@@ -21,8 +21,14 @@ environment / feature), optional ``scenario`` (S-code), ``in_domain`` (bool) and
 fields named in methods.json ``inputs`` (depth_ground_ft, depth_foundation_ft, depth_floor_ft,
 velocity_fps, dv_ft2s, structure_type, habitable, occupancy, occupants, m1_zone, road_class,
 aadt, ...). Summary record (dict, dam level): model_dimension (1D/2D), hydraulics_source
-(breach_model / simplified / none), storage_acft, lives_in_jeopardy, population_at_risk, ...
-optionally ``by_scenario`` {S-code: {...}}.
+(breach_model / simplified / none), analysis (as DamIT Hazard's dam record: breach_model / simplified /
+unsteady_tm11), current_class (ordinal or class label), storage_acft, lives_in_jeopardy,
+population_at_risk, ... optionally ``by_scenario`` {S-code: {...}}.
+
+M1 returns a class only for the zones in its ``class_zones`` parameter; an empty list (the USBR
+preset) means M1 only marks the lives in jeopardy that M5 counts. R2's floor presumption and R8's
+variant are modifier parameters (modifiers.json / a preset's modifier_overrides), the same ones
+DamIT Hazard reads.
 """
 import datetime
 
@@ -206,7 +212,8 @@ def _types(method):
     return (method.get("applies_to") or {}).get("receptor_type")
 
 
-def _apply_r2(receptors, flags):
+def _apply_r2(receptors, flags, params=None):
+    floor_presumption = bool((params or {}).get("floor_presumption"))
     out = []
     for r in receptors:
         r = dict(r)
@@ -214,7 +221,8 @@ def _apply_r2(receptors, flags):
             if _bool(r.get("habitable")) is None and r.get("occupancy"):
                 occ = str(r["occupancy"]).lower()
                 r["habitable"] = occ in ("overnight", "daytime", "regular_daytime")
-            if (str(r.get("structure_type", "")).lower() == "home" and r.get("depth_floor_ft") in (None, "")
+            if (floor_presumption and str(r.get("structure_type", "")).lower() == "home"
+                    and r.get("depth_floor_ft") in (None, "")
                     and _num(r.get("depth_ground_ft")) and _num(r.get("depth_ground_ft")) > 0):
                 r["depth_floor_ft"] = r["depth_ground_ft"]
                 flags.append(_flag("r2_presumption", "Home assumed flooded above its lowest occupied floor "
@@ -291,7 +299,9 @@ def _method_hits(mid, m, recs, summ, datums, sid, flags):
                 hit("count", c, "{}: {:g}".format(entry.get("label", entry.get("measure")), total))
     special = m.get("special")
     if special == "chart_zone":
-        zones = params.get("class_zones") or ["high_danger"]
+        zones = params.get("class_zones")
+        if zones is None:
+            zones = ["high_danger"]                # an empty list: M1 marks zones, returns no class
         ret = (m.get("returns") or {}).get("high_danger", 3)
         for r in cands:
             if _bool(r.get("habitable")) is False or _wet(r) is False:
@@ -332,6 +342,21 @@ def _method_hits(mid, m, recs, summ, datums, sid, flags):
     return hits
 
 
+def _class_of_record(config, catalog, value):
+    """A current class (ordinal, preset label or generic label) as an ordinal, or None."""
+    if value is None or value == "":
+        return None
+    n = _num(value)
+    if n is not None:
+        return int(n)
+    v = str(value).strip().lower()
+    for lm in (config.get("label_map") or {}, catalog.labels.get("ordinals") or {}):
+        for k, lab in lm.items():
+            if str(lab).strip().lower() == v:
+                return int(k)
+    return None
+
+
 def label_for(config, ordinal):
     """Label for an ordinal under a resolved config (clamped to the preset's tiers)."""
     if ordinal is None:
@@ -351,7 +376,7 @@ def evaluate(catalog, config, receptors, summary=None, apply_advisories=False, r
     mods = {r["id"]: r for r in config.get("modifiers", [])}
     recs = [dict(r) for r in (receptors or [])]
     if "R2" in mods:
-        recs = _apply_r2(recs, flags)
+        recs = _apply_r2(recs, flags, mods["R2"].get("params"))
     scen_ids = [s["id"] for s in config.get("scenarios", [])] or [None]
     datums = catalog.datums
     all_hits = []
@@ -408,6 +433,17 @@ def evaluate(catalog, config, receptors, summary=None, apply_advisories=False, r
             if up is not None and (ordinal is None or up > ordinal):
                 ordinal = int(up)
                 applied.append({"id": rid, "effect": "borderline result takes the higher class"})
+            continue
+        if rid == "R8" and p.get("variant") == "lowering_from_high":
+            cur = _class_of_record(config, catalog, summary.get("current_class"))
+            analysis = str(summary.get("analysis") or summary.get("hydraulics_source") or "").lower()
+            if cur is not None and cur >= 3 and (ordinal is None or ordinal < 3) and analysis != "unsteady_tm11":
+                ordinal = 3
+                applied.append({"id": rid, "effect": "current class High: lowering needs TM-11-based unsteady "
+                                "modeling (analysis = unsteady_tm11); class kept High"})
+            elif cur is None and (ordinal is None or ordinal < 3):
+                flags.append(_flag("missing_input", "R8: current class not given; lowering from High (needs "
+                                   "TM-11-based unsteady modeling) not checked.", method=rid))
             continue
         if rid == "R8":
             src = str(summary.get("hydraulics_source") or "").lower()

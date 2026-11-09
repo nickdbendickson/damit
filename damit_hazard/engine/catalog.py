@@ -136,6 +136,18 @@ def _rule_literal(rec, label, fields, params):
     raise CatalogError("{}: no rule {!r} reading a depth".format(rec.get("name"), label))
 
 
+def _rule_datum(src, rec, label):
+    """The datum ('ground' / 'foundation' / 'floor') of the depth a method's labelled receptor rule
+    reads (e.g. M3 'institution High' reads the lowest floor)."""
+    fields = list(src.datums.values())
+    for r in rec.get("receptor_rules") or []:
+        if r.get("label") == label:
+            for f, _op, _v in _terms(r.get("when")):
+                if f in fields:
+                    return _datum_of(src, f)
+    raise CatalogError("{}: no rule {!r} reading a depth".format(rec.get("name"), label))
+
+
 def _bands(count):
     return [(b["min"], b.get("max"), b["class"]) for b in count["bands"]]
 
@@ -201,6 +213,10 @@ def method_params(src, hz, mid, cp):
             for cell, ref in cells.items():
                 if cell == "low_below_rule":
                     row["low_below_ft"] = _rule_literal(m3, ref, list(src.datums.values()), m3p)
+                elif cell == "datum_rule":            # Significant / Low split datum
+                    row["datum"] = _rule_datum(src, m3, ref)
+                elif cell == "high_datum_rule":       # High test datum
+                    row["high_datum"] = _rule_datum(src, m3, ref)
                 else:
                     row[cell] = m3p[ref]
         walkout = m3p.get("walkout_high_depth_ft")
@@ -427,8 +443,10 @@ def _preset(src, hz, pid, pr, ref):
         if strength:
             params["strength"] = strength
         mods[rid] = params
+    # the preset's document status (presets.json 'status': NRCS unverified, NY draft) is read from
+    # DamIT Catalog; else the worst per-method mark of the preset (BIA M5 secondary)
     status = [v for v in (pr.get("verification") or {}).values()]
-    verification = ref.get("verification") or next(
+    verification = pr.get("status") or next(
         (s for s in ("unverified", "secondary") if s in status), "verified")
     notes = [n for n in (ref.get("notes"), pr.get("notes"),
                          "Citation: " + pr["citation"] if pr.get("citation") else None) if n]

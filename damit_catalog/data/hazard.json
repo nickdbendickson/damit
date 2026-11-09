@@ -1,7 +1,7 @@
 {
  "schema": "damit.catalog.hazard",
  "schema_version": 1,
- "purpose": "Engine profile for DamIT Hazard (damit:classify). DamIT Hazard reads every threshold, label, scenario, modifier and preset from the Appendix A files of this catalog (methods, scenarios, modifiers, labels, presets) and translates them to its classifier. This file holds only what those files do not express: the receptor-type vocabulary of Hazard's layers, which TM-11 chart applies to which receptor, sampling defaults, and a few Hazard-specific engine switches. It must never repeat a value that the other files carry (a test enforces this).",
+ "purpose": "Engine profile for DamIT Hazard (damit:classify). DamIT Hazard reads every threshold, label, scenario, modifier and preset from the Appendix A files of this catalog (methods, scenarios, modifiers, labels, presets) and translates them to its classifier. This file holds only what those files do not express: the receptor-type vocabulary of Hazard's layers, which TM-11 chart applies to which receptor, sampling defaults, and a few Hazard-specific engine switches; preset status marks, the USBR M1 reading and New York's R2 / R8 variants live in presets.json and modifiers.json so DamIT Screener reads them too. It must never repeat a value that the other files carry (a test enforces this).",
  "disclaimer_lead": "Informational screening aid, not legal or engineering advice and not a regulatory determination.",
  "disclaimer_tail": "Rules change: the current statutes, rules and agency guidance control. Items marked (unverified) or (secondary) should be confirmed before a preset is relied on, and every suggestion still needs an engineer's review.",
  "general": {
@@ -127,8 +127,7 @@
       "types": [
        "home",
        "mobile_home"
-      ],
-      "datum": "foundation"
+      ]
      },
      "institution": {
       "types": [
@@ -136,21 +135,18 @@
        "school",
        "hospital",
        "nursing_home"
-      ],
-      "datum": "floor"
+      ]
      },
      "commercial": {
       "types": [
        "commercial",
        "industrial"
-      ],
-      "datum": "foundation"
+      ]
      },
      "campground": {
       "types": [
        "campground"
-      ],
-      "datum": "ground"
+      ]
      },
      "unoccupied_farm": {
       "types": [
@@ -158,36 +154,46 @@
        "storage",
        "outbuilding"
       ],
-      "datum": "foundation",
       "low_only": true
      }
     },
-    "rows_note": "High at high_depth_ft or more at the datum, or DV high_dv or more; otherwise Low below low_below_ft (a low_below_ft of 0 means at or below the datum: below the foundation ground line), else Significant; Unoccupied farm or storage buildings: Low when flow is above the foundation line. Walkout basements may use walkout_high_depth_ft in place of the home row's high depth where occupants can move upstairs (walkout_option)."
+    "rows_note": "High at high_depth_ft or more at the row's high datum, or DV high_dv or more; otherwise Low below low_below_ft (a low_below_ft of 0 means at or below the datum: below the foundation ground line), else Significant; Unoccupied farm or storage buildings: Low when flow is above the foundation line. Walkout basements may use walkout_high_depth_ft in place of the home row's high depth where occupants can move upstairs (walkout_option)."
    },
    "row_params": {
     "home": {
      "high_depth_ft": "home_high_depth_ft",
      "high_dv": "home_high_dv",
-     "low_below_rule": "home Significant"
+     "low_below_rule": "home Significant",
+     "datum_rule": "home Significant",
+     "high_datum_rule": "home High"
     },
     "institution": {
      "high_depth_ft": "institution_high_depth_ft",
      "high_dv": "institution_high_dv",
-     "low_below_rule": "institution Significant"
+     "low_below_rule": "institution Significant",
+     "datum_rule": "institution Significant",
+     "high_datum_rule": "institution High"
     },
     "commercial": {
      "high_depth_ft": "commercial_high_depth_ft",
      "high_dv": "commercial_high_dv",
-     "low_below_ft": "commercial_sig_depth_ft"
+     "low_below_ft": "commercial_sig_depth_ft",
+     "datum_rule": "commercial Significant",
+     "high_datum_rule": "commercial High"
     },
     "campground": {
      "high_depth_ft": "campground_high_depth_ft",
      "high_dv": "campground_high_dv",
      "low_below_ft": "campground_sig_depth_ft",
-     "min_nights_per_year": "campground_min_nights_per_year"
+     "min_nights_per_year": "campground_min_nights_per_year",
+     "datum_rule": "campground Significant",
+     "high_datum_rule": "campground High"
+    },
+    "unoccupied_farm": {
+     "datum_rule": "unoccupied farm/storage Low"
     }
    },
-   "row_params_note": "Which catalog M3 parameter (or which catalog rule's depth literal, *_rule) fills each cell of Hazard's M3 rows."
+   "row_params_note": "Which catalog M3 parameter (or which catalog rule's depth literal, *_rule) fills each cell of Hazard's M3 rows. datum_rule / high_datum_rule name the catalog rule whose depth field sets the row's datum for the Significant / Low split and for the High test (institutions: foundation for the split, lowest floor for High)."
   },
   "M4a": {
    "receptor_kinds": [
@@ -412,11 +418,6 @@
   }
  },
  "modifiers": {
-  "R2": {
-   "params": {
-    "floor_presumption": false
-   }
-  },
   "R5": {
    "params": {
     "count_future": true,
@@ -436,9 +437,6 @@
    }
   },
   "R8": {
-   "params": {
-    "variant": "storage_limit"
-   },
    "variants": {
     "storage_limit": "No breach model and storage at or over the limit (or unknown): a class below High is not justified \u2192 High.",
     "lowering_from_high": "Current class High and the analysis is not TM-11-based unsteady modeling: the class is not lowered."
@@ -469,19 +467,12 @@
    "notes": "FEMA 333 (October 1998, reprinted April 2004)."
   },
   "USBR": {
-   "notes": "S5 for borderline dams is (unverified). In this preset M1 marks the lives in jeopardy (high-danger zone) that M5 counts (TM-11: 1\u20136 Significant, more than 6 High); M1 returns no class by itself (high_class null). TM-11 Figs 4\u20136 (vehicles, adults, children) are not digitized in this plugin: M1 flags those receptors.",
-   "methods": {
-    "M1": {
-     "high_class": null
-    }
-   }
+   "notes": "S5 for borderline dams is (unverified). TM-11 Figs 4\u20136 (vehicles, adults, children) are not digitized in this plugin: M1 flags those receptors."
   },
   "BIA": {
    "notes": "BIA's 1\u20136 Significant rule is from FEMA P-919 (July 2012): (secondary). No scenario confirmed: fall back to M13 and engineering judgment."
   },
   "NRCS": {
-   "notes": "NRCS hazard-definition wording (NEM \u00a7 520.21) is (unverified) in the source document.",
-   "verification": "unverified",
    "modifiers": {
     "R5": {
      "basis": "existing and future development"
@@ -500,16 +491,7 @@
    "notes": "Neb. Rev. Stat. \u00a7 46-1601 et seq.; Title 458. Minimal is generally limited to farm pond dams (engineer's call)."
   },
   "NY": {
-   "notes": "DOW TOGS 3.1.5 is still marked DRAFT. Class D (defunct dam) is an administrative status and is left out. Sunny-day and rainy-day breaches: the most severe governs.",
-   "verification": "draft",
-   "modifiers": {
-    "R2": {
-     "floor_presumption": true
-    },
-    "R8": {
-     "variant": "lowering_from_high"
-    }
-   }
+   "notes": "Class D (defunct dam) is an administrative status and is left out. Sunny-day and rainy-day breaches: the most severe governs."
   },
   "VA": {
    "notes": "Significant may cause loss of life. Significant dams of 50,000 ac-ft or more held to the High SDF is (unverified) and not used here. M5 is the incremental-analysis variant: it supports lowering a proposed class only.",
@@ -555,5 +537,5 @@
    "notes": "Class I (High), II (Significant), III (Low)."
   }
  },
- "presets_note": "Per-preset refinements DamIT Hazard needs that presets.json does not carry: notes, the document-status marker shown beside the preset name, the USBR M1 'marks lives, returns no class' reading, New York's R2 floor presumption and R8 lowering-from-High variant, R5 basis wording, and California's 'S1 or S2' choice. Keys are preset IDs or aliases."
+ "presets_note": "Per-preset refinements DamIT Hazard needs that presets.json does not carry: notes, R5 basis wording and California's 'S1 or S2' choice. Keys are preset IDs or aliases. Preset status (NRCS unverified, NY draft), the USBR M1 'marks lives, returns no class' reading and New York's R2 floor presumption and R8 lowering-from-High variant are in presets.json, where DamIT Screener reads them as well."
 }

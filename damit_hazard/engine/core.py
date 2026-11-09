@@ -383,9 +383,13 @@ def m2(ctx):
 
 
 def _m3_row(ctx, r, row, rname, mid, walkout_option):
+    # row["datum"] is the Significant / Low split datum, row["high_datum"] the High test's (both
+    # from the catalog M3 rules: institutions split at the foundation, High at the lowest floor)
     d = ctx.depth_at(r, row["datum"], mid)
     if d is None:
         return
+    hdat = row.get("high_datum") or row["datum"]
+    d_hi = d if hdat == row["datum"] else ctx.depth_at(r, hdat, mid)
     if row.get("low_only"):
         if d > 0:
             ctx.hit(mid, 1, r, "unoccupied farm / storage building, flow above the foundation "
@@ -405,7 +409,9 @@ def _m3_row(ctx, r, row, rname, mid, walkout_option):
         hi_d = row["walkout_high_depth_ft"]
     dv = ctx.dv(r, mid)
     why = "{} row: {} ft ({} datum), DV {}".format(rname, _f(d), row["datum"], _f(dv))
-    if d >= hi_d or (dv is not None and dv >= row["high_dv"]):
+    if hdat != row["datum"]:
+        why += ", {} ft ({} datum, High test)".format(_f(d_hi), hdat)
+    if d_hi >= hi_d or (dv is not None and dv >= row["high_dv"]):
         ctx.hit(mid, 3, r, why + " -> High (>= {} ft or DV >= {})".format(hi_d, row["high_dv"]))
         return
     lb = row["low_below_ft"]

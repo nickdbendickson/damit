@@ -9,6 +9,9 @@ module; only ID formats are validated here.
 Override the data folder (to update presets without a plugin release) with the
 ``DAMIT_CATALOG_DIR`` environment variable or the ``data_dir`` argument.
 
+A preset may carry a document ``status`` (``presets.json`` "status_values": unverified, draft): it
+marks the whole preset, is returned by ``resolve_preset`` and raises a ``preset_status`` flag.
+
 Preset IDs may have aliases (``presets.json`` "aliases", e.g. USBR_TM11 -> USBR): every
 lookup by preset ID accepts an alias and a resolved config records the stored ID.
 The optional ``hazard`` file (``hazard.json``) holds the DamIT Hazard classifier's engine
@@ -77,6 +80,7 @@ class Catalog(object):
         self.labels = parts["labels"]
         self.presets = parts["presets"]["presets"]
         self.preset_aliases = dict(parts["presets"].get("aliases") or {})
+        self.status_values = dict(parts["presets"].get("status_values") or {})
         self.hazard = parts.get("hazard") or {}
         self.dash_rule = parts["presets"].get("dash_rule", "")
         self.combination = manifest.get("combination", {})
@@ -123,6 +127,10 @@ class Catalog(object):
             raise CatalogError(_unknown_preset(self, preset_id))
         return self.presets[pid]
 
+    def preset_status(self, preset_id):
+        """The preset's document status from presets.json ('unverified', 'draft', ...) or None."""
+        return self.preset(preset_id).get("status")
+
     def generic_label(self, ordinal):
         return self.labels["ordinals"].get(str(int(ordinal)), str(ordinal))
 
@@ -145,11 +153,15 @@ class Catalog(object):
         for mid, ov in (extra_overrides or {}).items():
             method_over.setdefault(mid, {}).update(ov or {})
         methods = self._merge_methods(method_over, flags)
-        for mid, status in (pr.get("verification") or {}).items():
+        status = pr.get("status")
+        if status:
+            flags.append(_flag("preset_status", "Preset {} is marked ({}): {}".format(
+                preset_id, status, self.status_values.get(status, "confirm before relying on it."))))
+        for mid, mstatus in (pr.get("verification") or {}).items():
             if mid in methods:
-                methods[mid]["verification"] = status
+                methods[mid]["verification"] = mstatus
                 flags.append(_flag("unverified_or_secondary", "{} is marked ({}) for this preset; confirm before "
-                                   "relying on it.".format(mid, status), method=mid))
+                                   "relying on it.".format(mid, mstatus), method=mid))
         scen = list(scenario_ids) if scenario_ids else list(pr.get("scenarios") or [])
         if not scen:
             flags.append(_flag("scenario_unconfirmed", "The document confirms no scenario for this preset{}; "
@@ -168,7 +180,7 @@ class Catalog(object):
         label_map = {str(k): v for k, v in (pr.get("label_map") or {}).items()}
         return {"mode": MODE_PRESET, "preset_id": preset_id, "requested_preset_id": requested,
                 "preset_label": pr.get("label", preset_id),
-                "citation": pr.get("citation", ""), "scenarios": scenarios, "domain_cutoffs": cutoffs,
+                "citation": pr.get("citation", ""), "status": status, "scenarios": scenarios, "domain_cutoffs": cutoffs,
                 "methods": methods, "modifiers": modifiers, "label_map": label_map,
                 "labels": list(pr.get("labels") or []),
                 "conditional_scenarios": copy.deepcopy(pr.get("conditional_scenarios") or []),
@@ -191,7 +203,7 @@ class Catalog(object):
         if not scen:
             flags.append(_flag("scenario_unconfirmed", "No scenario chosen."))
         label_map = {k: v for k, v in self.labels["ordinals"].items()}
-        return {"mode": MODE_CUSTOM, "preset_id": None, "preset_label": "Custom", "citation": "",
+        return {"mode": MODE_CUSTOM, "preset_id": None, "preset_label": "Custom", "citation": "", "status": None,
                 "scenarios": self._scenarios(scen, {}, brand=False),
                 "domain_cutoffs": self._cutoffs(cutoff_ids or [], brand=False),
                 "methods": methods, "modifiers": self._modifiers(modifier_ids or [], {}, brand=False),
@@ -324,6 +336,7 @@ def validate(parts):
     if FALLBACK_METHOD not in methods:
         errs.append("fallback method {} missing".format(FALLBACK_METHOD))
     ordinals = (parts["labels"].get("ordinals") or {})
+    status_values = parts["presets"].get("status_values") or {}
     for pid, p in presets.items():
         if not PRESET_ID_RE.match(pid):
             errs.append("bad preset id {!r}".format(pid))
@@ -342,6 +355,8 @@ def validate(parts):
         for d in p.get("domain_cutoffs") or []:
             if d not in cut:
                 errs.append("{}: unknown cutoff {}".format(pid, d))
+        if p.get("status") is not None and p["status"] not in status_values:
+            errs.append("{}: status {!r} not in presets.json status_values".format(pid, p["status"]))
         for k in (p.get("label_map") or {}):
             if str(k) not in ordinals:
                 errs.append("{}: label_map ordinal {} not in labels.json".format(pid, k))
