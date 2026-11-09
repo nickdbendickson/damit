@@ -1,0 +1,2444 @@
+{
+ "schema": "damit.catalog.methods",
+ "schema_version": 1,
+ "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
+ "datums": {
+  "ground": "depth_ground_ft",
+  "foundation": "depth_foundation_ft",
+  "floor": "depth_floor_ft"
+ },
+ "comparators": [
+  ">",
+  ">=",
+  "<",
+  "<=",
+  "eq",
+  "ne",
+  "in"
+ ],
+ "verification_values": {
+  "as_documented": "Stated in the corrected edition's Appendix A.",
+  "unverified": "Marked (unverified) in the document; confirm before relying on it.",
+  "secondary": "Marked (secondary) in the document; confirm before relying on it."
+ },
+ "methods": {
+  "M1": {
+   "name": "Depth-velocity lethality charts",
+   "group": "structures_life_safety",
+   "inputs": [
+    "depth",
+    "velocity",
+    "m1_zone (chart zone at each habitable structure)",
+    "model_dimension"
+   ],
+   "params": {
+    "charts": [
+     "houses_on_foundations",
+     "mobile_homes",
+     "passenger_vehicles",
+     "adults",
+     "children"
+    ],
+    "chart_source": "USBR ACER TM-11 Figures 2-6",
+    "datum": "ground",
+    "require_2d": false,
+    "class_zones": [
+     "high_danger"
+    ],
+    "judgment_zone_flag": true,
+    "curves_digitized_in_catalog": false
+   },
+   "returns": {
+    "high_danger": 3,
+    "judgment": "flag_for_engineer_review",
+    "low_danger": "not_lethal_pass_to_M6"
+   },
+   "strength": "rule",
+   "source": "USBR ACER TM-11 Figs 2-6; variants: REG_05 Figs 5.1-5.2; NY lowest occupied floor",
+   "appendix_ref": "A.3 p.21-22",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure"
+    ]
+   },
+   "special": "chart_zone",
+   "evaluation": "auto",
+   "notes": "Chart curves are not digitized in this catalog; the evaluator reads a per-structure m1_zone (high_danger / judgment / low_danger) supplied by DamIT Hazard or the engineer. Block when require_2d is true and the run is 1D."
+  },
+  "M2": {
+   "name": "Flat depth threshold at habitable structures",
+   "group": "structures_life_safety",
+   "inputs": [
+    "depth at habitable structures (datum)",
+    "model_dimension"
+   ],
+   "params": {
+    "depth_ft": 2.0,
+    "comparator": ">",
+    "datum": "ground",
+    "only_if_1d": false,
+    "structure_types": [
+     "home",
+     "mobile_home",
+     "institution",
+     "commercial_industrial",
+     "campground"
+    ]
+   },
+   "returns": 3,
+   "strength": "rule",
+   "source": "REG_05.2026 (ND, > 2 ft, 1D only); IDWR (Idaho, >= 2 ft at residences, sufficient not sole)",
+   "appendix_ref": "A.3 p.22",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "habitable",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "in",
+        "$structure_types"
+       ],
+       [
+        "@datum",
+        "$comparator",
+        "$depth_ft"
+       ]
+      ]
+     },
+     "class": 3
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M3": {
+   "name": "Structure-type depth and DV matrix",
+   "group": "structures_life_safety",
+   "inputs": [
+    "structure_type",
+    "depth_foundation_ft",
+    "depth_floor_ft",
+    "depth_ground_ft",
+    "dv_ft2s",
+    "walkout_basement"
+   ],
+   "params": {
+    "home_high_depth_ft": 3.5,
+    "home_high_dv": 20,
+    "walkout_high_depth_ft": 3.5,
+    "walkout_high_depth_ft_allowed": 5.0,
+    "institution_high_depth_ft": 2.0,
+    "institution_high_dv": 15,
+    "commercial_sig_depth_ft": 1.0,
+    "commercial_high_depth_ft": 3.5,
+    "commercial_high_dv": 20,
+    "campground_sig_depth_ft": 1.0,
+    "campground_high_depth_ft": 3.5,
+    "campground_high_dv": 8,
+    "campground_min_nights_per_year": 25
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "Nebraska Classification of Dams (Dec. 2023) Table 3",
+   "appendix_ref": "A.3 p.22-23",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "label": "home High",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "home"
+       ],
+       [
+        "walkout_basement",
+        "ne",
+        true
+       ],
+       {
+        "any": [
+         [
+          "depth_foundation_ft",
+          ">=",
+          "$home_high_depth_ft"
+         ],
+         [
+          "dv_ft2s",
+          ">=",
+          "$home_high_dv"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "label": "home (walkout basement) High",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "home"
+       ],
+       [
+        "walkout_basement",
+        "eq",
+        true
+       ],
+       {
+        "any": [
+         [
+          "depth_foundation_ft",
+          ">=",
+          "$walkout_high_depth_ft"
+         ],
+         [
+          "dv_ft2s",
+          ">=",
+          "$home_high_dv"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "label": "home Significant",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "home"
+       ],
+       [
+        "depth_foundation_ft",
+        ">",
+        0
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "label": "home Low",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "home"
+       ]
+      ]
+     },
+     "class": 1
+    },
+    {
+     "label": "institution High",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "institution"
+       ],
+       {
+        "any": [
+         [
+          "depth_floor_ft",
+          ">=",
+          "$institution_high_depth_ft"
+         ],
+         [
+          "dv_ft2s",
+          ">=",
+          "$institution_high_dv"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "label": "institution Significant",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "institution"
+       ],
+       [
+        "depth_foundation_ft",
+        ">",
+        0
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "label": "institution Low",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "institution"
+       ]
+      ]
+     },
+     "class": 1
+    },
+    {
+     "label": "commercial High",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "commercial_industrial"
+       ],
+       {
+        "any": [
+         [
+          "depth_foundation_ft",
+          ">=",
+          "$commercial_high_depth_ft"
+         ],
+         [
+          "dv_ft2s",
+          ">=",
+          "$commercial_high_dv"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "label": "commercial Significant",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "commercial_industrial"
+       ],
+       [
+        "depth_foundation_ft",
+        ">=",
+        "$commercial_sig_depth_ft"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "label": "commercial Low",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "commercial_industrial"
+       ]
+      ]
+     },
+     "class": 1
+    },
+    {
+     "label": "campground High",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "campground"
+       ],
+       [
+        "nights_per_year",
+        ">",
+        "$campground_min_nights_per_year"
+       ],
+       {
+        "any": [
+         [
+          "depth_ground_ft",
+          ">=",
+          "$campground_high_depth_ft"
+         ],
+         [
+          "dv_ft2s",
+          ">=",
+          "$campground_high_dv"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "label": "campground Significant",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "campground"
+       ],
+       [
+        "nights_per_year",
+        ">",
+        "$campground_min_nights_per_year"
+       ],
+       [
+        "depth_ground_ft",
+        ">=",
+        "$campground_sig_depth_ft"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "label": "campground Low",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "campground"
+       ],
+       [
+        "nights_per_year",
+        ">",
+        "$campground_min_nights_per_year"
+       ]
+      ]
+     },
+     "class": 1
+    },
+    {
+     "label": "unoccupied farm/storage Low",
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "unoccupied_farm_storage"
+       ],
+       [
+        "depth_foundation_ft",
+        ">",
+        0
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "Every cell is editable. walkout_high_depth_ft defaults to 3.5; the document allows 5 ft where occupants can move upstairs (walkout_high_depth_ft_allowed). Missing floor elevation: institution rows fall back to no result and a missing-input flag is raised."
+  },
+  "M4a": {
+   "name": "Count-by-depth: occupied structure count",
+   "group": "structures_life_safety",
+   "inputs": [
+    "occupied structures",
+    "depth_foundation_ft"
+   ],
+   "params": {
+    "n_min": 20,
+    "depth_ft": 2.0
+   },
+   "returns": 3,
+   "strength": "advisory",
+   "source": "Nebraska Classification of Dams (Dec. 2023) ('should')",
+   "appendix_ref": "A.3 p.23",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure"
+    ]
+   },
+   "counts": [
+    {
+     "select": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "habitable",
+        "eq",
+        true
+       ],
+       [
+        "depth_foundation_ft",
+        ">=",
+        "$depth_ft"
+       ]
+      ]
+     },
+     "measure": "count",
+     "bands": [
+      {
+       "min": "$n_min",
+       "class": 3
+      }
+     ]
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M4b": {
+   "name": "Count-by-depth: homes count x depth table",
+   "group": "structures_life_safety",
+   "inputs": [
+    "homes",
+    "depth_floor_ft",
+    "m1_zone"
+   ],
+   "params": {
+    "shallow_depth_ft": 1.0
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "New York TOGS 3.1.5 (draft)",
+   "appendix_ref": "A.3 p.23",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure"
+    ]
+   },
+   "counts": [
+    {
+     "label": "up to 1 ft at lowest occupied floor",
+     "select": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "home"
+       ],
+       [
+        "depth_floor_ft",
+        ">",
+        0
+       ],
+       [
+        "depth_floor_ft",
+        "<=",
+        "$shallow_depth_ft"
+       ]
+      ]
+     },
+     "measure": "count",
+     "bands": [
+      {
+       "min": 1,
+       "max": 10,
+       "class": 1
+      },
+      {
+       "min": 11,
+       "max": 99,
+       "class": 2
+      },
+      {
+       "min": 100,
+       "class": 3
+      }
+     ]
+    },
+    {
+     "label": "over 1 ft at lowest occupied floor",
+     "select": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "home"
+       ],
+       [
+        "depth_floor_ft",
+        ">",
+        "$shallow_depth_ft"
+       ]
+      ]
+     },
+     "measure": "count",
+     "bands": [
+      {
+       "min": 1,
+       "max": 10,
+       "class": 2
+      },
+      {
+       "min": 11,
+       "max": 99,
+       "class": 2
+      },
+      {
+       "min": 100,
+       "class": 3
+      }
+     ]
+    },
+    {
+     "label": "above the Low Danger zone (M1)",
+     "select": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "home"
+       ],
+       [
+        "m1_zone",
+        "in",
+        [
+         "judgment",
+         "high_danger"
+        ]
+       ]
+      ]
+     },
+     "measure": "count",
+     "bands": [
+      {
+       "min": 1,
+       "class": 3
+      }
+     ]
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "Counts are taken per depth row as tabulated; the engineer confirms how homes are grouped."
+  },
+  "M4c": {
+   "name": "Count-by-depth: lives or habitable structures",
+   "group": "structures_life_safety",
+   "inputs": [
+    "occupants",
+    "habitable structures in the inundation area"
+   ],
+   "params": {},
+   "returns": {
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "Texas 30 TAC 299.14",
+   "appendix_ref": "A.3 p.23",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure"
+    ]
+   },
+   "counts": [
+    {
+     "label": "lives",
+     "select": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "habitable",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "measure": "sum:occupants",
+     "bands": [
+      {
+       "min": 1,
+       "max": 6,
+       "class": 2
+      },
+      {
+       "min": 7,
+       "class": 3
+      }
+     ]
+    },
+    {
+     "label": "habitable structures",
+     "select": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "habitable",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "measure": "count",
+     "bands": [
+      {
+       "min": 1,
+       "max": 2,
+       "class": 2
+      },
+      {
+       "min": 3,
+       "class": 3
+      }
+     ]
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M5": {
+   "name": "Lives-in-jeopardy count",
+   "group": "structures_life_safety",
+   "inputs": [
+    "lives_in_jeopardy (dam summary) or occupants of structures with m1_zone high_danger / lethal"
+   ],
+   "params": {
+    "sig_min": null,
+    "high_min": 1,
+    "lowering_only": false
+   },
+   "returns": {
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "FEMA 333; USBR ACER TM-11 (1-6 / over 6); BIA; Virginia TM-11 Section III variant",
+   "appendix_ref": "A.3 p.23",
+   "verification": "as_documented",
+   "special": "lives_in_jeopardy",
+   "evaluation": "auto",
+   "notes": "sig_min null means no Significant band (FEMA 333: High at 1+ life). lowering_only true: the result supports lowering a proposed class only (Virginia) and is reported as advisory."
+  },
+  "M6": {
+   "name": "Non-lethal flooding of occupied structures",
+   "group": "structures_life_safety",
+   "inputs": [
+    "habitable structures",
+    "depth_ground_ft",
+    "uninhabitable flag",
+    "indirect_life_loss flag"
+   ],
+   "params": {
+    "variant": "base"
+   },
+   "returns": 2,
+   "strength": "rule",
+   "source": "FEMA 333 / ND REG_05.2026 (advisory in ND); Colorado 2 CCR 402-1; IDWR",
+   "appendix_ref": "A.3 p.23-24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure",
+     "road",
+     "feature"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "label": "inundated habitable structure",
+     "if_param": {
+      "variant": "base"
+     },
+     "when": {
+      "all": [
+       [
+        "receptor_type",
+        "eq",
+        "structure"
+       ],
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "habitable",
+        "eq",
+        true
+       ],
+       [
+        "depth_ground_ft",
+        ">",
+        0
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "label": "uninhabitable or inoperable",
+     "if_param": {
+      "variant": "uninhabitable_inoperable"
+     },
+     "when": {
+      "all": [
+       [
+        "receptor_type",
+        "eq",
+        "structure"
+       ],
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "uninhabitable_after",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "label": "indirect loss of life",
+     "if_param": {
+      "variant": "indirect_life_loss"
+     },
+     "when": {
+      "all": [
+       [
+        "indirect_life_loss",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M7": {
+   "name": "Population threshold for a top tier",
+   "group": "structures_life_safety",
+   "inputs": [
+    "lives_in_jeopardy",
+    "population_at_risk",
+    "critical_facilities_threat"
+   ],
+   "params": {
+    "lives_min": 1,
+    "population_min": 1000
+   },
+   "returns": 4,
+   "strength": "rule",
+   "source": "California 23 CCR 335.4",
+   "appendix_ref": "A.3 p.24",
+   "verification": "as_documented",
+   "summary_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "lives_in_jeopardy",
+        ">=",
+        "$lives_min"
+       ],
+       {
+        "any": [
+         [
+          "population_at_risk",
+          ">=",
+          "$population_min"
+         ],
+         [
+          "critical_facilities_threat",
+          "eq",
+          true
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 4
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M8a": {
+   "name": "Road traffic bands",
+   "group": "infrastructure",
+   "inputs": [
+    "road_class",
+    "aadt"
+   ],
+   "params": {
+    "low_below_aadt": 500,
+    "high_above_aadt": 2000
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "ND REG_05.2026",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "road"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       {
+        "any": [
+         [
+          "road_class",
+          "eq",
+          "interstate"
+         ],
+         [
+          "aadt",
+          ">",
+          "$high_above_aadt"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       {
+        "any": [
+         [
+          "road_class",
+          "eq",
+          "us_state_highway"
+         ],
+         [
+          "aadt",
+          ">=",
+          "$low_below_aadt"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       {
+        "any": [
+         [
+          "road_class",
+          "eq",
+          "private"
+         ],
+         [
+          "aadt",
+          "<",
+          "$low_below_aadt"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "AADT of exactly 500 falls in Significant."
+  },
+  "M8b": {
+   "name": "Sole access road",
+   "group": "infrastructure",
+   "inputs": [
+    "sole_access"
+   ],
+   "params": {},
+   "returns": 2,
+   "strength": "rule",
+   "source": "ND REG_05.2026",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "road"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "sole_access",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "At least Significant."
+  },
+  "M8c": {
+   "name": "Road lanes x depth over road",
+   "group": "infrastructure",
+   "inputs": [
+    "road_class",
+    "depth_ground_ft (over road)"
+   ],
+   "params": {
+    "depth_ft": 2.0
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "Nebraska Classification of Dams (Dec. 2023)",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "road"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "road_class",
+        "in",
+        [
+         "interstate",
+         "main_highway_4lane"
+        ]
+       ],
+       [
+        "depth_ground_ft",
+        ">=",
+        "$depth_ft"
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "road_class",
+        "in",
+        [
+         "interstate",
+         "main_highway_4lane"
+        ]
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "road_class",
+        "eq",
+        "us_state_highway"
+       ],
+       [
+        "depth_ground_ft",
+        ">=",
+        "$depth_ft"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "road_class",
+        "eq",
+        "us_state_highway"
+       ]
+      ]
+     },
+     "class": 1
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "road_class",
+        "eq",
+        "other_public"
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M8d": {
+   "name": "Road functional class",
+   "group": "infrastructure",
+   "inputs": [
+    "functional_class",
+    "aadt"
+   ],
+   "params": {
+    "minor_road_max_aadt": 400,
+    "high_classes": [
+     "interstate",
+     "expressway",
+     "urban_principal_arterial_other"
+    ],
+    "significant_classes": [
+     "urban_minor_arterial",
+     "rural_principal_arterial_other",
+     "rural_minor_arterial",
+     "urban_collector",
+     "rural_major_collector"
+    ],
+    "low_classes": [
+     "rural_minor_collector",
+     "local"
+    ]
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "New York TOGS 3.1.5 (draft)",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "road"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "label": "minor road (AADT at or below limit)",
+     "final": true,
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "aadt",
+        "<=",
+        "$minor_road_max_aadt"
+       ]
+      ]
+     },
+     "class": 1
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "functional_class",
+        "in",
+        "$high_classes"
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "functional_class",
+        "in",
+        "$significant_classes"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "functional_class",
+        "in",
+        "$low_classes"
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M8e": {
+   "name": "Low-volume road exclusion",
+   "group": "infrastructure",
+   "inputs": [
+    "aadt"
+   ],
+   "params": {
+    "limited_use_max_aadt": 400
+   },
+   "returns": 1,
+   "strength": "advisory",
+   "source": "Virginia 4VAC50-20-45",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "road"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "label": "limited-use road",
+     "final": true,
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "aadt",
+        "<=",
+        "$limited_use_max_aadt"
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "'may be treated as limited use'. AADTs of several limited-use roads are summed unless they carry the same trips; summation is left to the engineer in 0.1.0 and flagged."
+  },
+  "M8f": {
+   "name": "Isolation from emergency services",
+   "group": "infrastructure",
+   "inputs": [
+    "homes_isolated (dam summary)",
+    "crossings_failed"
+   ],
+   "params": {
+    "homes_min": 10
+   },
+   "returns": 2,
+   "strength": "rule",
+   "source": "New York TOGS 3.1.5 (draft)",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "summary_rules": [
+    {
+     "when": {
+      "any": [
+       [
+        "homes_isolated",
+        ">=",
+        "$homes_min"
+       ],
+       [
+        "many_crossings_failed",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M8g": {
+   "name": "Road washout examples",
+   "group": "infrastructure",
+   "inputs": [
+    "road_class",
+    "washout",
+    "municipal_roads_washed_out",
+    "vehicle_access_lost"
+   ],
+   "params": {
+    "municipal_roads_min": 2
+   },
+   "returns": 2,
+   "strength": "rule",
+   "source": "Rhode Island 250-RICR-130-05-1",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "road"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "washout",
+        "eq",
+        true
+       ],
+       [
+        "road_class",
+        "in",
+        [
+         "interstate",
+         "us_state_highway"
+        ]
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "summary_rules": [
+    {
+     "when": {
+      "any": [
+       [
+        "municipal_roads_washed_out",
+        ">=",
+        "$municipal_roads_min"
+       ],
+       [
+        "vehicle_access_lost",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M9a": {
+   "name": "Railroad impact (traffic / passenger)",
+   "group": "infrastructure",
+   "inputs": [
+    "active",
+    "trains_per_day",
+    "passenger"
+   ],
+   "params": {
+    "freight_high_trains_per_day": 10
+   },
+   "returns": {
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "ND REG_05.2026",
+   "appendix_ref": "A.4 p.24",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "rail"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "active",
+        "eq",
+        true
+       ],
+       {
+        "any": [
+         [
+          "trains_per_day",
+          ">=",
+          "$freight_high_trains_per_day"
+         ],
+         [
+          "passenger",
+          "eq",
+          true
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "active",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M9b": {
+   "name": "Railroad main/minor line x depth",
+   "group": "infrastructure",
+   "inputs": [
+    "trains_per_day",
+    "depth_ground_ft (over rail bed)"
+   ],
+   "params": {
+    "main_line_trains_per_day": 5,
+    "depth_ft": 2.0
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "Nebraska Classification of Dams (Dec. 2023)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "rail"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "trains_per_day",
+        ">=",
+        "$main_line_trains_per_day"
+       ],
+       [
+        "depth_ground_ft",
+        ">=",
+        "$depth_ft"
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "trains_per_day",
+        ">=",
+        "$main_line_trains_per_day"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "trains_per_day",
+        "<",
+        "$main_line_trains_per_day"
+       ],
+       [
+        "depth_ground_ft",
+        ">=",
+        "$depth_ft"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "trains_per_day",
+        "<",
+        "$main_line_trains_per_day"
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M9c": {
+   "name": "Railroad service type",
+   "group": "infrastructure",
+   "inputs": [
+    "rail_service",
+    "freight_class",
+    "fuel_delivery",
+    "strategic",
+    "hazmat_yard"
+   ],
+   "params": {
+    "high_services": [
+     "intercity_passenger",
+     "commuter",
+     "transit"
+    ],
+    "high_freight_classes": [
+     1,
+     2
+    ],
+    "significant_services": [
+     "scenic_tourist",
+     "other_freight"
+    ]
+   },
+   "returns": {
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "New York TOGS 3.1.5 (draft)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "rail"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       {
+        "any": [
+         [
+          "rail_service",
+          "in",
+          "$high_services"
+         ],
+         [
+          "freight_class",
+          "in",
+          "$high_freight_classes"
+         ],
+         [
+          "fuel_delivery",
+          "eq",
+          true
+         ],
+         [
+          "strategic",
+          "eq",
+          true
+         ],
+         [
+          "hazmat_yard",
+          "eq",
+          true
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "rail_service",
+        "in",
+        "$significant_services"
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M10a": {
+   "name": "Critical facility isolation / hospital flooding",
+   "group": "infrastructure",
+   "inputs": [
+    "facility_kind",
+    "isolated",
+    "depth_ground_ft"
+   ],
+   "params": {
+    "hospital_depth_ft": 1.0,
+    "datum": "ground",
+    "kinds": [
+     "hospital",
+     "nursing_home",
+     "fire_station",
+     "police_station"
+    ]
+   },
+   "returns": {
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "New York TOGS 3.1.5 (draft)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "facility"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "facility_kind",
+        "eq",
+        "hospital"
+       ],
+       [
+        "@datum",
+        ">=",
+        "$hospital_depth_ft"
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "facility_kind",
+        "in",
+        "$kinds"
+       ],
+       [
+        "isolated",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "The document does not name the datum for 'flooding a hospital by 1 ft'; default ground, editable."
+  },
+  "M10b": {
+   "name": "Institutions by depth and DV (M3 institutions row)",
+   "group": "infrastructure",
+   "inputs": [
+    "depth_floor_ft",
+    "depth_foundation_ft",
+    "dv_ft2s"
+   ],
+   "params": {
+    "institution_high_depth_ft": 2.0,
+    "institution_high_dv": 15
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "Nebraska Classification of Dams (Dec. 2023) Table 3 (institutions row)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure",
+     "facility"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "institution"
+       ],
+       {
+        "any": [
+         [
+          "depth_floor_ft",
+          ">=",
+          "$institution_high_depth_ft"
+         ],
+         [
+          "dv_ft2s",
+          ">=",
+          "$institution_high_dv"
+         ]
+        ]
+       }
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "institution"
+       ],
+       [
+        "depth_foundation_ft",
+        ">",
+        0
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wet",
+        "eq",
+        true
+       ],
+       [
+        "structure_type",
+        "eq",
+        "institution"
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M11a": {
+   "name": "Lifeline effectiveness or access",
+   "group": "lifelines",
+   "inputs": [
+    "impacted",
+    "access_blocked"
+   ],
+   "params": {},
+   "returns": 2,
+   "strength": "rule",
+   "source": "ND REG_05.2026",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "lifeline"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "any": [
+       [
+        "impacted",
+        "eq",
+        true
+       ],
+       [
+        "access_blocked",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "At least Significant."
+  },
+  "M11b": {
+   "name": "Lifeline damage / generation / outage",
+   "group": "lifelines",
+   "inputs": [
+    "exposed_lines",
+    "undermined_towers",
+    "generation_first_floor_flooded",
+    "outage_days"
+   ],
+   "params": {
+    "outage_high_days": 1
+   },
+   "returns": {
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "Nebraska Classification of Dams (Dec. 2023)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "lifeline"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "any": [
+       [
+        "generation_first_floor_flooded",
+        "eq",
+        true
+       ],
+       [
+        "outage_days",
+        ">",
+        "$outage_high_days"
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "any": [
+       [
+        "exposed_lines",
+        "eq",
+        true
+       ],
+       [
+        "undermined_towers",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M11c": {
+   "name": "Important utilities / wastewater plants",
+   "group": "lifelines",
+   "inputs": [
+    "units_served",
+    "outage_days",
+    "major_loss",
+    "wastewater_size"
+   ],
+   "params": {
+    "important_units_min": 100,
+    "significant_outage_max_days": 5,
+    "wastewater_significant_sizes": [
+     "major",
+     "significant_minor"
+    ],
+    "wastewater_low_sizes": [
+     "lesser"
+    ]
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "New York TOGS 3.1.5 (draft)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "lifeline"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "units_served",
+        ">=",
+        "$important_units_min"
+       ],
+       [
+        "major_loss",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "units_served",
+        ">=",
+        "$important_units_min"
+       ],
+       [
+        "outage_days",
+        ">",
+        0
+       ],
+       [
+        "outage_days",
+        "<=",
+        "$significant_outage_max_days"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wastewater_size",
+        "in",
+        "$wastewater_significant_sizes"
+       ],
+       [
+        "impacted",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "wastewater_size",
+        "in",
+        "$wastewater_low_sizes"
+       ],
+       [
+        "impacted",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "'several weeks' has no number in the document: supply major_loss = true. Loss of the dam's own water-supply reservoir alone does not normally drive the class."
+  },
+  "M12a": {
+   "name": "Archaeological / historic sites",
+   "group": "environment",
+   "inputs": [
+    "site_significance",
+    "mitigation"
+   ],
+   "params": {},
+   "returns": {
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "Nebraska Classification of Dams (Dec. 2023)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "environment"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "mitigation",
+        "eq",
+        "extensive_or_impossible"
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "mitigation",
+        "eq",
+        "major"
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M12b": {
+   "name": "Substantial environmental damage",
+   "group": "environment",
+   "inputs": [
+    "substantial_env_damage"
+   ],
+   "params": {},
+   "returns": 2,
+   "strength": "rule",
+   "source": "New York TOGS 3.1.5 (draft)",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "environment"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "substantial_env_damage",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M12c": {
+   "name": "Anadromous fish waters",
+   "group": "environment",
+   "inputs": [
+    "anadromous_waters_damage"
+   ],
+   "params": {},
+   "returns": 2,
+   "strength": "rule",
+   "source": "Alaska (5 AAC 95.011(a))",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "environment"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "anadromous_waters_damage",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 2
+    }
+   ],
+   "evaluation": "auto"
+  },
+  "M12d": {
+   "name": "Intangible losses (resource agency)",
+   "group": "environment",
+   "inputs": [
+    "resource agency finding",
+    "common/unique",
+    "temporary/permanent"
+   ],
+   "params": {},
+   "returns": "judgment",
+   "strength": "advisory",
+   "source": "Arizona",
+   "appendix_ref": "A.4 p.25",
+   "verification": "as_documented",
+   "evaluation": "manual",
+   "notes": "Weighed judgment; not evaluated automatically. Always flagged for the engineer."
+  },
+  "M13": {
+   "name": "Qualitative descriptor match",
+   "group": "fallback",
+   "inputs": [
+    "feature_kind (presence only)",
+    "probable_loss_of_life (summary)"
+   ],
+   "params": {
+    "low_kinds": [
+     "farm_building",
+     "agricultural_land",
+     "township_or_county_road",
+     "isolated_unoccupied_building",
+     "undeveloped_land"
+    ],
+    "significant_kinds": [
+     "isolated_home",
+     "main_highway",
+     "minor_railroad",
+     "relatively_important_utility"
+    ],
+    "high_kinds": [
+     "home_serious_damage",
+     "industrial_commercial_serious_damage",
+     "important_public_utility",
+     "main_highway_serious_damage",
+     "railroad_serious_damage"
+    ]
+   },
+   "returns": {
+    "Low": 1,
+    "Significant": 2,
+    "High": 3
+   },
+   "strength": "rule",
+   "source": "NRCS / FEMA 333 / New York definitions",
+   "appendix_ref": "A.4 p.25-26",
+   "verification": "as_documented",
+   "applies_to": {
+    "receptor_type": [
+     "structure",
+     "road",
+     "rail",
+     "facility",
+     "lifeline",
+     "environment",
+     "feature"
+    ]
+   },
+   "receptor_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "feature_kind",
+        "in",
+        "$high_kinds"
+       ]
+      ]
+     },
+     "class": 3
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "feature_kind",
+        "in",
+        "$significant_kinds"
+       ]
+      ]
+     },
+     "class": 2
+    },
+    {
+     "when": {
+      "all": [
+       [
+        "feature_kind",
+        "in",
+        "$low_kinds"
+       ]
+      ]
+     },
+     "class": 1
+    }
+   ],
+   "summary_rules": [
+    {
+     "when": {
+      "all": [
+       [
+        "probable_loss_of_life",
+        "eq",
+        true
+       ]
+      ]
+     },
+     "class": 3
+    }
+   ],
+   "evaluation": "auto",
+   "notes": "Fallback when only feature presence is known. Also the fallback for a preset with no confirmed method (dash)."
+  }
+ }
+}

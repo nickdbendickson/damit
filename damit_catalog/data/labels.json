@@ -1,0 +1,84 @@
+{
+ "schema": "damit.catalog.labels",
+ "schema_version": 1,
+ "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
+ "ordinals": {
+  "0": "Minimal",
+  "1": "Low",
+  "2": "Significant",
+  "3": "High",
+  "4": "Extremely High"
+ },
+ "local_equivalents": {
+  "0": [
+   {
+    "label": "Minimal",
+    "where": "Nebraska"
+   },
+   {
+    "label": "No Public Hazard",
+    "where": "Colorado"
+   },
+   {
+    "label": "Very Low",
+    "where": "Arizona"
+   }
+  ],
+  "1": [
+   {
+    "label": "Low",
+    "where": "general"
+   },
+   {
+    "label": "Class A",
+    "where": "New York, North Carolina"
+   },
+   {
+    "label": "Class III",
+    "where": "Alaska"
+   }
+  ],
+  "2": [
+   {
+    "label": "Medium",
+    "where": "North Dakota"
+   },
+   {
+    "label": "Intermediate / Class B",
+    "where": "New York, North Carolina"
+   },
+   {
+    "label": "Class II",
+    "where": "Alaska"
+   }
+  ],
+  "3": [
+   {
+    "label": "High",
+    "where": "general"
+   },
+   {
+    "label": "Class C",
+    "where": "New York, North Carolina"
+   },
+   {
+    "label": "Class I",
+    "where": "Alaska"
+   }
+  ],
+  "4": [
+   {
+    "label": "Extremely High",
+    "where": "California only"
+   }
+  ]
+ },
+ "excluded": [
+  {
+   "label": "Class D",
+   "where": "New York",
+   "why": "defunct dam: administrative status, not a consequence class"
+  }
+ ],
+ "mapping_convention": "A preset's label_map gives a label for each ordinal it uses. An ordinal below the preset's lowest tier maps to its lowest label; above its highest tier maps to its highest label (implementation convention, flagged in the run report)."
+}

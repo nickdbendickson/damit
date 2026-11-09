@@ -1,0 +1,137 @@
+{
+ "schema": "damit.catalog.scenarios",
+ "schema_version": 1,
+ "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
+ "scenarios": {
+  "S1": {
+   "name": "Sunny-day failure at normal pool",
+   "starting_condition": "Normal pool (lowest ungated spillway crest or typical operating level)",
+   "pool": "normal_pool",
+   "dam_fields": [
+    "normal_pool_elev_ft"
+   ],
+   "inflow": "none",
+   "source": "Common baseline; New York and Virginia name it explicitly",
+   "appendix_ref": "A.2 p.20"
+  },
+  "S2": {
+   "name": "Sunny-day failure, reservoir full to high water line",
+   "starting_condition": "Emergency spillway crest, or dam crest if none",
+   "pool": "high_water_line",
+   "dam_fields": [
+    "emergency_spillway_elev_ft|top_of_dam_elev_ft"
+   ],
+   "inflow": "none",
+   "source": "Colorado; Rhode Island uses top of embankment for new and currently-Low dams",
+   "appendix_ref": "A.2 p.21"
+  },
+  "S3": {
+   "name": "Top of dam or PMF peak, whichever is lower",
+   "starting_condition": "Water at the top of dam or the PMF peak, whichever is lower; no added inflow; no coincident downstream flooding",
+   "pool": "min(top_of_dam, pmf_peak)",
+   "dam_fields": [
+    "top_of_dam_elev_ft",
+    "pmf_peak_elev_ft"
+   ],
+   "inflow": "none",
+   "source": "North Dakota REG_05.2026 5.1.1",
+   "appendix_ref": "A.2 p.21"
+  },
+  "S4": {
+   "name": "Peak pool during 100-year flood routing",
+   "starting_condition": "Peak pool during routing of the 100-year flood, never below the auxiliary spillway crest; no coincident downstream flooding",
+   "pool": "max(peak_pool_100yr, auxiliary_spillway_crest)",
+   "dam_fields": [
+    "peak_pool_100yr_elev_ft",
+    "emergency_spillway_elev_ft"
+   ],
+   "inflow": "100yr_routed",
+   "source": "Nebraska guidance 2.32, 2.35",
+   "appendix_ref": "A.2 p.21"
+  },
+  "S5": {
+   "name": "Flood plus failure (rainy day)",
+   "starting_condition": "SDF or PMF with failure versus the same flood without failure; count only the incremental rise",
+   "pool": "flood_routed",
+   "dam_fields": [
+    "flood_hydrograph_csv"
+   ],
+   "inflow": "SDF_or_PMF",
+   "requires_non_breach_run": true,
+   "analyses": [
+    "with_failure",
+    "without_failure"
+   ],
+   "source": "New York (rainy-day run); Virginia (SDF with and without failure and PMF with failure)",
+   "appendix_ref": "A.2 p.21"
+  },
+  "S6": {
+   "name": "Scenario set by current class",
+   "starting_condition": "New or Low -> S2 at top of embankment; existing High -> 1/2 PMF; existing Significant -> 500-year storm",
+   "pool": "by_current_class",
+   "dam_fields": [
+    "existing_class|new_or_existing"
+   ],
+   "by_current_class": {
+    "new": {
+     "scenario": "S2",
+     "pool": "top_of_embankment"
+    },
+    "Low": {
+     "scenario": "S2",
+     "pool": "top_of_embankment"
+    },
+    "High": {
+     "inflow": "half_PMF"
+    },
+    "Significant": {
+     "inflow": "500yr_storm"
+    }
+   },
+   "requires": [
+    "existing_class"
+   ],
+   "source": "Rhode Island 1.9(B)",
+   "appendix_ref": "A.2 p.21"
+  },
+  "S7": {
+   "name": "Multiple breach locations along an above-grade impoundment",
+   "starting_condition": "Several breach locations; most severe governs",
+   "pool": "inherit",
+   "dam_fields": [
+    "breach_locations"
+   ],
+   "multiple_breach_locations": true,
+   "source": "North Dakota REG_05.2026 5.3(e)",
+   "appendix_ref": "A.2 p.21"
+  }
+ },
+ "domain_cutoffs": {
+  "D1": {
+   "name": "Incremental rise cutoff",
+   "rule": "stop where incremental rise falls to about 2 ft or less",
+   "incremental_rise_ft": 2.0,
+   "judgment_point": true,
+   "source": "New York",
+   "appendix_ref": "A.2 p.21"
+  },
+  "D2": {
+   "name": "Water-surface convergence cutoff",
+   "rule": "stop where breach and non-breach water surfaces converge within 1 ft",
+   "convergence_ft": 1.0,
+   "judgment_point": false,
+   "source": "Virginia 4VAC50-20-54(B)",
+   "appendix_ref": "A.2 p.21"
+  }
+ },
+ "dam_fields_all": [
+  "height_ft",
+  "top_of_dam_elev_ft",
+  "storage_acft|storage_curve_csv"
+ ],
+ "dam_fields_note": "'a|b' means either field satisfies the need. Missing fields are flagged by preflight, never silently passed.",
+ "assumptions": [
+  "Bridges and culverts work as designed and are not blocked by debris (New York).",
+  "Spillway-sizing hazard (e.g. Colorado's Hydrologic Hazard) is outside classification."
+ ]
+}

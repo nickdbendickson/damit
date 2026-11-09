@@ -1,0 +1,21 @@
+[general]
+name=DamIT Screener
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Multi-jurisdiction dam hazard screening (Processing provider damit_screen): preflight, a scenario-driven screening chain (inventory prepare, terrain, storage, breach direction, hydrograph, triage, preliminary suggested class), and hand-off packages for DamIT Runner. Presets and thresholds come from DamIT Catalog.
+about=Generalized from the DamSafety Screening workflow for the DamIT presets (FEMA 333, USBR ACER TM-11, BIA, NRCS, North Dakota REG_05.2026, Nebraska, New York, Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska) or custom method selection. Tools: damit_screen:preflight, damit_screen:runchain, damit_screen:prepare, :terrain, :storage, :breachdirection, :hydrograph, :triage, :engine2d (contract only, not run in 0.1.0), :suggest, :handoff (writes damit_handoff.json for damit_run:rundam) and :report. It launches no flood model (no LISFLOOD-FP, ANUGA, HEC-RAS or Wine). Results are suggested classifications only; the engineer of record and the regulating agency make the determination. Classification of finished rasters is DamIT Hazard's job (damit:classify).
+version=0.1.0
+author=Nick Bendickson
+email=322661428+nickdbendickson@users.noreply.github.com
+repository=https://github.com/nickdbendickson/damit
+tracker=https://github.com/nickdbendickson/damit/issues
+homepage=https://github.com/nickdbendickson/damit
+category=Analysis
+tags=dam,dam safety,hazard classification,screening,breach,processing
+icon=icon.svg
+experimental=True
+deprecated=False
+hasProcessingProvider=yes
+plugin_dependencies=DamIT Catalog
+changelog=0.1.0 - first release: provider damit_screen, preset/custom modes from DamIT Catalog, preflight, runchain and damit.handoff v1 packages for DamIT Runner.
