@@ -1,0 +1,565 @@
+{
+ "schema": "damit.catalog.presets",
+ "schema_version": 1,
+ "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
+ "dash_rule": "A dash in the document (no confirmed method) falls back to M13 and engineering judgment; a preset with no confirmed scenario must have one chosen by the user (flagged).",
+ "presets": {
+  "FEMA333": {
+   "label": "FEMA 333 baseline",
+   "scenarios": [
+    "S1"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M13": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R1",
+    "R3"
+   ],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "FEMA P-333"
+  },
+  "USBR_TM11": {
+   "label": "USBR (ACER TM-11)",
+   "scenarios": [
+    "S1"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M1": {
+     "charts": [
+      "houses_on_foundations",
+      "mobile_homes",
+      "passenger_vehicles",
+      "adults",
+      "children"
+     ]
+    },
+    "M5": {
+     "sig_min": 1,
+     "high_min": 7
+    }
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R1"
+   ],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "USBR ACER TM-11",
+   "conditional_scenarios": [
+    {
+     "id": "S5",
+     "when": "borderline dams",
+     "verification": "unverified"
+    }
+   ]
+  },
+  "BIA": {
+   "label": "BIA",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M5": {
+     "sig_min": 1,
+     "high_min": 7
+    }
+   },
+   "methods_confirmed": true,
+   "modifiers": [],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "BIA (secondary source)",
+   "verification": {
+    "M5": "secondary"
+   }
+  },
+  "NRCS": {
+   "label": "NRCS",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M13": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R5"
+   ],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "NRCS TR-60 / NRCS definitions"
+  },
+  "ND": {
+   "label": "North Dakota (REG_05.2026)",
+   "scenarios": [
+    "S3",
+    "S7"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M1": {
+     "charts": [
+      "houses_on_foundations",
+      "mobile_homes"
+     ],
+     "require_2d": true
+    },
+    "M2": {
+     "only_if_1d": true,
+     "depth_ft": 2.0,
+     "comparator": ">"
+    },
+    "M6": {
+     "strength": "advisory"
+    },
+    "M8a": {},
+    "M8b": {},
+    "M9a": {},
+    "M11a": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R7",
+    "R8",
+    "R9"
+   ],
+   "labels": [
+    "Low",
+    "Medium",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Medium",
+    "3": "High"
+   },
+   "citation": "N.D.A.C. 89-08-01; REG_05.2026; DWR June 2023 release",
+   "modifier_overrides": {
+    "R4": {
+     "strength": "advisory"
+    }
+   }
+  },
+  "NE": {
+   "label": "Nebraska",
+   "scenarios": [
+    "S4"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M3": {},
+    "M4a": {
+     "strength": "advisory"
+    },
+    "M8c": {},
+    "M9b": {},
+    "M11b": {},
+    "M12a": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R4",
+    "R5",
+    "R6"
+   ],
+   "labels": [
+    "Minimal",
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "0": "Minimal",
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "Nebraska Classification of Dams (Dec. 2023); Safety of Dams statutes"
+  },
+  "NY": {
+   "label": "New York",
+   "scenarios": [
+    "S1",
+    "S5"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M1": {
+     "class_zones": [
+      "high_danger",
+      "judgment"
+     ],
+     "datum": "floor",
+     "charts": [
+      "houses_on_foundations",
+      "mobile_homes"
+     ]
+    },
+    "M4b": {},
+    "M8d": {},
+    "M8f": {},
+    "M9c": {},
+    "M10a": {},
+    "M11c": {},
+    "M12b": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R1",
+    "R2",
+    "R4",
+    "R8"
+   ],
+   "labels": [
+    "Class A",
+    "Class B",
+    "Class C"
+   ],
+   "label_map": {
+    "1": "Class A",
+    "2": "Class B",
+    "3": "Class C"
+   },
+   "citation": "TOGS 3.1.5 (draft)",
+   "domain_cutoffs": [
+    "D1"
+   ],
+   "modifier_overrides": {
+    "R4": {
+     "strength": "advisory"
+    }
+   }
+  },
+  "VA": {
+   "label": "Virginia",
+   "scenarios": [
+    "S1",
+    "S5"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M13": {
+     "variant": "virginia_4VAC50-20-40",
+     "high_kinds": [
+      "residence",
+      "business",
+      "occupied_structure",
+      "major_roadway"
+     ],
+     "significant_kinds": [
+      "frequently_used_facility",
+      "secondary_roadway"
+     ],
+     "low_kinds": []
+    },
+    "M8e": {},
+    "M5": {
+     "lowering_only": true,
+     "strength": "advisory"
+    }
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R5",
+    "R9"
+   ],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "4VAC50-20-40, -45, -52; Va. Reg. Vol. 42 Iss. 9",
+   "domain_cutoffs": [
+    "D2"
+   ],
+   "scenario_overrides": {
+    "S5": {
+     "analyses": [
+      "SDF_with_failure",
+      "SDF_without_failure",
+      "PMF_with_failure"
+     ]
+    }
+   },
+   "modifier_overrides": {
+    "R9": {
+     "params": {
+      "may_lower_class": true
+     }
+    }
+   },
+   "notes": "S1 + S5 = four analyses (sunny day; SDF with and without failure; PMF with failure)."
+  },
+  "TX": {
+   "label": "Texas",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M4c": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R5"
+   ],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "Tex. Water Code 12.052; 30 TAC 299.14; TCEQ GI-394; SAO 20-036",
+   "modifier_overrides": {
+    "R5": {
+     "params": {
+      "scope": "existing_development"
+     }
+    }
+   }
+  },
+  "ID": {
+   "label": "Idaho",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M2": {
+     "depth_ft": 2.0,
+     "comparator": ">=",
+     "structure_types": [
+      "home",
+      "mobile_home"
+     ],
+     "sufficient_not_sole": true
+    },
+    "M6": {
+     "variant": "indirect_life_loss"
+    }
+   },
+   "methods_confirmed": true,
+   "modifiers": [],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "IDWR Dam Safety"
+  },
+  "CO": {
+   "label": "Colorado",
+   "scenarios": [
+    "S2"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M6": {
+     "variant": "uninhabitable_inoperable"
+    }
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R10"
+   ],
+   "labels": [
+    "No Public Hazard",
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "0": "No Public Hazard",
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "2 CCR 402-1"
+  },
+  "RI": {
+   "label": "Rhode Island",
+   "scenarios": [
+    "S6"
+   ],
+   "scenarios_confirmed": true,
+   "methods": {
+    "M13": {},
+    "M8g": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R1",
+    "R10"
+   ],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "250-RICR-130-05-1",
+   "modifier_overrides": {
+    "R1": {
+     "params": {
+      "variant": "incidental_presence"
+     }
+    }
+   }
+  },
+  "AZ": {
+   "label": "Arizona",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M13": {},
+    "M12d": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [
+    "R1",
+    "R5",
+    "R10"
+   ],
+   "labels": [
+    "Very Low",
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "0": "Very Low",
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "Arizona dam safety rules",
+   "modifier_overrides": {
+    "R1": {
+     "params": {
+      "variant": "three_part_test"
+     }
+    },
+    "R5": {
+     "params": {
+      "horizon_years": 10
+     }
+    }
+   }
+  },
+  "CA": {
+   "label": "California",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M7": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [],
+   "labels": [
+    "Low",
+    "Significant",
+    "High",
+    "Extremely High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High",
+    "4": "Extremely High"
+   },
+   "citation": "23 CCR 335.4; State Auditor 2025-603",
+   "scenario_note": "Sunny-day loading (the document does not map it to a specific S-code; choose S1 or S2 explicitly)."
+  },
+  "AK": {
+   "label": "Alaska",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M12c": {},
+    "M13": {}
+   },
+   "methods_confirmed": true,
+   "modifiers": [],
+   "labels": [
+    "Class III",
+    "Class II",
+    "Class I"
+   ],
+   "label_map": {
+    "1": "Class III",
+    "2": "Class II",
+    "3": "Class I"
+   },
+   "citation": "Alaska dam safety (5 AAC 95.011(a) for M12c)"
+  }
+ }
+}
