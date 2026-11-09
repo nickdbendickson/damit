@@ -125,6 +125,11 @@ def preflight(work, settings, dams=None, dam_problems=None, receptors=None, rece
     for s in config["scenarios"]:
         needs += [n for n in s.get("dam_fields", []) if n not in needs]
     for d in dams or []:
+        ns = d.get("nid_step") or {}
+        if ns.get("status") == ST.STATUS_GAP:
+            checks.append(check(WARN, "Dam {} NID ID".format(d["dam_id"]), ns.get("detail", ""),
+                                "The dam inventory is the NID: dam_id should be the NID ID; only a new / proposed dam or a desk sample may have none."))
+    for d in dams or []:
         miss = ST.missing_dam_fields(d, needs)
         if miss:
             checks.append(check(WARN, "Dam {} inputs".format(d["dam_id"]), "missing: " + ", ".join(miss),
@@ -235,7 +240,9 @@ def build_handoff(cat, config, dam, results, settings, receptors_json=None):
 def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None, log=print):
     """All screening steps for one dam. Returns the per-step results dict (+ 'handoff_path')."""
     _, _, HO = CB.modules()
-    res = {"prepare": ST.step(ST.STATUS_OK, "dam record prepared")}
+    nid_step = dam.get("nid_step") or ST.step(ST.STATUS_OK, "dam record prepared")
+    res = {"prepare": ST.step(nid_step["status"], "dam record prepared; " + nid_step["detail"],
+                              nid_id=dam.get("nid_id"))}
     scen = config["scenarios"]
     res["terrain"] = ST.terrain(dam, settings.get("terrain") or dam.get("terrain"), terrain_info)
     res["storage"] = ST.storage(dam, scen)

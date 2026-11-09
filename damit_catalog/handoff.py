@@ -1,7 +1,9 @@
 """DamIT hand-off package: what DamIT Screener writes and DamIT Runner reads (pure Python).
 
 One JSON file per dam, ``damit_handoff.json`` (schema ``damit.handoff`` version 1), inside a
-per-dam folder. Paths to terrain, hydrograph and receptor layers are referenced, never copied.
+per-dam folder. The dam inventory is the USACE National Inventory of Dams (NID): ``dam.dam_id`` is the NID ID
+(``ND00199``) and ``dam.nid_id`` the same (``nid_rule``); only a new / proposed dam (``is_new``) or a desk sample
+(``is_sample``) may have none. Paths to terrain, hydrograph and receptor layers are referenced, never copied.
 DamIT Hazard (``damit:classify``) can later read the same file next to a finished run to know
 the preset / custom method list and scenarios that were intended.
 """
@@ -28,6 +30,62 @@ INPUT_PATHS = ("terrain", "hydrograph_csv", "storage_curve_csv", "receptors_json
 
 class HandoffError(ValueError):
     pass
+
+
+# ---------------------------------------------------------------- NID IDs --
+#: An NID ID: the two-letter state / territory code and at least three digits (ND00199, CA01234).
+NID_ID_RE = re.compile(r"[A-Z]{2}\d{3,}")
+#: Ids of other inventories (state dam-safety, dugout and unknown-structure layers), never a dam's id here.
+OTHER_INVENTORY_RE = re.compile(r"(DWR|DUG|UNK)-", re.I)
+_TRUE = ("1", "true", "yes", "y", "t")
+
+
+def is_nid_id(value):
+    """True for an NID ID (two letters and 3+ digits, e.g. ND00199). DWR-2801, DUG-130, SAMPLE-4031 are not."""
+    return bool(NID_ID_RE.fullmatch(str(value or "").strip().upper()))
+
+
+def flag(value):
+    """A yes/no field from a layer or JSON (True, 1, 'true', 'yes', ...)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value or "").strip().lower() in _TRUE
+
+
+def nid_rule(dam):
+    """The NID-ID rule for one dam record. Returns (error, warning, nid_id).
+
+    * The record needs an NID ID: ``nid_id``, or a ``dam_id`` that is an NID ID (dam_id = NID ID preferred;
+      a different dam_id with a valid nid_id passes with a warning).
+    * A ``nid_id`` that is not an NID ID, or a DWR- / DUG- / UNK-style ``dam_id``, is an error.
+    * Exception: a record explicitly new / proposed (``is_new`` true, or ``new_or_existing`` = new) or a desk
+      sample (``is_sample`` true) may have no NID ID; that passes with a warning.
+    * Anything else without an NID ID is an error."""
+    dam = dam or {}
+    dam_id = str(dam.get("dam_id") or "").strip()
+    raw = dam.get("nid_id")
+    nid = str(raw).strip().upper() if raw not in (None, "") else ""
+    if nid and not is_nid_id(nid):
+        return ("dam {!r}: nid_id {!r} is not an NID ID (two letters and digits, e.g. ND00199); the dam inventory "
+                "is the NID".format(dam_id, raw)), None, None
+    if OTHER_INVENTORY_RE.match(dam_id):
+        return ("dam {!r} is another inventory's id, not an NID ID; use the NID ID as dam_id".format(dam_id)), None, None
+    if not nid and is_nid_id(dam_id):
+        nid = dam_id.upper()
+    if nid:
+        if dam_id.upper() != nid:
+            return None, ("dam_id {} is not the NID ID {}; outputs are named {} (dam_id = NID ID preferred)"
+                          .format(dam_id, nid, dam_id)), nid
+        return None, None, nid
+    is_new = flag(dam.get("is_new")) or str(dam.get("new_or_existing") or "").strip().lower() == "new"
+    if is_new:
+        return None, "dam {!r} has no NID ID: a new / proposed dam (is_new)".format(dam_id), None
+    if flag(dam.get("is_sample")):
+        return None, "dam {!r} has no NID ID: a desk sample, not an NID inventory record (is_sample)".format(dam_id), None
+    return ("dam {!r} has no NID ID; give nid_id or use the NID ID as dam_id (the dam inventory is the NID), or "
+            "mark a proposed dam is_new".format(dam_id)), None, None
 
 
 def safe_name(s):
@@ -96,6 +154,10 @@ def validate(pkg, catalog=None, check_paths=False):
     for k in REQUIRED_DAM:
         if dam.get(k) in (None, ""):
             errs.append("dam.{} is required".format(k))
+    if dam.get("dam_id") not in (None, ""):
+        nid_error, _, _ = nid_rule(dam)
+        if nid_error:
+            errs.append(nid_error)
     for k in DAM_NUMERIC:
         v = dam.get(k)
         if v not in (None, ""):

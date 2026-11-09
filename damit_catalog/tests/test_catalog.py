@@ -264,5 +264,28 @@ class Combination(unittest.TestCase):
         self.assertEqual(E.label_for(cfg, None), "Not determined")
 
 
+class NidRule(unittest.TestCase):
+    def test_rule(self):
+        from damit_catalog import handoff as HO
+        ok = lambda d: HO.nid_rule(d)  # noqa: E731
+        self.assertEqual(ok({"dam_id": "ND00199"}), (None, None, "ND00199"))
+        self.assertEqual(ok({"dam_id": "nd00199"})[2], "ND00199")
+        e, w, n = ok({"dam_id": "Swan 12", "nid_id": "ND00199"})
+        self.assertIsNone(e)
+        self.assertIn("dam_id = NID ID preferred", w)
+        self.assertEqual(n, "ND00199")
+        for bad in ({"dam_id": "DWR-2801"}, {"dam_id": "DUG-130", "nid_id": "ND00199"}, {"dam_id": "UNK-9"},
+                    {"dam_id": "x", "nid_id": "DWR-2801"}, {"dam_id": "SAMPLE-4031"}, {"dam_id": "NEW"},
+                    {"dam_id": "DESK-014"}, {"dam_id": "x", "is_new": False}):
+            self.assertIsNotNone(ok(bad)[0], bad)
+        for good in ({"dam_id": "desk-1", "is_new": True}, {"dam_id": "desk-1", "is_new": "true"},
+                     {"dam_id": "p", "new_or_existing": "new"}, {"dam_id": "local-sample", "is_sample": True}):
+            e, w, n = ok(good)
+            self.assertIsNone(e, good)
+            self.assertIsNone(n)
+            self.assertTrue(w)
+        self.assertTrue(HO.is_nid_id("TX12345") and not HO.is_nid_id("ND-001") and not HO.is_nid_id(None))
+
+
 if __name__ == "__main__":
     unittest.main()

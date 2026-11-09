@@ -18,6 +18,14 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 repository, built separately; it classifies finished runs from rasters and receptors. DamIT Screener and DamIT
 Runner do not use the `damit` provider id and do not classify finished rasters.
 
+**NID dams only.** The dam inventory for every DamIT plugin is the USACE National Inventory of Dams (NID).
+A dam record needs an NID ID (two letters and digits, e.g. `ND00199`): `dam_id` should be the NID ID, or a
+`nid_id` field carries it. A `nid_id` that is not an NID ID, or a state dam-safety / dugout style id
+(`DWR-2801`, `DUG-130`, `UNK-…`), is refused (Screener: a dam problem, FAIL; Runner: the package is rejected).
+The only records allowed without an NID ID are a new / proposed dam (`is_new` true or `new_or_existing` = new)
+and a desk sample (`is_sample` true); they pass with a warning / gap. The rule is `handoff.nid_rule` in
+DamIT Catalog. Presets (including North Dakota REG_05.2026) are unchanged.
+
 DamIT Screener and DamIT Runner declare `plugin_dependencies=DamIT Catalog`, so install DamIT Catalog first
 (the QGIS Plugin Manager offers it). None of the DamIT plugins depend on the DamSafety / DWR plugins.
 
@@ -90,7 +98,7 @@ to a finished run. Defined in `damit_catalog/handoff.py`. Key fields:
 * `mode`, `preset_id` / `preset_label` or the custom method list, `scenarios` (S-codes with pool / analyses),
   `conditional_scenarios`, `domain_cutoffs`, `methods` (resolved params + strength), `modifiers`, `label_map`,
   `apply_advisories`;
-* `dam`: `dam_id`, name, x / y / crs, height, top of dam, normal pool, spillway, PMF peak, existing class,
+* `dam`: `dam_id` (the NID ID), `nid_id`, `is_new`, `is_sample`, name, x / y / crs, height, top of dam, normal pool, spillway, PMF peak, existing class,
   storage at top of dam, `scenario_pools` (pool elevation and storage per S-code), breach azimuth, peak outflow;
 * `inputs`: `terrain`, `hydrograph_csv`, `storage_curve_csv`, `receptors_json` (paths, never copied);
 * `screening`: preliminary suggestion (when receptor hydraulics exist) with driving receptors, advisories,

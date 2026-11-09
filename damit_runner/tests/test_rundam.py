@@ -31,7 +31,7 @@ class RoundTrip(unittest.TestCase):
         os.makedirs(self.runs)
         dem = os.path.join(self.tmp, "dem.tif")
         open(dem, "wb").close()
-        dams, _ = ST.prepare([{"ID": "NE 7/A", "HT": 25, "STOR": 300, "TOD": 1200, "NP": 1190, "AUX": 1195,
+        dams, _ = ST.prepare([{"ID": "NE00007", "HT": 25, "STOR": 300, "TOD": 1200, "NP": 1190, "AUX": 1195,
                                "P100": 1197, "_x": 1.0, "_y": 2.0, "_crs": "EPSG:26914"}],
                              {"dam_id": "ID", "height_ft": "HT", "storage_acft": "STOR", "top_of_dam_elev_ft": "TOD",
                               "normal_pool_elev_ft": "NP", "emergency_spillway_elev_ft": "AUX",
@@ -39,7 +39,7 @@ class RoundTrip(unittest.TestCase):
         summ = WF.run_chain(self.work, dict(WF.DEFAULT_SETTINGS, preset="NE", terrain=dem), dams, [],
                             log=lambda *_: None)
         self.assertTrue(summ["ok"])
-        self.pkg_path = summ["dams"]["NE 7/A"]["handoff_path"]
+        self.pkg_path = summ["dams"]["NE00007"]["handoff_path"]
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -47,7 +47,7 @@ class RoundTrip(unittest.TestCase):
     def test_screener_package_accepted_by_runner(self):
         pkg = HO.read(self.pkg_path)
         folder, setup = RD.prepare_run(pkg, self.runs)
-        self.assertTrue(folder.startswith(os.path.join(self.runs, "NE 7_A", "run_")))
+        self.assertTrue(folder.startswith(os.path.join(self.runs, "NE00007", "run_")))
         self.assertEqual(setup["status"], "prepared")
         self.assertFalse(setup["model_launched"])
         self.assertEqual(setup["engine"], "none")
@@ -60,7 +60,7 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(setup["ready_to_run"])
         with open(os.path.join(folder, RD.RUN_SETUP)) as fh:
             self.assertEqual(json.load(fh)["schema"], "damit.run_setup")
-        self.assertEqual(HO.read(folder)["dam"]["dam_id"], "NE 7/A")
+        self.assertEqual(HO.read(folder)["dam"]["dam_id"], "NE00007")
         self.assertTrue(os.path.isdir(os.path.join(folder, "outputs")))
         self.assertEqual(os.listdir(os.path.join(folder, "outputs")), [])
 
@@ -97,12 +97,35 @@ class RoundTrip(unittest.TestCase):
 
     def test_equivalent_parameters(self):
         cat = C.load()
-        pkg = RD.package_from_params(cat, {"dam_id": "X1", "x": 1, "y": 2, "storage_acft": 10}, "preset", "FEMA333")
+        pkg = RD.package_from_params(cat, {"dam_id": "ND00199", "x": 1, "y": 2, "storage_acft": 10}, "preset", "FEMA333")
         folder, setup = RD.prepare_run(pkg, self.runs, cat)
         self.assertEqual([s["id"] for s in setup["scenarios"]], ["S1"])
         self.assertEqual(setup["created_by"]["plugin"], "damit_runner")
         self.assertIn("terrain (DEM)", setup["gaps"])
         self.assertFalse(setup["ready_to_run"])
+
+    def test_nid_ids_only(self):
+        cat = C.load()
+        pkg = HO.read(self.pkg_path)
+        self.assertEqual(pkg["dam"]["nid_id"], "NE00007")
+        for bad in ({"dam_id": "DWR-2801"}, {"dam_id": "DWR-2801", "nid_id": "ND00199"}, {"dam_id": "SAMPLE-4031"},
+                    {"dam_id": "desk-x", "nid_id": "NEW"}, {"dam_id": "local-sample"}):
+            p = dict(pkg, dam=dict(pkg["dam"], **dict({"nid_id": None, "is_new": False, "is_sample": False}, **bad)))
+            with self.assertRaises(RD.RunError) as cm:
+                RD.prepare_run(p, self.runs, cat)
+            self.assertIn("NID", str(cm.exception))
+        new = RD.package_from_params(cat, {"dam_id": "desk-new1", "is_new": True, "x": 1, "y": 2, "storage_acft": 10},
+                                     "preset", "FEMA333")
+        _, setup = RD.prepare_run(new, self.runs, cat)
+        self.assertIsNone(setup["nid_id"])
+        self.assertIn("new / proposed", setup["nid_warning"])
+        sample = RD.package_from_params(cat, {"dam_id": "local-sample", "is_sample": True, "x": 1, "y": 2,
+                                              "storage_acft": 10}, "preset", "FEMA333")
+        _, setup = RD.prepare_run(sample, self.runs, cat)
+        self.assertIn("desk sample", setup["nid_warning"])
+        _, setup = RD.prepare_run(RD.package_from_params(cat, {"dam_id": "ND00199", "x": 1, "y": 2}, "preset", "FEMA333"),
+                                  self.runs, cat)
+        self.assertEqual((setup["nid_id"], setup["nid_warning"]), ("ND00199", None))
 
 
 if __name__ == "__main__":

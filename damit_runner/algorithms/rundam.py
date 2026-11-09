@@ -44,13 +44,23 @@ class RunDam(_Base):
                 "metadata and citations), a copy of the package, README_run.md and the expected-output contract "
                 "for DamIT Hazard (damit:classify).\n\nDamIT Runner 0.1.0 is prepare / record only: it never "
                 "launches LISFLOOD-FP, ANUGA, HEC-RAS, Wine, ndbreach:rundam or ndbreach:batch. Choosing an engine "
-                "or turning DRY_RUN off is refused with an error. Classification is DamIT Hazard's job.")
+                "or turning DRY_RUN off is refused with an error. Classification is DamIT Hazard's job.\n\n"
+                "NID dams only: the dam's id is its NID ID (National Inventory of Dams, e.g. ND00199), as dam_id "
+                "or nid_id. A DWR-, DUG- or other non-NID id is refused; a new / proposed dam (IS_NEW) or a desk "
+                "sample (IS_SAMPLE) may have none, with a warning.")
 
     def initAlgorithm(self, config=None):  # noqa: N802
         P = self.addParameter
         P(QgsProcessingParameterFile("HANDOFF", "Hand-off package (damit_handoff.json)", behavior=FILE_FILE,
                                      fileFilter="DamIT hand-off (*.json)", optional=True))
-        P(QgsProcessingParameterString("DAM_ID", "Dam ID (without a package)", defaultValue="", optional=True))
+        P(QgsProcessingParameterString("DAM_ID", "Dam ID (without a package): the NID ID, e.g. ND00199",
+                                       defaultValue="", optional=True))
+        P(QgsProcessingParameterString("NID_ID", "NID ID (without a package; when DAM_ID is not the NID ID)",
+                                       defaultValue="", optional=True))
+        P(QgsProcessingParameterBoolean("IS_NEW", "New / proposed dam with no NID ID yet (without a package)",
+                                        defaultValue=False, optional=True))
+        P(QgsProcessingParameterBoolean("IS_SAMPLE", "Desk sample, not an NID inventory record (without a package)",
+                                        defaultValue=False, optional=True))
         P(QgsProcessingParameterNumber("X", "Dam X (without a package)", type=_DOUBLE, optional=True))
         P(QgsProcessingParameterNumber("Y", "Dam Y (without a package)", type=_DOUBLE, optional=True))
         P(QgsProcessingParameterString("CRS", "Dam CRS authid (without a package)", defaultValue="", optional=True))
@@ -92,7 +102,10 @@ class RunDam(_Base):
                 dam_id = self.parameterAsString(params, "DAM_ID", context)
                 if not dam_id:
                     raise RD.RunError("Give a hand-off package or a dam ID")
-                dam = {"dam_id": dam_id, "crs": self.parameterAsString(params, "CRS", context) or None}
+                dam = {"dam_id": dam_id, "crs": self.parameterAsString(params, "CRS", context) or None,
+                       "nid_id": self.parameterAsString(params, "NID_ID", context).strip() or None,
+                       "is_new": self.parameterAsBool(params, "IS_NEW", context),
+                       "is_sample": self.parameterAsBool(params, "IS_SAMPLE", context)}
                 for k, p in (("x", "X"), ("y", "Y"), ("height_ft", "HEIGHT_FT"), ("storage_acft", "STORAGE_ACFT")):
                     if params.get(p) not in (None, ""):
                         dam[k] = self.parameterAsDouble(params, p, context)
@@ -108,6 +121,8 @@ class RunDam(_Base):
         except (RD.RunError, HO.HandoffError, ValueError) as e:
             raise QgsProcessingException(str(e))
         feedback.pushInfo("Prepared (no model launched): {}".format(folder))
+        if setup.get("nid_warning"):
+            feedback.pushInfo("NID ID: " + setup["nid_warning"])
         for g in setup["gaps"]:
             feedback.pushWarning("not ready to run: missing {}".format(g)) if hasattr(feedback, "pushWarning") \
                 else feedback.pushInfo("not ready to run: missing {}".format(g))
