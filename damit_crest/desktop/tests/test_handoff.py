@@ -1,0 +1,872 @@
+"""Dam folder, preflight gate, the one-dam flood button and classify, against a fake qgis_process. No QGIS required,
+and no model, screening or Wine is ever started: qgis_process and the runner CLI are small scripts written here."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+
+import io  # noqa: E402
+
+import damit_desktop.__main__ as m  # noqa: E402
+from damit_desktop.algorithms import ENV_VARS  # noqa: E402
+from damit_desktop.handoff import HandoffError, write_dam_folder, write_named_files  # noqa: E402
+from damit_desktop.layers import _nums, download_aoi, use_data_folder  # noqa: E402
+from damit_desktop.qgis_run import (  # noqa: E402
+    _collect_bounded,
+    _opt_num,
+    _taskkill_tree,
+    chain_names,
+    chain_results,
+    run_classify,
+    run_folder,
+    run_model,
+    run_screening,
+)
+
+DAM = {
+    "nid": "ND00199",
+    "name": "Swan Buffalo",
+    "county": "Kidder",
+    "heightFt": 27.5,
+    "storageAcFt": 1615.5,
+    "lengthFt": 1700,
+    "statedDatum": "NAVD88",
+    "method": "froehlich",
+    "failureMode": "piping",
+    "geometry": {
+        "damLine": {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [[-100.1, 46.8], [-100.0, 46.81]]},
+            "properties": {},
+        },
+        "breachPoint": {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [-100.05, 46.805]},
+            "properties": {},
+        },
+        "reservoirPoint": {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [-100.06, 46.81]},
+            "properties": {},
+        },
+        "aoi": {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[-100.1, 46.7], [-99.9, 46.7], [-99.9, 46.8], [-100.1, 46.7]]],
+            },
+            "properties": {},
+        },
+    },
+}
+ANALYSIS = {
+    "datum": {"crestNavdFt": 1071.09, "poolNavdFt": 1060.0, "streambedNavdFt": 1043.59},
+    "breach": {"peakCfs": 20933, "widthFt": 80, "series": [{"tHr": 0, "qCfs": 0}, {"tHr": 1, "qCfs": 100}]},
+    "screen": {"level": "High", "label": "High (flagged)", "reasons": ["desk screen"]},
+}
+
+QGIS = r"""#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+Path(os.environ["CALLS"]).open("a").write("\n".join(args) + "\n---\n")
+mode = os.environ.get("QGIS_MODE", "fail")
+joined = " ".join(args)
+if any(a.startswith(("nddam:", "ndbreach:", "nd_")) for a in args):
+    print("legacy ND id must never be called", joined)
+    sys.exit(42)
+missing = [x for x in os.environ.get("QGIS_MISSING", "").split(",") if x]
+if args[:1] == ["help"]:
+    if len(args) > 1 and args[1] in missing:
+        print("Algorithm not found", file=sys.stderr)
+        sys.exit(1)
+    style = os.environ.get("QGIS_STYLE", "nd")
+    name = args[1].split(":", 1)[-1] if len(args) > 1 else ""
+    lists = {
+        "nd": {
+            "preflight": ["WORK", "REPORT", "SETTINGS"],
+            "runchain": ["WORK", "DAM_ID", "PREFLIGHT", "FAIL_ON_ERROR", "LOG", "SETTINGS"],
+            "rundam": ["DAM_ID", "DAMS_FOLDER", "DEM", "METHOD", "TIER", "LISFLOOD_EXE", "HEIGHT_FT", "STORAGE_ACFT", "TOP_FT", "AREA_AC"],
+        },
+        "swe": {
+            "preflight": ["WORK", "DAMS", "FIELD_MAP", "MODE", "PRESET", "SCENARIOS", "METHODS", "RECEPTORS",
+                          "TERRAIN", "APPLY_ADVISORIES", "SETTINGS", "REPORT"],
+            "runchain": ["WORK", "DAMS", "FIELD_MAP", "MODE", "PRESET", "SCENARIOS", "METHODS", "RECEPTORS",
+                         "TERRAIN", "APPLY_ADVISORIES", "SETTINGS", "PREFLIGHT", "FAIL_ON_ERROR"],
+            "rundam": ["HANDOFF", "DAM_ID", "NID_ID", "IS_NEW", "IS_SAMPLE", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT", "MODE", "PRESET",
+                       "SCENARIOS", "METHODS", "TERRAIN", "HYDROGRAPH", "OUTPUT_FOLDER", "ENGINE", "DRY_RUN"],
+        },
+    }[style]
+    if name == "classify":
+        print("PRESET: Jurisdiction preset")
+        print("\tAvailable values:")
+        print("\t\t- 0: Custom (methods ticked below)")
+        print("\t\t- 1: FEMA P-333 baseline")
+        print("\t\t- 2: North Dakota (example)")
+        for n in ("METHODS", "MODIFIERS", "SCENARIOS", "APPLY_ADVISORY", "DEPTH", "VELOCITY", "DAM_JSON", "DAM_NAME", "OUTPUT"):
+            print(n + ": " + n.title())
+        sys.exit(0)
+    for n in lists.get(name, ["WORK"]):
+        print(n + ": " + n.title())
+        if n == "MODE":
+            print("\tAvailable values:")
+            print("\t\t- 0: preset")
+            print("\t\t- 1: custom")
+    if mode != "help":
+        sys.exit(0)
+    print("METHOD: Breach (ND 5.1.1(d))")
+    print("\tArgument type:\tenum")
+    print("\tAvailable values:")
+    print("\t\t- 0: Piping failure with a pipe (orifice) phase, Froehlich (2008) size and time")
+    print("\t\t- 1: Piping failure, Froehlich (2008) parameters, routed")
+    print("TIER: Model")
+    print("\tAvailable values:")
+    print("\t\t- 0: Built-in only")
+    print("\t\t- 1: LISFLOOD-FP only")
+    sys.exit(0)
+if mode == "help":
+    mode = "pass"
+if "preflight" in joined:
+    report = next((a.split("=", 1)[1] for a in args if a.startswith("--REPORT=")), "")
+    if mode == "report-fail":
+        if report:
+            Path(report).write_text("Preflight: not ready: no DEM\n", encoding="utf-8")
+        sys.exit(0)
+    if mode == "report-warn":
+        if report:
+            Path(report).write_text("Preflight: ready, 2 warning(s)\n", encoding="utf-8")
+        sys.exit(0)
+    if mode == "fail":
+        print("READY:\tfalse")
+        print("FAILS:\t2")
+        sys.exit(0)
+    print("READY:\ttrue")
+    print("FAILS:\t0")
+    sys.exit(0)
+if "damit:classify" in joined:
+    print("classified", flush=True)
+    sys.exit(0)
+if "runchain" in joined or "rundam" in joined:
+    print("started", flush=True)
+    if mode == "slow":
+        import time
+        time.sleep(60)
+    if mode in ("outputs", "outputs_alias") and "runchain" in joined:
+        name = "DWR-2801" if mode == "outputs_alias" else "ND00199"
+        import csv, sqlite3
+        work = Path(next(a.split("=", 1)[1] for a in args if a.startswith("--WORK=")))
+        (work / "1_dams.gpkg").unlink(missing_ok=True)
+        con = sqlite3.connect(work / "1_dams.gpkg")
+        con.execute("CREATE TABLE gpkg_contents (table_name TEXT, data_type TEXT)")
+        con.execute("INSERT INTO gpkg_contents VALUES ('dams', 'features')")
+        con.execute("CREATE TABLE dams (fid INTEGER PRIMARY KEY, dam_id TEXT, nid_id TEXT)")
+        con.execute("INSERT INTO dams (dam_id, nid_id) VALUES (?, 'ND00199'), ('ND00001', 'ND00001')", (name,))
+        con.commit()
+        con.close()
+        (work / "10_reports").mkdir(exist_ok=True)
+        with (work / "10_reports" / "summary.csv").open("w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["dam_id", "name", "hz_class", "haz_existing", "hz_vs_existing", "hz_conf", "review"])
+            w.writerow([name, "Test dam", "Significant", "Significant", "same", "medium", ""])
+            w.writerow(["ND00001", "Other", "High", "Low", "higher", "low", "check"])
+    sys.exit(0)
+print("unexpected", joined)
+sys.exit(9)
+"""
+
+CLI = r"""#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+Path(os.environ["CALLS"]).open("a").write("CLI " + " ".join(sys.argv[1:]) + "\n---\n")
+sys.exit(0)
+"""
+
+
+def _exe(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+
+
+class FolderTests(unittest.TestCase):
+    def test_writes_streambed_with_datum_and_source_like_top_of_dam(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder, _ = write_dam_folder(Path(d), DAM, ANALYSIS)
+            record = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
+            fields, sources = record["fields"], record["sources"]
+            self.assertEqual(fields["streambed_ft"], 1043.59)
+            self.assertEqual(fields["streambed_datum"], fields["top_of_dam_datum"])
+            for key in ("streambed_ft", "streambed_datum"):
+                self.assertEqual(sources[key]["tool"], sources["top_of_dam_ft"]["tool"])
+                self.assertIn("when", sources[key])
+            no_bed = {**ANALYSIS, "datum": {"crestNavdFt": 1071.09}}
+            folder2, _ = write_dam_folder(Path(d) / "b", DAM, no_bed)
+            fields2 = json.loads((folder2 / "dam.json").read_text(encoding="utf-8"))["fields"]
+            self.assertNotIn("streambed_ft", fields2)
+            self.assertNotIn("streambed_datum", fields2)
+
+    def test_sources_cite_the_dwr_field_not_just_crest_desk(self):
+        prov = {
+            "streambedFt": {"src": "DWR", "field": "streambed__navd88", "value": 1043.59},
+            "crestFt": {"src": "DWR", "field": "max_pool_e_navd88", "value": 1071.09},
+        }
+        with tempfile.TemporaryDirectory() as d:
+            folder, _ = write_dam_folder(Path(d), {**DAM, "provenance": prov}, ANALYSIS)
+            sources = json.loads((folder / "dam.json").read_text(encoding="utf-8"))["sources"]
+            self.assertIn("DWR streambed__navd88", sources["streambed_ft"]["note"])
+            self.assertIn("DWR max_pool_e_navd88", sources["top_of_dam_ft"]["note"])
+            self.assertEqual(sources["dam_id"]["note"], "DamIT Crest desk")
+            typed = {"streambedFt": {"src": "DEM", "field": "streambed (typed from DEM)"}}
+            folder2, _ = write_dam_folder(Path(d) / "b", {**DAM, "provenance": typed}, ANALYSIS)
+            sources2 = json.loads((folder2 / "dam.json").read_text(encoding="utf-8"))["sources"]
+            self.assertEqual(sources2["streambed_ft"]["note"], "DamIT Crest desk, streambed (typed from DEM)")
+
+    def test_labels_tied_elevations_navd88_whatever_the_stated_datum(self):
+        cases = [
+            # Local 0-300 ft crest tied to the DEM: the written values are NAVD88, not "local".
+            ({"statedDatum": "Local"}, {"offsetFt": 1509.76, "warnings": []}, "NAVD88 ft"),
+            # NGVD29 shifted by VERTCON: NAVD88.
+            ({"statedDatum": "NGVD29"}, {"offsetFt": 0.4, "warnings": []}, "NAVD88 ft"),
+            # NGVD29 with no shift available: still NGVD29.
+            ({"statedDatum": "NGVD29"}, {"offsetFt": None, "warnings": ["NGVD29 offset unknown"]}, "NGVD29 ft"),
+            # Local crest with no DEM tie: left as stated.
+            ({"statedDatum": "Local"}, {"offsetFt": None, "warnings": ["No DEM tie. Crest left unconverted."]}, "local"),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            for i, (dam_patch, datum_patch, want) in enumerate(cases):
+                analysis = {**ANALYSIS, "datum": {**ANALYSIS["datum"], **datum_patch}}
+                folder, _ = write_dam_folder(Path(d) / str(i), {**DAM, **dam_patch}, analysis)
+                fields = json.loads((folder / "dam.json").read_text(encoding="utf-8"))["fields"]
+                self.assertEqual(fields["top_of_dam_datum"], want, dam_patch)
+                self.assertEqual(fields["streambed_datum"], want, dam_patch)
+
+    def test_writes_suite_record_and_keeps_other_tools(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder, notes = write_dam_folder(Path(d), DAM, ANALYSIS)
+            record = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
+            self.assertEqual(record["format"], "damit/dam_record")
+            self.assertEqual(record["format_version"], 1)
+            self.assertEqual(record["fields"]["height_ft"], 27.5)
+            self.assertEqual(record["fields"]["lon"], -100.05)
+            self.assertNotIn("crs", record["fields"])
+            self.assertNotIn("line_xy", record["proposed_embankment"])
+            self.assertEqual(record["proposed_embankment"]["phrase"], "proposed — embankment inserted from the drawn line")
+            self.assertEqual(record["proposed_embankment"]["crest_m"], round(1071.09 * 0.3048, 3))
+            self.assertTrue(any("line_xy" in n for n in notes))
+            self.assertEqual(record["status"][-1]["step"], "screened")
+            self.assertTrue(record["status"][-1]["result"]["preview"])
+            for name in ("dam_line.geojson", "breach_point.geojson", "reservoir_point.geojson", "downstream_area.geojson", "hydrograph.csv"):
+                self.assertTrue((folder / name).is_file(), name)
+            self.assertTrue((folder / "hydrograph.csv").read_text(encoding="utf-8").startswith("time_hours,discharge_cms\n"))
+            runner = folder / "inputs" / "breach_hydrograph.csv"
+            self.assertTrue(runner.read_text(encoding="utf-8").startswith("time_hr,discharge_cfs\n"))
+            self.assertIn("1.0000,100.0000", runner.read_text(encoding="utf-8"))
+            runner.write_text("keep\n", encoding="utf-8")
+            _, notes2 = write_dam_folder(Path(d), DAM, ANALYSIS)
+            self.assertEqual(runner.read_text(encoding="utf-8"), "keep\n")
+            self.assertTrue(any("already" in n for n in notes2))
+            written = write_named_files(folder, {
+                "nd00199.par": "par text",
+                "flood_strip.geojson": "{}",
+                "inputs/extra.csv": "a,b\n",
+                "../secret.par": "no",
+                "inputs/../no.csv": "no",
+            })
+            self.assertEqual(sorted(written), ["flood_strip.geojson", "inputs/extra.csv", "nd00199.par"])
+            self.assertFalse((folder / "secret.par").exists())
+
+            record["fields"]["height_ft"] = 99
+            record["sources"]["height_ft"] = {"tool": "ndbreach", "version": "1", "when": "2020-01-01T00:00:00", "note": ""}
+            record["proposed_embankment"] = {"phrase": "proposed — embankment inserted from the drawn line", "line_xy": [[1, 2], [3, 4]], "crest_m": 10}
+            (folder / "dam.json").write_text(json.dumps(record), encoding="utf-8")
+            write_dam_folder(Path(d), DAM, ANALYSIS)
+            again = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
+            self.assertEqual(again["fields"]["height_ft"], 99)
+            self.assertEqual(again["proposed_embankment"]["line_xy"], [[1, 2], [3, 4]])
+
+    def test_refuses_a_foreign_dam_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / "dams" / "ND00199"
+            folder.mkdir(parents=True)
+            (folder / "dam.json").write_text('{"format":"something-else"}', encoding="utf-8")
+            with self.assertRaises(HandoffError):
+                write_dam_folder(Path(d), DAM, ANALYSIS)
+            self.assertEqual(json.loads((folder / "dam.json").read_text(encoding="utf-8"))["format"], "something-else")
+
+    def test_status_null_is_coerced_not_crash(self):
+        # Another tool may leave "status": null (or a non-list); setdefault(...).append would then raise
+        # AttributeError instead of appending gracefully. The record must be repaired, not crash.
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / "dams" / "ND00199"
+            folder.mkdir(parents=True)
+            (folder / "dam.json").write_text(json.dumps({
+                "format": "nd_dam_suite/dam_record", "format_version": 1,
+                "fields": {}, "sources": {}, "status": None, "conflicts": [],
+            }), encoding="utf-8")
+            write_dam_folder(Path(d), DAM, ANALYSIS)  # must not raise
+            rec = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
+            self.assertIsInstance(rec["status"], list)
+            self.assertEqual(rec["status"][-1]["step"], "screened")
+
+
+class NumsTests(unittest.TestCase):
+    def test_nums_drops_non_finite(self):
+        # Python's json parses NaN/Infinity, which would otherwise reach int(width_m / 10) and crash the
+        # download job. _nums must filter them so only finite coordinates survive.
+        self.assertEqual(_nums([1.0, float("nan"), 2.0, float("inf"), -float("inf")]), [1.0, 2.0])
+        self.assertEqual(_nums(float("nan")), [])
+        self.assertEqual(_nums([[1.0, float("nan")], [3.0, 4.0]]), [1.0, 3.0, 4.0])
+
+
+class GateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.calls = self.root / "calls.txt"
+        self.qgis = self.root / "qgis_process"
+        self.cli = self.root / "damit_cli.py"
+        _exe(self.qgis, QGIS)
+        _exe(self.cli, CLI)
+        self.env = {
+            "QGIS_PROCESS": os.environ.get("QGIS_PROCESS"),
+            "QGIS_MODE": os.environ.get("QGIS_MODE"),
+            "CALLS": os.environ.get("CALLS"),
+            "DAMIT_CLI": os.environ.get("DAMIT_CLI"),
+            "DAMIT_PYTHON": os.environ.get("DAMIT_PYTHON"),
+            "DAMIT_DEM": os.environ.get("DAMIT_DEM"),
+            "NDSUITE_DATA": os.environ.get("NDSUITE_DATA"),
+            "DAMIT_SCREENING_TIMEOUT_S": os.environ.get("DAMIT_SCREENING_TIMEOUT_S"),
+            "DAMIT_DATA": os.environ.get("DAMIT_DATA"),
+            "DAMIT_HANDOFF_CONFIG": os.environ.get("DAMIT_HANDOFF_CONFIG"),
+            "QGIS_MISSING": os.environ.get("QGIS_MISSING"),
+            "QGIS_STYLE": os.environ.get("QGIS_STYLE"),
+            "HOME": os.environ.get("HOME"),
+            **{k: os.environ.get(k) for k in ENV_VARS.values()},
+        }
+        # A clean home: no ~/.damit or ~/.ndsuite config and no installed QGIS plugins leak into the tests.
+        os.environ["HOME"] = str(self.root / "home")
+        (self.root / "home").mkdir()
+        for key in ("DAMIT_DATA", "DAMIT_HANDOFF_CONFIG", "QGIS_MISSING", *ENV_VARS.values()):
+            os.environ.pop(key, None)
+        os.environ.pop("DAMIT_SCREENING_TIMEOUT_S", None)
+        os.environ["QGIS_PROCESS"] = str(self.qgis)
+        os.environ["CALLS"] = str(self.calls)
+        os.environ.pop("DAMIT_CLI", None)
+        os.environ.pop("DAMIT_DEM", None)
+        os.environ.pop("NDSUITE_DATA", None)
+
+    def tearDown(self):
+        for key, value in self.env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def log(self):
+        self.lines = []
+        return self.lines.append
+
+    def calls_text(self):
+        return self.calls.read_text(encoding="utf-8") if self.calls.is_file() else ""
+
+    def test_fail_does_not_start_the_chain(self):
+        os.environ["QGIS_MODE"] = "fail"
+        result = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertFalse(result["ok"])
+        text = self.calls_text()
+        self.assertIn("run\ndamit_screen:preflight\n", text)
+        self.assertNotIn("run\ndamit_screen:runchain", text)
+        self.assertTrue(any("not started" in line for line in self.lines))
+
+    def test_unparsed_report_fail_does_not_start_the_chain(self):
+        os.environ["QGIS_MODE"] = "report-fail"
+        run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertNotIn("run\ndamit_screen:runchain", self.calls_text())
+
+    def test_warnings_still_start_the_chain(self):
+        os.environ["QGIS_MODE"] = "report-warn"
+        result = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertTrue(result["ok"])
+        self.assertIn("damit_screen:runchain", self.calls_text())
+
+    def test_pass_starts_the_chain(self):
+        os.environ["QGIS_MODE"] = "pass"
+        result = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertTrue(result["ok"])
+        text = self.calls_text()
+        self.assertIn("damit_screen:runchain", text)
+        self.assertIn("--PREFLIGHT=true", text)
+        self.assertIn("--FAIL_ON_ERROR=true", text)
+
+    def test_chain_settings_name_the_dam(self):
+        # DamSafety_Screening's damit_screen:runchain has no DAM_ID parameter: it screens the dams in
+        # settings["only_ids"], so the handoff writes the dam there even with no pack or DEM.
+        os.environ["QGIS_MODE"] = "pass"
+        result = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertTrue(result["ok"])
+        path = self.root / "work" / "damit_settings.json"
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(settings["only_ids"], "ND00199")
+        text = self.calls_text()
+        self.assertIn(f"--SETTINGS={path}", text)
+        self.assertIn("--DAM_ID=ND00199", text)
+        self.assertIn("--DAM_ID=ND00199", text)
+
+    def test_model_without_dem_stops(self):
+        os.environ["QGIS_MODE"] = "pass"
+        os.environ["DAMIT_CLI"] = str(self.cli)
+        result = run_model(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("No DEM" in line for line in self.lines))
+        # Only `help` (is the algorithm installed, does it take DEM); nothing was run.
+        self.assertNotIn("\nrun\n", "\n" + self.calls_text())
+
+    def test_model_sends_enum_indexes_read_from_help(self):
+        # qgis_process 3.34 rejects option text for damit_run:rundam's METHOD / TIER ("Incorrect parameter value"),
+        # so the index is read from `qgis_process help` (here deliberately not the plugin's real order).
+        import damit_desktop.qgis_run as qr
+
+        qr._ENUM_HELP.clear()
+        os.environ["QGIS_MODE"] = "help"
+        os.environ["DAMIT_CLI"] = str(self.cli)
+        work = self.root / "work"
+        work.mkdir()
+        (work / "dem.tif").write_bytes(b"not a real dem")
+        try:
+            result = run_model(DAM, ANALYSIS, str(work), self.log())
+        finally:
+            qr._ENUM_HELP.clear()
+        self.assertTrue(result["ok"])
+        text = self.calls_text()
+        self.assertIn("--METHOD=1\n", text)
+        self.assertIn("--TIER=1\n", text)
+
+    def test_model_uses_rundam_not_batch_or_a_lonlat_line(self):
+        os.environ["QGIS_MODE"] = "pass"
+        os.environ["DAMIT_CLI"] = str(self.cli)
+        work = self.root / "work"
+        (work).mkdir()
+        (work / "dem.tif").write_bytes(b"not a real dem")
+        result = run_model(DAM, ANALYSIS, str(work), self.log())
+        self.assertTrue(result["ok"])
+        text = self.calls_text()
+        self.assertIn("damit_run:rundam", text)
+        self.assertNotIn("damit_run:batch", text)
+        self.assertNotIn("DAM_LINES", text)
+        self.assertNotIn("CLI ", text)
+        self.assertIn("Froehlich (2008)", text)
+        self.assertTrue(any("damit_cli.py needs the dam point" in line for line in self.lines))
+
+    def test_model_uses_cli_only_with_a_dem_point(self):
+        os.environ["QGIS_MODE"] = "pass"
+        os.environ["DAMIT_CLI"] = str(self.cli)
+        work = self.root / "work"
+        work.mkdir()
+        (work / "dem.tif").write_bytes(b"not a real dem")
+        dam = {**DAM, "lisflood": {"pointX": 500000, "pointY": 5200000}}
+        result = run_model(dam, ANALYSIS, str(work), self.log())
+        self.assertTrue(result["ok"])
+        text = self.calls_text()
+        self.assertIn("CLI run ", text)
+        self.assertNotIn("damit_run:rundam", text)
+        config = json.loads((Path(result["folder"]) / "runner_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(config["dam"]["point"], [500000, 5200000])
+        self.assertEqual(config["breach"]["method"], "piping")
+        self.assertEqual(config["model"]["tier"], "lisflood")
+        self.assertNotIn("lisflood_exe", config["model"])
+
+    def test_folder_writes_exports_and_does_not_start_qgis(self):
+        result = run_folder(DAM, ANALYSIS, str(self.root / "work"), self.log(), {"nd00199.par": "par text", "../no.par": "no"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.calls_text(), "")
+        folder = Path(result["folder"])
+        self.assertEqual((folder / "nd00199.par").read_text(encoding="utf-8"), "par text")
+        self.assertFalse((folder.parent / "no.par").exists())
+        self.assertTrue(any("No model was started" in line for line in self.lines))
+
+    def test_model_sends_the_chosen_tier_and_builtin(self):
+        os.environ["QGIS_MODE"] = "pass"
+        work = self.root / "work"
+        work.mkdir()
+        (work / "dem.tif").write_bytes(b"not a real dem")
+        result = run_model(DAM, ANALYSIS, str(work), self.log(), model="anuga")
+        self.assertTrue(result["ok"])
+        text = self.calls_text()
+        self.assertIn("--TIER=LISFLOOD-FP for the extent, then ANUGA (final results from ANUGA)", text)
+        self.assertNotIn("LISFLOOD_EXE", text)
+        self.calls.write_text("", encoding="utf-8")
+        dam = {**DAM, "lisflood": {"pointX": 500000, "pointY": 5200000}}
+        os.environ["DAMIT_CLI"] = str(self.cli)
+        os.environ["DAMIT_PYTHON"] = "python3"
+        result = run_model(dam, ANALYSIS, str(work), self.log(), model="builtin")
+        self.assertTrue(result["ok"])
+        config = json.loads((Path(result["folder"]) / "runner_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(config["model"]["tier"], "lisflood")
+        self.assertEqual(config["model"]["lisflood_exe"], "builtin")
+
+    def test_data_folder_dem_is_used_without_a_network(self):
+        pack = self.root / "pack"
+        (pack / "dem").mkdir(parents=True)
+        (pack / "dem" / "lidar_1m").mkdir()
+        (pack / "dem" / "mosaic.vrt").write_text("<VRTDataset></VRTDataset>", encoding="utf-8")
+        os.environ["DAMIT_DATA"] = str(pack)
+        os.environ["QGIS_MODE"] = "pass"
+        result = run_model(DAM, ANALYSIS, str(self.root / "work"), self.log(), source="pack")
+        self.assertTrue(result["ok"])
+        text = self.calls_text()
+        self.assertIn("mosaic.vrt", text)
+        self.assertNotIn("lidar_1m", text)
+        self.assertIn("--TIER=LISFLOOD-FP only", text)
+        screen = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertTrue(screen["ok"])
+        settings = json.loads((self.root / "work" / "damit_settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["suite_folder"], str(pack.resolve()))
+        self.assertEqual(settings["terrain_source"], 1)
+        self.assertTrue(settings["local_dem"].endswith("/dem"))
+        self.assertEqual(settings["only_ids"], "ND00199")
+        self.assertIn("--SETTINGS=", self.calls_text())
+
+    def test_download_uses_the_supplied_fetch(self):
+        saved = []
+
+        def fetch(url, dest):
+            saved.append(url)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"x")
+
+        work = self.root / "dl"
+        result = download_aoi(work, DAM, self.log(), fetch=fetch)
+        self.assertTrue(result["ok"])
+        self.assertTrue((work / "dem.tif").is_file())
+        self.assertTrue((work / "aoi" / "streams.geojson").is_file())
+        self.assertTrue((work / "aoi" / "waterbodies.geojson").is_file())
+        self.assertTrue(any("3DEPElevation" in url and "imageSR=5070" in url for url in saved))
+        self.assertTrue(any("/6/query" in url for url in saved))
+        self.assertTrue(any("/12/query" in url for url in saved))
+        self.assertTrue((work / "damit_settings.json").is_file())
+
+    def test_missing_pack_does_not_invent_a_folder(self):
+        result = use_data_folder(self.root / "work", self.log())
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("No DamIT data folder" in line for line in self.lines))
+
+    def test_http_folder_and_layers(self):
+        import time
+        import urllib.error
+        import urllib.request
+
+        from damit_desktop.__main__ import API_TOKEN, TOKEN_HEADER, job_snapshot, serve
+
+        # jobs sent over the API may only write under the allowed roots (damit_desktop.qgis_run.resolve_work)
+        os.environ["DAMIT_WORK_ROOTS"] = str(self.root)
+        self.addCleanup(os.environ.pop, "DAMIT_WORK_ROOTS", None)
+        server = serve(port=0)
+        try:
+            port = server.server_address[1]
+            body = json.dumps({
+                "dam": DAM,
+                "analysis": ANALYSIS,
+                "work": str(self.root / "httpwork"),
+                "model": "hecras",
+                "source": "pack",
+                "files": {"flood_strip.kml": "<kml></kml>"},
+            }).encode()
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/folder",
+                data=body,
+                headers={"Content-Type": "application/json", TOKEN_HEADER: API_TOKEN},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                job = json.loads(response.read())
+            found = None
+            for _ in range(50):
+                found = job_snapshot(job["id"])
+                if found and found["done"]:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(found and found["done"] and found["ok"])
+            self.assertTrue((Path(found["folder"]) / "flood_strip.kml").is_file())
+            layers = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/layers",
+                data=json.dumps({"dam": DAM, "work": str(self.root / "httpwork"), "source": "pack"}).encode(),
+                headers={"Content-Type": "application/json", TOKEN_HEADER: API_TOKEN},
+            )
+            with urllib.request.urlopen(layers, timeout=5) as response:
+                layer_job = json.loads(response.read())
+            found = None
+            for _ in range(50):
+                found = job_snapshot(layer_job["id"])
+                if found and found["done"]:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(found and found["done"])
+            self.assertFalse(found["ok"])
+            self.assertIn("No DamIT data folder", found["log"])
+            missing = urllib.request.Request(f"http://127.0.0.1:{port}/api/nope", data=b"{}", method="POST", headers={TOKEN_HEADER: API_TOKEN}
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(missing, timeout=5)
+            self.assertEqual(caught.exception.code, 404)
+        finally:
+            server.shutdown()
+
+
+    def test_timeout_stops_the_chain(self):
+        os.environ["QGIS_MODE"] = "slow"
+        started = time.monotonic()
+        result = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log(), timeout=1.5)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["timedOut"])
+        self.assertTrue(any("Stopped" in line for line in self.lines))
+
+    def test_timeout_from_environment(self):
+        os.environ["QGIS_MODE"] = "slow"
+        os.environ["DAMIT_SCREENING_TIMEOUT_S"] = "1"
+        started = time.monotonic()
+        result = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log())
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertTrue(result["timedOut"])
+
+    def test_cancel_stops_the_chain(self):
+        os.environ["QGIS_MODE"] = "slow"
+        cancel = threading.Event()
+        threading.Timer(1.5, cancel.set).start()
+        started = time.monotonic()
+        result = run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log(), cancel=cancel)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["cancelled"])
+
+    def test_chain_name_and_result_are_read_back(self):
+        os.environ["QGIS_MODE"] = "outputs"
+        work = self.root / "work"
+        result = run_screening(DAM, ANALYSIS, str(work), self.log())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["chainIds"], ["ND00199"])
+        self.assertEqual([r["dam_id"] for r in result["chainResult"]], ["ND00199"])
+        text = "\n".join(self.lines)
+        self.assertIn("Screening result for ND00199: Significant", text)
+        self.assertIn("not an official class", text)
+        run_screening(DAM, ANALYSIS, str(work), self.log())
+        self.assertIn("--DAM_ID=ND00199", self.calls_text())
+        settings = json.loads((work / "damit_settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["only_ids"], "ND00199")
+
+    def test_another_inventory_id_is_reported_never_substituted(self):
+        # A screener that still names the dam by a state inventory id (DWR-2801): Crest says so and keeps the NID ID.
+        os.environ["QGIS_MODE"] = "outputs_alias"
+        work = self.root / "work"
+        result = run_screening(DAM, ANALYSIS, str(work), self.log())
+        self.assertEqual(result["chainIds"], [])
+        self.assertEqual(result["chainResult"], [])
+        text = "\n".join(self.lines)
+        self.assertIn("also name this dam DWR-2801, which is not its NID ID ND00199", text)
+        run_screening(DAM, ANALYSIS, str(work), self.log())
+        self.assertNotIn("DWR-2801", self.calls_text())
+        settings = json.loads((work / "damit_settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["only_ids"], "ND00199")
+
+    def test_a_record_without_an_nid_id_is_stopped_unless_new_or_a_sample(self):
+        os.environ["QGIS_MODE"] = "pass"
+        work = str(self.root / "work")
+        for bad in ({**DAM, "nid": "DWR-4031"}, {**DAM, "nid": "", "id": "desk-x"}, {**DAM, "nid": "NEW", "id": "desk-y"}):
+            for run in (run_screening, run_classify):
+                r = run(bad, ANALYSIS, work, self.log())
+                self.assertFalse(r["ok"])
+                self.assertIn("NID", r["nidProblem"])
+            r = run_model(bad, ANALYSIS, work, self.log(), model="builtin")
+            self.assertIn("nidProblem", r)
+        self.assertNotIn("DWR-4031", self.calls_text())
+        # A new (proposed) dam: handed off under its desk id, is_new, no nid_id.
+        new = {**DAM, "nid": "", "id": "desk-new1", "isNew": True}
+        r = run_screening(new, ANALYSIS, work, self.log())
+        self.assertTrue(r["ok"], "\n".join(self.lines))
+        self.assertIn("--DAM_ID=desk-new1", self.calls_text())
+        rec = json.loads((Path(r["folder"]) / "dam.json").read_text(encoding="utf-8"))["fields"]
+        self.assertEqual((rec["dam_id"], rec.get("nid_id"), rec["is_new"]), ("desk-new1", None, True))
+        # A built-in fictional sample: is_sample, never its made-up id as an NID ID.
+        sample = {**DAM, "nid": "SAMPLE-4031", "id": "local-sample"}
+        r = run_screening(sample, ANALYSIS, work, self.log())
+        self.assertTrue(r["ok"])
+        rec = json.loads((Path(r["folder"]) / "dam.json").read_text(encoding="utf-8"))["fields"]
+        self.assertEqual((rec["dam_id"], rec.get("nid_id"), rec.get("is_sample")), ("local-sample", None, True))
+        point = json.loads((Path(r["folder"]) / "dam_point.geojson").read_text(encoding="utf-8"))["features"][0]["properties"]
+        self.assertEqual((point["dam_id"], point["nid_id"], point["is_sample"]), ("local-sample", None, True))
+        self.assertNotIn("SAMPLE-4031", self.calls_text())
+
+    def test_rundam_gets_the_nid_id_or_why_there_is_none(self):
+        # DamIT Runner with the NID-ID rule (NID_ID / IS_NEW / IS_SAMPLE): Crest passes the NID ID, or the exception.
+        os.environ["QGIS_MODE"] = "pass"
+        os.environ["QGIS_STYLE"] = "swe"
+        work = self.root / "work"
+        run_model(DAM, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--DAM_ID=ND00199", text)
+        self.assertIn("--NID_ID=ND00199", text)
+        self.assertNotIn("--IS_NEW", text)
+        self.calls.unlink()
+        run_model({**DAM, "nid": "", "id": "desk-new1", "isNew": True}, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--DAM_ID=desk-new1", text)
+        self.assertIn("--IS_NEW=true", text)
+        self.assertNotIn("--NID_ID", text)
+        self.calls.unlink()
+        run_model({**DAM, "nid": "SAMPLE-4031", "id": "local-sample"}, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--IS_SAMPLE=true", text)
+        self.assertNotIn("SAMPLE-4031", text)
+
+    def test_read_back_helpers_without_outputs(self):
+        self.assertEqual(chain_names(self.root, "ND00199"), [])
+        self.assertEqual(chain_results(self.root, ["ND00199"]), [])
+
+
+class RobustnessTests(unittest.TestCase):
+    """Audit H1 (Windows tree-kill), H2 (bounded output + job eviction), H3 (per-folder lock + status gating)."""
+
+    # ---- H3: status append is gated, and a plain folder export does not log a screening -------------------
+    def test_append_status_false_writes_no_screened_entry(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder, _ = write_dam_folder(Path(d), DAM, ANALYSIS, append_status=False)
+            record = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
+            self.assertEqual(record["status"], [])
+            # The merged fields are still written — only the screening log entry is withheld.
+            self.assertEqual(record["fields"]["height_ft"], 27.5)
+
+    def test_plain_folder_export_does_not_grow_the_status_list(self):
+        with tempfile.TemporaryDirectory() as d:
+            work = Path(d) / "work"
+            log = lambda line: None
+            for _ in range(3):
+                result = run_folder(DAM, ANALYSIS, str(work), log)
+            record = json.loads((Path(result["folder"]) / "dam.json").read_text(encoding="utf-8"))
+            self.assertEqual(record["status"], [], "a plain folder export must not append a screened status")
+
+    def test_screening_still_appends_one_status_per_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder, _ = write_dam_folder(Path(d), DAM, ANALYSIS)  # default append_status=True
+            record = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(record["status"]), 1)
+            self.assertEqual(record["status"][-1]["step"], "screened")
+
+    def test_concurrent_writes_to_one_folder_lose_no_status_entry(self):
+        # Without the per-folder lock, concurrent read-merge-write on the same dam.json would drop appends.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            n = 12
+            start = threading.Event()
+            errors: list[Exception] = []
+
+            def writer():
+                start.wait()
+                try:
+                    write_dam_folder(root, DAM, ANALYSIS)  # each appends one screened status
+                except Exception as exc:  # noqa: BLE001 — surface any error to the assertion
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=writer) for _ in range(n)]
+            for t in threads:
+                t.start()
+            start.set()
+            for t in threads:
+                t.join(timeout=20)
+            self.assertEqual(errors, [])
+            folder = root / "dams" / "ND00199"
+            record = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(record["status"]), n, "every concurrent write must land its status entry")
+
+    # ---- H2: run output is kept head + tail only -------------------------------------------------------------
+    def test_collect_bounded_keeps_head_and_tail_and_notes_the_drop(self):
+        block = 8192
+        data = "A" * block + "B" * (block * 5) + "C" * block
+        text = _collect_bounded(io.StringIO(data), head_cap=block, tail_cap=block)
+        self.assertTrue(text.startswith("A" * 100))
+        self.assertTrue(text.rstrip().endswith("C" * 100))
+        self.assertNotIn("B", text, "the middle must be dropped, not retained")
+        self.assertIn("omitted", text)
+        self.assertLess(len(text), len(data))
+
+    def test_collect_bounded_keeps_short_output_whole(self):
+        text = _collect_bounded(io.StringIO("short output\n"), head_cap=8192, tail_cap=8192)
+        self.assertEqual(text, "short output\n")
+
+    # ---- H2: finished jobs are evicted past the cap, running jobs never are ----------------------------------
+    def test_finished_jobs_evicted_past_cap_running_kept(self):
+        with m._jobs_lock:
+            saved_jobs = dict(m._jobs)
+            saved_cancels = dict(m._cancels)
+            m._jobs.clear()
+            m._cancels.clear()
+            m._jobs["run"] = {"id": "run", "done": False}  # a running job, inserted first (oldest)
+            for i in range(m.MAX_JOBS + 5):
+                m._jobs[f"d{i}"] = {"id": f"d{i}", "done": True}
+            m._evict_finished_locked()
+            ids = list(m._jobs)
+            # restore
+            m._jobs.clear()
+            m._jobs.update(saved_jobs)
+            m._cancels.clear()
+            m._cancels.update(saved_cancels)
+        self.assertEqual(len(ids), m.MAX_JOBS)
+        self.assertIn("run", ids, "a running job is never evicted")
+        self.assertNotIn("d0", ids, "the oldest finished job is evicted first")
+        self.assertIn(f"d{m.MAX_JOBS + 4}", ids, "the newest finished job is kept")
+
+    # ---- H1: Windows tree-kill helper degrades gracefully when taskkill is absent ----------------------------
+    def test_taskkill_tree_returns_bool_and_never_raises(self):
+        # On this POSIX CI host taskkill is absent, so the helper returns False (the caller then falls back to
+        # terminate()/kill()); on Windows it runs taskkill and returns True. Either way it must not raise.
+        self.assertIsInstance(_taskkill_tree(2_000_000_000), bool)
+
+    # ---- M6: misc hardening ----------------------------------------------------------------------------------
+    def test_file_ok_rejects_a_trailing_newline(self):
+        # \Z, not $: a name ending in a newline must not pass the allow-list (would have with $).
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            written = write_named_files(folder, {"ok.par": "x", "evil.par\n": "y"})
+            self.assertEqual(written, ["ok.par"])
+            self.assertFalse((folder / "evil.par\n").exists())
+
+    def test_opt_num_rejects_non_finite(self):
+        cmd: list[str] = []
+        _opt_num(cmd, "TOP_FT", float("inf"))
+        _opt_num(cmd, "TOP_FT", float("-inf"))
+        _opt_num(cmd, "TOP_FT", float("nan"))
+        self.assertEqual(cmd, [], "±Infinity and NaN must not reach the command line")
+        _opt_num(cmd, "TOP_FT", 12.5)
+        self.assertEqual(cmd, ["--TOP_FT=12.5"])
+
+    def test_chain_names_handles_a_work_path_with_a_question_mark(self):
+        # A '?' in the work-folder name must not break the SQLite file: URI (it would be read as a query, leaving
+        # the path truncated so the open fails and the dam is silently not found). Build a minimal gpkg and look
+        # it up through a ?-named folder: without the quote fix this returns [], with it the chain name is found.
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as d:
+            work = Path(d) / "q? dir"
+            work.mkdir()
+            con = sqlite3.connect(str(work / "1_dams.gpkg"))
+            try:
+                con.execute("CREATE TABLE gpkg_contents (table_name TEXT, data_type TEXT)")
+                con.execute("INSERT INTO gpkg_contents VALUES ('dams', 'features')")
+                con.execute("CREATE TABLE dams (dam_id TEXT, nid_id TEXT)")
+                con.execute("INSERT INTO dams VALUES ('DWR-2801', 'ND00199')")
+                con.commit()
+            finally:
+                con.close()
+            self.assertEqual(chain_names(work, "ND00199"), ["DWR-2801"])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

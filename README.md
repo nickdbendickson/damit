@@ -19,6 +19,7 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 | [`damit_data/`](damit_data/README.md) | DamIT Data | `damit_data` | Offline NSI, Microsoft footprints, OpenStreetMap (Geofabrik) and USA Structures layers for any US state (`damit_data:download`, `:status`) |
 | [`damit_hazardlite/`](damit_hazardlite/README.md) | DamIT Hazard Lite | `damit_lite` | One tool, `damit_lite:classify`: suggested class from depth / velocity rasters at structures, roads and rail with DamIT Catalog presets or custom methods |
 | [`damit_pmp/`](damit_pmp/README.md) | DamIT PMP | `damit_pmp` | NOAA Atlas 14 only: point / basin precipitation-frequency tables, alternating-block hyetograph, Atlas 14 grid basin statistics (no PMP values in 0.1.0) |
+| [`damit_crest/`](damit_crest/README.md) | DamIT Crest | none (desktop app) | Local desktop app (pywebview), adapted from Crest: draw a dam, size its breach, view results and flood maps, and hand one dam to the DamIT QGIS plugins through `qgis_process` |
 
 **DamIT Hazard** (`damit_hazard/`, provider `damit`, algorithm `damit:classify`) classifies finished runs from
 rasters and receptors. DamIT Screener and DamIT Runner do not use the `damit` provider id and do not classify

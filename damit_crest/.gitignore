@@ -1,0 +1,13 @@
+node_modules/
+dist/
+DamIT.html
+*.log
+.env
+.env.*
+.DS_Store
+__pycache__/
+*.pyc
+desktop/build/
+desktop/dist/
+# Raw NID downloads (npm run data:nid); never committed.
+data-raw/

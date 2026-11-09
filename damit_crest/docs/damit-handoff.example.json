@@ -1,0 +1,11 @@
+{
+  "algorithms": {
+    "classify": "damit:classify",
+    "preflight": "damit_screen:preflight",
+    "runchain": "damit_screen:runchain",
+    "rundam": "damit_run:rundam",
+    "batch": "damit_run:batch"
+  },
+  "cli": "",
+  "cliNames": ["damit_cli.py", "damit_runner_cli.py"]
+}

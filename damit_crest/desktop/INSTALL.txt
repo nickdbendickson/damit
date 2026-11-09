@@ -1,0 +1,72 @@
+DamIT Crest desktop
+===================
+
+Python 3.10 or newer. Python 3.14 is fine. You do not need Node.
+
+1. Get the damit repository (git clone, or unzip a copy).
+2. Open a terminal and go into the damit_crest/desktop folder:
+     cd damit/damit_crest/desktop
+3. Install the window library (once):
+     python3 -m pip install -r requirements.txt
+4. Start the desk. Leave this terminal open.
+     python3 run.py
+
+If the window does not open, the desk opens in your browser instead.
+The same terminal has to stay open while you use the desk.
+
+Report step — DamIT plugins in QGIS
+-----------------------------------
+These buttons need QGIS (3.28 to 4.x) and the DamIT plugins installed.
+Set QGIS_PROCESS if qgis_process is not on PATH.
+
+Algorithm ids (defaults; see docs/HANDOFF.md to change them):
+  damit:classify          hazard classification (damit_hazard)
+  damit_screen:preflight  screening preflight (damit_screener)
+  damit_screen:runchain   screening chain (damit_screener)
+  damit_run:rundam        one-dam run (damit_runner; 0.1.0 prepares and
+                          records the run, it launches no model)
+  damit_run:batch         not published - never started here
+  damit_cli.py            one-dam runner CLI, searched in DamIT plugin
+                          folders (none published yet)
+Override with DAMIT_ALG_CLASSIFY / _PREFLIGHT / _RUNCHAIN / _RUNDAM / _BATCH,
+DAMIT_CLI, or a damit-handoff.json file. North Dakota suite ids (nddam:*,
+ndbreach:*) are refused.
+
+Dam inventory
+  The NID (USACE National Inventory of Dams) only, one state at a time. Pick
+  the state in "Fill from the NID": the app downloads that state's NID bulk
+  CSV once and caches it in the settings folder (nid/nid_XX.json); "Download
+  latest from the NID" refreshes it. North Dakota is bundled for offline use.
+  No state dam-safety, dugout or suite-pack inventory is read (NDSUITE_DATA
+  and ~/.ndsuite are not used). Records are handed off under their NID ID;
+  a proposed dam needs the New dam box, the two fictional samples go as
+  samples.
+
+Get layers
+  DamIT data folder (DAMIT_DATA, or damit/data_folder in ~/.damit/config.json),
+  or download a USGS 3DEP DEM and NHD streams for the drawn area.
+
+Write the dam folder
+  <work>/dams/<id>/ with dam.json, the drawn geometries, hydrograph.csv,
+  inputs/breach_hydrograph.csv, the LISFLOOD .par .bci .bdy, and the flood
+  strip. No model is started.
+
+Write folder and run screening
+  The preflight, then the screening chain only if the preflight is READY.
+  Only this dam is screened. Cancel stops qgis_process.
+  DAMIT_SCREENING_TIMEOUT_S sets a time limit (default none).
+
+Run the flood model
+  One dam only: damit_run:rundam (with the screening's hand-off package
+  when there is one, DRY_RUN=true), or a DamIT runner CLI when Point X and
+  Point Y are both filled in the DEM's coordinates. Never the batch.
+  A failure mode you did not choose is sent as piping.
+
+Classify
+  Sends the jurisdiction choice (preset or custom methods, Report step),
+  the model run's depth raster (type its path) and the dam record to
+  damit:classify.
+
+A blank work folder means ~/DamITDams.
+The desk screen is not an official hazard class; the engineer of record
+and the regulating agency make the determination.
