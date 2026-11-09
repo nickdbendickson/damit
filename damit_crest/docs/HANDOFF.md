@@ -64,7 +64,7 @@ such a port also works. Enums are sent as the option index read from `help` (QGI
 | Write the dam folder | nothing in QGIS | `<work>/dams/<id>/dam.json` (`damit/dam_record`), geometries, hydrographs, LISFLOOD package, flood strip |
 | Write folder and run screening | `preflight`, then `runchain` **only if READY** | `--WORK --DAMS=<dam folder>/dam_point.geojson --MODE --PRESET` (preset) or `--SCENARIOS --METHODS` (custom) `[--TERRAIN] [--APPLY_ADVISORIES] --SETTINGS`; preflight adds `--REPORT`, runchain `--PREFLIGHT=true --FAIL_ON_ERROR=true` |
 | Run the flood model | `rundam` (one dam) or the runner CLI | `--HANDOFF=<work>/handoff/<id>/damit_handoff.json` when the screening wrote it, else `--DAM_ID --X --Y --CRS=EPSG:4326 --HEIGHT_FT --STORAGE_ACFT --MODE --PRESET/--SCENARIOS/--METHODS [--TERRAIN] [--HYDROGRAPH]`; always `--OUTPUT_FOLDER=<work>/runs --DRY_RUN=true`, never `ENGINE`; CLI: `run runner_config.json` |
-| Classify | `classify` | `--PRESET=<index>` (0 = custom, else the option whose text is the preset's catalog label) `[--METHODS --SCENARIOS --MODIFIERS] [--APPLY_ADVISORY] --DEPTH [--VELOCITY] --DAM_JSON=<dam folder>/damit_dam.json --DAM_NAME --OUTPUT=<dam folder>/classify` |
+| Classify | `classify` | `--PRESET=<index>` (0 = custom, else the option whose text is the preset's catalog label) `[--METHODS --SCENARIOS --MODIFIERS] [--APPLY_ADVISORY] --DEPTH [--VELOCITY] [--DV] [--WSE] [--NONBREACH] [--ARRIVAL]` + the receptor layers `[--STRUCTURES] [--ROADS] [--RAIL] [--FACILITIES] [--LIFELINES] [--ENVIRONMENT]=<dam folder>/classify_inputs/<layer>.geojson` (at least one) `[--DOMAIN=<dam folder>/classify_inputs/domain.geojson] --DAM_JSON=<dam folder>/damit_dam.json --DAM_NAME --OUTPUT=<dam folder>/classify` |
 
 Details:
 
@@ -94,11 +94,67 @@ Details:
   stopping; for an algorithm that declares `DEM` (or for the CLI) a missing DEM still stops. DamIT Runner 0.1.0
   prepares `run_setup.json` in a new folder under `<work>/runs`; the app reports `RUN_FOLDER`. It never sends an
   engine choice or `DRY_RUN=false`.
-- **Classify** needs the model run's maximum depth raster: type its path under *Depth raster* (velocity optional).
-  Without it, or when the installed algorithm does not list the chosen preset, the job stops before running.
+- **Classify** needs the model run's maximum depth raster: type its path under *Depth raster* (velocity, depth ×
+  velocity, water-surface elevation, non-breach depth and arrival-time rasters are optional and sent as `VELOCITY`,
+  `DV`, `WSE`, `NONBREACH`, `ARRIVAL` when typed). It also needs at least one downstream receptor layer (see
+  *Downstream receptors for classify* below). Without a depth raster, without a receptor it can place, when the
+  installed algorithm lists none of the receptor layers, or when it does not list the chosen preset, the job stops
+  before running and the log says why.
   `damit_dam.json` is a flat record: `dam_id`, `nid_id`, `name`, `storage_acft`, `height_ft`, `current_class`, `is_new`, `is_sample` (samples only),
   `failure_mode`, and `class_of_record_text` (the original class-of-record text, for people; classify ignores it).
   See *Class of record and new dams* below.
+
+## Downstream receptors for classify (the chosen jurisdiction judges them)
+
+`damit:classify` applies the chosen preset's methods (or the ticked custom methods) to **receptor layers**; it refuses
+a run without one. The Classify button therefore sends the dam's downstream receptors, so the selected state, agency
+or custom method set, not the desk's ND / ACER TM 11 screen, judges the downstream consequences.
+
+**Built in the page** (`src/lib/crest/classify-receptors.ts`, `classifyReceptors`) and sent with the job as
+`receptors` (`"format": "damit_crest/classify_receptors"`); the server checks every feature
+(`desktop/damit_desktop/receptors.py`) and writes, in `<dam folder>/classify_inputs/`:
+
+| File | Classify parameter | From | Geometry |
+|---|---|---|---|
+| `structures.geojson` | `STRUCTURES` | house, mobile home, barn seeds (911 points added for review included) | Point |
+| `roads.geojson` | `ROADS` | road seeds | LineString: the crossing drawn across the valley (perpendicular to the downstream direction, the desk half-width each side, at least 50 m) |
+| `rail.geojson` | `RAIL` | a `rail` seed, if a record carries one | LineString, as roads |
+| `domain.geojson` | `DOMAIN` | the drawn downstream area (Flood step AOI), when one is drawn | Polygon / MultiPolygon |
+| `receptors_manifest.json` | — | counts, placement, the downstream-direction note, every receptor **not** sent and why | — |
+
+All files are EPSG:4326 (GeoJSON CRS84); classify reprojects them to the depth raster's CRS. A layer file is written
+only when it has at least one feature with a usable geometry, and only layers the installed algorithm lists in
+`help` are sent. The desk has no critical-facility, lifeline or environmental receptors, so `FACILITIES`,
+`LIFELINES` and `ENVIRONMENT` are not written from the desk (classify accepts them; add them in QGIS for now).
+
+**Attributes** (named for Hazard's receptor reader, `damit_hazard/engine/receptors.py`): `crest_id`, `name`, `kind`
+(the Crest kind), `type` (house → `home`, mobile → `mobile_home`, barn → `farm_unoccupied`; a structure marked not
+habitable → `outbuilding`, a barn marked habitable → `farm_occupied`), `habitable`, `placed`, `distance_km`, `pad_ft`
+(pad above the channel bed; informational, not a floor elevation), `source` / `source_ref` (`nd911` and the NG911
+Site_NGUID); roads add `road_class` (`interstate`, `us_state`, `other`) and `aadt`, and `geom_basis`.
+
+**Where each receptor goes** (`placed`), first that applies:
+
+1. `mapped`: the seed's own longitude/latitude;
+2. `911 address point`: a 911 seed's address point from the record's NG911 cache (by Site_NGUID);
+3. `desk valley`: where the desk's straight valley puts it: from the breach (breach point, else the record's lat/lon,
+   dam line or reservoir point) along the downstream direction (across the dam line away from the reservoir point, or
+   reservoir point → breach) at its distance, `lateral` across the desk half-width. This is schematic: the real
+   stream bends, so the log says how many receptors were placed this way.
+
+A receptor none of these can place (no lon/lat, and no breach location or no downstream direction) is **skipped**,
+listed in the job log and the manifest with the reason. A road also needs the downstream direction to be drawn as a
+line. If nothing can be placed, classify is not started. Without the page's payload (an older page or a scripted
+call) the server uses mapped and 911 seeds only, as structures.
+
+**Result.** The job returns `CLASS`, `ORDINAL`, `REPORT` and `GPKG` (receptors by class) and the app reads the run's
+`damit_hazard_report.json` for the preset/mode it ran, the hits that set the class and its warning count (a ran
+preset other than the chosen one is logged). The Report step stores this on the record (`hazardResult`) with the
+choice and receptors it was made for and **leads with it** as *DamIT classification (<preset or custom methods>)*; the
+paper sheet's stamp becomes `DAMIT CLASSIFY: <class>`. A result for another preset, other methods or changed
+receptors is shown as out of date, never as the new choice's class. The desk screen stays on the Screen step, the
+dashboard and the paper sheet only as a *schematic preview* on the ND / ACER TM 11 desk rules, labeled as not the DamIT
+classification.
 
 ## Class of record and new dams (`damit_dam.json`)
 
@@ -143,16 +199,15 @@ and `damit_settings.json`, and sent to the screener as `MODE` + `PRESET` or `SCE
 
 Default: preset mode, **FEMA 333 baseline** (national, not a state). No threshold is written or shown by the app; the
 thresholds live in the hazard catalog data file `damit:classify` reads (Appendix A.7). The desk's preset list is a
-display index, `src/lib/crest/data/jurisdictions.json`, generated from `damit_hazard/data/catalog.json` by
-`node scripts/sync-jurisdictions.mjs` (`--check` fails when it is out of date).
+display index, `src/lib/crest/data/jurisdictions.json`, generated from DamIT Catalog (`damit_catalog/data/`, through
+`python3 -m damit_hazard.engine.catalog --export`) by `node scripts/sync-jurisdictions.mjs` (`--check` fails when it
+is out of date).
 
 ## Open points for review
 
-1. **Preset ids differ between the two catalogs.** QGIS Dev's `damit_hazard/data/catalog.json` (the source of the
-   desk's index) calls the Reclamation preset `USBR`; SWE's `damit_catalog/data/presets.json` calls it `USBR_TM11`.
-   The other 14 ids match. The screener gets the desk's id, so `USBR` fails its preflight until one catalog changes.
-2. The desk index is generated from `damit_hazard`'s catalog; once one shared catalog is merged, point
-   `scripts/sync-jurisdictions.mjs` at it.
+1. **Preset ids (resolved).** DamIT Hazard reads DamIT Catalog, whose stored Reclamation id is `USBR` with
+   `USBR_TM11` as an alias, so the desk's `USBR` passes Screener preflight and `damit:classify`.
+2. **One catalog (resolved).** The desk index is generated from DamIT Catalog; `damit_hazard/data/catalog.json` is gone.
 3. No batch algorithm and no runner CLI are published; the CLI search and the `batch` name stay for a later runner.
 4. If review renames any id or parameter: change `DEFAULT_ALGORITHMS` in `desktop/damit_desktop/algorithms.py` and
    `src/lib/crest/handoff.ts` (and their tests), rebuild the bundle (`npm run build:desktop`) and commit; until then

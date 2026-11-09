@@ -371,7 +371,7 @@ function KpiStack({ result }: { result: Analysis }) {
         </div>
       ))}
       <div className="kpi-card">
-        <div className="l">Desk screen</div>
+        <div className="l">Desk screen (schematic preview)</div>
         <div className="v">{result.screen.label}</div>
       </div>
     </div>

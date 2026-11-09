@@ -110,15 +110,18 @@ export function screenOrdinal(level: ScreenLevel): number | null {
   return level === "High" ? 3 : level === "Medium" ? 2 : level === "Low" ? 1 : null;
 }
 
-/** One line for the Report: the desk screen read against the chosen labels, never as the preset's class. */
+/**
+ * One line for the Report about the desk screen. It is a schematic preview on the ND / ACER TM 11 rules Crest was
+ * adapted from, so it is never translated into the chosen preset's labels or offered as that preset's (or the custom
+ * methods') determination: that class comes from damit:classify on the downstream receptors.
+ */
 export function screenAgainstChoice(level: ScreenLevel, choice: ClassificationChoice): string {
-  const ord = screenOrdinal(level);
-  if (ord == null) return "The desk screen is at Review, so it has no class to read against the chosen labels.";
   const c = resolveChoice(choice);
-  const where = c.mode === "preset" ? `${CATALOG.presets[c.preset ?? DEFAULT_PRESET].label} labels` : "generic labels";
+  const chosen = c.mode === "preset" ? CATALOG.presets[c.preset ?? DEFAULT_PRESET].label : "the custom methods";
+  const preview = level === "Review" ? "is at Review" : `reads ${level}`;
   return (
-    `The desk screen's ${level} is ordinal ${ord} (${genericLabel(ord)}); in ${where} that reads "${classLabel(c, ord)}". ` +
-    "The desk screen uses the Crest rule set it was adapted from, not this preset's methods: the suggested class for this choice comes from damit:classify."
+    `Schematic preview only: the desk screen ${preview} on the ND / ACER TM 11 desk rules, not on ${chosen}. ` +
+    `It is not the DamIT classification. The class for ${chosen} is the one damit:classify returns for the downstream receptors (Classify below).`
   );
 }
 

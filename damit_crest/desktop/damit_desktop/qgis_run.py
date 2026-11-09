@@ -35,6 +35,8 @@ from damit_desktop.handoff import (
     write_named_files,
 )
 from damit_desktop.layers import data_dem, download_aoi, find_data_folder, use_data_folder, write_settings
+from damit_desktop.receptors import LAYERS as RECEPTOR_LAYERS
+from damit_desktop.receptors import write_receptor_layers
 
 # An ND-style runner port's option text (damit_runner 0.1.0 has no METHOD / TIER; these are used only when a rundam override lists them). qgis_process
 # (QGIS 3.34) rejects option text for these enums ("Incorrect parameter value for METHOD"), so enum_value() looks the
@@ -958,6 +960,43 @@ def _preset_index(exe: str, alg: str, choice: dict) -> str | None:
     return None
 
 
+#: damit:classify's optional rasters besides DEPTH (dam keys the server fills from the job's fields).
+EXTRA_RASTERS = (("VELOCITY", "velocityRaster"), ("DV", "dvRaster"), ("WSE", "wseRaster"),
+                 ("NONBREACH", "nonbreachRaster"), ("ARRIVAL", "arrivalRaster"))
+
+
+def read_hazard_report(out_dir: Path) -> dict | None:
+    """The parts of damit:classify's damit_hazard_report.json the desk shows: which preset/mode it ran, the
+    generic label, the hits that set the class and how many warnings it flagged. None when there is no report."""
+    try:
+        res = json.loads((Path(out_dir) / "damit_hazard_report.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(res, dict):
+        return None
+    cfg = res.get("config") if isinstance(res.get("config"), dict) else {}
+    labels = cfg.get("labels") if isinstance(cfg.get("labels"), dict) else {}
+    driving = []
+    for h in (res.get("driving") or [])[:8]:
+        if isinstance(h, dict):
+            cls = h.get("class")
+            driving.append({
+                "method": str(h.get("method") or ""),
+                "label": str(labels.get(str(cls), labels.get(cls, cls)) if cls is not None else ""),
+                "reason": str(h.get("reason") or "")[:300],
+                "receptors": len(h.get("receptors") or []),
+            })
+    flags = [f for f in res.get("flags") or [] if isinstance(f, dict) and f.get("level") in ("error", "warning")]
+    return {
+        "ranMode": cfg.get("mode"),
+        "ranPreset": cfg.get("preset"),
+        "ranPresetLabel": cfg.get("preset_label"),
+        "genericLabel": res.get("generic_label"),
+        "driving": driving,
+        "warnings": len(flags),
+    }
+
+
 def run_classify(
     dam: dict,
     analysis: dict,
@@ -966,9 +1005,14 @@ def run_classify(
     files=None,
     cancel: threading.Event | None = None,
     config: HandoffConfig | None = None,
+    receptors=None,
 ) -> dict:
-    """Write the dam folder, then hand it to the hazard classification algorithm (damit:classify by default) with the
-    desk's preset or custom method choice and the model's depth raster. It runs no breach model."""
+    """Write the dam folder and the downstream receptor layers, then hand them to the hazard classification algorithm
+    (damit:classify by default) with the desk's preset or custom method choice and the model's depth raster, so the
+    chosen jurisdiction judges the downstream consequences. It runs no breach model.
+
+    receptors: the desk's "damit_crest/classify_receptors" payload (classify-receptors.ts); without it the record's
+    mapped seeds are used. Classify is not started without a depth raster or without at least one receptor layer."""
     cfg = handoff_config(config)
     alg = cfg.alg("classify")
     dam = dam or {}
@@ -980,25 +1024,50 @@ def run_classify(
     if stop:
         return stop
     _log_ids(dam, log)
+    base = {"folder": str(folder), "work": str(root)}
     _log_config(log, cfg, ("classify",))
+    choice = _choice(dam)
+    chosen = (f"preset {choice['preset_label'] or choice['preset']}" if choice["mode"] == "preset"
+              else "custom methods " + ",".join(x for x in (choice["scenarios"], choice["methods"], choice["modifiers"]) if x))
     exe = find_qgis_process()
     if not exe:
         log("qgis_process was not found. The classification was not started.")
-        return {"ok": False, "stopped": True, "folder": str(folder), "work": str(root)}
+        return {**base, "ok": False, "stopped": True}
     if not algorithm_available(exe, alg):
         _missing_alg(log, cfg, "classify", "The classification")
-        return {"ok": False, "stopped": True, "missingAlgorithm": alg, "folder": str(folder), "work": str(root)}
-    accepted = help_params(exe, alg)
-    choice = _choice(dam)
-    depth, velocity = _raster(dam.get("depthRaster")), _raster(dam.get("velocityRaster"))
-    if not depth and "DEPTH" in accepted:
+        return {**base, "ok": False, "stopped": True, "missingAlgorithm": alg}
+    depth = _raster(dam.get("depthRaster"))
+    if not depth:
         log(f"{alg} needs the maximum depth raster of a flood model run. Type its path under Depth raster; nothing was classified.")
-        return {"ok": False, "stopped": True, "folder": str(folder), "work": str(root)}
+        return {**base, "ok": False, "stopped": True, "noDepth": True}
+    written = write_receptor_layers(folder, dam, receptors)
+    for s in written["skipped"]:
+        log(f"Receptor not sent: {s.get('name') or s.get('id') or s.get('kind')} ({s.get('kind')}): {s.get('reason')}.")
+    if not written["layers"]:
+        log(f"No downstream receptor could be sent to {alg}, so it was not started: it judges the consequences from "
+            "receptor layers (structures, roads, rail, facilities, lifelines or environment) and needs at least one.")
+        log("Add or map receptors (Flood / Screen steps, or the 911 points), and draw the breach point, dam line and "
+            "reservoir point so desk-valley receptors can be placed on the ground.")
+        return {**base, "ok": False, "stopped": True, "noReceptors": True, "skipped": len(written["skipped"])}
+    counts = ", ".join(f"{k} {n}" for k, n in written["counts"].items())
+    placed = ", ".join(f"{n} {k}" for k, n in written["placement"].items() if n)
+    log(f"Receptor layers for {alg} ({written['source']}): {counts}" + (f"; placed: {placed}" if placed else "") + ".")
+    if written["placement"].get("desk valley"):
+        log("Desk-valley receptors sit where the desk's straight valley puts them from the breach (schematic); map "
+            "them (lon/lat) for a placement the depth raster can be trusted at.")
+    if written["domain"]:
+        log(f"Routed domain: {written['domain']} (the drawn downstream area).")
+    accepted = help_params(exe, alg)
+    if accepted and not (set(written["layers"]) & accepted):
+        log(f"{alg} lists none of the receptor layers {', '.join(written['layers'])}, so the chosen methods could not "
+            "judge the downstream receptors; nothing was classified. Check that the id points at DamIT Hazard's classify.")
+        return {**base, "ok": False, "stopped": True, "noReceptorParams": True}
     preset = _preset_index(exe, alg, choice)
     if preset is None and "PRESET" in accepted:
         log(f"{alg} does not list the preset {choice['preset'] or 'custom'}; nothing was classified.")
-        return {"ok": False, "stopped": True, "folder": str(folder), "work": str(root)}
+        return {**base, "ok": False, "stopped": True}
     record = write_classify_record(folder, dam)
+    out_dir = folder / "classify"
     values = {
         "PRESET": preset,
         "METHODS": choice["methods"],
@@ -1006,25 +1075,50 @@ def run_classify(
         "SCENARIOS": choice["scenarios"],
         "APPLY_ADVISORY": "true" if choice["advisory"] else None,
         "DEPTH": depth,
-        "VELOCITY": velocity,
+        **{param: _raster(dam.get(key)) for param, key in EXTRA_RASTERS},
+        **{key: written["layers"].get(key) for key in RECEPTOR_LAYERS},
+        "DOMAIN": written["domain"],
         "DAM_JSON": str(record),
         "DAM_NAME": dam.get("name") or None,
-        "OUTPUT": str(folder / "classify"),
+        "OUTPUT": str(out_dir),
     }
+    unsent = [k for k in written["layers"] if accepted and k not in accepted]
+    if unsent:
+        log(f"{alg} does not list {', '.join(unsent)}; those receptors were not sent.")
     cmd = [exe, "run", alg, *_args(exe, alg, values, log)]
-    log(f"Classification ({choice['mode']}{': ' + choice['preset'] if choice['preset'] else ''}): {' '.join(cmd[1:3])}")
+    log(f"Classification for {chosen}: {' '.join(cmd[1:3])} judges the downstream receptors with these methods.")
     log("The result is a suggested class; the engineer of record and the regulating agency make the determination.")
     code, text = _run(cmd, timeout=None, cancel=cancel)
     log(text.rstrip())
     if code == STOPPED_CANCEL:
-        return {"ok": False, "stopped": True, "cancelled": True, "folder": str(folder), "work": str(root)}
-    out = {"ok": code == 0, "stopped": code != 0, "folder": str(folder), "work": str(root)}
+        return {**base, "ok": False, "stopped": True, "cancelled": True}
+    out = {**base, "ok": code == 0, "stopped": code != 0}
     results = _outputs(text)
     if code == 0 and results.get("CLASS"):
+        report = read_hazard_report(Path(results.get("OUTPUT") or out_dir)) or {}
         out["suggestedClass"] = results["CLASS"]
         out["ordinal"] = results.get("ORDINAL")
         out["report"] = results.get("REPORT")
-        log(f"Suggested class: {results['CLASS']} (ordinal {results.get('ORDINAL', '?')}). Not an official hazard classification.")
+        out["gpkg"] = results.get("GPKG")
+        out["classification"] = {
+            "suggestedClass": results["CLASS"],
+            "ordinal": results.get("ORDINAL"),
+            "report": results.get("REPORT"),
+            "gpkg": results.get("GPKG"),
+            "layers": written["counts"],
+            "skipped": len(written["skipped"]),
+            "mode": choice["mode"],
+            "preset": choice["preset"],
+            **report,
+        }
+        ran = report.get("ranPreset")
+        if choice["mode"] == "preset" and report and ran != choice["preset"]:
+            log(f"Note: the report says it ran {ran or 'custom mode'}, not {choice['preset']}; check the PRESET list of {alg}.")
+            out["classification"]["presetMismatch"] = True
+        log(f"Suggested class for {chosen}: {results['CLASS']} (ordinal {results.get('ORDINAL', '?')}). "
+            "This is the DamIT classification for the chosen jurisdiction, a suggestion, not an official hazard classification.")
+        if results.get("GPKG"):
+            log(f"Receptors by class: {results['GPKG']}")
     log("Classification finished." if code == 0 else "The classification failed.")
     return out
 

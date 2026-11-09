@@ -14,7 +14,7 @@ what changed is the posture and the hand-off:
   **custom mode** (tick S/D/M/R method ids, no jurisdiction names shown). The default is the FEMA 333 national
   baseline, not a state. Thresholds live in the hazard catalog data file that `damit:classify` reads, never in this
   app; the desk carries only a display index (`src/lib/crest/data/jurisdictions.json`, generated from
-  `damit_hazard/data/catalog.json` by `scripts/sync-jurisdictions.mjs`).
+  DamIT Catalog through DamIT Hazard's `--export` by `scripts/sync-jurisdictions.mjs`).
 - **DamIT hand-off.** The buttons call the DamIT plugins' `qgis_process` algorithms — `damit:classify`
   (`damit_hazard`), `damit_screen:preflight`, `damit_screen:runchain` (`damit_screener`) and `damit_run:rundam`
   (`damit_runner`), the ids those plugins publish — and the DamIT runner CLI (`damit_cli.py`). Every id can be overridden by environment variable or

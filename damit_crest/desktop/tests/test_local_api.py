@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -123,6 +124,36 @@ class LocalApiTests(unittest.TestCase):
             status, data = self.req("POST", "/api/classify", {"dam": {"id": "x"}})
         self.assertEqual(status, 200)
         self.assertEqual(sj.call_args.args[0], "classify")
+
+    def test_classify_forwards_the_receptor_layers_and_rasters(self):
+        payload = {"format": "damit_crest/classify_receptors", "layers": {}}
+        with mock.patch.object(m, "start_job", return_value={"id": "abc"}) as sj:
+            self.req("POST", "/api/classify", {"dam": {"id": "x"}, "receptors": payload, "depth": " /d.tif ",
+                                               "wse": "/w.tif", "arrival": "/a.tif"})
+        self.assertEqual(sj.call_args.args[8], payload)
+        dam = sj.call_args.args[1]
+        self.assertEqual((dam["depthRaster"], dam["wseRaster"], dam["arrivalRaster"]), ("/d.tif", "/w.tif", "/a.tif"))
+        # Only the classify job takes receptors.
+        with mock.patch.object(m, "start_job", return_value={"id": "abc"}) as sj:
+            self.req("POST", "/api/screen", {"dam": {"id": "x"}, "receptors": payload})
+        self.assertIsNone(sj.call_args.args[8])
+
+    def test_classify_job_carries_hazards_class_back_to_the_page(self):
+        got = {}
+
+        def fake(dam, analysis, work, log, files, cancel=None, receptors=None):
+            got["receptors"] = receptors
+            return {"ok": True, "classification": {"suggestedClass": "High", "ordinal": "3"}}
+
+        with mock.patch.object(m, "run_classify", side_effect=fake):
+            job = m.start_job("classify", {"id": "x"}, {}, None, receptors={"format": "damit_crest/classify_receptors"})
+            for _ in range(100):
+                snap = m.job_snapshot(job["id"])
+                if snap and snap["done"]:
+                    break
+                time.sleep(0.02)
+        self.assertEqual(snap["classification"], {"suggestedClass": "High", "ordinal": "3"})
+        self.assertEqual(got["receptors"], {"format": "damit_crest/classify_receptors"})
 
     def test_legacy_pack_source_is_the_data_folder(self):
         with mock.patch.object(m, "start_job", return_value={"id": "abc"}) as sj:

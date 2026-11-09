@@ -332,6 +332,8 @@ export function prefillPatch(
       nd911AutoAdded: undefined,
       nd911: undefined,
       judgmentAsProbable: false,
+      // A classify result belongs to the dam and receptors it was run on.
+      hazardResult: undefined,
     } as Partial<DamRecord>);
     if (current?.surfaceAreaAc != null) replaced.push("surfaceAreaAc");
     if (current?.classOfRecord) replaced.push("classOfRecord");

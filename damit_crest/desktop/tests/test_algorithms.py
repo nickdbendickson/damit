@@ -53,8 +53,14 @@ if args[:1] == ["help"]:
         sys.exit(1)
     name = args[1].split(":", 1)[1]
     if name == "classify":
+        # damit_hazard/algorithms/classify.py (PR #1): presets, rasters, the six receptor layers and DOMAIN.
         params = ["PRESET", "METHODS", "MODIFIERS", "SCENARIOS", "OVERRIDES", "APPLY_ADVISORY", "RUN_SCENARIO",
-                  "MODEL_DIM", "DEPTH", "VELOCITY", "DV", "STRUCTURES", "DAM_JSON", "DAM_NAME", "OUTPUT"]
+                  "MODEL_DIM", "DEPTH", "VELOCITY", "DV", "WSE", "NONBREACH", "ARRIVAL", "METRES", "STRUCTURES",
+                  "ROADS", "RAIL", "FACILITIES", "LIFELINES", "ENVIRONMENT", "DOMAIN", "EXTRA_RUNS", "DAM_JSON",
+                  "CHARTS_JSON", "DAM_NAME", "OUTPUT"]
+        if os.environ.get("FAKE_CLASSIFY") == "no-receptors":
+            params = [p for p in params if p not in ("STRUCTURES", "ROADS", "RAIL", "FACILITIES", "LIFELINES",
+                                                     "ENVIRONMENT", "DOMAIN")]
     elif name == "rundam" and os.environ.get("FAKE_STYLE") == "nd":
         params = ["DAM_ID", "DAMS_FOLDER", "DEM", "METHOD", "TIER", "HEIGHT_FT", "STORAGE_ACFT", "TOP_FT"]
         ENUMS["METHOD"] = ["Overtopping failure, Froehlich (2008) parameters, routed",
@@ -87,8 +93,24 @@ if any(a.endswith(":rundam") for a in args) and "OUTPUT_FOLDER" in vals:
     print("RUN_FOLDER:\t" + vals["OUTPUT_FOLDER"] + "/run_1")
     print("STATUS:\tprepared")
 if any(a.endswith(":classify") for a in args):
+    # Like damit:classify: it refuses a run without a receptor layer, then writes its report and outputs.
+    if not any(k in vals for k in ("STRUCTURES", "ROADS", "RAIL", "FACILITIES", "LIFELINES", "ENVIRONMENT")):
+        print("Give at least one receptor layer (structures, roads, rail, facilities, lifelines or environment).")
+        sys.exit(1)
+    out = Path(vals["OUTPUT"])
+    out.mkdir(parents=True, exist_ok=True)
+    preset = {"1": "FEMA333", "2": "NE", "3": "ND"}.get(vals.get("PRESET", ""))
+    (out / "damit_hazard_report.json").write_text(json.dumps({
+        "suggested_class": 2, "suggested_label": "Significant", "generic_label": "Significant",
+        "config": {"mode": "preset" if preset else "custom", "preset": preset, "preset_label": preset,
+                   "labels": {"2": "Significant", "3": "High"}},
+        "driving": [{"method": "M2", "class": 2, "reason": "home wet 2.1 ft", "receptors": ["structure:0"]}],
+        "flags": [{"level": "warning", "code": "x", "message": "m", "receptors": []}]}))
     print("CLASS:\tSignificant")
     print("ORDINAL:\t2")
+    print("REPORT:\t" + str(out / "damit_hazard_report.md"))
+    print("GPKG:\t" + str(out / "damit_hazard_receptors.gpkg"))
+    print("OUTPUT:\t" + str(out))
 sys.exit(0)
 """
 
@@ -109,6 +131,36 @@ DAM = {
     "lat": 46.75,
 }
 ANALYSIS = {"datum": {"crestNavdFt": 1000.0}, "breach": {"series": []}, "screen": {"level": "Low"}}
+
+#: A mapped home: enough for damit:classify's STRUCTURES layer without the desk's payload.
+SEEDS = [{"id": "h1", "name": "Home", "kind": "house", "lon": -100.0, "lat": 46.74, "padFt": 1}]
+AOI = {"type": "Feature", "properties": {}, "geometry": {"type": "Polygon", "coordinates": [
+    [[-100.05, 46.70], [-99.95, 46.70], [-99.95, 46.76], [-100.05, 46.70]]]}}
+#: What classify-receptors.ts sends (damit_crest/classify_receptors).
+PAYLOAD = {
+    "format": "damit_crest/classify_receptors", "version": 1, "crs": "EPSG:4326",
+    "layers": {
+        "STRUCTURES": {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [-100.0, 46.74]},
+             "properties": {"crest_id": "h1", "name": "Home", "kind": "house", "type": "home", "placed": "mapped",
+                            "habitable": None, "pad_ft": 1, "distance_km": 1.2, "source": "crest", "source_ref": None}},
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [-100.01, 46.73]},
+             "properties": {"crest_id": "m1", "name": "Mobile", "kind": "mobile", "type": "mobile_home",
+                            "placed": "desk valley", "habitable": True, "pad_ft": 0}},
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [999, 46.73]},
+             "properties": {"crest_id": "bad", "name": "Off the globe", "kind": "house"}}]},
+        "ROADS": {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "geometry": {"type": "LineString", "coordinates": [[-100.02, 46.72], [-100.0, 46.725]]},
+             "properties": {"crest_id": "r1", "name": "ND 36", "kind": "road", "type": "road", "road_class": "us_state",
+                            "aadt": 1200, "placed": "desk valley"}}]},
+        "RAIL": {"type": "FeatureCollection", "features": []},
+    },
+    "domain": AOI,
+    "skipped": [{"id": "x", "name": "Far road", "kind": "road",
+                 "reason": "a road crossing needs the downstream direction to be drawn as a line"}],
+    "placement": {"mapped": 1, "911 address point": 0, "desk valley": 2},
+    "direction": "Downstream direction: test",
+}
 
 
 class Base(unittest.TestCase):
@@ -137,6 +189,7 @@ class Base(unittest.TestCase):
                 "QGIS_MISSING": "",
                 "FAKE_STYLE": "",
                 "FAKE_PACKAGE": "",
+                "FAKE_CLASSIFY": "",
                 "APPDATA": "",
             },
         )
@@ -447,7 +500,7 @@ class ClassificationTests(Base):
         return [line for line in self.calls_text().splitlines() if line.startswith("run ")][0]
 
     def test_classify_sends_the_preset_index_depth_and_flat_record(self):
-        dam = {**DAM, "depthRaster": self.depth(),
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(),
                "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
         result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
         self.assertTrue(result["ok"], self.lines)
@@ -464,7 +517,7 @@ class ClassificationTests(Base):
         self.assertEqual(result["suggestedClass"], "Significant")
 
     def test_classify_record_maps_the_class_of_record_and_writes_is_new(self):
-        dam = {**DAM, "depthRaster": self.depth(), "classOfRecord": "ND MEDIUM (NID hazard Significant)",
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(), "classOfRecord": "ND MEDIUM (NID hazard Significant)",
                "classification": {"mode": "preset", "preset": "FEMA333", "presetLabel": "FEMA P-333 baseline"}}
         result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
         self.assertTrue(result["ok"], self.lines)
@@ -474,7 +527,7 @@ class ClassificationTests(Base):
         self.assertIs(record["is_new"], False)
 
     def test_classify_record_new_dam_and_unmapped_class(self):
-        dam = {**DAM, "depthRaster": self.depth(), "isNew": True, "classOfRecord": "class of record (cleared)",
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(), "isNew": True, "classOfRecord": "class of record (cleared)",
                "classification": {"mode": "custom", "methods": ["S6", "M1", "R6"]}}
         result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
         record = json.loads((Path(result["folder"]) / "damit_dam.json").read_text(encoding="utf-8"))
@@ -491,7 +544,7 @@ class ClassificationTests(Base):
             self.assertNotIn("current_class", record)
 
     def test_classify_custom_mode_splits_the_ids(self):
-        dam = {**DAM, "depthRaster": self.depth(),
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(),
                "classification": {"mode": "custom", "methods": ["S1", "M2", "M8a", "R1"]}}
         qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
         run = self.classify_run()
@@ -501,14 +554,14 @@ class ClassificationTests(Base):
         self.assertIn("--MODIFIERS=R1", run)
 
     def test_classify_without_a_depth_raster_stops(self):
-        result = qr.run_classify({**DAM, "classification": {"mode": "preset", "preset": "FEMA333"}}, ANALYSIS,
+        result = qr.run_classify({**DAM, "receptors": SEEDS, "classification": {"mode": "preset", "preset": "FEMA333"}}, ANALYSIS,
                                  str(self.root / "work"), self.log)
         self.assertFalse(result["ok"])
         self.assertNotIn("run ", self.calls_text())
         self.assertTrue(any("depth raster" in line for line in self.lines))
 
     def test_classify_unknown_preset_stops(self):
-        dam = {**DAM, "depthRaster": self.depth(), "classification": {"mode": "preset", "preset": "ZZ"}}
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(), "classification": {"mode": "preset", "preset": "ZZ"}}
         result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
         self.assertFalse(result["ok"])
         self.assertNotIn("run ", self.calls_text())
@@ -519,6 +572,126 @@ class ClassificationTests(Base):
         self.assertFalse(result["ok"])
         self.assertEqual(result["missingAlgorithm"], "damit:classify")
         self.assertNotIn("run ", self.calls_text())
+
+
+    # ---- downstream receptors: the chosen jurisdiction judges them through damit:classify ----------------------
+
+    def test_classify_sends_receptor_layers_domain_and_the_chosen_preset(self):
+        dam = {**DAM, "depthRaster": self.depth(), "velocityRaster": self.depth(),
+               "geometry": {"aoi": AOI},
+               "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log, receptors=PAYLOAD)
+        self.assertTrue(result["ok"], self.lines)
+        run = self.classify_run()
+        inputs = Path(result["folder"]) / "classify_inputs"
+        self.assertIn("--PRESET=2", run)
+        self.assertIn("--STRUCTURES=" + str(inputs / "structures.geojson"), run)
+        self.assertIn("--ROADS=" + str(inputs / "roads.geojson"), run)
+        self.assertIn("--DOMAIN=" + str(inputs / "domain.geojson"), run)
+        self.assertIn("--VELOCITY=", run)
+        self.assertIn("--DAM_JSON=", run)
+        for absent in ("--RAIL=", "--FACILITIES=", "--LIFELINES=", "--ENVIRONMENT=", "--WORK=", "--ENGINE="):
+            self.assertNotIn(absent, run)
+        self.assertFalse((inputs / "rail.geojson").exists())
+        # Hazard's class for the chosen preset comes back with the report read-back.
+        c = result["classification"]
+        self.assertEqual((c["suggestedClass"], c["ordinal"], c["ranPreset"]), ("Significant", "2", "NE"))
+        self.assertEqual(c["layers"], {"STRUCTURES": 2, "ROADS": 1})
+        self.assertTrue(c["gpkg"].endswith("damit_hazard_receptors.gpkg"))
+        self.assertEqual(c["driving"][0]["method"], "M2")
+        self.assertEqual(c["warnings"], 1)
+        self.assertNotIn("presetMismatch", c)
+
+    def test_receptor_files_have_hazard_field_names_and_geometries(self):
+        from damit_desktop.receptors import write_receptor_layers
+        with tempfile.TemporaryDirectory() as d:
+            out = write_receptor_layers(Path(d), {"geometry": {"aoi": AOI}}, PAYLOAD)
+            st = json.loads(Path(out["layers"]["STRUCTURES"]).read_text(encoding="utf-8"))
+            rd = json.loads(Path(out["layers"]["ROADS"]).read_text(encoding="utf-8"))
+            dom = json.loads(Path(out["domain"]).read_text(encoding="utf-8"))
+            manifest = json.loads(Path(out["manifest"]).read_text(encoding="utf-8"))
+        self.assertEqual(sorted(out["layers"]), ["ROADS", "STRUCTURES"])
+        self.assertEqual({f["geometry"]["type"] for f in st["features"]}, {"Point"})
+        self.assertEqual(rd["features"][0]["geometry"]["type"], "LineString")
+        props = st["features"][0]["properties"]
+        for name in ("crest_id", "name", "kind", "type", "placed", "habitable", "pad_ft"):
+            self.assertIn(name, props)
+        self.assertEqual(props["type"], "home")
+        self.assertEqual(rd["features"][0]["properties"]["road_class"], "us_state")
+        self.assertEqual(rd["features"][0]["properties"]["aadt"], 1200)
+        self.assertEqual(dom["features"][0]["geometry"]["type"], "Polygon")
+        self.assertEqual(st["crs"]["properties"]["name"], "urn:ogc:def:crs:OGC:1.3:CRS84")
+        # The desk's skipped receptor and a bad feature are both listed with a reason.
+        reasons = " ".join(s["reason"] for s in manifest["skipped"])
+        self.assertIn("downstream direction", reasons)
+        self.assertIn("no usable", reasons)
+
+    def test_receptor_fallback_uses_mapped_and_911_points_only(self):
+        from damit_desktop.receptors import write_receptor_layers
+        dam = {"receptors": [
+            {"id": "h", "name": "Mapped house", "kind": "house", "lon": -100.0, "lat": 46.7, "padFt": 2},
+            {"id": "b", "name": "Barn", "kind": "barn", "lon": -100.01, "lat": 46.7, "habitable": True},
+            {"id": "911x", "name": "911: 1 Main", "kind": "house", "source": "nd911", "sourceRef": "G1"},
+            {"id": "v", "name": "Valley home", "kind": "house", "station": 0.5, "lateral": 0},
+            {"id": "r", "name": "Road", "kind": "road", "station": 0.3, "lateral": 0}],
+            "nd911": {"points": [{"nguid": "G1", "lon": -100.02, "lat": 46.69}]}}
+        with tempfile.TemporaryDirectory() as d:
+            out = write_receptor_layers(Path(d), dam, None)
+            st = json.loads(Path(out["layers"]["STRUCTURES"]).read_text(encoding="utf-8"))
+        self.assertEqual(out["source"], "record")
+        self.assertEqual([f["properties"]["type"] for f in st["features"]], ["home", "farm_occupied", "home"])
+        self.assertEqual(st["features"][2]["properties"]["placed"], "911 address point")
+        self.assertEqual(sorted(s["id"] for s in out["skipped"]), ["r", "v"])
+
+    def test_classify_without_receptors_is_not_started(self):
+        dam = {**DAM, "depthRaster": self.depth(), "receptors": [{"id": "v", "name": "Valley home", "kind": "house"}],
+               "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["noReceptors"])
+        self.assertNotIn("run ", self.calls_text())
+        text = "\n".join(self.lines)
+        self.assertIn("No downstream receptor could be sent", text)
+        self.assertIn("Receptor not sent: Valley home", text)
+        empty = {**PAYLOAD, "layers": {}, "skipped": []}
+        result = qr.run_classify({**dam, "receptors": []}, ANALYSIS, str(self.root / "work"), self.log, receptors=empty)
+        self.assertTrue(result["noReceptors"])
+        self.assertNotIn("run ", self.calls_text())
+
+    def test_classify_without_depth_is_not_started_even_with_receptors(self):
+        dam = {**DAM, "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log, receptors=PAYLOAD)
+        self.assertTrue(result["noDepth"])
+        self.assertNotIn("run ", self.calls_text())
+
+    def test_classify_custom_methods_go_with_the_receptors(self):
+        dam = {**DAM, "depthRaster": self.depth(), "classification": {"mode": "custom", "methods": ["S1", "M2", "R1"]}}
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log, receptors=PAYLOAD)
+        run = self.classify_run()
+        self.assertIn("--PRESET=0", run)
+        self.assertIn("--METHODS=M2", run)
+        self.assertIn("--STRUCTURES=", run)
+        self.assertEqual(result["classification"]["mode"], "custom")
+        self.assertIn("custom methods S1,M2,R1", "\n".join(self.lines))
+
+    def test_classify_that_lists_no_receptor_layer_is_not_started(self):
+        dam = {**DAM, "depthRaster": self.depth(), "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        with mock.patch.dict(os.environ, {"FAKE_CLASSIFY": "no-receptors"}):
+            qr._ENUM_HELP.clear()
+            result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log, receptors=PAYLOAD)
+        qr._ENUM_HELP.clear()
+        self.assertTrue(result["noReceptorParams"])
+        self.assertNotIn("run ", self.calls_text())
+
+    def test_extra_rasters_are_sent_when_given(self):
+        dam = {**DAM, "depthRaster": self.depth(), "dvRaster": self.depth(), "wseRaster": self.depth(),
+               "nonbreachRaster": self.depth(), "arrivalRaster": self.depth(),
+               "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log, receptors=PAYLOAD)
+        run = self.classify_run()
+        for p in ("--DV=", "--WSE=", "--NONBREACH=", "--ARRIVAL="):
+            self.assertIn(p, run)
+        self.assertNotIn("--VELOCITY=", run)
 
 
 class ClassOrdinalTests(unittest.TestCase):

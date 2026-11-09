@@ -70,21 +70,28 @@ describe("jurisdiction presets (Appendix A.6)", () => {
     assert.doesNotMatch(text, /"params"|threshold_ft|high_min|aadt/i);
   });
 
-  it("reads the desk screen as an ordinal against the chosen labels, never as the preset's class", () => {
+  it("labels the desk screen a schematic preview, never the chosen preset's or custom methods' class", () => {
     assert.equal(screenOrdinal("Medium"), 2);
     assert.equal(screenOrdinal("Review"), null);
     const line = screenAgainstChoice("Medium", { mode: "preset", preset: "NY" });
-    assert.match(line, /ordinal 2 \(Significant\)/);
-    assert.match(line, /"Class B"/);
+    assert.match(line, /^Schematic preview only/);
+    assert.match(line, /ND \/ ACER TM 11 desk rules, not on New York/);
+    assert.match(line, /not the DamIT classification/);
     assert.match(line, /damit:classify/);
+    // Not translated into the preset's labels (that would read as New York's determination).
+    assert.doesNotMatch(line, /Class B|ordinal|Significant/);
+    const custom = screenAgainstChoice("High", { mode: "custom", methods: ["M1"] });
+    assert.match(custom, /not on the custom methods/);
+    assert.match(screenAgainstChoice("Review", { mode: "preset", preset: "FEMA333" }), /is at Review/);
   });
 
-  it("matches the damit_hazard catalog when it is in this checkout", () => {
-    const url = new URL("../../../../damit_hazard/data/catalog.json", import.meta.url);
-    if (!existsSync(url)) return; // damit_hazard is published separately; scripts/sync-jurisdictions.mjs --check
+  it("matches DamIT Catalog when it is in this checkout", () => {
+    const url = new URL("../../../../damit_catalog/data/presets.json", import.meta.url);
+    if (!existsSync(url)) return; // full check: scripts/sync-jurisdictions.mjs --check
     const cat = JSON.parse(readFileSync(url, "utf8"));
     assert.deepEqual(Object.keys(cat.presets).sort(), presetIds().sort());
-    assert.deepEqual(Object.keys(cat.methods).sort(), Object.keys(CATALOG.methods).sort());
+    const methods = JSON.parse(readFileSync(new URL("methods.json", url), "utf8"));
+    assert.deepEqual(Object.keys(methods.methods).sort(), Object.keys(CATALOG.methods).sort());
   });
 });
 

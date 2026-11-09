@@ -273,7 +273,7 @@ function ReviewPane({
     <div className="rounded-md border border-line bg-card p-4">
       <h2 className="text-xl">Review results</h2>
       <p className="mt-1 text-sm text-muted">
-        Desk screen {result.screen.label}. Peak {num(result.breach.peakCfs, 0)} cfs,{" "}
+        Desk screen (schematic preview, ND / TM 11 rules) {result.screen.label}. Peak {num(result.breach.peakCfs, 0)} cfs,{" "}
         {result.flood.receptors.filter((r) => r.flooded).length} of {result.flood.receptors.length}{" "}
         structures wet.
       </p>

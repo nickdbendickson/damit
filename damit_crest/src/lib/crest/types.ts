@@ -129,6 +129,12 @@ export type DamRecord = {
   receptors: ReceptorSeed[];
   /** Jurisdiction context for the hand-off to damit:classify. Absent = DEFAULT_CLASSIFICATION (FEMA 333 baseline). */
   classification?: ClassificationChoice;
+  /**
+   * The last damit:classify result for this dam (Report step, Classify button): the class the chosen preset or custom
+   * methods give the downstream receptors. Kept with the choice and receptors it was made for, so a changed choice
+   * shows it as out of date instead of as the new jurisdiction's class.
+   */
+  hazardResult?: HazardResult;
   geometry?: DamGeometry;
   /** PLSS sections looked up for the flood strip (BLM CadNSDI), kept so the list works offline afterwards. */
   plss?: PlssCache;
@@ -167,6 +173,33 @@ export type DamRecord = {
   provenance?: Partial<Record<string, Provenance>>;
   /** Read-only NID reference values (not used by the engine). */
   nidRef?: NidRef;
+};
+
+/** What damit:classify returned (qgis_run.run_classify), stored on the record by the Report step. */
+export type HazardResult = {
+  /** CLASS: the suggested class in the chosen preset's labels (generic labels in custom mode). */
+  suggestedClass: string;
+  /** ORDINAL 0-4 (0 Minimal ... 4 Extremely High), as text from qgis_process. */
+  ordinal: string | null;
+  genericLabel?: string | null;
+  /** Markdown run report and the receptors-by-class GeoPackage, paths on this computer. */
+  report?: string | null;
+  gpkg?: string | null;
+  /** The preset / mode the report says it ran (read back from damit_hazard_report.json). */
+  ranPreset?: string | null;
+  ranPresetLabel?: string | null;
+  ranMode?: string | null;
+  /** The hits that set the class (method, class, reason), first few. */
+  driving?: { method: string; label: string; reason: string; receptors: number }[];
+  warnings?: number;
+  /** Receptor features sent, by layer. */
+  layers?: Record<string, number>;
+  skipped?: number;
+  classifiedAt: string;
+  /** choiceKey / receptorKey (classify-receptors.ts) and the choice in words, at the time of the run. */
+  choiceKey: string;
+  receptorKey: string;
+  choiceText: string;
 };
 
 export type NidHazard = "Low" | "Significant" | "High" | "Undetermined";
