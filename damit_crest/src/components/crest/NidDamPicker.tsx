@@ -12,9 +12,11 @@ import {
   countyOptions,
   damOptionLabel,
   demElevationsPatch,
+  elevationNote,
   fieldTag,
   heightWarningOnElevations,
   heightWarningOnPick,
+  newRecordPatch,
   type NidDam,
   type NidData,
   nidHazardLine,
@@ -262,7 +264,7 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
         <div role="alertdialog" aria-label="Fill from the NID" className="mt-3 rounded-sm border border-line bg-card p-3 text-sm">
           <p>{confirmText(confirm.replaced)}</p>
           <p className="mt-1 text-muted">
-            {damOptionLabel(picked)}. Elevations are not in the NID; you enter them next.
+            {damOptionLabel(picked)}. {elevationNote(confirm.replaced)}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
@@ -279,7 +281,7 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
               type="button"
               className="h-10 rounded-sm border border-line bg-paper px-3"
               onClick={() => {
-                const { patch } = prefillPatch(picked, data);
+                const patch = newRecordPatch(picked, data, dam);
                 const base = blankDam();
                 addDam({ ...base, ...patch, id: `nid-${picked.nid.toLowerCase()}-${base.id.slice(5)}` });
                 setPicked(null);

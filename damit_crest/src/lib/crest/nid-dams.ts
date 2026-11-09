@@ -11,7 +11,8 @@
  * Rules:
  * - H = NID Height (whole ft, rounded). V = NID Storage (= max(Max, Normal)); chip says which. Surface area is never
  *   filled.
- * - Elevations are never filled from the NID (it has none); the user enters them or ties them to a DEM.
+ * - Elevations are never filled from the NID (it has none); the user enters them or ties them to a DEM. Filling a
+ *   record that already is this NID dam keeps its elevations and datum (Nick, 2026-11-09).
  * - NID hazard is shown as reported (FEMA class), never used by the screen and never the class of record.
  */
 import type { DamRecord, NidHazard, NidRef, Provenance } from "./types.ts";
@@ -261,9 +262,32 @@ export const FIELD_LABEL: Record<string, string> = {
 };
 
 /**
+ * The record's elevation and datum fields. The NID supplies none of them, so an NID fill never has a replacement.
+ */
+export const ELEVATION_FIELDS = [
+  "crestFt",
+  "streambedFt",
+  "demCrestFt",
+  "statedDatum",
+  "datumOffsetFt",
+  "datumNote",
+  "spillwayFt",
+  "normalPoolFt",
+] as const;
+
+/** True when `current` already is NID dam `d` (its NID ID, else its typed NID field, is d's NID ID). */
+export function isSameNidDam(d: Pick<NidDam, "nid">, current: Pick<DamRecord, "nid" | "nidId"> | undefined): boolean {
+  return Boolean(current) && (current!.nidId ?? current!.nid) === d.nid;
+}
+
+/**
  * Decision 6-8: the patch "Fill this record from the NID" applies, its provenance, and the replaced-field list.
- * Elevations are cleared (NaN, datum unset), never filled. When the record was a different dam, its drawn geometry,
- * class of record, notes and surface area are cleared too, so nothing from the previous dam carries over.
+ * Elevations are never filled from the NID (it has none). Applied to a record that already is this NID dam, the
+ * record's crest, breach bottom, DEM crest, datum (and its offset / note), spillway and normal pool are kept: the NID
+ * has no replacement for them (Nick, 2026-11-09: "Apply to this record" wiped the DWR crest of ND00199). With no
+ * current record, or a record of a different dam (or none named), they are cleared (NaN, datum unset), so neither a
+ * blank record's placeholders nor another dam's elevations carry over; its drawn geometry, class of record, notes and
+ * surface area are cleared too.
  */
 export function prefillPatch(
   d: NidDam,
@@ -299,23 +323,25 @@ export function prefillPatch(
     lengthFt: d.lengthFt ?? nan,
     storageAcFt: v.value,
     drainageMi2: d.drainageMi2 ?? nan,
-    crestFt: nan,
-    streambedFt: nan,
-    demCrestFt: nan,
-    statedDatum: "",
-    datumOffsetFt: undefined,
-    datumNote: undefined,
-    spillwayFt: nan,
-    normalPoolFt: nan,
     nidId: d.nid,
     nidHazard: d.nidHazard ?? undefined,
     provenance: prov,
     nidRef: nidRefFor(d, data.nidSource),
   };
   const replaced = ["name", "nid", "county", "year", "lat", "lon", "heightFt", "lengthFt", "storageAcFt", "drainageMi2"];
-  replaced.push("crestFt", "streambedFt", "demCrestFt", "statedDatum", "spillwayFt", "normalPoolFt");
-  const otherDam = !current || (current.nidId ?? current.nid) !== d.nid;
+  const otherDam = !isSameNidDam(d, current);
   if (otherDam) {
+    replaced.push("crestFt", "streambedFt", "demCrestFt", "statedDatum", "spillwayFt", "normalPoolFt");
+    Object.assign(patch, {
+      crestFt: nan,
+      streambedFt: nan,
+      demCrestFt: nan,
+      statedDatum: "",
+      datumOffsetFt: undefined,
+      datumNote: undefined,
+      spillwayFt: nan,
+      normalPoolFt: nan,
+    } as Partial<DamRecord>);
     Object.assign(patch, {
       surfaceAreaAc: undefined,
       classOfRecord: undefined,
@@ -341,6 +367,27 @@ export function prefillPatch(
     if (current?.geometry) replaced.push("geometry");
   }
   return { patch, replaced };
+}
+
+/**
+ * "New record from NID": the NID fill on a blank record (blankDam's placeholder elevations cleared). When the record
+ * on screen already is this NID dam, its own elevations and datum go with the new record (the NID has none to offer),
+ * so the copy is not flagged missing crest / breach bottom / datum. Nothing is invented: a field the current record
+ * does not hold stays blank.
+ */
+export function newRecordPatch(d: NidDam, data: Pick<NidData, "nidSource">, current?: DamRecord): Partial<DamRecord> {
+  const { patch } = prefillPatch(d, data);
+  if (current && isSameNidDam(d, current)) {
+    for (const f of ELEVATION_FIELDS) (patch as Record<string, unknown>)[f] = current[f];
+  }
+  return patch;
+}
+
+/** The confirm dialog's second line: what happens to the elevations. */
+export function elevationNote(replaced: string[]): string {
+  return replaced.includes("crestFt")
+    ? "Elevations are not in the NID; you enter them next."
+    : "Elevations are not in the NID; this record's crest, breach bottom and datum are kept.";
 }
 
 /** The confirm dialog's text. */
