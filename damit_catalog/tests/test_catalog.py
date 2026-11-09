@@ -14,7 +14,8 @@ from damit_catalog import evaluate as E       # noqa: E402
 PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 METHODS = ["M1", "M2", "M3", "M4a", "M4b", "M4c", "M5", "M6", "M7", "M8a", "M8b", "M8c", "M8d", "M8e", "M8f",
            "M8g", "M9a", "M9b", "M9c", "M10a", "M10b", "M11a", "M11b", "M11c", "M12a", "M12b", "M12c", "M12d", "M13"]
-PRESETS = ["FEMA333", "USBR", "BIA", "NRCS", "ND", "NE", "NY", "VA", "TX", "ID", "CO", "RI", "AZ", "CA", "AK"]
+PRESETS = ["FEMA333", "USBR", "BIA", "NRCS", "ND", "NE", "NY", "VA", "TX", "ID", "CO", "RI", "AZ", "CA", "AK",
+           "AL", "NC", "USACE", "TVA"]   # Appendix A.6 (15) + the Nov 2026 Summaries (AL, NC, USACE, TVA)
 
 
 def home(depth, **kw):
@@ -81,19 +82,23 @@ class CatalogContent(unittest.TestCase):
         u = self.cat.resolve_preset("USBR_TM11")
         self.assertEqual(u["preset_label"], "USBR (ACER TM-11)")
         self.assertEqual([s["id"] for s in u["scenarios"]], ["S1"])
-        self.assertEqual(u["conditional_scenarios"], [{"id": "S5", "when": "borderline dams", "verification": "unverified"}])
+        self.assertEqual([(c["id"], c["when"], c.get("verification")) for c in u["conditional_scenarios"]],
+                         [("S5", "borderline dams", None)])      # Summaries F-3 states it without a mark
         self.assertEqual(len(u["methods"]["M1"]["params"]["charts"]), 5)
         self.assertEqual((u["methods"]["M5"]["params"]["sig_min"], u["methods"]["M5"]["params"]["high_min"]), (1, 7))
         self.assertEqual([r["id"] for r in u["modifiers"]], ["R1"])
-        self.assertTrue(any(fl["code"] == "unverified_or_secondary" for fl in u["flags"]))
+        self.assertTrue(any(fl["code"] == "conditional_scenario" for fl in u["flags"]))
+        self.assertFalse(any(fl["code"] == "unverified_or_secondary" for fl in u["flags"]))
 
     def test_all_presets_resolve(self):
         expect = {"FEMA333": (["S1"], {"M5", "M13"}), "BIA": ([], {"M5"}), "NRCS": ([], {"M13"}),
                   "NE": (["S4"], {"M3", "M4a", "M8c", "M9b", "M11b", "M12a"}),
-                  "NY": (["S1", "S5"], {"M1", "M4b", "M8d", "M8f", "M9c", "M10a", "M11c", "M12b"}),
-                  "VA": (["S1", "S5"], {"M13", "M8e", "M5"}), "TX": ([], {"M4c"}), "ID": ([], {"M2", "M6"}),
+                  "NY": (["S1", "S5"], {"M1", "M4b", "M5", "M8d", "M8f", "M9c", "M10a", "M11c", "M12b"}),
+                  "VA": (["S1", "S5"], {"M13", "M8e", "M5"}), "TX": ([], {"M4c", "M13"}), "ID": ([], {"M2", "M6"}),
                   "CO": (["S2"], {"M5", "M6"}), "RI": (["S6"], {"M13", "M8g"}), "AZ": ([], {"M13", "M12d"}),
-                  "CA": ([], {"M5", "M7"}), "AK": ([], {"M5", "M12c", "M13"})}
+                  "CA": ([], {"M5", "M7"}), "AK": ([], {"M5", "M12c", "M13"}),
+                  "AL": ([], {"M5", "M13"}), "NC": ([], {"M5", "M13"}), "USACE": ([], {"M5", "M13"}),
+                  "TVA": ([], {"M5", "M13"})}
         for pid in PRESETS:
             cfg = self.cat.resolve_preset(pid)
             if pid in expect:
@@ -476,6 +481,130 @@ class Combination(unittest.TestCase):
         self.assertEqual(E.label_for(cfg, 0), "Low")
         self.assertEqual(E.label_for(cfg, 4), "High")
         self.assertEqual(E.label_for(cfg, None), "Not determined")
+
+
+class Nov2026Summaries(unittest.TestCase):
+    """Catalog 2026.11.09.4 follows the two attached documents: the Corrected Edition (Appendix A, unchanged)
+    and the In-Depth Summaries (Nov. 2026): new AL / NC / USACE / TVA presets, Summaries corrections, and the
+    agencies with no preset documented. Nick's M1 / M3 / status decisions stay as they were."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.pop(C.ENV_DIR, None)
+        cls.cat = C.load()
+
+    def ev(self, pid, recs, summ=None):
+        return E.evaluate(self.cat, self.cat.resolve_preset(pid), recs, summ or {})
+
+    def feat(self, kind, rid="f1"):
+        return {"id": rid, "receptor_type": "feature", "feature_kind": kind}
+
+    def test_sources_recorded(self):
+        self.assertEqual(self.cat.version, "2026.11.09.4")
+        self.assertIn("Corrected Edition", self.cat.source["title"])
+        sup = self.cat.source["supplements"]
+        self.assertEqual(len(sup), 1)
+        self.assertIn("In-Depth Summaries", sup[0]["title"])
+        self.assertEqual((sup[0]["date"], sup[0]["printed"]), ("2026-11", "2026-11-09"))
+
+    def test_new_presets_are_thin_fema_style_and_flagged(self):
+        for pid, labels in (("AL", ["Low", "Significant", "High"]), ("NC", ["Class A", "Class B", "Class C"]),
+                            ("USACE", ["Low", "Significant", "High"]), ("TVA", ["Low", "Significant", "High"])):
+            cfg = self.cat.resolve_preset(pid)
+            self.assertEqual(cfg["labels"], labels, pid)
+            self.assertEqual(set(cfg["methods"]), {"M5", "M13"}, pid)
+            self.assertEqual((cfg["methods"]["M5"]["params"]["sig_min"], cfg["methods"]["M5"]["params"]["high_min"]),
+                             (None, 1), pid)
+            codes = [f["code"] for f in cfg["flags"]]
+            self.assertIn("method_fallback_m13", codes, pid)       # no jurisdiction-specific criteria in the sources
+            self.assertIn("scenario_unconfirmed", codes, pid)
+            self.assertEqual(cfg["scenarios"], [], pid)
+            self.assertEqual(cfg["modifiers"], [], pid)
+            self.assertIsNone(cfg["status"], pid)
+        self.assertEqual(self.cat.resolve_preset("USACE")["methods"]["M5"]["verification"], "secondary")
+        al = self.cat.presets["AL"]["notes"]
+        for words in ("voluntary", "October 1, 2026", "AEMA", "secondary"):
+            self.assertIn(words, al)
+        self.assertIn("exemption", self.cat.presets["NC"]["notes"])
+        self.assertIn(".0102", self.cat.presets["NC"]["citation"])
+
+    def test_new_presets_classify(self):
+        self.assertEqual(self.ev("AL", [], {"lives_in_jeopardy": 1})["suggested_label"], "High")
+        self.assertEqual(self.ev("NC", [], {"lives_in_jeopardy": 2})["suggested_label"], "Class C")
+        self.assertEqual(self.ev("NC", [self.feat("isolated_home")], {"lives_in_jeopardy": 0})["suggested_label"],
+                         "Class B")
+        self.assertEqual(self.ev("TVA", [self.feat("farm_building")], {"lives_in_jeopardy": 0})["suggested_label"],
+                         "Low")
+        self.assertEqual(self.ev("USACE", [], {"lives_in_jeopardy": 1})["suggested_ordinal"], 3)
+
+    def test_state_postal_codes_pick_the_new_presets(self):
+        self.assertEqual(self.cat.canonical_preset_id("AL"), "AL")
+        self.assertEqual(self.cat.canonical_preset_id("NC"), "NC")
+
+    def test_agencies_without_a_preset_are_documented(self):
+        with open(os.path.join(PKG, "data", "presets.json"), encoding="utf-8") as fh:
+            nop = json.load(fh)["no_preset"]
+        self.assertEqual(set(nop), {"FERC", "USFWS", "MSHA", "OTHER_STATES"})
+        for k, why in nop.items():
+            self.assertFalse(self.cat.has_preset(k), k)
+            self.assertIn("Summaries", why, k)
+
+    def test_texas_economic_loss_half(self):
+        cfg = self.cat.resolve_preset("TX")
+        self.assertEqual(cfg["methods"]["M13"]["params"]["variant"], "texas_30TAC299.14")
+        self.assertEqual(self.ev("TX", [self.feat("secondary_highway")])["suggested_ordinal"], 2)
+        self.assertEqual(self.ev("TX", [self.feat("public_utility_interruption")])["suggested_ordinal"], 2)
+        self.assertEqual(self.ev("TX", [self.feat("excessive_economic_loss_urban")])["suggested_ordinal"], 3)
+        # M4c bands unchanged: 1-6 lives / 1-2 habitable structures Significant; 7+ / 3+ High
+        self.assertEqual(self.ev("TX", [home(1.0, occupants=6)])["suggested_ordinal"], 2)
+        self.assertEqual(self.ev("TX", [home(1.0, occupants=7)])["suggested_ordinal"], 3)
+        recs = [home(1.0, id="h{}".format(i), occupants=1) for i in range(3)]
+        self.assertEqual(self.ev("TX", recs)["suggested_ordinal"], 3)
+
+    def test_alaska_current_wording(self):
+        ak = self.cat.presets["AK"]
+        self.assertEqual(ak["methods"]["M13"]["variant"], "alaska_11AAC93.157")
+        self.assertIn("anadromous", ak["notes"])
+        self.assertIn("superseded", ak["notes"])
+        self.assertIn("Oct. 2, 2004", ak["citation"])
+        for name in ("presets.json", "methods.json", "hazard.json"):
+            with open(os.path.join(PKG, "data", name), encoding="utf-8") as fh:
+                d = json.load(fh)
+            # the superseded 'salmon spawning habitat' wording is never a rule, only named as superseded
+            for pid, p in (d.get("presets") or {}).items():
+                for k, v in p.items():
+                    if isinstance(v, str) and "salmon" in v.lower():
+                        self.assertIn("superseded", v, (name, pid, k))
+        self.assertEqual(self.ev("AK", [self.feat("high_value_property")])["suggested_label"], "Class II")
+        self.assertEqual(self.ev("AK", [self.feat("secondary_road")])["suggested_label"], "Class III")
+        r = self.ev("AK", [{"id": "e", "receptor_type": "environment", "anadromous_waters_damage": True}])
+        self.assertEqual(r["suggested_label"], "Class II")
+        self.assertEqual(self.ev("AK", [], {"probable_loss_of_life": True})["suggested_label"], "Class I")
+
+    def test_new_york_single_life(self):
+        self.assertEqual(self.cat.presets["NY"]["methods"]["M5"], {"sig_min": None, "high_min": 1})
+        self.assertEqual(self.ev("NY", [], {"lives_in_jeopardy": 1})["suggested_label"], "Class C")
+        self.assertEqual(self.cat.preset_status("NY"), "draft")
+
+    def test_nick_decisions_kept(self):
+        u = self.cat.presets["USBR"]["methods"]
+        self.assertEqual(u["M1"]["class_zones"], [])
+        self.assertEqual((u["M5"]["sig_min"], u["M5"]["high_min"]), (1, 7))
+        self.assertEqual(self.cat.preset_status("NRCS"), "unverified")       # kept: see status_review
+        self.assertIn("Summaries", self.cat.presets["NRCS"]["status_review"])
+        rules = {r["label"]: json.dumps(r["when"]) for r in self.cat.methods["M3"]["receptor_rules"]}
+        self.assertIn("depth_floor_ft", rules["institution High"])
+        self.assertIn("depth_foundation_ft", rules["institution Significant"])
+
+    def test_superseded_and_corrected_notes(self):
+        hz = self.cat.hazard["presets"]
+        self.assertIn("superseded", hz["VA"]["notes"])
+        self.assertNotIn("(unverified)", hz["VA"]["notes"])
+        self.assertIn("5.1.2", self.cat.presets["ND"]["notes"])
+        self.assertIn("61-03-25", self.cat.presets["ND"]["citation"])
+        self.assertIn("DWEE", self.cat.presets["NE"]["notes"])
+        self.assertIn("4.2.14", self.cat.presets["CO"]["notes"])
+        self.assertIn("TR-60", self.cat.scenarios["S3"]["breach_assumption"])
 
 
 class NidRule(unittest.TestCase):

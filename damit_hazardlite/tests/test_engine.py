@@ -116,5 +116,24 @@ class NoThresholdsInCode(unittest.TestCase):
             self.assertNotIn(word, code)
 
 
+class Nov2026Summaries(unittest.TestCase):
+    """Hazard Lite reads the catalog 2026.11.09.4 presets: AL, NC, USACE, TVA (M5 High at 1+ life, M13 fallback)."""
+
+    def test_new_presets_classify(self):
+        deep = [struct("s1", 6.5, vel=3.0, pop=2)]
+        for pid, label in (("AL", "High"), ("NC", "Class C"), ("USACE", "High"), ("TVA", "High")):
+            cfg = E.resolve(CAT, "preset", pid, None)
+            self.assertIn("method_fallback_m13", [f["code"] for f in cfg["flags"]], pid)
+            res = run(pid, deep, {"model_dimension": "2D", "hydraulics_source": "breach_model",
+                                  "lives_in_jeopardy": 2})
+            self.assertEqual(res["preset_id"], pid)
+            self.assertEqual(res["suggested_ordinal"], 3, pid)
+            self.assertEqual(res["suggested_label"], label, pid)
+
+    def test_texas_m4c_unchanged_with_m13(self):
+        self.assertEqual(run("TX", [struct("s1", 1.0, pop=7)])["suggested_ordinal"], 3)
+        self.assertEqual(run("TX", [struct("s1", 1.0, pop=2)])["suggested_ordinal"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

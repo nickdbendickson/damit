@@ -351,6 +351,15 @@ def _scenario(src, hz, sid, s, ordinals):
     return out
 
 
+def _source_document(s):
+    """The source line: the Appendix A document, then any supplement (catalog.json source.supplements)."""
+    out = "{} ({}), Appendix {} pp. {}".format(s.get("title", ""), s.get("date", ""),
+                                              s.get("appendix", ""), s.get("pages", ""))
+    for sup in s.get("supplements") or []:
+        out += "; {} ({})".format(sup.get("title", ""), sup.get("date", ""))
+    return out
+
+
 def build(src):
     """The classifier catalog (a plain JSON-able dict) from a DamIT Catalog object."""
     hz = src.hazard
@@ -363,9 +372,7 @@ def build(src):
         "schema": 1,
         "catalog_version": src.version,
         "damit_catalog": src.identity(),
-        "source_document": "{} ({}), Appendix {} pp. {}".format(
-            src.source.get("title", ""), src.source.get("date", ""),
-            src.source.get("appendix", ""), src.source.get("pages", "")),
+        "source_document": _source_document(src.source),
         "disclaimer": " ".join(x for x in (hz.get("disclaimer_lead"), src.disclaimer,
                                            hz.get("disclaimer_tail")) if x),
         "verification_legend": copy.deepcopy(hz["verification_legend"]),
@@ -469,6 +476,8 @@ def _preset(src, hz, pid, pr, ref):
         out["domains"] = list(pr["domain_cutoffs"])
     if pr.get("verification"):
         out["method_verification"] = dict(pr["verification"])
+    if not (pr.get("methods") or {}) or not pr.get("methods_confirmed", True):
+        out["method_fallback"] = True                 # the run is flagged: M13 and engineering judgment
     return out
 
 
@@ -584,7 +593,7 @@ def preset_config(cat, preset_id, overrides=None, apply_advisory=False):
             "scenarios": list(p["scenarios"]),
             "optional_scenarios": dict(p.get("optional_scenarios", {})),
             "scenarios_any_of": list(p.get("scenarios_any_of", [])),
-            "scenario_note": p.get("scenario_note", ""),
+            "scenario_note": p.get("scenario_note", ""), "method_fallback": bool(p.get("method_fallback")),
             "domains": domains, "methods": methods, "modifiers": mods,
             "labels": labels_for(cat, pid), "apply_advisory": bool(apply_advisory),
             "general": copy.deepcopy(cat["general"])}

@@ -27,9 +27,12 @@ scenario ID (S1–S7) records which run they are.
 
 ## Modes
 
-**Preset** – pick one of the DamIT Catalog presets (15 in the Nov 9, 2026 edition): FEMA 333
-baseline, USBR (ACER TM-11), BIA (secondary), NRCS (unverified), North Dakota, Nebraska, New
-York (draft), Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska. Class
+**Preset** – pick one of the DamIT Catalog presets (19 in catalog 2026.11.09.4: the 15 of Appendix A
+plus 4 from the Nov 2026 In-Depth Summaries): FEMA 333 baseline, USBR (ACER TM-11), BIA (secondary),
+NRCS (unverified), North Dakota, Nebraska, New York (draft), Virginia, Texas, Idaho, Colorado, Rhode
+Island, Arizona, California, Alaska, Alabama, North Carolina, USACE (secondary), TVA. Alabama, North
+Carolina, USACE and TVA have no jurisdiction-specific criteria in the sources: they run FEMA 333-style
+M5 (High at 1+ life) and M13, and every run gets a `method_fallback_m13` warning. Class
 labels are the jurisdiction's own. In `damit:classify` the `PRESET` list shows `ID: label`
 (e.g. `ND: North Dakota (REG_05.2026)`), and `PRESET_ID` takes a preset ID or alias as text
 (it wins over the list): `USBR` and `USBR_TM11` are the same preset.

@@ -19,8 +19,11 @@ import { analyze } from "./engine.ts";
 import type { DamRecord } from "./types.ts";
 
 describe("jurisdiction presets (Appendix A.6)", () => {
-  it("lists the fifteen presets of the source document", () => {
-    assert.deepEqual(presetIds().sort(), ["AK", "AZ", "BIA", "CA", "CO", "FEMA333", "ID", "NE", "ND", "NRCS", "NY", "RI", "TX", "USBR", "VA"].sort());
+  it("lists the fifteen Appendix A presets plus AL, NC, USACE and TVA from the Nov 2026 Summaries", () => {
+    assert.deepEqual(presetIds().sort(), ["AK", "AL", "AZ", "BIA", "CA", "CO", "FEMA333", "ID", "NC", "NE", "ND", "NRCS", "NY", "RI", "TVA", "TX", "USACE", "USBR", "VA"].sort());
+    assert.equal(CATALOG.presets.USACE.verification, "secondary");
+    assert.deepEqual(CATALOG.presets.NC.labels, { "1": "Class A", "2": "Class B", "3": "Class C" });
+    assert.match(CATALOG.sourceDocument, /In-Depth Summaries/);
   });
 
   it("defaults to the FEMA 333 national baseline, not a state", () => {
@@ -54,7 +57,7 @@ describe("jurisdiction presets (Appendix A.6)", () => {
   });
 
   it("enables the preset's ids, or exactly the ticked ids", () => {
-    assert.deepEqual(enabledIds({ mode: "preset", preset: "TX" }), ["M4c", "R5"]);
+    assert.deepEqual(enabledIds({ mode: "preset", preset: "TX" }), ["M4c", "M13", "R5"]);   // M13: 30 TAC 299.14 economic loss (Nov 2026 Summaries)
     assert.deepEqual(enabledIds({ mode: "custom", methods: ["S1", "M13"] }), ["S1", "M13"]);
   });
 

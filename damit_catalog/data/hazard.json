@@ -411,6 +411,22 @@
       "road:other_public": "secondary_roadway",
       "road:municipal": "secondary_roadway",
       "road:township_county": "secondary_roadway"
+     },
+     "texas_30TAC299.14": {
+      "home": "isolated_home",
+      "mobile_home": "isolated_home",
+      "rail:minor": "minor_railroad"
+     },
+     "alaska_11AAC93.157": {
+      "farm_unoccupied": "rural_structure",
+      "storage": "rural_structure",
+      "outbuilding": "rural_structure",
+      "road:township_county": "secondary_road",
+      "road:private": "secondary_road",
+      "road:interstate": "major_highway",
+      "road:us_state": "major_highway",
+      "rail:main": "major_railroad",
+      "lifeline": "major_utility"
      }
     },
     "auto_map_note": "auto_map is a DamIT Hazard default that guesses an M13 descriptor (catalog low/significant/high_kinds vocabulary) from the receptor type, keyed by the M13 wording: 'general' (catalog default) or the preset's M13 variant. A guessed descriptor is advisory; a home in the general wording is guessed as 'isolated_home' (Significant), a lower bound: serious damage to homes is High, and an engineer decides."
@@ -467,7 +483,7 @@
    "notes": "FEMA 333 (October 1998, reprinted April 2004)."
   },
   "USBR": {
-   "notes": "S5 for borderline dams is (unverified). TM-11 Figs 4\u20136 (vehicles, adults, children) are not digitized in this plugin: M1 flags those receptors."
+   "notes": "TM-11 Figs 4\u20136 (vehicles, adults, children) are not digitized in this plugin: M1 flags those receptors. S5 is for borderline dams."
   },
   "BIA": {
    "notes": "BIA's 1\u20136 Significant rule is from FEMA P-919 (July 2012): (secondary). No scenario confirmed: fall back to M13 and engineering judgment."
@@ -494,7 +510,7 @@
    "notes": "Class D (defunct dam) is an administrative status and is left out. Sunny-day and rainy-day breaches: the most severe governs."
   },
   "VA": {
-   "notes": "Significant may cause loss of life. Significant dams of 50,000 ac-ft or more held to the High SDF is (unverified) and not used here. M5 is the incremental-analysis variant: it supports lowering a proposed class only.",
+   "notes": "Significant may cause loss of life. M5 is the incremental-analysis variant: it supports lowering a proposed class only. Spillway design floods (4VAC50-20-50 Table 1) are keyed to hazard class only; the older size-based SDF classes ('Significant dams of 50,000 ac-ft or more', 2006-era drafts) are superseded (Summaries S-11) and not used.",
    "modifiers": {
     "R5": {
      "basis": "locally approved planned land use"
@@ -534,7 +550,19 @@
    ]
   },
   "AK": {
-   "notes": "Class I (High), II (Significant), III (Low)."
+   "notes": "Class I (High), II (Significant), III (Low) under 11 AAC 93.157."
+  },
+  "AL": {
+   "notes": "Alabama Dam Safety Program (AEMA), effective October 1, 2026; voluntary for private owners."
+  },
+  "NC": {
+   "notes": "Class A (Low), B (Intermediate), C (High) under 15A NCAC 02K .0105."
+  },
+  "USACE": {
+   "notes": "NID hazard fields use FEMA 333 terminology; loss of life controls (secondary)."
+  },
+  "TVA": {
+   "notes": "FEMA 333 tiers per TVA's impoundment disclosures."
   }
  },
  "presets_note": "Per-preset refinements DamIT Hazard needs that presets.json does not carry: notes, R5 basis wording and California's 'S1 or S2' choice. Keys are preset IDs or aliases. Preset status (NRCS unverified, NY draft), the USBR M1 'marks lives, returns no class' reading and New York's R2 floor presumption and R8 lowering-from-High variant are in presets.json, where DamIT Screener reads them as well."

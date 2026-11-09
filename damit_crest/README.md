@@ -10,7 +10,7 @@ what changed is the posture and the hand-off:
 
 - **Multi-jurisdiction.** Classification is consequence-based and jurisdiction-specific (US Dam Hazard Classification —
   Corrected Edition, Nov 9, 2026, Appendix A). The Report step has a *Jurisdiction and classification methods* panel:
-  **preset mode** (a state or agency preset: FEMA 333, USBR, BIA, NRCS, ND, NE, NY, VA, TX, ID, CO, RI, AZ, CA, AK) or
+  **preset mode** (a state or agency preset: FEMA 333, USBR, BIA, NRCS, USACE, TVA, ND, NE, NY, VA, TX, ID, CO, RI, AZ, CA, AK, AL, NC) or
   **custom mode** (tick S/D/M/R method ids, no jurisdiction names shown). The default is the FEMA 333 national
   baseline, not a state. Thresholds live in the hazard catalog data file that `damit:classify` reads, never in this
   app; the desk carries only a display index (`src/lib/crest/data/jurisdictions.json`, generated from

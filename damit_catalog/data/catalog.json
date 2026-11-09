@@ -1,7 +1,7 @@
 {
  "schema": "damit.catalog",
  "schema_version": 1,
- "catalog_version": "2026.11.09.3",
+ "catalog_version": "2026.11.09.4",
  "source": {
   "title": "US Dam Hazard Classification - Corrected Edition",
   "date": "2026-11-09",
@@ -15,7 +15,22 @@
    "A.5",
    "A.6",
    "A.7"
-  ]
+  ],
+  "supplements": [
+   {
+    "title": "In-Depth Summaries: Dam & Pond Hazard Classification - Federal Agencies and the States",
+    "short_title": "Dam Hazard Classification Summaries",
+    "date": "2026-11",
+    "printed": "2026-11-09",
+    "parts": [
+     "I (F-1 to F-9 federal)",
+     "II (S-1 to S-12 states)",
+     "III (cross-cutting tables)"
+    ],
+    "use": "Corrects and enriches presets where it is more current or more precise than Appendix A; adds the AL, NC, USACE and TVA presets. Its verification labels are honored (unmarked = confirmed; secondary / unverified items stay marked)."
+   }
+  ],
+  "reconfirmed": "Corrected Edition re-issued 2026-11-09 22:17 UTC: extracted text identical to the edition Appendix A was built from (18:28 UTC); Appendix A wording unchanged."
  },
  "files": {
   "methods": "methods.json",

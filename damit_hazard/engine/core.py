@@ -1138,6 +1138,10 @@ def _validate_runs(cat, cfg, runs, dam, flags):
             flags.add(WARNING, "scenario_none", "a run has no scenario ID")
         elif s not in cat["scenarios"]:
             flags.add(ERROR, "scenario_unknown", "unknown scenario ID {}".format(s))
+    if cfg.get("method_fallback"):
+        flags.add(WARNING, "method_fallback_m13", "the source documents give no confirmed method for "
+                  "this preset: its methods are FEMA 333-style defaults with the M13 fallback; "
+                  "engineering judgment needed", "M13")
     want = cfg.get("scenarios") or []
     for s in want:
         if s not in have:

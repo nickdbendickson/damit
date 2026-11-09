@@ -10,8 +10,8 @@ Depends on DamIT Core and DamIT Catalog; no DamSafety plugin and no North Dakota
    (`<STATE>/nsi`, `microsoft_footprints`, `osm`, `usa_structures`).
 2. **Work folder** – where DamIT Screener / Runner runs go; refused inside the data folder.
 3. **State** and **Preset** – choosing a state proposes the DamIT Catalog preset with that ID (ND, NE, NY,
-   VA, TX, ID, CO, RI, AZ, CA, AK); other states pick an agency preset (FEMA333, USBR / USBR_TM11, BIA,
-   NRCS) or custom mode.
+   VA, TX, ID, CO, RI, AZ, CA, AK, AL, NC); other states pick an agency preset (FEMA333, USBR / USBR_TM11,
+   BIA, NRCS, USACE, TVA) or custom mode.
 4. The suite check lists the DamIT plugins found; DamIT Core or DamIT Catalog missing, a missing DamIT
    dependency or a non-DamIT dependency turns **Continue** off with the reason shown.
 5. **Save** stores the folders and fills only empty settings (layer paths, state, preset).
