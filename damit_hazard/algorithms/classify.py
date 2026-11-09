@@ -96,6 +96,10 @@ class Classify(QgsProcessingAlgorithm):
                 "Rule-strength results set the suggestion; advisory results are listed beside "
                 "it and count only when 'Apply advisory results' is on. Missing inputs are "
                 "flagged in the report, never passed silently.<br><br>"
+                "NID dams only: the dam record (DAM_JSON) names the dam by its NID ID (USACE "
+                "National Inventory of Dams, e.g. ND00199) as dam_id or nid_id. A DWR-, DUG- or "
+                "other non-NID id fails; only a new / proposed dam (is_new) or a desk sample "
+                "(is_sample) may have none, with a warning.<br><br>"
                 "Receptor attributes are read by name (type, occupants, floor_elev / "
                 "floor_height_ft, aadt, road_class, func_class, sole_access, trains_per_day, "
                 "passenger, ...): see the plugin README.<br><br>"
@@ -153,7 +157,7 @@ class Classify(QgsProcessingAlgorithm):
             "EXTRA_RUNS", "More runs (JSON list: scenario, model_dim, depth, velocity, ...)",
             behavior=compat.FILE_FILE, extension="json", optional=True))
         self.addParameter(QgsProcessingParameterFile(
-            "DAM_JSON", "Dam record (JSON: storage_acft, current_class, is_new, ...)",
+            "DAM_JSON", "Dam record (JSON: dam_id = NID ID, nid_id, storage_acft, current_class, is_new, ...)",
             behavior=compat.FILE_FILE, extension="json", optional=True))
         self.addParameter(QgsProcessingParameterFile(
             "CHARTS_JSON", "Extra digitized TM-11 charts (JSON)", behavior=compat.FILE_FILE,
@@ -262,6 +266,14 @@ class Classify(QgsProcessingAlgorithm):
             with open(dam_path, encoding="utf-8") as f:
                 dam = json.load(f)
             layers_info.append(_stat(dam_path, "dam record"))
+            # NID dams only: the dam record needs its NID ID unless it is a new / proposed dam or a sample.
+            nid_error, nid_warning, _nid = core.nid_rule(dam)
+            if nid_error:
+                raise QgsProcessingException(
+                    nid_error + ". DamIT Hazard classifies NID dams: the dam record (DAM_JSON) needs "
+                    "dam_id = its NID ID (or nid_id); only is_new / is_sample records may have none.")
+            if nid_warning:
+                feedback.pushWarning("NID ID: " + nid_warning)
         name = self.parameterAsString(p, "DAM_NAME", context)
         if name:
             dam["name"] = name

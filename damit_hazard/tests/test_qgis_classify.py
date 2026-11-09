@@ -156,6 +156,44 @@ def test_preset_id_and_alias_headless():
     assert not ok
 
 
+def test_dam_json_needs_an_nid_id():
+    _app()
+    from qgis.core import QgsProcessingContext, QgsProcessingFeedback, QgsProject
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    try:
+        dep, vel = _rasters(d)
+        s, p, r = _layers(d)
+        from damit_hazard.engine import catalog as C
+        pids = [None] + list(C.load()["presets"])
+        alg = QgsApplication.processingRegistry().algorithmById("damit:classify")
+
+        def go(dam, name):
+            path = os.path.join(d, name + ".json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(dam, f)
+            ctx = QgsProcessingContext()
+            ctx.setProject(QgsProject.instance())
+            return alg.run({"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep,
+                            "VELOCITY": vel, "METRES": True, "STRUCTURES": s, "DAM_JSON": path,
+                            "OUTPUT": os.path.join(d, name)}, ctx, QgsProcessingFeedback())
+
+        res, ok = go({"dam_id": "ND00199", "storage_acft": 300}, "nid")
+        assert ok, res
+        rep = json.load(open(os.path.join(d, "nid", "damit_hazard_report.json"), encoding="utf-8"))
+        assert rep["nid_id"] == "ND00199"
+        for name, dam in (("dwr", {"dam_id": "DWR-2801"}), ("sample_id", {"dam_id": "SAMPLE-4031"})):
+            _res, ok = go(dam, name)
+            assert not ok, name
+            assert not os.path.isfile(os.path.join(d, name, "damit_hazard_report.json")), name
+        _res, ok = go({"dam_id": "desk-new1", "is_new": True}, "new")
+        assert ok
+        _res, ok = go({"dam_id": "local-sample", "is_sample": True}, "sample")
+        assert ok
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_custom_mode_headless():
     _app()
     d = tempfile.mkdtemp(prefix="damit_smoke_")

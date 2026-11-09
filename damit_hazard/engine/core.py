@@ -4,7 +4,8 @@
 
 runs: [{"scenario": "S3", "label": "...", "model_dim": "2D" | "1D" | None,
         "breach_location": optional, "has_non_breach": bool, "receptors": [receptor dicts]}]
-dam:  optional dam attributes (storage_acft, current_class, is_new, analysis,
+dam:  optional dam record: dam_id = the dam's NID ID (USACE National Inventory of Dams, e.g. ND00199),
+      nid_id, is_new, is_sample (see nid_rule), storage_acft, current_class, analysis,
       downstream_dam_classes, municipalities, development_curtailed, lives_in_jeopardy,
       population_inundation, access_controlled, eap_warning, evacuation_credit, name)
 
@@ -19,6 +20,7 @@ A method whose inputs are missing flags the gap (result["flags"]) instead of pas
 import datetime
 
 from . import catalog as C
+from . import catalog_bridge
 from . import tm11
 
 ERROR, WARNING, INFO = "error", "warning", "info"
@@ -42,6 +44,40 @@ class Flags(object):
             if rid is not None and rid not in f["receptors"]:
                 f["receptors"].append(rid)
         return f
+
+
+# ---------------------------------------------------------------- NID IDs ----------------
+# The dam inventory is the NID. The rule lives in DamIT Catalog (damit_catalog.handoff.nid_rule), shared with
+# DamIT Screener / Runner and the records DamIT Crest hands off; these are thin pass-throughs, not a copy.
+def _handoff():
+    ho = catalog_bridge.damit_handoff()
+    if not hasattr(ho, "nid_rule"):
+        raise catalog_bridge.CatalogMissing("This DamIT Catalog has no NID-ID rule (handoff.nid_rule); update the "
+                                            "'DamIT Catalog' plugin to the one shipped with this DamIT Hazard.")
+    return ho
+
+
+def is_nid_id(value):
+    """True for an NID ID (ND00199, TX12345). DWR-2801, DUG-130, SAMPLE-4031, DESK-014 and NEW are not."""
+    return _handoff().is_nid_id(value)
+
+
+def nid_rule(dam):
+    """DamIT Catalog's handoff.nid_rule: returns (error, warning, nid_id) for a dam record."""
+    return _handoff().nid_rule(dam)
+
+
+def _nid(dam, flags):
+    """Flag the dam record's NID ID (error / warning); returns the NID ID or None."""
+    if not any(dam.get(k) not in (None, "") for k in _handoff().NID_KEYS):
+        flags.add(INFO, "nid_none", "no dam id in the dam record: this result is not tied to an NID dam")
+        return None
+    error, warning, nid = nid_rule(dam)
+    if error:
+        flags.add(ERROR, "nid_id", error)
+    elif warning:
+        flags.add(WARNING, "nid_exception", warning)
+    return nid
 
 
 def _list(x):
@@ -1138,6 +1174,9 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
     dam = dict(dam or {})
     charts = charts or tm11.load()
     flags, notes = Flags(), []
+    nid = _nid(dam, flags)
+    if nid:
+        dam["nid_id"] = nid
     _validate_runs(cat, cfg, runs, dam, flags)
     base = int(cfg["general"].get("base_class", 1))
     apply_adv = bool(cfg.get("apply_advisory"))
@@ -1196,7 +1235,7 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
         "class_with_advisory": adv_cls, "advisory_applied": apply_adv,
         "driving": driving, "advisory": advisory, "hits": all_hits, "flags": flags.items,
         "per_scenario": per, "modifier_notes": notes, "per_receptor": per_rec,
-        "receptor_flags": flag_rec, "config": cfg, "dam": dam, "layers": layers or [],
+        "receptor_flags": flag_rec, "config": cfg, "dam": dam, "nid_id": nid, "layers": layers or [],
         "run_date": run_date or datetime.datetime.now().astimezone().isoformat(
             timespec="seconds"),
         "catalog_version": cat.get("catalog_version"), "disclaimer": cat.get("disclaimer"),

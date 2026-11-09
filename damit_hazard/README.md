@@ -84,8 +84,19 @@ it (one JSON file), e.g. for DamIT Crest's jurisdiction index.
 Rasters (feet, ft/s and ft²/s, or tick *metres*): maximum depth (required), velocity, DV,
 water-surface elevation, non-breach depth, arrival time. Layers: structures, roads, railroads,
 critical facilities, lifelines, environmental / cultural features, routed domain. Optional
-JSON: a dam record (`storage_acft`, `current_class`, `is_new`, ...), more runs (one per
-scenario), extra TM-11 charts.
+JSON: a dam record (`dam_id`, `nid_id`, `storage_acft`, `current_class`, `is_new`, `is_sample`, ...),
+more runs (one per scenario), extra TM-11 charts.
+
+**NID dams only.** The dam inventory is the USACE National Inventory of Dams (NID). A dam record
+needs the dam's NID ID (two letters and digits, e.g. `ND00199`): `dam_id` should be the NID ID, or
+`nid_id` carries it. damit:classify **fails** on a dam record whose `nid_id` is not an NID ID, whose
+`dam_id` is a state dam-safety / dugout style id (`DWR-2801`, `DUG-130`, `UNK-…`) or a different NID
+ID than its `nid_id`, or that has no NID ID at all (`SAMPLE-4031`, `DESK-014`, `NEW` are not NID IDs).
+The exceptions are a new / proposed dam (`is_new` true, or `new_or_existing` = new / proposed) and a desk
+sample (`is_sample` true): they run, with a warning (report flag `nid_exception`). The report lists the NID
+ID under *Inputs*. Without a dam record the result is flagged `nid_none` (not tied to an NID dam). The rule
+is DamIT Catalog's `handoff.nid_rule` (the same one DamIT Screener and Runner apply); `engine/core.py`
+`nid_rule` only passes through to it.
 
 Attribute names are matched case-insensitively; the first of these per field is used
 (`engine/receptors.py` has the full list):
