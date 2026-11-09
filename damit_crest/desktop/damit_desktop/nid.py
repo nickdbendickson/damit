@@ -25,11 +25,12 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from damit_desktop.nid_rule import NID_ID_RE, is_nid_id  # noqa: F401 (DamIT Catalog's NID ID format)
+
 #: Set by __main__.main() to <settings>/nid; tests set it directly.
 NID_DIR: Path | None = None
 
 QUERY_URL = "https://nid.sec.usace.army.mil/api/query?sy=%40stateKey%3A{state}&out=csv"
-NID_ID_RE = re.compile(r"[A-Z]{2}\d{3,}")
 #: The NID's state and territory codes (the desk's state picker, src/lib/crest/nid-state.ts).
 STATES = frozenset(
     "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR "
@@ -134,7 +135,7 @@ def convert_csv(text: str, state: str, fetched_utc: str | None = None, url: str 
         if fed != nid:
             dropped.append({"federalId": fed, "nid": nid, "name": _str(get(row, "Dam Name"))})
             continue
-        if not NID_ID_RE.fullmatch(nid.upper()):
+        if not is_nid_id(nid):
             warnings.append(f"{nid}: not an NID ID, skipped")
             continue
         if nid in seen:

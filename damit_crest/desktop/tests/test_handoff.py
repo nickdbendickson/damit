@@ -688,6 +688,16 @@ class GateTests(unittest.TestCase):
             r = run_model(bad, ANALYSIS, work, self.log(), model="builtin")
             self.assertIn("nidProblem", r)
         self.assertNotIn("DWR-4031", self.calls_text())
+        # A new dam (or sample) whose desk id is another inventory's (DWR-2801): DamIT Catalog's rule refuses it, so
+        # Crest stops before qgis_process instead of handing off a record the plugins would refuse.
+        for bad in ({**DAM, "nid": "", "id": "DWR-2801", "isNew": True}, {**DAM, "nid": "SAMPLE-4031", "id": "DWR_2801"}):
+            for run in (run_screening, run_classify):
+                r = run(bad, ANALYSIS, work, self.log())
+                self.assertFalse(r["ok"])
+                self.assertIn("another inventory's id", r["nidProblem"])
+            self.assertIn("nidProblem", run_model(bad, ANALYSIS, work, self.log(), model="builtin"))
+        self.assertNotIn("DWR-2801", self.calls_text())
+        self.assertNotIn("DWR_2801", self.calls_text())
         # A new (proposed) dam: handed off under its desk id, is_new, no nid_id.
         new = {**DAM, "nid": "", "id": "desk-new1", "isNew": True}
         r = run_screening(new, ANALYSIS, work, self.log())

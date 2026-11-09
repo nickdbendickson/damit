@@ -19,6 +19,7 @@ import {
   loadNidData,
   makeNidData,
   missingForNext,
+  NID_ID_RE,
   nidHazardLine,
   prefillPatch,
   revertPatch,
@@ -368,5 +369,23 @@ describe("hand-off ids (NID IDs only)", () => {
     assert.deepEqual(handoffIds(fresh), { damId: fresh.id, nidId: null, isNew: true, isSample: false });
     assert.equal(handoffIds({ id: "x", nid: "DWR-4031" }).damId, "x");
     assert.equal(handoffIds({ id: "x", nid: "NEW" }).nidId, null);
+  });
+});
+
+describe("NID ID format is DamIT Catalog's", () => {
+  // The one rule is damit_catalog/handoff.py (nid_rule, NID_ID_RE). The desk's browser copy of the format and the
+  // NID bundle build must match it; a change in Catalog fails here until these follow.
+  const catalog = readFileSync(new URL("../../../../damit_catalog/handoff.py", import.meta.url), "utf8");
+  const m = /^NID_ID_RE = re\.compile\(r"([^"]+)"\)$/m.exec(catalog);
+  it("reads Catalog's NID_ID_RE", () => assert.ok(m, "NID_ID_RE not found in damit_catalog/handoff.py"));
+  it("nid-dams.ts NID_ID_RE is ^<Catalog pattern>$ (Catalog uses fullmatch)", () => {
+    assert.equal(NID_ID_RE.source, `^${m![1]}$`);
+    assert.equal(NID_ID_RE.flags, "");
+  });
+  it("scripts/build-nid-dams.mjs uses the same pattern", () => {
+    const build = readFileSync(new URL("../../../scripts/build-nid-dams.mjs", import.meta.url), "utf8");
+    const lits = [...build.matchAll(/\/\^\[A-Z\]\{2\}(\\d[^/]*)\$\//g)].map((x) => `[A-Z]{2}${x[1]}`);
+    assert.ok(lits.length >= 1, "no NID ID literal in build-nid-dams.mjs");
+    for (const lit of lits) assert.equal(lit, m![1]);
   });
 });
