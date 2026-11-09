@@ -25,6 +25,20 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 rasters and receptors. DamIT Screener and DamIT Runner do not use the `damit` provider id and do not classify
 finished rasters.
 
+**NID dams only.** The dam inventory for every DamIT plugin is the USACE National Inventory of Dams (NID).
+A dam record needs an NID ID (two letters and digits, e.g. `ND00199`): `dam_id` should be the NID ID, or a
+`nid_id` field carries it (a different `dam_id` with a valid `nid_id` passes with a warning). Refused, even
+when `nid_id` is set or the record is new / a sample: a `nid_id` that is not an NID ID, a `dam_id` that is a
+different NID ID than `nid_id`, and a state dam-safety / dugout / unknown-structure id (`DWR-2801`, `DUG-130`,
+`UNK-…`). The only records allowed without an NID ID are a new / proposed dam (`is_new` true or
+`new_or_existing` = new / proposed) and a desk sample (`is_sample` true); they pass with a warning / gap.
+One rule, `handoff.nid_rule` in DamIT Catalog, used by DamIT Screener (a dam problem, FAIL), DamIT Runner (the
+package is rejected) and DamIT Hazard (`damit:classify` fails on such a `DAM_JSON`). DamIT Crest hands off
+`dam_id` = NID ID, `nid_id`, `is_new` and `is_sample` (and `NID_ID` / `IS_NEW` / `IS_SAMPLE` to
+`damit_run:rundam`) and stops before `qgis_process` on a record the plugins would refuse. Presets (including
+North Dakota REG_05.2026) are unchanged.
+
+
 DamIT Hazard, DamIT Screener and DamIT Runner all declare `plugin_dependencies=DamIT Catalog` and read their
 presets, methods and thresholds from it, so install DamIT Catalog first (the QGIS Plugin Manager offers it). None of the DamIT plugins depend on the DamSafety / DWR plugins.
 
@@ -107,7 +121,7 @@ to a finished run. Defined in `damit_catalog/handoff.py`. Key fields:
 * `mode`, `preset_id` / `preset_label` or the custom method list, `scenarios` (S-codes with pool / analyses),
   `conditional_scenarios`, `domain_cutoffs`, `methods` (resolved params + strength), `modifiers`, `label_map`,
   `apply_advisories`;
-* `dam`: `dam_id`, name, x / y / crs, height, top of dam, normal pool, spillway, PMF peak, existing class,
+* `dam`: `dam_id` (the NID ID), `nid_id`, `is_new`, `is_sample`, name, x / y / crs, height, top of dam, normal pool, spillway, PMF peak, existing class,
   storage at top of dam, `scenario_pools` (pool elevation and storage per S-code), breach azimuth, peak outflow;
 * `inputs`: `terrain`, `hydrograph_csv`, `storage_curve_csv`, `receptors_json` (paths, never copied);
 * `screening`: preliminary suggestion (when receptor hydraulics exist) with driving receptors, advisories,

@@ -122,12 +122,12 @@ class Integration(unittest.TestCase):
         self.assertIsNone(reg.algorithmById("damit_run:classify"))
 
     def _dams(self):
-        return point_layer([{"_x": 500000.0, "_y": 5200000.0, "ID": "ND-9", "HT": 30.0, "STOR": 450.0,
+        return point_layer([{"_x": 500000.0, "_y": 5200000.0, "ID": "ND00009", "HT": 30.0, "STOR": 450.0,
                              "TOD": 1530.0, "NP": 1520.0, "PMF": 1534.0}],
                            [("ID", "s"), ("HT", "d"), ("STOR", "d"), ("TOD", "d"), ("NP", "d"), ("PMF", "d")])
 
     def _receptors(self):
-        return point_layer([{"_x": 500100.0, "_y": 5199900.0, "id": "h1", "dam_id": "ND-9",
+        return point_layer([{"_x": 500100.0, "_y": 5199900.0, "id": "h1", "dam_id": "ND00009",
                              "receptor_type": "structure", "structure_type": "home", "habitable": True,
                              "depth_ground_ft": 2.6, "feature_kind": "isolated_home"}],
                            [("id", "s"), ("dam_id", "s"), ("receptor_type", "s"), ("structure_type", "s"),
@@ -145,8 +145,8 @@ class Integration(unittest.TestCase):
                                                        "DAMS": self._dams(), "FIELD_MAP": "dam_id=ID"})
         self.assertTrue(r["READY"])
         titles = {c["title"]: c for c in r["CHECKS"]}
-        self.assertEqual(titles["Dam ND-9 inputs"]["status"], "warn")
-        self.assertIn("height_ft", titles["Dam ND-9 inputs"]["detail"])
+        self.assertEqual(titles["Dam ND00009 inputs"]["status"], "warn")
+        self.assertIn("height_ft", titles["Dam ND00009 inputs"]["detail"])
         self.assertEqual(titles["Receptors"]["status"], "warn")
 
     def test_chain_handoff_rundam_round_trip(self):
@@ -179,7 +179,7 @@ class Integration(unittest.TestCase):
                 processing.run("damit_run:rundam", {"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs, "ENGINE": engine})
         with self.assertRaises(QgsProcessingException):
             processing.run("damit_run:rundam", {"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs, "DRY_RUN": False})
-        self.assertEqual(len(os.listdir(os.path.join(runs, "ND-9"))), 1)
+        self.assertEqual(len(os.listdir(os.path.join(runs, "ND00009"))), 1)
 
     def test_runchain_refuses_on_preflight_fail(self):
         import processing

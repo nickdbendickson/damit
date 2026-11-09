@@ -378,3 +378,50 @@ def test_usbr_alias_classifies_the_same():
     a, b = run(preset("USBR"), recs), run(preset("USBR_TM11"), recs)
     assert a["suggested_class"] == b["suggested_class"]
     assert a["config"]["preset"] == b["config"]["preset"] == "USBR"
+
+
+# ---------------------------------------------------------------- NID dams only -----------
+def test_nid_rule():
+    rule = core.nid_rule
+    assert rule({"dam_id": "ND00199"}) == (None, None, "ND00199")
+    assert rule({"dam_id": "nd00199"})[2] == "ND00199"
+    err, warn, nid = rule({"dam_id": "Swan 12", "nid_id": "ND00199"})
+    assert err is None and "dam_id = NID ID preferred" in warn and nid == "ND00199"
+    for bad in ({"dam_id": "DWR-2801"}, {"dam_id": "DUG-130", "nid_id": "ND00199"}, {"dam_id": "UNK-9"},
+                {"dam_id": "x", "nid_id": "DWR-2801"}, {"dam_id": "SAMPLE-4031"}, {"dam_id": "DESK-014"},
+                {"dam_id": "NEW"}, {"dam_id": "x", "is_new": False}):
+        assert rule(bad)[0], bad
+    for good in ({"dam_id": "desk-1", "is_new": True}, {"dam_id": "desk-1", "is_new": "true"},
+                 {"dam_id": "p", "new_or_existing": "new"}, {"dam_id": "local-sample", "is_sample": True}):
+        err, warn, nid = rule(good)
+        assert err is None and warn and nid is None, good
+    assert core.is_nid_id("TX12345") and not core.is_nid_id("ND-001") and not core.is_nid_id(None)
+
+
+
+def test_nid_rule_is_damit_catalogs():
+    """One rule: DamIT Hazard uses DamIT Catalog's handoff.nid_rule, not a copy."""
+    from damit_catalog import handoff as HO
+    assert not hasattr(core, "NID_ID_RE") and not hasattr(core, "OTHER_INVENTORY_RE")
+    for dam in ({"dam_id": "ND00199"}, {"nid_id": "ND00199"}, {"dam_id": "Swan 12", "nid_id": "ND00199"},
+                {"dam_id": "ND00001", "nid_id": "ND00002"}, {"dam_id": "DWR2801"},
+                {"dam_id": "DWR-2801", "is_new": True}, {"dam_id": "desk-1", "is_new": True},
+                {"dam_id": "local-sample", "is_sample": "yes"}, {"dam_id": "x"}, {}):
+        assert core.nid_rule(dam) == HO.nid_rule(dam), dam
+
+
+def test_classify_flags_the_dam_nid_id():
+    cfg = preset("ND")
+    recs = [home("h1", depth=1.0)]
+    res = run(cfg, recs, dam={"dam_id": "ND00199", "storage_acft": 300})
+    assert res["nid_id"] == "ND00199" and res["dam"]["nid_id"] == "ND00199"
+    assert not codes(res) & {"nid_id", "nid_exception", "nid_none"}
+    assert "NID ID: ND00199" in report.markdown(res, CAT)
+    res = run(cfg, recs, dam={"dam_id": "DWR-2801"})
+    assert "nid_id" in codes(res, "error") and res["nid_id"] is None
+    res = run(cfg, recs, dam={"dam_id": "desk-new1", "is_new": True})
+    assert "nid_exception" in codes(res, "warning") and res["nid_id"] is None
+    res = run(cfg, recs, dam={"dam_id": "local-sample", "is_sample": True})
+    assert "nid_exception" in codes(res, "warning")
+    res = run(cfg, recs, dam={"storage_acft": 300})
+    assert "nid_none" in codes(res, "info")

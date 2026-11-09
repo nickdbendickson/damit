@@ -5,6 +5,9 @@ parameters, validates it against DamIT Catalog, and prepares a NEW run folder wi
 run_setup.json, a copy of the package and the expected-output contract that DamIT Hazard
 (damit:classify) will read after a model run.
 
+NID dams only: the package's dam must carry an NID ID (dam_id or nid_id), or be marked new / proposed
+(is_new) or a desk sample (is_sample); DamIT Catalog's handoff.nid_rule decides, and validate() refuses the rest.
+
 0.1.0 is prepare / record only: it never starts LISFLOOD-FP, ANUGA, HEC-RAS, Wine,
 ndbreach:rundam or ndbreach:batch. Any request for a model engine is refused.
 """
@@ -109,6 +112,9 @@ def prepare_run(pkg, out_root, cat=None, engine=ENGINE_NONE, dry_run=True, now=N
     if errs:
         raise RunError("hand-off package rejected: " + "; ".join(errs))
     dam = pkg["dam"]
+    _, nid_warning, nid = HO.nid_rule(dam)
+    if nid and not dam.get("nid_id"):
+        dam = dict(dam, nid_id=nid)
     folder = new_run_folder(out_root, dam["dam_id"], now)
     os.makedirs(os.path.join(folder, "outputs"))
     HO.write(pkg, folder)
@@ -118,7 +124,8 @@ def prepare_run(pkg, out_root, cat=None, engine=ENGINE_NONE, dry_run=True, now=N
         "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "created_by": {"plugin": "damit_runner", "version": VERSION, "algorithm": "damit_run:rundam"},
         "status": "prepared", "model_launched": False, "engine": "none", "dry_run": True,
-        "dam": dam, "mode": pkg.get("mode"), "preset_id": pkg.get("preset_id"),
+        "dam": dam, "nid_id": nid, "nid_warning": nid_warning,
+        "mode": pkg.get("mode"), "preset_id": pkg.get("preset_id"),
         "preset_label": pkg.get("preset_label"),
         "scenarios": pkg.get("scenarios"), "conditional_scenarios": pkg.get("conditional_scenarios") or [],
         "domain_cutoffs": pkg.get("domain_cutoffs") or [], "methods": pkg.get("methods"),
