@@ -156,6 +156,9 @@ describe("prefill", () => {
     assert.ok(replaced.includes("surfaceAreaAc") && replaced.includes("classOfRecord"));
     assert.match(confirmText(replaced), /^Fill this record from the NID\? These fields will be replaced: .*crest \(cleared\).*class of record \(cleared\)/);
     assert.equal(patch.surfaceAreaAc, undefined);
+    const fromNew = prefillPatch(dam("ND00486"), data, { ...cur, isNew: true });
+    assert.equal(fromNew.patch.isNew, undefined, "another dam does not inherit the New dam box");
+    assert.ok(fromNew.replaced.includes("isNew"));
     const again = prefillPatch(dam("ND00486"), data, { ...cur, ...patch, surfaceAreaAc: 40 });
     assert.ok(!("surfaceAreaAc" in again.patch), "re-applying the same dam leaves area as it was");
   });

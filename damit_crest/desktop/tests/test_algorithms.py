@@ -463,6 +463,33 @@ class ClassificationTests(Base):
         self.assertIn("--DAM_JSON=" + str(Path(result["folder"]) / "damit_dam.json"), run)
         self.assertEqual(result["suggestedClass"], "Significant")
 
+    def test_classify_record_maps_the_class_of_record_and_writes_is_new(self):
+        dam = {**DAM, "depthRaster": self.depth(), "classOfRecord": "ND MEDIUM (NID hazard Significant)",
+               "classification": {"mode": "preset", "preset": "FEMA333", "presetLabel": "FEMA P-333 baseline"}}
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(result["ok"], self.lines)
+        record = json.loads((Path(result["folder"]) / "damit_dam.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["current_class"], 2)
+        self.assertEqual(record["class_of_record_text"], "ND MEDIUM (NID hazard Significant)")
+        self.assertIs(record["is_new"], False)
+
+    def test_classify_record_new_dam_and_unmapped_class(self):
+        dam = {**DAM, "depthRaster": self.depth(), "isNew": True, "classOfRecord": "class of record (cleared)",
+               "classification": {"mode": "custom", "methods": ["S6", "M1", "R6"]}}
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
+        record = json.loads((Path(result["folder"]) / "damit_dam.json").read_text(encoding="utf-8"))
+        self.assertIs(record["is_new"], True)
+        self.assertNotIn("current_class", record)  # unmapped: omitted, never the raw text
+        self.assertTrue(result["ok"], self.lines)
+
+    def test_is_new_is_not_inferred(self):
+        from damit_desktop.handoff import write_classify_record
+        for extra in ({}, {"classOfRecord": None}, {"isNew": "yes"}, {"isNew": 1}):
+            with tempfile.TemporaryDirectory() as d:
+                record = json.loads(write_classify_record(Path(d), {**DAM, **extra}).read_text(encoding="utf-8"))
+            self.assertIs(record["is_new"], False, extra)
+            self.assertNotIn("current_class", record)
+
     def test_classify_custom_mode_splits_the_ids(self):
         dam = {**DAM, "depthRaster": self.depth(),
                "classification": {"mode": "custom", "methods": ["S1", "M2", "M8a", "R1"]}}
@@ -492,6 +519,40 @@ class ClassificationTests(Base):
         self.assertFalse(result["ok"])
         self.assertEqual(result["missingAlgorithm"], "damit:classify")
         self.assertNotIn("run ", self.calls_text())
+
+
+class ClassOrdinalTests(unittest.TestCase):
+    """hazard_class.class_ordinal: the class of record as damit:classify's current_class (0 Minimal ... 4 Extremely High)."""
+
+    def test_the_crest_nd_sample_string(self):
+        from damit_desktop.hazard_class import class_ordinal
+        self.assertEqual(class_ordinal("ND MEDIUM (NID hazard Significant)"), 2)
+        self.assertEqual(class_ordinal("NID hazard Significant"), 2)
+        self.assertEqual(class_ordinal("ND HIGH (NID hazard High)"), 3)
+        self.assertEqual(class_ordinal("ND LOW (NID hazard Low)"), 1)
+
+    def test_plain_labels_longest_phrase_first(self):
+        from damit_desktop.hazard_class import class_ordinal
+        cases = {
+            "Minimal": 0, "Very Low": 0, "very-low": 0, "No Public Hazard": 0, "Low": 1, "low hazard": 1,
+            "Significant": 2, "Medium": 2, "Intermediate": 2, "High": 3, "HIGH": 3, "High (flagged)": 3,
+            "Extremely High": 4, "extremely_high": 4, "Class A": 1, "class B": 2, "Class C": 3, "classc": 3,
+        }
+        for text, ordinal in cases.items():
+            self.assertEqual(class_ordinal(text), ordinal, text)
+
+    def test_numeric_inputs(self):
+        from damit_desktop.hazard_class import class_ordinal
+        for value, ordinal in ((0, 0), (2, 2), (4, 4), (3.0, 3), ("1", 1), (" 4 ", 4), ("2.0", 2)):
+            self.assertEqual(class_ordinal(value), ordinal, value)
+        for value in (5, -1, 2.5, "7", float("nan"), float("inf"), True, False):
+            self.assertIsNone(class_ordinal(value), value)
+
+    def test_unmapped_and_empty(self):
+        from damit_desktop.hazard_class import class_ordinal
+        for value in (None, "", "   ", "Undetermined", "unknown", "Not rated", "class of record (cleared)",
+                      "Review", "banana", "Class D", [], {}):
+            self.assertIsNone(class_ordinal(value), value)
 
 
 class DataFolderTests(Base):

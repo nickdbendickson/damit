@@ -127,4 +127,16 @@ describe("hand-off to the DamIT plugins", () => {
     assert.equal(j.classification.mode, "preset");
     assert.equal(j.classification.preset, "FEMA333");
   });
+
+  it("is_new is false unless the New dam box is ticked, and never inferred from a missing class of record", () => {
+    for (const d of SAMPLE_DAMS) assert.notEqual(d.isNew, true, `${d.nid} is a sample of an existing dam`);
+    const blank = blankDam();
+    assert.equal(blank.isNew, undefined);
+    assert.equal(blank.classOfRecord, undefined);
+    assert.equal(JSON.parse(exportDamJson(blank, analyze(blank))).is_new, false);
+    const nd = SAMPLE_DAMS.find((x) => x.nid === "ND00199")!;
+    assert.equal(JSON.parse(exportDamJson(nd, analyze(nd))).is_new, false);
+    assert.equal(JSON.parse(exportDamJson({ ...nd, isNew: true }, analyze(nd))).is_new, true);
+    assert.equal(handoffDam({ ...nd, isNew: true }).isNew, true);
+  });
 });

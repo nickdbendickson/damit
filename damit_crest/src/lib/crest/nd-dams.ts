@@ -337,6 +337,7 @@ export const FIELD_LABEL: Record<string, string> = {
   normalPoolFt: "normal pool (cleared)",
   surfaceAreaAc: "surface area (cleared)",
   classOfRecord: "class of record (cleared)",
+  isNew: "new dam flag (cleared)",
   geometry: "drawn dam, breach point and AOI (cleared)",
 };
 
@@ -415,6 +416,8 @@ export function prefillPatch(
     Object.assign(patch, {
       surfaceAreaAc: undefined,
       classOfRecord: undefined,
+      // A different dam starts as an existing dam; "New dam" is never carried over or inferred.
+      isNew: undefined,
       sampleNote: undefined,
       geometry: undefined,
       reachKm: undefined,
@@ -428,6 +431,7 @@ export function prefillPatch(
     } as Partial<DamRecord>);
     if (current?.surfaceAreaAc != null) replaced.push("surfaceAreaAc");
     if (current?.classOfRecord) replaced.push("classOfRecord");
+    if (current?.isNew) replaced.push("isNew");
     if (current?.geometry) replaced.push("geometry");
   }
   return { patch, replaced };

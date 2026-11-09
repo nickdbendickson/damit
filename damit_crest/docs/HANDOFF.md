@@ -86,8 +86,32 @@ Details:
   engine choice or `DRY_RUN=false`.
 - **Classify** needs the model run's maximum depth raster: type its path under *Depth raster* (velocity optional).
   Without it, or when the installed algorithm does not list the chosen preset, the job stops before running.
-  `damit_dam.json` is a flat record (`dam_id`, `name`, `storage_acft`, `height_ft`, `current_class`,
-  `failure_mode`).
+  `damit_dam.json` is a flat record: `dam_id`, `name`, `storage_acft`, `height_ft`, `current_class`, `is_new`,
+  `failure_mode`, and `class_of_record_text` (the original class-of-record text, for people; classify ignores it).
+  See *Class of record and new dams* below.
+
+## Class of record and new dams (`damit_dam.json`)
+
+`damit:classify` reads `current_class` and `is_new` from `DAM_JSON`: S6 looks up `by_current_class` with `"new"`
+when `is_new` is true, else `str(current_class)`; R8's lowering-from-High rule does `int(current_class)`; R6
+(new-dam proximity) runs only when `is_new` is true.
+
+**`current_class`** is the dam's class of record as the catalog ordinal (0 Minimal, 1 Low, 2 Significant, 3 High,
+4 Extremely High), mapped in one place, `desktop/damit_desktop/hazard_class.py` (`class_ordinal`):
+
+- an int, or a string `"0"`–`"4"`, is used as is; anything outside 0–4 (or a bool, NaN) is not mapped;
+- otherwise the text is matched against known labels and the **earliest** match wins, so the primary class leads:
+  `"ND MEDIUM (NID hazard Significant)"` → 2. Longer phrases are listed before the words they contain
+  (`extremely high` before `high`, `very low` before `low`). Labels: Minimal / Very Low / No Public Hazard → 0,
+  Low → 1, Significant / Medium / Intermediate / Moderate → 2, High → 3, Extremely High → 4, and Class A → 1,
+  Class B → 2, Class C → 3 (New York style; classify already reads "class c" as 3);
+- text that says there is no class (Undetermined, Unknown, Not rated / classified, cleared, Review, N/A) or that
+  matches no label gives no ordinal, and **`current_class` is omitted** — the raw text is never sent as the class.
+
+**`is_new`** is always written as a boolean. It is `true` only when the **New dam** box on the Record step (under the
+dam fields) is ticked (`DamRecord.isNew`, persisted with the dam). It defaults to unticked / `false`, is never inferred
+from a missing class of record, is cleared when the record is filled from another NID dam, and is `false` on every
+sample dam. The desk's `dam.json` export carries it too (`is_new`).
 
 ## Failure mode default
 

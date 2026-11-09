@@ -40,6 +40,8 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
     lon: loc?.lon ?? null,
     method: dam.method,
     failure_mode: dam.failureMode === "overtopping" ? "overtopping" : "piping",
+    // A new dam only when the Record step's "New dam" box is ticked (never inferred).
+    is_new: dam.isNew === true,
     // Jurisdiction context for damit:classify (preset or custom mode); no thresholds, those live in its catalog.
     classification: handoffChoice(dam.classification),
     screened: {

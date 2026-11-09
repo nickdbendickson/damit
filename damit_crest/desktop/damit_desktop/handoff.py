@@ -14,6 +14,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from damit_desktop.hazard_class import class_ordinal
+
 # One lock per dam folder. The desktop server runs one thread per request, so two jobs on the same dam would both
 # read dam.json, merge, and write — the second clobbering the first (a lost field or status entry). Serialise the
 # read-merge-write per folder. Keyed by resolved path; the set stays tiny (a handful of dams per session).
@@ -466,14 +468,21 @@ def write_dam_point(folder: Path, dam: dict, analysis: dict | None = None) -> Pa
 
 
 def write_classify_record(folder: Path, dam: dict) -> Path:
-    """<folder>/damit_dam.json: the flat dam record damit:classify's DAM_JSON reads (storage_acft, current_class...)."""
+    """<folder>/damit_dam.json: the flat dam record damit:classify's DAM_JSON reads.
+
+    current_class is the class of record as an ordinal 0-4 (hazard_class.class_ordinal), omitted when it cannot be
+    mapped; the original text goes in class_of_record_text for people (classify ignores it). is_new is always written
+    as a boolean, false unless the desk's "New dam" box is ticked."""
     dam = dam or {}
+    raw_class = dam.get("classOfRecord")
     record = {
         "dam_id": str(dam.get("nid") or dam.get("id") or "dam"),
         "name": dam.get("name") or None,
         "storage_acft": _num(dam.get("storageAcFt")),
         "height_ft": _num(dam.get("heightFt")),
-        "current_class": dam.get("classOfRecord") or None,
+        "current_class": class_ordinal(raw_class),
+        "class_of_record_text": raw_class.strip() if isinstance(raw_class, str) and raw_class.strip() else None,
+        "is_new": dam.get("isNew") is True,
         "failure_mode": resolved_failure_mode(dam),
     }
     path = Path(folder) / "damit_dam.json"

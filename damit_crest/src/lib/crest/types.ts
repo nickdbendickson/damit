@@ -113,6 +113,11 @@ export type DamRecord = {
   datumNote?: string;
   /** Class of record, if one exists (e.g. a DWR benchmark). The desk screen is shown against it, never as it. */
   classOfRecord?: string;
+  /**
+   * A new (proposed or not yet built) dam. Set only by the "New dam" box on the Record step; never inferred from a
+   * missing class of record. Unset = false. Sent to damit:classify as is_new (S6 starting condition, R6 proximity).
+   */
+  isNew?: boolean;
   /** A note shown with the screen (sample records). */
   sampleNote?: string;
   /** LISFLOOD-FP export settings. Default: 10 m cells, point = breach location in UTM 14N. */

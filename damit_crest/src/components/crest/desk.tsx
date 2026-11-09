@@ -526,6 +526,21 @@ function RecordStep({ dam, result }: { dam: DamRecord; result: ReturnType<typeof
             />
           ) : null}
         </div>
+        <label className="mt-3 flex items-start gap-2 text-sm" data-testid="new-dam">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={dam.isNew === true}
+            onChange={(e) => update({ isNew: e.target.checked })}
+          />
+          <span>
+            New dam (proposed or not yet built)
+            <span className="block text-xs text-muted">
+              Unticked = an existing dam. Sent to damit:classify as is_new; it changes the starting class (S6) and turns
+              on the new-dam proximity check (R6). A missing class of record does not make a dam new.
+            </span>
+          </span>
+        </label>
         <LocationPanel dam={dam} />
       </div>
       <aside className="rounded-md border border-line bg-sand p-4">
