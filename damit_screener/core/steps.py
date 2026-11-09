@@ -13,7 +13,9 @@ from . import catalog_bridge as CB
 STATUS_OK, STATUS_GAP, STATUS_FAIL, STATUS_NOT_RUN = "ok", "gap", "fail", "not_run"
 
 # standard dam record fields (feet, acre-feet, degrees); field_map maps layer fields onto these
-DAM_FIELDS = ("dam_id", "name", "height_ft", "storage_acft", "top_of_dam_elev_ft", "normal_pool_elev_ft",
+# dam_id is the NID ID (USACE National Inventory of Dams); nid_id carries it when dam_id is something else.
+DAM_FIELDS = ("dam_id", "nid_id", "is_new", "is_sample", "name", "height_ft", "storage_acft", "top_of_dam_elev_ft",
+              "normal_pool_elev_ft",
               "emergency_spillway_elev_ft", "pmf_peak_elev_ft", "peak_pool_100yr_elev_ft", "existing_class",
               "new_or_existing", "breach_azimuth_deg", "surface_area_ac", "storage_curve_csv",
               "hydrograph_csv", "flood_hydrograph_csv", "breach_locations", "downstream_dam_class")
@@ -23,6 +25,24 @@ NUMERIC = ("height_ft", "storage_acft", "top_of_dam_elev_ft", "normal_pool_elev_
 FT = 0.3048
 ACFT_M3 = 1233.4818375
 CFS_PER_CMS = 35.3146667
+
+
+def nid_check(d):
+    """Apply DamIT Catalog's NID-ID rule (handoff.nid_rule) to a prepared record; sets nid_id / is_new / is_sample.
+
+    Returns (problem or None, step): a record needs an NID ID (nid_id, or a dam_id that is an NID ID); a non-NID
+    nid_id or a DWR- / DUG- / UNK-style dam_id is a problem (FAIL); a new / proposed dam (is_new) or a desk sample
+    (is_sample) may lack one and passes with a GAP."""
+    _, _, HO = CB.modules()
+    d["is_new"] = HO.is_new_dam(d)
+    d["is_sample"] = HO.flag(d.get("is_sample"))
+    error, warning, nid = HO.nid_rule(d)
+    if error:
+        return error, None
+    d["nid_id"] = nid
+    if warning:
+        return None, step(STATUS_GAP, warning, nid_id=nid)
+    return None, step(STATUS_OK, "NID ID {}".format(nid), nid_id=nid)
 
 
 def _num(v):
@@ -44,7 +64,9 @@ def step(status, detail="", **extra):
 # ---------------------------------------------------------------- 1 prepare --
 def prepare(records, field_map=None):
     """Normalize raw dam records ({field: value, '_x', '_y', '_crs'}) to DamIT dam records.
-    Returns (dams, problems). A record with no dam_id or a duplicate id is a problem, not dropped silently."""
+    Returns (dams, problems). A record with no dam_id, a duplicate id, or no NID ID (nid_check: only a new /
+    proposed dam or a desk sample may lack one) is a problem, not dropped silently. Each kept record carries
+    ``nid_step`` (OK, or GAP for a new dam / sample / dam_id that is not the NID ID)."""
     fm = {k: k for k in DAM_FIELDS}
     fm.update({k: v for k, v in (field_map or {}).items() if v})
     dams, problems, seen = [], [], set()
@@ -61,6 +83,8 @@ def prepare(records, field_map=None):
                 v = n
             d[k] = v
         d["x"], d["y"], d["crs"] = _num(rec.get("_x")), _num(rec.get("_y")), rec.get("_crs")
+        if d["dam_id"] in (None, "") and d.get("nid_id") not in (None, ""):
+            d["dam_id"] = d["nid_id"]                   # dam_id = NID ID when only the NID ID field is mapped
         if d["dam_id"] in (None, ""):
             problems.append("record {}: no dam id (field {!r})".format(i + 1, fm["dam_id"]))
             continue
@@ -68,6 +92,11 @@ def prepare(records, field_map=None):
         if d["dam_id"] in seen:
             problems.append("record {}: duplicate dam id {!r}".format(i + 1, d["dam_id"]))
             continue
+        problem, nid_step = nid_check(d)
+        if problem:
+            problems.append("record {}: {}".format(i + 1, problem))
+            continue
+        d["nid_step"] = nid_step
         seen.add(d["dam_id"])
         dams.append(d)
     return dams, problems

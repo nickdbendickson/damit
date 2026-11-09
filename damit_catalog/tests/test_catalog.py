@@ -329,5 +329,52 @@ class Combination(unittest.TestCase):
         self.assertEqual(E.label_for(cfg, None), "Not determined")
 
 
+class NidRule(unittest.TestCase):
+    def test_rule(self):
+        from damit_catalog import handoff as HO
+        ok = lambda d: HO.nid_rule(d)  # noqa: E731
+        self.assertEqual(ok({"dam_id": "ND00199"}), (None, None, "ND00199"))
+        self.assertEqual(ok({"dam_id": "nd00199"})[2], "ND00199")
+        e, w, n = ok({"dam_id": "Swan 12", "nid_id": "ND00199"})
+        self.assertIsNone(e)
+        self.assertIn("dam_id = NID ID preferred", w)
+        self.assertEqual(n, "ND00199")
+        for bad in ({"dam_id": "DWR-2801"}, {"dam_id": "DUG-130", "nid_id": "ND00199"}, {"dam_id": "UNK-9"},
+                    {"dam_id": "x", "nid_id": "DWR-2801"}, {"dam_id": "SAMPLE-4031"}, {"dam_id": "NEW"},
+                    {"dam_id": "DESK-014"}, {"dam_id": "x", "is_new": False}):
+            self.assertIsNotNone(ok(bad)[0], bad)
+        for good in ({"dam_id": "desk-1", "is_new": True}, {"dam_id": "desk-1", "is_new": "true"},
+                     {"dam_id": "p", "new_or_existing": "new"}, {"dam_id": "local-sample", "is_sample": True}):
+            e, w, n = ok(good)
+            self.assertIsNone(e, good)
+            self.assertIsNone(n)
+            self.assertTrue(w)
+        self.assertTrue(HO.is_nid_id("TX12345") and not HO.is_nid_id("ND-001") and not HO.is_nid_id(None))
+
+    def test_rule_edges(self):
+        from damit_catalog import handoff as HO
+        # nid_id alone (no dam_id) is the NID ID, no warning
+        self.assertEqual(HO.nid_rule({"nid_id": "nd00199"}), (None, None, "ND00199"))
+        self.assertEqual(HO.nid_rule({"dam_id": "ND00199", "nid_id": "nd00199"}), (None, None, "ND00199"))
+        # two different NID IDs in one record
+        e, w, n = HO.nid_rule({"dam_id": "ND00001", "nid_id": "ND00002"})
+        self.assertIn("one record names one NID dam", e)
+        # other inventories in any spelling, even new / sample / with a valid nid_id
+        for bad in ({"dam_id": "DWR2801"}, {"dam_id": "dwr_2801", "nid_id": "ND00199"}, {"dam_id": "UNK 9"},
+                    {"dam_id": "DWR-2801", "is_new": True}, {"dam_id": "DUG-130", "is_sample": True}):
+            self.assertIsNotNone(HO.nid_rule(bad)[0], bad)
+        # a name that merely starts with the letters is not another inventory's id
+        self.assertIsNone(HO.nid_rule({"dam_id": "Dugan Dam", "nid_id": "ND00199"})[0])
+        self.assertIsNone(HO.nid_rule({"dam_id": "p", "new_or_existing": "Proposed"})[0])
+        self.assertIsNotNone(HO.nid_rule({"dam_id": "p", "new_or_existing": "existing"})[0])
+        self.assertIsNotNone(HO.nid_rule({"dam_id": "p", "is_new": "false", "is_sample": 0})[0])
+        self.assertIsNotNone(HO.nid_rule(None)[0])
+
+    def test_validate_applies_the_rule(self):
+        from damit_catalog import handoff as HO
+        pkg = {"dam": {"dam_id": "DWR-2801"}}
+        self.assertTrue(any("another inventory" in e for e in HO.validate(pkg)))
+
+
 if __name__ == "__main__":
     unittest.main()

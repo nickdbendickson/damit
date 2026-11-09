@@ -108,8 +108,12 @@ class _OneStep(C.DamitAlgorithm):
 
 class Prepare(_OneStep):
     _name, _display, step_key = "prepare", "Prepare dam inventory", "prepare"
-    _help = ("Maps the dam layer's fields onto DamIT dam fields (FIELD_MAP, e.g. dam_id=STRUCTURE_ID,"
-             "height_ft=MAX_HT) and checks ids, duplicates and numbers. Writes <work>/damit_screen/dams.json.")
+    _help = ("Maps the dam layer's fields onto DamIT dam fields (FIELD_MAP, e.g. dam_id=NIDID,"
+             "height_ft=MAX_HT) and checks ids, duplicates and numbers. Writes <work>/damit_screen/dams.json.\n\n"
+             "The dam inventory is the USACE National Inventory of Dams (NID): every dam needs an NID ID "
+             "(dam_id = the NID ID, e.g. ND00199, or a nid_id field). A DWR-, DUG- or other non-NID id is a "
+             "problem; only a new / proposed dam (is_new, or new_or_existing = new) or a desk sample (is_sample) "
+             "may have none, recorded as a gap.")
 
     def processAlgorithm(self, params, context, feedback):  # noqa: N802
         work, s, dams, problems, _, _ = self.gather(params, context)
