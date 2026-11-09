@@ -1,0 +1,31 @@
+name: damit_hazard
+
+on:
+  push:
+    paths: ["damit_hazard/**", ".github/workflows/damit_hazard.yml"]
+  pull_request:
+    paths: ["damit_hazard/**", ".github/workflows/damit_hazard.yml"]
+
+jobs:
+  engine:
+    name: Engine and catalog (no QGIS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 damit_hazard/tests/run_tests.py
+
+  qgis:
+    name: damit:classify on QGIS (offscreen)
+    runs-on: ubuntu-latest
+    container: qgis/qgis:3.34
+    steps:
+      - uses: actions/checkout@v4
+      - name: QGIS Python is importable (else the QGIS tests would only skip)
+        run: python3 -c "import qgis.core, osgeo.gdal, numpy"
+      - name: Tests with QGIS
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python3 damit_hazard/tests/run_tests.py
