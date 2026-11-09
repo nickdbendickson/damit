@@ -15,7 +15,7 @@
  */
 import { downstreamDirection, fromLocal, toLocal, type XY } from "./aoi.ts";
 import { damLocation } from "./engine.ts";
-import { handoffChoice, resolveChoice } from "./jurisdiction.ts";
+import { damChoice, handoffChoice, resolveChoice } from "./jurisdiction.ts";
 import { halfAt } from "./results.ts";
 import type { Analysis, ClassificationChoice, DamRecord, GeoJSONFeature, HazardResult, ReceptorSeed } from "./types.ts";
 
@@ -189,8 +189,8 @@ export type HazardStatus =
 export function hazardStatus(dam: DamRecord, result: Pick<Analysis, "flood">): HazardStatus {
   const r = dam.hazardResult;
   if (!r || !r.suggestedClass) return { state: "none" };
-  if (r.choiceKey !== choiceKey(dam.classification))
-    return { state: "stale", result: r, why: `it was classified for ${r.choiceText}, not the current choice (${choiceText(dam.classification)})` };
+  if (r.choiceKey !== choiceKey(damChoice(dam)))
+    return { state: "stale", result: r, why: `it was classified for ${r.choiceText}, not the current choice (${choiceText(damChoice(dam))})` };
   if (r.receptorKey !== receptorKey(classifyReceptors(dam, result)))
     return { state: "stale", result: r, why: "the downstream receptors or the drawn area changed since it was classified" };
   return { state: "current", result: r };
@@ -212,7 +212,7 @@ export type ReportLead = {
 
 export function reportLead(dam: DamRecord, result: Pick<Analysis, "flood">): ReportLead {
   const st = hazardStatus(dam, result);
-  const chosen = choiceText(dam.classification);
+  const chosen = choiceText(damChoice(dam));
   if (st.state === "current") {
     const r = st.result;
     const ord = hazardOrdinal(r);

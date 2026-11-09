@@ -1,4 +1,4 @@
-import { handoffChoice } from "./jurisdiction.ts";
+import { defaultPresetFor, handoffChoice } from "./jurisdiction.ts";
 import { damLocation, ENGINE_VERSION } from "./engine.ts";
 import { handoffIds } from "./nid-dams.ts";
 import type { Analysis, DamRecord, SeriesPoint } from "./types.ts";
@@ -47,7 +47,7 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
     is_new: dam.isNew === true,
     ...(ids.isSample ? { is_sample: true } : {}),
     // Jurisdiction context for damit:classify (preset or custom mode); no thresholds, those live in its catalog.
-    classification: handoffChoice(dam.classification),
+    classification: handoffChoice(dam.classification, defaultPresetFor(dam)),
     screened: {
       level: analysis.screen.level,
       level_label: analysis.screen.label,

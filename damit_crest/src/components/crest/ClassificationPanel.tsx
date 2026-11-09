@@ -6,6 +6,8 @@ import { useMemo } from "react";
 import {
   CATALOG,
   customOptions,
+  damChoice,
+  defaultPresetFor,
   enabledIds,
   presetIds,
   resolveChoice,
@@ -30,8 +32,9 @@ export function ClassificationPanel({
   level: ScreenLevel;
   update: (patch: Partial<DamRecord>) => void;
 }) {
-  const choice = resolveChoice(dam.classification);
-  const set = (next: ClassificationChoice) => update({ classification: resolveChoice(next) });
+  // No choice yet: the record's state preset (ND00199 -> North Dakota REG_05.2026), else FEMA 333.
+  const choice = damChoice(dam);
+  const set = (next: ClassificationChoice) => update({ classification: resolveChoice(next, defaultPresetFor(dam)) });
   const options = useMemo(() => customOptions(), []);
   const enabled = new Set(enabledIds(choice));
   const p = choice.mode === "preset" ? CATALOG.presets[choice.preset ?? ""] : undefined;
