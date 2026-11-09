@@ -277,7 +277,7 @@ def test_virginia_low_volume_and_wording():
     recs = [road("a", cls="other_public", aadt=300), road("b", cls="other_public", aadt=200)]
     res = run(preset("VA"), recs)
     assert "m8e_sum" in codes(res) and "M13" in methods_hit(res, 2)
-    res = run(preset("VA"), [home("h", depth=0.3, descriptor="residences")])
+    res = run(preset("VA"), [home("h", depth=0.3, descriptor="residence")])
     assert res["suggested_class"] == 3
 
 
@@ -351,3 +351,30 @@ def test_preset_report_marks_verification():
     assert "(draft)" in md and "Class A" in md
     res = run(preset("NRCS"), [home("h", depth=0.5)])
     assert "(unverified)" in report.markdown(res, CAT)
+
+
+# ---------------------------------------------------------------- DAM_JSON contract --------
+def test_flat_dam_record_contract():
+    """damit:classify's DAM_JSON stays a flat record (storage_acft, current_class ordinal 0-4,
+    is_new, analysis, name, ...), read the same with presets from DamIT Catalog."""
+    dam = {"name": "Test Dam", "storage_acft": 250, "current_class": 1, "is_new": False,
+           "analysis": "simplified"}
+    res = run(preset("ND"), [home("h", depth=0.2, vel=0.1)], scenario="S3", dim="2D", dam=dam)
+    assert res["suggested_class"] == 3 and "r8_storage" in codes(res)
+    dam = dict(dam, storage_acft=50)
+    res = run(preset("ND"), [home("h", depth=0.2, vel=0.1)], scenario="S3", dim="2D", dam=dam)
+    assert "r8_storage" not in codes(res)
+    # S6 picks its condition from the ordinal (Rhode Island)
+    res = run(preset("RI"), [], scenario="S6", dam={"current_class": 3, "is_new": False})
+    assert "s6_condition" in codes(res) and "s6_class" not in codes(res)
+    res = run(preset("RI"), [], scenario="S6", dam={"is_new": True})
+    assert "s6_condition" in codes(res)
+    res = run(preset("RI"), [], scenario="S6", dam={})
+    assert "s6_class" in codes(res)
+
+
+def test_usbr_alias_classifies_the_same():
+    recs = [home("h{}".format(i), depth=6.5, vel=1.0, occupants=1) for i in range(3)]
+    a, b = run(preset("USBR"), recs), run(preset("USBR_TM11"), recs)
+    assert a["suggested_class"] == b["suggested_class"]
+    assert a["config"]["preset"] == b["config"]["preset"] == "USBR"

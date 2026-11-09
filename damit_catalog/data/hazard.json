@@ -1,0 +1,559 @@
+{
+ "schema": "damit.catalog.hazard",
+ "schema_version": 1,
+ "purpose": "Engine profile for DamIT Hazard (damit:classify). DamIT Hazard reads every threshold, label, scenario, modifier and preset from the Appendix A files of this catalog (methods, scenarios, modifiers, labels, presets) and translates them to its classifier. This file holds only what those files do not express: the receptor-type vocabulary of Hazard's layers, which TM-11 chart applies to which receptor, sampling defaults, and a few Hazard-specific engine switches. It must never repeat a value that the other files carry (a test enforces this).",
+ "disclaimer_lead": "Informational screening aid, not legal or engineering advice and not a regulatory determination.",
+ "disclaimer_tail": "Rules change: the current statutes, rules and agency guidance control. Items marked (unverified) or (secondary) should be confirmed before a preset is relied on, and every suggestion still needs an engineer's review.",
+ "general": {
+  "base_class": 1,
+  "base_class_note": "With no hit the suggestion is the lowest consequence class (Low). Minimal / Very Low / No Public Hazard need an engineer's call (no method returns ordinal 0).",
+  "wet_min_depth_ft": 0.0,
+  "wet_min_depth_note": "Plugin default: any depth above this counts as inundated (Appendix A: 'inundated at any depth').",
+  "edge_ring_ft": 5.0,
+  "point_radius_ft": 20.0,
+  "line_step_ft": 10.0,
+  "sampling_note": "Sampling defaults copied from DamSafety_Hazard (constants.OSM_EDGE_BUFFER_FT = 5 ft edge ring around an outline, DEFAULT_POINT_RADIUS_FT = 20 ft disc around a point, LINE_SAMPLE_STEP_FT = 10 ft along roads and rail). Not from the source document; editable."
+ },
+ "receptor_types": {
+  "habitable_types": [
+   "home",
+   "mobile_home",
+   "institution",
+   "school",
+   "hospital",
+   "nursing_home",
+   "commercial",
+   "industrial",
+   "campground",
+   "farm_occupied"
+  ],
+  "residence_types": [
+   "home",
+   "mobile_home"
+  ],
+  "transient_occupancy": [
+   "occasional",
+   "transient",
+   "day_use",
+   "passerby",
+   "trespasser"
+  ],
+  "structure_type_map": {
+   "home": "home",
+   "farm_occupied": "home",
+   "mobile_home": "mobile_home",
+   "institution": "institution",
+   "school": "institution",
+   "hospital": "institution",
+   "nursing_home": "institution",
+   "commercial": "commercial_industrial",
+   "industrial": "commercial_industrial",
+   "campground": "campground",
+   "farm_unoccupied": "unoccupied_farm_storage",
+   "storage": "unoccupied_farm_storage",
+   "outbuilding": "unoccupied_farm_storage"
+  },
+  "structure_type_map_note": "Hazard receptor type -> catalog structure_type. A catalog structure_types list (e.g. M2) is expanded to every Hazard type that maps to one of its entries.",
+  "road_class_map": {
+   "us_state_highway": "us_state"
+  },
+  "road_class_map_note": "Catalog road_class -> Hazard road_class where the names differ."
+ },
+ "charts": {
+  "names": {
+   "houses_on_foundations": "houses"
+  },
+  "names_note": "Catalog TM-11 chart name -> chart key in damit_hazard/data/tm11_charts.json (the digitized curves stay in DamIT Hazard)."
+ },
+ "verification_map": {
+  "as_documented": "verified",
+  "unverified": "unverified",
+  "secondary": "secondary"
+ },
+ "verification_legend": {
+  "verified": "Confirmed against a primary or official source in the source document (unmarked statements).",
+  "secondary": "Only a secondary source was found (source document label: Secondary).",
+  "unverified": "Not confirmed; carried for reference only (source document label: Unverified).",
+  "draft": "The governing guidance is itself marked DRAFT."
+ },
+ "variant_map": {
+  "M6": {
+   "base": "any_inundation"
+  },
+  "R1": {
+   "base": "general",
+   "incidental_presence": "incidental"
+  }
+ },
+ "methods": {
+  "M1": {
+   "receptor_kinds": [
+    "structure",
+    "road"
+   ],
+   "params": {
+    "chart_for_type": {
+     "mobile_home": "mobile_homes",
+     "home": "houses",
+     "institution": "houses",
+     "school": "houses",
+     "hospital": "houses",
+     "nursing_home": "houses",
+     "commercial": "houses",
+     "industrial": "houses",
+     "farm_occupied": "houses",
+     "campground": [
+      "adults",
+      "children"
+     ],
+     "road": "passenger_vehicles"
+    },
+    "chart_for_type_note": "Which chart applies to which receptor type is a plugin default (TM-11 names the charts: houses on foundations, mobile homes, passenger vehicles, adults, children); edit it per study.",
+    "judgment_hit_class": null
+   }
+  },
+  "M2": {
+   "receptor_kinds": [
+    "structure"
+   ]
+  },
+  "M3": {
+   "receptor_kinds": [
+    "structure"
+   ],
+   "params": {
+    "rows": {
+     "home": {
+      "types": [
+       "home",
+       "mobile_home"
+      ],
+      "datum": "foundation"
+     },
+     "institution": {
+      "types": [
+       "institution",
+       "school",
+       "hospital",
+       "nursing_home"
+      ],
+      "datum": "floor"
+     },
+     "commercial": {
+      "types": [
+       "commercial",
+       "industrial"
+      ],
+      "datum": "foundation"
+     },
+     "campground": {
+      "types": [
+       "campground"
+      ],
+      "datum": "ground"
+     },
+     "unoccupied_farm": {
+      "types": [
+       "farm_unoccupied",
+       "storage",
+       "outbuilding"
+      ],
+      "datum": "foundation",
+      "low_only": true
+     }
+    },
+    "rows_note": "High at high_depth_ft or more at the datum, or DV high_dv or more; otherwise Low below low_below_ft (a low_below_ft of 0 means at or below the datum: below the foundation ground line), else Significant; Unoccupied farm or storage buildings: Low when flow is above the foundation line. Walkout basements may use walkout_high_depth_ft in place of the home row's high depth where occupants can move upstairs (walkout_option)."
+   },
+   "row_params": {
+    "home": {
+     "high_depth_ft": "home_high_depth_ft",
+     "high_dv": "home_high_dv",
+     "low_below_rule": "home Significant"
+    },
+    "institution": {
+     "high_depth_ft": "institution_high_depth_ft",
+     "high_dv": "institution_high_dv",
+     "low_below_rule": "institution Significant"
+    },
+    "commercial": {
+     "high_depth_ft": "commercial_high_depth_ft",
+     "high_dv": "commercial_high_dv",
+     "low_below_ft": "commercial_sig_depth_ft"
+    },
+    "campground": {
+     "high_depth_ft": "campground_high_depth_ft",
+     "high_dv": "campground_high_dv",
+     "low_below_ft": "campground_sig_depth_ft",
+     "min_nights_per_year": "campground_min_nights_per_year"
+    }
+   },
+   "row_params_note": "Which catalog M3 parameter (or which catalog rule's depth literal, *_rule) fills each cell of Hazard's M3 rows."
+  },
+  "M4a": {
+   "receptor_kinds": [
+    "structure"
+   ]
+  },
+  "M4b": {
+   "receptor_kinds": [
+    "structure"
+   ],
+   "params": {
+    "low_danger_charts": [
+     "houses",
+     "mobile_homes"
+    ]
+   }
+  },
+  "M4c": {
+   "receptor_kinds": [
+    "structure"
+   ]
+  },
+  "M5": {
+   "receptor_kinds": [
+    "structure"
+   ],
+   "params": {
+    "count_judgment_zone": false,
+    "danger_charts": [
+     "houses",
+     "mobile_homes"
+    ]
+   }
+  },
+  "M6": {
+   "receptor_kinds": [
+    "structure",
+    "road"
+   ]
+  },
+  "M7": {
+   "receptor_kinds": [
+    "structure",
+    "facility"
+   ]
+  },
+  "M8a": {
+   "receptor_kinds": [
+    "road"
+   ]
+  },
+  "M8b": {
+   "receptor_kinds": [
+    "road"
+   ]
+  },
+  "M8c": {
+   "receptor_kinds": [
+    "road"
+   ],
+   "params": {
+    "multilane_min_lanes": 4
+   },
+   "note": "The catalog writes 'main_highway_4lane' as a road class; Hazard reads a lanes attribute and treats this many lanes or more on a main highway as that class."
+  },
+  "M8d": {
+   "receptor_kinds": [
+    "road"
+   ]
+  },
+  "M8e": {
+   "receptor_kinds": [
+    "road"
+   ],
+   "params": {
+    "sum_aadt": true
+   }
+  },
+  "M8f": {
+   "receptor_kinds": [
+    "road"
+   ]
+  },
+  "M8g": {
+   "receptor_kinds": [
+    "road"
+   ],
+   "params": {
+    "municipal_classes": [
+     "municipal",
+     "other_public",
+     "local"
+    ]
+   }
+  },
+  "M9a": {
+   "receptor_kinds": [
+    "rail"
+   ]
+  },
+  "M9b": {
+   "receptor_kinds": [
+    "rail"
+   ]
+  },
+  "M9c": {
+   "receptor_kinds": [
+    "rail"
+   ]
+  },
+  "M10a": {
+   "receptor_kinds": [
+    "facility",
+    "structure"
+   ]
+  },
+  "M10b": {
+   "receptor_kinds": [
+    "facility",
+    "structure"
+   ],
+   "params": {
+    "m3_row": "institution"
+   }
+  },
+  "M11a": {
+   "receptor_kinds": [
+    "lifeline"
+   ]
+  },
+  "M11b": {
+   "receptor_kinds": [
+    "lifeline"
+   ]
+  },
+  "M11c": {
+   "receptor_kinds": [
+    "lifeline"
+   ],
+   "params": {
+    "high_outage_days": null,
+    "high_outage_note": "'Several weeks' is not a number in the source; set high_outage_days per study or mark major_population on the lifeline."
+   }
+  },
+  "M12a": {
+   "receptor_kinds": [
+    "environment"
+   ],
+   "params": {
+    "site_types": [
+     "archaeological",
+     "national_monument",
+     "state_historic"
+    ]
+   }
+  },
+  "M12b": {
+   "receptor_kinds": [
+    "environment"
+   ],
+   "params": {
+    "types": [
+     "listed_species_habitat",
+     "contaminated_sediments"
+    ]
+   }
+  },
+  "M12c": {
+   "receptor_kinds": [
+    "environment"
+   ]
+  },
+  "M12d": {
+   "receptor_kinds": [
+    "environment"
+   ]
+  },
+  "M13": {
+   "receptor_kinds": [
+    "structure",
+    "road",
+    "rail",
+    "lifeline",
+    "facility"
+   ],
+   "params": {
+    "auto_map": {
+     "general": {
+      "home": "isolated_home",
+      "mobile_home": "isolated_home",
+      "farm_unoccupied": "farm_building",
+      "storage": "farm_building",
+      "outbuilding": "isolated_unoccupied_building",
+      "road:township_county": "township_or_county_road",
+      "road:private": "township_or_county_road",
+      "road:interstate": "main_highway",
+      "road:us_state": "main_highway",
+      "rail:minor": "minor_railroad",
+      "rail:main": "railroad_serious_damage",
+      "lifeline": "relatively_important_utility"
+     },
+     "virginia_4VAC50-20-40": {
+      "home": "residence",
+      "mobile_home": "residence",
+      "commercial": "business",
+      "industrial": "business",
+      "institution": "occupied_structure",
+      "school": "occupied_structure",
+      "hospital": "occupied_structure",
+      "nursing_home": "occupied_structure",
+      "farm_occupied": "occupied_structure",
+      "campground": "frequently_used_facility",
+      "road:interstate": "major_roadway",
+      "road:us_state": "major_roadway",
+      "road:other_public": "secondary_roadway",
+      "road:municipal": "secondary_roadway",
+      "road:township_county": "secondary_roadway"
+     }
+    },
+    "auto_map_note": "auto_map is a DamIT Hazard default that guesses an M13 descriptor (catalog low/significant/high_kinds vocabulary) from the receptor type, keyed by the M13 wording: 'general' (catalog default) or the preset's M13 variant. A guessed descriptor is advisory; a home in the general wording is guessed as 'isolated_home' (Significant), a lower bound: serious damage to homes is High, and an engineer decides."
+   }
+  }
+ },
+ "modifiers": {
+  "R2": {
+   "params": {
+    "floor_presumption": false
+   }
+  },
+  "R5": {
+   "params": {
+    "count_future": true,
+    "basis": "approved or imminent development"
+   }
+  },
+  "R6": {
+   "params": {
+    "raises_class": false
+   }
+  },
+  "R7": {
+   "params": {
+    "judgment_zone_to_high": false,
+    "near_margin_ft": null,
+    "near_margin_note": "The source gives no borderline margin; set near_margin_ft to promote M1 points within that depth below the high-danger line."
+   }
+  },
+  "R8": {
+   "params": {
+    "variant": "storage_limit"
+   },
+   "variants": {
+    "storage_limit": "No breach model and storage at or over the limit (or unknown): a class below High is not justified \u2192 High.",
+    "lowering_from_high": "Current class High and the analysis is not TM-11-based unsteady modeling: the class is not lowered."
+   }
+  },
+  "R1": {
+   "variants": {
+    "general": "Receptors with transient occupancy are left out of the life-safety methods.",
+    "incidental": "People only incidentally present (walking on the dam, driving lightly traveled roads, recreating outside an established area) are left out.",
+    "three_part_test": "Loss of life is unlikely only if people are temporary, there are no residences or overnight campsites, and the owner controls access and keeps an EAP with a warning process; otherwise transients are not left out."
+   }
+  }
+ },
+ "domains": {
+  "D1": {
+   "params": {
+    "exclude_beyond": false
+   }
+  },
+  "D2": {
+   "params": {
+    "exclude_beyond": false
+   }
+  }
+ },
+ "presets": {
+  "FEMA333": {
+   "notes": "FEMA 333 (October 1998, reprinted April 2004)."
+  },
+  "USBR": {
+   "notes": "S5 for borderline dams is (unverified). In this preset M1 marks the lives in jeopardy (high-danger zone) that M5 counts (TM-11: 1\u20136 Significant, more than 6 High); M1 returns no class by itself (high_class null). TM-11 Figs 4\u20136 (vehicles, adults, children) are not digitized in this plugin: M1 flags those receptors.",
+   "methods": {
+    "M1": {
+     "high_class": null
+    }
+   }
+  },
+  "BIA": {
+   "notes": "BIA's 1\u20136 Significant rule is from FEMA P-919 (July 2012): (secondary). No scenario confirmed: fall back to M13 and engineering judgment."
+  },
+  "NRCS": {
+   "notes": "NRCS hazard-definition wording (NEM \u00a7 520.21) is (unverified) in the source document.",
+   "verification": "unverified",
+   "modifiers": {
+    "R5": {
+     "basis": "existing and future development"
+    }
+   }
+  },
+  "ND": {
+   "notes": "N.D. Admin. Code \u00a7 89-08-01-01; DWR policy REG_05.2026 effective April 1, 2026 (superseded REG_05.2024a). 'Significant' means the same as 'Medium'. The ND Dam Design Handbook was not reviewed.",
+   "modifiers": {
+    "R5": {
+     "basis": "approved plans, permits or active construction"
+    }
+   }
+  },
+  "NE": {
+   "notes": "Neb. Rev. Stat. \u00a7 46-1601 et seq.; Title 458. Minimal is generally limited to farm pond dams (engineer's call)."
+  },
+  "NY": {
+   "notes": "DOW TOGS 3.1.5 is still marked DRAFT. Class D (defunct dam) is an administrative status and is left out. Sunny-day and rainy-day breaches: the most severe governs.",
+   "verification": "draft",
+   "modifiers": {
+    "R2": {
+     "floor_presumption": true
+    },
+    "R8": {
+     "variant": "lowering_from_high"
+    }
+   }
+  },
+  "VA": {
+   "notes": "Significant may cause loss of life. Significant dams of 50,000 ac-ft or more held to the High SDF is (unverified) and not used here. M5 is the incremental-analysis variant: it supports lowering a proposed class only.",
+   "modifiers": {
+    "R5": {
+     "basis": "locally approved planned land use"
+    }
+   }
+  },
+  "TX": {
+   "notes": "Classifies on existing downstream development.",
+   "modifiers": {
+    "R5": {
+     "basis": "existing development"
+    }
+   }
+  },
+  "ID": {
+   "notes": "2 ft or more at residences is sufficient (not the only reason) for High. Pre-2023 versions used a 2 ft / 2 fps test (not used)."
+  },
+  "CO": {
+   "notes": "Rule 4.13 sunny-day failure, reservoir full to the high water line (Rule 4.14). The Rule 4.15 Hydrologic Hazard sizes spillways and is not covered."
+  },
+  "RI": {
+   "notes": "Scenario depends on the current class (\u00a7 1.9(B)). The Director evaluates Low and Significant dams at least every 10 years."
+  },
+  "AZ": {
+   "notes": "Classification regardless of the dam's condition. Very Low needs an engineer's call.",
+   "modifiers": {
+    "R5": {
+     "basis": "zoning and development projected over 10 years"
+    }
+   }
+  },
+  "CA": {
+   "notes": "Extremely High for critical facilities is case by case. DWR's older 'considerable loss of life' wording is superseded by the regulation.",
+   "scenarios_any_of": [
+    "S1",
+    "S2"
+   ]
+  },
+  "AK": {
+   "notes": "Class I (High), II (Significant), III (Low)."
+  }
+ },
+ "presets_note": "Per-preset refinements DamIT Hazard needs that presets.json does not carry: notes, the document-status marker shown beside the preset name, the USBR M1 'marks lives, returns no class' reading, New York's R2 floor presumption and R8 lowering-from-High variant, R5 basis wording, and California's 'S1 or S2' choice. Keys are preset IDs or aliases."
+}

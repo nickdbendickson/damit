@@ -121,7 +121,7 @@ def validate(pkg, catalog=None, check_paths=False):
         for d in pkg.get("domain_cutoffs") or []:
             if d.get("id") not in catalog.domain_cutoffs:
                 errs.append("unknown domain cutoff {}".format(d.get("id")))
-        if pkg.get("mode") == "preset" and pkg.get("preset_id") not in catalog.presets:
+        if pkg.get("mode") == "preset" and not _has_preset(catalog, pkg.get("preset_id")):
             errs.append("unknown preset {}".format(pkg.get("preset_id")))
     if check_paths:
         for k in INPUT_PATHS:
@@ -151,3 +151,10 @@ def read(path):
             return json.load(fh)
     except (OSError, ValueError) as e:
         raise HandoffError("cannot read hand-off package {}: {}".format(path, e))
+
+
+def _has_preset(catalog, preset_id):
+    """A stored preset ID or one of its aliases (USBR_TM11 = USBR)."""
+    if hasattr(catalog, "has_preset"):
+        return catalog.has_preset(preset_id)
+    return preset_id in catalog.presets

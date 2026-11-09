@@ -40,7 +40,11 @@ RASTERS = [("DEPTH", "depth", "Maximum depth raster", False),
 
 
 def _cat():
-    return C.load()
+    """DamIT Catalog as the classifier reads it (presets, methods and thresholds)."""
+    try:
+        return C.load()
+    except (C.CatalogError, ImportError) as e:
+        raise QgsProcessingException("DamIT Catalog could not be read: {}".format(e))
 
 
 def _ids(text):
@@ -85,7 +89,9 @@ class Classify(QgsProcessingAlgorithm):
     def shortHelpString(self):
         return ("Suggests a dam hazard class from EXISTING depth / velocity rasters and receptor "
                 "layers, with a jurisdiction preset (scenarios, methods, parameters and labels "
-                "from data/catalog.json) or with methods you tick (custom: generic labels). "
+                "from the DamIT Catalog plugin) or with methods you tick (custom: generic labels). "
+                "Pick the preset from the list or type its ID in 'Preset ID' (an alias such as "
+                "USBR_TM11 for USBR works too; it wins over the list). "
                 "It does not run a breach or flood model.<br><br>"
                 "Rule-strength results set the suggestion; advisory results are listed beside "
                 "it and count only when 'Apply advisory results' is on. Missing inputs are "
@@ -100,12 +106,22 @@ class Classify(QgsProcessingAlgorithm):
         return Classify()
 
     def initAlgorithm(self, config=None):
-        cat = _cat()
+        try:
+            cat = _cat()
+        except QgsProcessingException:          # DamIT Catalog missing: the run explains it
+            cat = {"presets": {"FEMA333": {"label": "FEMA 333 baseline"}}, "preset_aliases": {}}
         self.preset_ids = [None] + list(cat["presets"])
-        choices = ["Custom (methods ticked below)"] + [lab for _p, lab in C.preset_choices(cat)]
+        # "ID: label": the ID is visible and tools can pick an option by ID or by label
+        choices = ["Custom (methods ticked below)"] + ["{}: {}".format(pid, lab)
+                                                      for pid, lab in C.preset_choices(cat)]
         self.addParameter(QgsProcessingParameterEnum(
             "PRESET", "Jurisdiction preset", options=choices,
             defaultValue=self.preset_ids.index("FEMA333")))
+        aliases = ", ".join("{} = {}".format(a, t) for a, t in cat.get("preset_aliases", {}).items())
+        self.addParameter(QgsProcessingParameterString(
+            "PRESET_ID", "Preset ID (overrides the list; {}{})".format(
+                ", ".join(cat["presets"]), "; aliases " + aliases if aliases else ""),
+            defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString(
             "METHODS", "Custom: method IDs (e.g. M1,M3,M8a)", optional=True))
         self.addParameter(QgsProcessingParameterString(
@@ -153,6 +169,13 @@ class Classify(QgsProcessingAlgorithm):
     def _config(self, cat, p, context):
         idx = self.parameterAsEnum(p, "PRESET", context)
         pid = ([None] + list(cat["presets"]))[idx]
+        typed = (self.parameterAsString(p, "PRESET_ID", context) or "").strip()
+        if typed:
+            pid = C.canonical_preset(cat, typed)
+            if pid is None:
+                raise QgsProcessingException("Unknown preset ID {!r}. Known: {}{}".format(
+                    typed, ", ".join(cat["presets"]), "".join(
+                        "; {} = {}".format(a, t) for a, t in cat.get("preset_aliases", {}).items())))
         text = self.parameterAsString(p, "OVERRIDES", context).strip()
         try:
             overrides = json.loads(text) if text else {}

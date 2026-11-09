@@ -59,6 +59,16 @@ class Preflight(unittest.TestCase):
         checks, _, _ = WF.preflight(self.work, dict(WF.DEFAULT_SETTINGS, preset="ND"), dams, probs)
         self.assertFalse(WF.ready(checks))
 
+    def test_usbr_and_usbr_tm11_preset_ids(self):
+        dams, _ = ST.prepare([raw_dam()], FMAP)
+        for pid in ("USBR", "USBR_TM11"):
+            checks, _, cfg = WF.preflight(self.work, dict(WF.DEFAULT_SETTINGS, preset=pid), dams, [])
+            self.assertNotIn(("fail", "Preset / method selection"), self.codes(checks), pid)
+            self.assertEqual(cfg["preset_id"], "USBR", pid)
+            self.assertEqual(cfg["preset_label"], "USBR (ACER TM-11)")
+        checks, _, _ = WF.preflight(self.work, dict(WF.DEFAULT_SETTINGS, preset="USBR_TM12"), dams, [])
+        self.assertIn(("fail", "Preset / method selection"), self.codes(checks))
+
     def test_dash_preset_and_receptor_fields(self):
         dams, _ = ST.prepare([raw_dam()], FMAP)
         recs = [{"id": 1, "receptor_type": "structure", "structure_type": "home"}]

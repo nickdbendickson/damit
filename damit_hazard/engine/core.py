@@ -325,7 +325,10 @@ def m2(ctx):
         else:
             ctx.flag(INFO, "m2_not_1d", "M2 applies to 1D runs only; this run is 2D", "M2")
         return
-    types = ctx.cat["residence_types"] if P.get("receptor_types") == "residence" else None
+    # "habitable" (every occupied habitable structure), "residence", or a list of receptor types
+    rt = P.get("receptor_types")
+    types = ctx.cat["residence_types"] if rt == "residence" else \
+        list(rt) if isinstance(rt, (list, tuple)) else None
     thr, cmp_ = float(P["threshold_ft"]), P["comparator"]
     for r in ctx.life("M2"):
         if not ctx.impacted(r, "M2"):
@@ -375,9 +378,12 @@ def _m3_row(ctx, r, row, rname, mid, walkout_option):
 
 
 def m3(ctx, mid="M3", only_row=None):
-    # M10b reads the M3 rows: the configured ones when M3 is enabled, else the catalog's
+    # M10b reads its own institutions row (catalog M10b parameters) when it has one, else the
+    # M3 rows: the configured ones when M3 is enabled, else the catalog's
     P = ctx.p("M3") if "M3" in ctx.cfg["methods"] else ctx.cat["methods"]["M3"]["params"]
     rows = P["rows"]
+    if mid != "M3" and ctx.p(mid).get("rows"):
+        rows = ctx.p(mid)["rows"]
     rs = ctx.need(mid, STRUCT_KINDS)
     for r in rs:
         if not ctx.impacted(r, mid):
@@ -729,13 +735,15 @@ def m9c(ctx):
     P = ctx.p("M9c")
     for r in _rails(ctx, "M9c"):
         cat = r.get("line_category")
-        if r.get("passenger") or cat in ("intercity_passenger", "commuter", "transit"):
+        if r.get("passenger") or cat in P.get("high_services", ()) or \
+                cat in ("intercity_passenger", "commuter", "transit"):
             ctx.hit("M9c", 3, r, "passenger / commuter / transit line")
         elif r.get("freight_class") in P["high_freight_classes"]:
             ctx.hit("M9c", 3, r, "Class {} freight".format(r["freight_class"]))
         elif r.get("fuel_line") or r.get("strategic") or r.get("hazmat_yard"):
             ctx.hit("M9c", 3, r, "fuel-delivery / strategic line or toxic-hazmat yard")
-        elif cat in ("scenic", "tourist", "other_freight", "freight") or \
+        elif cat in P.get("significant_services", ()) or \
+                cat in ("scenic", "tourist", "other_freight", "freight") or \
                 r.get("freight_class") is not None:
             ctx.hit("M9c", 2, r, "scenic / tourist or other freight line")
         else:
@@ -1192,6 +1200,7 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
         "run_date": run_date or datetime.datetime.now().astimezone().isoformat(
             timespec="seconds"),
         "catalog_version": cat.get("catalog_version"), "disclaimer": cat.get("disclaimer"),
+        "damit_catalog": cat.get("damit_catalog"),
         "source_document": cat.get("source_document"),
     })
     return result

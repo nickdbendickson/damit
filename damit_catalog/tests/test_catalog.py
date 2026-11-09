@@ -14,7 +14,7 @@ from damit_catalog import evaluate as E       # noqa: E402
 PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 METHODS = ["M1", "M2", "M3", "M4a", "M4b", "M4c", "M5", "M6", "M7", "M8a", "M8b", "M8c", "M8d", "M8e", "M8f",
            "M8g", "M9a", "M9b", "M9c", "M10a", "M10b", "M11a", "M11b", "M11c", "M12a", "M12b", "M12c", "M12d", "M13"]
-PRESETS = ["FEMA333", "USBR_TM11", "BIA", "NRCS", "ND", "NE", "NY", "VA", "TX", "ID", "CO", "RI", "AZ", "CA", "AK"]
+PRESETS = ["FEMA333", "USBR", "BIA", "NRCS", "ND", "NE", "NY", "VA", "TX", "ID", "CO", "RI", "AZ", "CA", "AK"]
 
 
 def home(depth, **kw):
@@ -117,6 +117,55 @@ class CatalogContent(unittest.TestCase):
                                   "{} hardcodes {}".format(name, num))
 
 
+class PresetAliases(unittest.TestCase):
+    """USBR and USBR_TM11 are one preset: stored as USBR, USBR_TM11 accepted everywhere."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.pop(C.ENV_DIR, None)
+        cls.cat = C.load()
+
+    def test_both_ids_resolve_to_one_preset(self):
+        self.assertIn("USBR", self.cat.presets)
+        self.assertNotIn("USBR_TM11", self.cat.presets)
+        self.assertEqual(self.cat.preset_aliases, {"USBR_TM11": "USBR"})
+        for pid in ("USBR", "USBR_TM11"):
+            self.assertTrue(self.cat.has_preset(pid))
+            self.assertEqual(self.cat.canonical_preset_id(pid), "USBR")
+            self.assertIs(self.cat.preset(pid), self.cat.presets["USBR"])
+        a, b = self.cat.resolve_preset("USBR"), self.cat.resolve_preset("USBR_TM11")
+        self.assertEqual((a["preset_id"], b["preset_id"]), ("USBR", "USBR"))
+        self.assertEqual((a["requested_preset_id"], b["requested_preset_id"]), ("USBR", "USBR_TM11"))
+        a.pop("requested_preset_id"), b.pop("requested_preset_id")
+        self.assertEqual(a, b)
+        self.assertEqual(a["preset_label"], "USBR (ACER TM-11)")
+
+    def test_unknown_preset_lists_aliases(self):
+        self.assertIsNone(self.cat.canonical_preset_id("USBR_TM12"))
+        with self.assertRaises(C.CatalogError) as cm:
+            self.cat.resolve_preset("USBR_TM12")
+        self.assertIn("USBR_TM11 = USBR", str(cm.exception))
+
+    def test_handoff_accepts_either_id(self):
+        from damit_catalog import handoff as HO
+        for pid in ("USBR", "USBR_TM11"):
+            pkg = {"mode": "preset", "preset_id": pid, "scenarios": [], "modifiers": [], "domain_cutoffs": []}
+            self.assertNotIn("unknown preset {}".format(pid), HO.validate(pkg, self.cat))
+        pkg = {"mode": "preset", "preset_id": "USBR_TM12", "scenarios": [], "modifiers": [], "domain_cutoffs": []}
+        self.assertIn("unknown preset USBR_TM12", HO.validate(pkg, self.cat))
+
+    def test_evaluation_identical(self):
+        for lives, want in ((3, 2), (7, 3)):
+            got = [E.evaluate(self.cat, self.cat.resolve_preset(pid), [],
+                              {"lives_in_jeopardy": lives, "model_dimension": "2D"})["suggested_ordinal"]
+                   for pid in ("USBR", "USBR_TM11")]
+            self.assertEqual(got, [want, want])
+
+    def test_hazard_profile_loaded_and_hashed(self):
+        self.assertEqual(self.cat.hazard.get("schema"), "damit.catalog.hazard")
+        self.assertTrue(self.cat.hazard.get("presets"))
+
+
 class DataDriven(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="damit_cat_")
@@ -161,6 +210,22 @@ class DataDriven(unittest.TestCase):
         codes = [f["code"] for f in cfg["flags"]]
         self.assertIn("method_fallback_m13", codes)
         self.assertIn("scenario_unconfirmed", codes)
+
+    def test_bad_alias_rejected(self):
+        self._edit("presets.json", lambda d: d["aliases"].update({"ND_OLD": "NOPE"}))
+        with self.assertRaises(C.CatalogError):
+            C.load(self.dir)
+
+    def test_alias_may_not_shadow_a_preset(self):
+        self._edit("presets.json", lambda d: d["aliases"].update({"ND": "USBR"}))
+        with self.assertRaises(C.CatalogError):
+            C.load(self.dir)
+
+    def test_hazard_profile_optional(self):
+        self._edit("catalog.json", lambda d: d["files"].pop("hazard"))
+        cat = C.load(self.dir)
+        self.assertEqual(cat.hazard, {})
+        self.assertEqual(cat.resolve_preset("USBR_TM11")["preset_id"], "USBR")
 
     def test_invalid_catalog_rejected(self):
         self._edit("presets.json", lambda d: d["presets"]["ND"]["methods"].__setitem__("M99", {}))

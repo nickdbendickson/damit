@@ -9,6 +9,11 @@ rasters and receptor layers. It uses the methods, modifiers and jurisdiction pre
 > regulating agency make the determination. Items marked (unverified), (secondary) or (draft)
 > should be confirmed before a preset is relied on.
 
+**Requires the DamIT Catalog plugin** (`damit_catalog/`, declared as
+`plugin_dependencies=DamIT Catalog`). Every preset, method, threshold, scenario, modifier and
+class label comes from DamIT Catalog's Appendix A data files; DamIT Hazard ships no catalog of
+its own (see *Where the thresholds come from*).
+
 It does **not** run a breach or flood model. The rasters come from a run made elsewhere; the
 scenario ID (S1–S7) records which run they are.
 
@@ -22,18 +27,47 @@ scenario ID (S1–S7) records which run they are.
 
 ## Modes
 
-**Preset** – pick one of 15 jurisdictions: FEMA 333 baseline, USBR (ACER TM-11), BIA
-(secondary), NRCS (unverified), North Dakota, Nebraska, New York (draft), Virginia, Texas,
-Idaho, Colorado, Rhode Island, Arizona, California, Alaska. Class labels are the
-jurisdiction's own.
+**Preset** – pick one of the DamIT Catalog presets (15 in the Nov 9, 2026 edition): FEMA 333
+baseline, USBR (ACER TM-11), BIA (secondary), NRCS (unverified), North Dakota, Nebraska, New
+York (draft), Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska. Class
+labels are the jurisdiction's own. In `damit:classify` the `PRESET` list shows `ID: label`
+(e.g. `ND: North Dakota (REG_05.2026)`), and `PRESET_ID` takes a preset ID or alias as text
+(it wins over the list): `USBR` and `USBR_TM11` are the same preset.
 
 **Custom** – tick methods, modifiers and scenarios by name. No jurisdiction appears in the
 method list; labels are generic (Minimal, Low, Significant, High, Extremely High); each method's
 source is still listed under *Citations* in the report.
 
-In both modes the parameters (thresholds) of the chosen methods are editable JSON. Every
-threshold lives in `data/catalog.json`; the engine code contains none
-(`tests/test_catalog.py` checks this).
+In both modes the parameters (thresholds) of the chosen methods are editable JSON
+(`OVERRIDES`); a key may use the classifier's name (`{"M2": {"threshold_ft": 2.5}}`) or the
+catalog's (`{"M2": {"depth_ft": 2.5}}`).
+
+## Where the thresholds come from
+
+DamIT Catalog is the single source of truth. At run time DamIT Hazard imports `damit_catalog`
+(the installed plugin, or the `damit_catalog/` folder beside `damit_hazard/` in a checkout),
+which reads `DAMIT_CATALOG_DIR` if set, else its bundled `data/`. `engine/catalog.py`
+translates the catalog to the classifier's configuration:
+
+* `methods.json`, `modifiers.json`, `scenarios.json`, `labels.json`, `presets.json`: every
+  threshold, count band, class label, scenario, modifier and preset bundle (parameter renames
+  such as `depth_ft` → `threshold_ft` are listed in `engine/catalog.py` `RENAMES`; the M4b /
+  M4c bands and the M3 / M8a / M8g class lists are read from the catalog rules).
+* `hazard.json` (in DamIT Catalog): only what the Appendix A files do not express — the
+  receptor-type vocabulary of Hazard's layers, which TM-11 chart applies to which receptor,
+  sampling defaults (5 ft edge ring, 20 ft point disc, 10 ft line step), the M13 type →
+  descriptor guesses, and per-preset notes and switches (e.g. USBR: M1 marks lives for M5 and
+  returns no class itself; New York: R2 floor presumption, R8 lowering-from-High). A test
+  checks that it repeats no parameter the other files carry.
+* `damit_hazard/data/tm11_charts.json` stays here: the digitized TM-11 curves.
+
+Edit a copy of DamIT Catalog's `data/` and set `DAMIT_CATALOG_DIR` to change presets or
+thresholds for Hazard, Screener and Runner at once; each report records the catalog version,
+SHA-256 and folder. Neither the engine nor the translation contains a threshold number
+(`tests/test_catalog.py` checks both).
+
+`python3 -m damit_hazard.engine.catalog --export out.json` writes the catalog as Hazard reads
+it (one JSON file), e.g. for DamIT Crest's jurisdiction index.
 
 ## How the class is formed
 
@@ -91,12 +125,12 @@ sizes, citations) and `damit_hazard_receptors.gpkg` (one layer per input layer; 
   receptor is flagged.
 * **M8f** isolation needs `isolates_homes` / `crossings_failed` attributes; no network
   analysis is done.
-* Draft or unverified items: D1, M4b, M8d, M8f, M9c, M10a, M11c, M12b (draft) and M13
-  (unverified), plus the BIA, NRCS and New York presets.
+* Draft, secondary or unverified items follow DamIT Catalog's verification fields: the BIA
+  (secondary), NRCS (unverified) and New York (draft) presets are marked beside their names.
 
 ## Tests
 
-    python3 damit_hazard/tests/run_tests.py            # engine, catalog, TM-11 (no QGIS)
+    python3 damit_hazard/tests/run_tests.py            # engine, DamIT Catalog bridge, TM-11 (no QGIS)
     QT_QPA_PLATFORM=offscreen <QGIS python> damit_hazard/tests/run_tests.py
                                                         # + sampling (GDAL) and damit:classify
 

@@ -8,6 +8,12 @@ module; only ID formats are validated here.
 
 Override the data folder (to update presets without a plugin release) with the
 ``DAMIT_CATALOG_DIR`` environment variable or the ``data_dir`` argument.
+
+Preset IDs may have aliases (``presets.json`` "aliases", e.g. USBR_TM11 -> USBR): every
+lookup by preset ID accepts an alias and a resolved config records the stored ID.
+The optional ``hazard`` file (``hazard.json``) holds the DamIT Hazard classifier's engine
+profile: structure the Appendix A files do not express (receptor-type vocabulary, TM-11
+chart assignment, sampling defaults); it never repeats a threshold of the other files.
 """
 import copy
 import hashlib
@@ -30,6 +36,7 @@ CUTOFF_ID_RE = re.compile(r"^D[1-9][0-9]?$")
 MODIFIER_ID_RE = re.compile(r"^R(?:[1-9]|[1-9][0-9])$")
 PRESET_ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}$")
 STRENGTHS = ("rule", "advisory")
+OPTIONAL_FILES = ("hazard",)    # manifest "files" entries that may be absent
 FALLBACK_METHOD = "M13"          # the document's fallback for a dash; checked to exist in the data
 
 
@@ -69,6 +76,8 @@ class Catalog(object):
         self.modifiers = parts["modifiers"]["modifiers"]
         self.labels = parts["labels"]
         self.presets = parts["presets"]["presets"]
+        self.preset_aliases = dict(parts["presets"].get("aliases") or {})
+        self.hazard = parts.get("hazard") or {}
         self.dash_rule = parts["presets"].get("dash_rule", "")
         self.combination = manifest.get("combination", {})
         self.disclaimer = manifest.get("disclaimer", "")
@@ -97,6 +106,23 @@ class Catalog(object):
     def preset_ids(self):
         return list(self.presets)
 
+    def canonical_preset_id(self, preset_id):
+        """The stored preset ID for an ID or alias (case-sensitive), or None if unknown."""
+        if preset_id in self.presets:
+            return preset_id
+        target = self.preset_aliases.get(preset_id)
+        return target if target in self.presets else None
+
+    def has_preset(self, preset_id):
+        return self.canonical_preset_id(preset_id) is not None
+
+    def preset(self, preset_id):
+        """The preset record for an ID or alias. Raises CatalogError if unknown."""
+        pid = self.canonical_preset_id(preset_id)
+        if pid is None:
+            raise CatalogError(_unknown_preset(self, preset_id))
+        return self.presets[pid]
+
     def generic_label(self, ordinal):
         return self.labels["ordinals"].get(str(int(ordinal)), str(ordinal))
 
@@ -105,8 +131,10 @@ class Catalog(object):
         """The run configuration for a preset: scenarios, merged method params and strengths,
         modifiers, label map and flags. ``scenario_ids`` replaces the preset's scenarios (needed
         when the preset has none confirmed)."""
-        if preset_id not in self.presets:
-            raise CatalogError("unknown preset {!r}; known: {}".format(preset_id, ", ".join(self.presets)))
+        requested = preset_id
+        preset_id = self.canonical_preset_id(preset_id)
+        if preset_id is None:
+            raise CatalogError(_unknown_preset(self, requested))
         pr = self.presets[preset_id]
         flags = []
         method_over = copy.deepcopy(pr.get("methods") or {})
@@ -138,7 +166,8 @@ class Catalog(object):
         modifiers = self._modifiers(pr.get("modifiers") or [], pr.get("modifier_overrides") or {})
         cutoffs = self._cutoffs(pr.get("domain_cutoffs") or [])
         label_map = {str(k): v for k, v in (pr.get("label_map") or {}).items()}
-        return {"mode": MODE_PRESET, "preset_id": preset_id, "preset_label": pr.get("label", preset_id),
+        return {"mode": MODE_PRESET, "preset_id": preset_id, "requested_preset_id": requested,
+                "preset_label": pr.get("label", preset_id),
                 "citation": pr.get("citation", ""), "scenarios": scenarios, "domain_cutoffs": cutoffs,
                 "methods": methods, "modifiers": modifiers, "label_map": label_map,
                 "labels": list(pr.get("labels") or []),
@@ -249,6 +278,13 @@ class Catalog(object):
         return out
 
 
+def _unknown_preset(cat, preset_id):
+    known = ", ".join(cat.presets)
+    if cat.preset_aliases:
+        known += " (aliases: {})".format(", ".join("{} = {}".format(a, t) for a, t in cat.preset_aliases.items()))
+    return "unknown preset {!r}; known: {}".format(preset_id, known)
+
+
 def _flag(code, message, method=None, receptor=None, scenario=None):
     f = {"code": code, "message": message}
     if method:
@@ -309,6 +345,25 @@ def validate(parts):
         for k in (p.get("label_map") or {}):
             if str(k) not in ordinals:
                 errs.append("{}: label_map ordinal {} not in labels.json".format(pid, k))
+    for alias, target in (parts["presets"].get("aliases") or {}).items():
+        if not PRESET_ID_RE.match(str(alias)):
+            errs.append("bad preset alias {!r}".format(alias))
+        if alias in presets:
+            errs.append("preset alias {} is also a stored preset ID".format(alias))
+        if target not in presets:
+            errs.append("preset alias {} points to unknown preset {!r}".format(alias, target))
+    hz = parts.get("hazard")
+    if hz is not None:
+        aliases = parts["presets"].get("aliases") or {}
+        for pid in (hz.get("presets") or {}):
+            if pid not in presets and aliases.get(pid) not in presets:
+                errs.append("hazard.json: unknown preset {}".format(pid))
+        for mid in (hz.get("methods") or {}):
+            if mid not in methods:
+                errs.append("hazard.json: unknown method {}".format(mid))
+        for rid in (hz.get("modifiers") or {}):
+            if rid not in mods:
+                errs.append("hazard.json: unknown modifier {}".format(rid))
     return errs
 
 
@@ -322,6 +377,16 @@ def load(folder=None):
     for key in ("methods", "scenarios", "modifiers", "labels", "presets"):
         name = files.get(key)
         if not name or os.path.basename(name) != name:
+            raise CatalogError("catalog.json: bad file entry for {}".format(key))
+        path = os.path.join(folder, name)
+        parts[key] = _read(path)
+        with open(path, "rb") as fh:
+            h.update(fh.read())
+    for key in OPTIONAL_FILES:                     # optional parts (DamIT Hazard's engine profile)
+        name = files.get(key)
+        if not name:
+            continue
+        if os.path.basename(name) != name:
             raise CatalogError("catalog.json: bad file entry for {}".format(key))
         path = os.path.join(folder, name)
         parts[key] = _read(path)

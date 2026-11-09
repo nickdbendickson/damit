@@ -39,6 +39,15 @@ class Plugin(object):
     def open(self):
         from .dialog import DamitHazardDialog
         if self.dialog is None:
+            from .engine import catalog as C
+            try:
+                C.load()
+            except (C.CatalogError, ImportError) as e:      # DamIT Catalog missing or broken
+                from qgis.PyQt.QtWidgets import QMessageBox
+                QMessageBox.warning(self.iface.mainWindow(), "DamIT Hazard",
+                                    "DamIT Hazard reads its presets and thresholds from the "
+                                    "DamIT Catalog plugin, which could not be read:\n\n{}".format(e))
+                return
             self.dialog = DamitHazardDialog(self.iface.mainWindow(), self.iface)
         self.dialog.show()
         self.dialog.raise_()
