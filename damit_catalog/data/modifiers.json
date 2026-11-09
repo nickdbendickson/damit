@@ -1,0 +1,108 @@
+{
+ "schema": "damit.catalog.modifiers",
+ "schema_version": 1,
+ "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
+ "modifiers": {
+  "R1": {
+   "name": "Transient-use exclusion",
+   "rule": "People only occasionally or briefly present do not by themselves create probable life loss.",
+   "strength": "rule",
+   "source": "FEMA 333; New York; Rhode Island (incidental presence); Arizona three-part test",
+   "evaluation": "report",
+   "appendix_ref": "A.5 p.26-27",
+   "params": {
+    "variant": "base"
+   }
+  },
+  "R2": {
+   "name": "Occupancy presumption",
+   "rule": "Habitable structures (incl. regularly occupied farm/commercial, overnight recreation) are assumed occupied; occasionally used outbuildings are not. A home shown flooded is assumed flooded above its lowest occupied floor unless data show otherwise (New York).",
+   "strength": "rule",
+   "source": "North Dakota; New York",
+   "evaluation": "auto",
+   "appendix_ref": "A.5 p.26-27"
+  },
+  "R3": {
+   "name": "No evacuation credit",
+   "rule": "Emergency action plans and evacuation do not lower the class.",
+   "strength": "rule",
+   "source": "FEMA 333; North Dakota",
+   "evaluation": "report",
+   "appendix_ref": "A.5 p.26-27"
+  },
+  "R4": {
+   "name": "Dams in series",
+   "rule": "Where an upstream failure could cause or contribute to a downstream failure, the upstream class is at least the downstream class.",
+   "strength": "rule",
+   "source": "Nebraska ('must'); advisory in North Dakota and New York ('should')",
+   "evaluation": "auto",
+   "appendix_ref": "A.5 p.26-27"
+  },
+  "R5": {
+   "name": "Future development",
+   "rule": "Count approved or imminent development.",
+   "strength": "rule",
+   "source": "North Dakota; Virginia; Arizona (10-yr zoning); NRCS",
+   "evaluation": "report",
+   "appendix_ref": "A.5 p.26-27",
+   "params": {
+    "horizon_years": null
+   }
+  },
+  "R6": {
+   "name": "Proximity rule for new dams",
+   "rule": "A new dam within the distance of a city class is designed to High unless downstream development is legally curtailed.",
+   "strength": "rule",
+   "source": "Nebraska",
+   "evaluation": "auto",
+   "appendix_ref": "A.5 p.26-27",
+   "params": {
+    "distance_mi_by_city_class": {
+     "metropolitan": 3,
+     "primary": 3,
+     "first_class": 2,
+     "second_class": 1,
+     "village": 1
+    }
+   }
+  },
+  "R7": {
+   "name": "Borderline goes higher",
+   "rule": "A borderline result takes the higher class. Judgment-zone hits from M1 are always flagged.",
+   "strength": "rule",
+   "source": "North Dakota",
+   "evaluation": "auto",
+   "appendix_ref": "A.5 p.26-27"
+  },
+  "R8": {
+   "name": "Simplified-analysis limits",
+   "rule": "Without a breach model a class below High can be justified only for dams storing under the limit at top of dam; lowering from High needs TM-11-based unsteady modeling (New York).",
+   "strength": "rule",
+   "source": "North Dakota; New York",
+   "evaluation": "auto",
+   "appendix_ref": "A.5 p.26-27",
+   "params": {
+    "storage_acft_limit": 200
+   }
+  },
+  "R9": {
+   "name": "Incremental damage analysis scope",
+   "rule": "North Dakota: may reduce the inflow design flood but never the hazard class. Virginia: may lower a proposed class (4VAC50-20-52).",
+   "strength": "rule",
+   "source": "North Dakota; Virginia 4VAC50-20-52",
+   "evaluation": "report",
+   "appendix_ref": "A.5 p.26-27",
+   "params": {
+    "may_lower_class": false
+   }
+  },
+  "R10": {
+   "name": "Re-review trigger",
+   "rule": "Store the run date and receptor-layer versions; re-run when downstream layers change.",
+   "strength": "rule",
+   "source": "Colorado Rule 5.4; Arizona; Rhode Island; New York; MSHA",
+   "evaluation": "auto",
+   "appendix_ref": "A.5 p.26-27"
+  }
+ }
+}
