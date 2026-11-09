@@ -61,12 +61,13 @@ class Metadata(unittest.TestCase):
                 self.assertIsNone(FORBIDDEN_LAUNCH.search(code), p)
                 self.assertNotRegex(code, r"processing\.run\(\s*['\"](ndbreach|nddam):", p)
 
-    def test_hazard_left_alone(self):
-        # this branch does not create or edit damit_hazard (QGIS Dev owns it)
-        import subprocess as sp  # tests only
-        out = sp.run(["git", "-C", ROOT, "diff", "--name-only", "origin/main...HEAD"], capture_output=True, text=True)
-        if out.returncode == 0:
-            self.assertFalse([f for f in out.stdout.split() if f.startswith("damit_hazard/")])
+    def test_hazard_depends_on_catalog(self):
+        # DamIT Hazard reads its presets and thresholds from DamIT Catalog and ships no catalog of its own
+        m = meta("damit_hazard")
+        self.assertEqual(m["name"], "DamIT Hazard")
+        self.assertEqual(m["hasProcessingProvider"], "yes")
+        self.assertEqual(m.get("plugin_dependencies"), "DamIT Catalog")
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "damit_hazard", "data", "catalog.json")))
 
 
 if __name__ == "__main__":

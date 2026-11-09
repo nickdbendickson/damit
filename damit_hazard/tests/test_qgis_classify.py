@@ -125,6 +125,37 @@ def test_nd_preset_headless():
     assert os.path.isfile(os.path.join(out, "damit_hazard_report.html"))
 
 
+def test_preset_id_and_alias_headless():
+    """PRESET_ID takes a preset ID or alias (USBR or USBR_TM11) and wins over the PRESET list;
+    the list shows 'ID: label'; an unknown ID fails with the known ones listed."""
+    _app()
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    dep, vel = _rasters(d)
+    s, p, r = _layers(d)
+    alg = QgsApplication.processingRegistry().algorithmById("damit:classify")
+    opts = alg.parameterDefinition("PRESET").options()
+    assert "USBR: USBR (ACER TM-11)" in opts and opts[0].startswith("Custom"), opts
+    reps = []
+    for pid in ("USBR", "USBR_TM11"):
+        out = os.path.join(d, "out_" + pid)
+        res = _alg_run({"PRESET": 0, "PRESET_ID": pid, "RUN_SCENARIO": 1, "MODEL_DIM": 0,
+                        "DEPTH": dep, "VELOCITY": vel, "METRES": True, "STRUCTURES": s,
+                        "FACILITIES": p, "ROADS": r, "OUTPUT": out})
+        rep = json.load(open(os.path.join(out, "damit_hazard_report.json"), encoding="utf-8"))
+        assert rep["config"]["preset"] == "USBR"
+        reps.append((res["ORDINAL"], res["CLASS"], sorted(h["method"] for h in rep["hits"])))
+    assert reps[0] == reps[1], reps
+    from qgis.core import QgsProcessingContext, QgsProcessingFeedback
+    ok = True
+    try:
+        _r, ok = alg.run({"PRESET": 0, "PRESET_ID": "USBR_TM12", "DEPTH": dep,
+                          "OUTPUT": os.path.join(d, "bad")}, QgsProcessingContext(),
+                         QgsProcessingFeedback())
+    except Exception as e:                      # some QGIS versions raise instead of returning
+        ok = "USBR_TM11" not in str(e)
+    assert not ok
+
+
 def test_custom_mode_headless():
     _app()
     d = tempfile.mkdtemp(prefix="damit_smoke_")

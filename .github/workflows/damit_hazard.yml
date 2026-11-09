@@ -2,9 +2,9 @@ name: damit_hazard
 
 on:
   push:
-    paths: ["damit_hazard/**", ".github/workflows/damit_hazard.yml"]
+    paths: ["damit_hazard/**", "damit_catalog/**", ".github/workflows/damit_hazard.yml"]
   pull_request:
-    paths: ["damit_hazard/**", ".github/workflows/damit_hazard.yml"]
+    paths: ["damit_hazard/**", "damit_catalog/**", ".github/workflows/damit_hazard.yml"]
 
 jobs:
   engine:

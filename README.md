@@ -15,12 +15,12 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 | `damit_runner/` | DamIT Runner | `damit_run` | Prepares and records breach runs from a hand-off package (0.1.0 launches no model) |
 | [`damit_hazard/`](damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 15 jurisdiction presets or a custom method set (`damit:classify`) |
 
-**DamIT Hazard** (`damit_hazard/`, provider `damit`, algorithm `damit:classify`) is a separate plugin in this
-repository, built separately; it classifies finished runs from rasters and receptors. DamIT Screener and DamIT
-Runner do not use the `damit` provider id and do not classify finished rasters.
+**DamIT Hazard** (`damit_hazard/`, provider `damit`, algorithm `damit:classify`) classifies finished runs from
+rasters and receptors. DamIT Screener and DamIT Runner do not use the `damit` provider id and do not classify
+finished rasters.
 
-DamIT Screener and DamIT Runner declare `plugin_dependencies=DamIT Catalog`, so install DamIT Catalog first
-(the QGIS Plugin Manager offers it). None of the DamIT plugins depend on the DamSafety / DWR plugins.
+DamIT Hazard, DamIT Screener and DamIT Runner all declare `plugin_dependencies=DamIT Catalog` and read their
+presets, methods and thresholds from it, so install DamIT Catalog first (the QGIS Plugin Manager offers it). None of the DamIT plugins depend on the DamSafety / DWR plugins.
 
 ## The catalog: Appendix A as data
 
@@ -34,7 +34,11 @@ pages 18–30:
 | `scenarios.json` | Scenarios S1–S7 (pool rule, dam fields each needs) and domain cutoffs D1, D2 |
 | `modifiers.json` | Modifiers R1–R10 |
 | `labels.json` | Class-label normalization (ordinal 0 Minimal … 4 Extremely High, local equivalents) |
+| `hazard.json` | DamIT Hazard's engine profile: receptor-type vocabulary, TM-11 chart assignment, sampling defaults, per-preset notes. Repeats no threshold of the other files |
 | `presets.json` | FEMA 333, USBR (ACER TM-11), BIA, NRCS, North Dakota (REG_05.2026), Nebraska, New York, Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska |
+
+Preset IDs may have aliases (`presets.json` `aliases`): `USBR_TM11` is accepted everywhere `USBR` is (Screener
+`PRESET`, hand-off validation, `damit:classify` `PRESET_ID`) and a run records the stored ID `USBR`.
 
 Every threshold, label map, method parameter, scenario and modifier lives in those files; the Python code only
 validates ID formats and interprets the rule language. **Presets can be updated without a plugin release**:

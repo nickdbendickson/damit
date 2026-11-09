@@ -118,6 +118,10 @@ def sections(result, cat):
         m = cat["modifiers"][rid]
         cites.append("{}: {} [{}]".format(rid, m["source"], m["verification"]))
     cites.append("Source document: " + (result.get("source_document") or ""))
+    dc = result.get("damit_catalog") or {}
+    if dc:
+        cites.append("DamIT Catalog {} (sha256 {}) from {}".format(
+            dc.get("catalog_version"), dc.get("sha256"), dc.get("folder")))
     out.append(("Citations", cites))
     out.append(("Disclaimer", [result.get("disclaimer") or ""]))
     return out

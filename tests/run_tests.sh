@@ -22,5 +22,7 @@ QPY="${DAMIT_QGIS_PYTHON:-python3}"
 echo "== pure Python ($PY)"
 nice -n 19 $PY -m unittest -v damit_catalog.tests.test_catalog damit_screener.tests.test_workflow \
     damit_runner.tests.test_rundam tests.test_metadata
+nice -n 19 $PY damit_hazard/tests/run_tests.py
 echo "== real QGIS, offscreen, scratch profile $QGIS_CUSTOM_CONFIG_PATH ($QPY)"
 nice -n 19 $QPY -m unittest -v tests.test_qgis_integration
+nice -n 19 $QPY damit_hazard/tests/run_tests.py qgis
