@@ -1,0 +1,13 @@
+node_modules/
+dist/
+DamIT.html
+*.log
+.env
+.env.*
+.DS_Store
+__pycache__/
+*.pyc
+desktop/build/
+desktop/dist/
+# Raw downloads for the ND example dam bundles (npm run data:nd-dams / data:nd-dams-dwr); never committed.
+data-raw/
