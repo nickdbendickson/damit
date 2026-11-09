@@ -95,6 +95,8 @@ def sections(result, cat):
         lines.append("{}: {} (modified {}, {} bytes{})".format(
             L.get("role"), L.get("source"), L.get("modified"), L.get("size"),
             ", " + L["note"] if L.get("note") else ""))
+    if result.get("nid_id"):
+        lines.append("NID ID: {} (USACE National Inventory of Dams)".format(result["nid_id"]))
     if result.get("dam"):
         lines.append("Dam record: " + _params(result["dam"]))
     out.append(("Inputs (R10: re-run when these change)", lines or ["-"]))

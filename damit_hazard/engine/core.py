@@ -4,7 +4,8 @@
 
 runs: [{"scenario": "S3", "label": "...", "model_dim": "2D" | "1D" | None,
         "breach_location": optional, "has_non_breach": bool, "receptors": [receptor dicts]}]
-dam:  optional dam attributes (storage_acft, current_class, is_new, analysis,
+dam:  optional dam record: dam_id = the dam's NID ID (USACE National Inventory of Dams, e.g. ND00199),
+      nid_id, is_new, is_sample (see nid_rule), storage_acft, current_class, is_new, analysis,
       downstream_dam_classes, municipalities, development_curtailed, lives_in_jeopardy,
       population_inundation, access_controlled, eap_warning, evacuation_credit, name)
 
@@ -17,6 +18,7 @@ dam:  optional dam attributes (storage_acft, current_class, is_new, analysis,
 A method whose inputs are missing flags the gap (result["flags"]) instead of passing silently.
 """
 import datetime
+import re
 
 from . import catalog as C
 from . import tm11
@@ -42,6 +44,72 @@ class Flags(object):
             if rid is not None and rid not in f["receptors"]:
                 f["receptors"].append(rid)
         return f
+
+
+# ---------------------------------------------------------------- NID IDs ----------------
+#: The dam inventory is the NID: an NID ID is the two-letter state code and 3+ digits (ND00199).
+NID_ID_RE = re.compile(r"[A-Z]{2}\d{3,}")
+#: Ids of other inventories (state dam-safety, dugout, unknown-structure layers): never a dam's id.
+OTHER_INVENTORY_RE = re.compile(r"(DWR|DUG|UNK)-", re.I)
+ID_KEYS = ("dam_id", "nid_id", "is_new", "is_sample", "new_or_existing")
+
+
+def is_nid_id(value):
+    """True for an NID ID (ND00199, TX12345). DWR-2801, DUG-130, SAMPLE-4031, DESK-014 and NEW are not."""
+    return bool(NID_ID_RE.fullmatch(str(value or "").strip().upper()))
+
+
+def _yes(v):
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v == 1
+    return str(v or "").strip().lower() in ("1", "true", "yes", "y", "t")
+
+
+def nid_rule(dam):
+    """The NID-ID rule (same as DamIT Catalog's handoff.nid_rule). Returns (error, warning, nid_id).
+
+    The dam record needs an NID ID: nid_id, or a dam_id that is one (dam_id = NID ID preferred). A nid_id
+    that is not an NID ID, or a DWR- / DUG- / UNK-style dam_id, is an error. Only a new / proposed dam
+    (is_new, or new_or_existing = new) or a desk sample (is_sample) may have none: a warning."""
+    dam = dam or {}
+    dam_id = str(dam.get("dam_id") or "").strip()
+    raw = dam.get("nid_id")
+    nid = str(raw).strip().upper() if raw not in (None, "") else ""
+    if nid and not is_nid_id(nid):
+        return ("dam {!r}: nid_id {!r} is not an NID ID (two letters and digits, e.g. ND00199); the "
+                "dam inventory is the NID".format(dam_id, raw)), None, None
+    if OTHER_INVENTORY_RE.match(dam_id):
+        return ("dam {!r} is another inventory's id, not an NID ID; use the NID ID as dam_id"
+                .format(dam_id)), None, None
+    if not nid and is_nid_id(dam_id):
+        nid = dam_id.upper()
+    if nid:
+        if dam_id and dam_id.upper() != nid:
+            return None, ("dam_id {} is not the NID ID {} (dam_id = NID ID preferred)"
+                          .format(dam_id, nid)), nid
+        return None, None, nid
+    if _yes(dam.get("is_new")) or str(dam.get("new_or_existing") or "").strip().lower() == "new":
+        return None, "dam {!r} has no NID ID: a new / proposed dam (is_new)".format(dam_id), None
+    if _yes(dam.get("is_sample")):
+        return None, ("dam {!r} has no NID ID: a desk sample, not an NID inventory record "
+                      "(is_sample)".format(dam_id)), None
+    return ("dam {!r} has no NID ID; give nid_id or use the NID ID as dam_id (the dam inventory is "
+            "the NID), or mark a proposed dam is_new".format(dam_id)), None, None
+
+
+def _nid(dam, flags):
+    """Flag the dam record's NID ID (error / warning); returns the NID ID or None."""
+    if not any(dam.get(k) not in (None, "") for k in ID_KEYS):
+        flags.add(INFO, "nid_none", "no dam id in the dam record: this result is not tied to an NID dam")
+        return None
+    error, warning, nid = nid_rule(dam)
+    if error:
+        flags.add(ERROR, "nid_id", error)
+    elif warning:
+        flags.add(WARNING, "nid_exception", warning)
+    return nid
 
 
 def _list(x):
@@ -1130,6 +1198,9 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
     dam = dict(dam or {})
     charts = charts or tm11.load()
     flags, notes = Flags(), []
+    nid = _nid(dam, flags)
+    if nid:
+        dam["nid_id"] = nid
     _validate_runs(cat, cfg, runs, dam, flags)
     base = int(cfg["general"].get("base_class", 1))
     apply_adv = bool(cfg.get("apply_advisory"))
@@ -1188,7 +1259,7 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
         "class_with_advisory": adv_cls, "advisory_applied": apply_adv,
         "driving": driving, "advisory": advisory, "hits": all_hits, "flags": flags.items,
         "per_scenario": per, "modifier_notes": notes, "per_receptor": per_rec,
-        "receptor_flags": flag_rec, "config": cfg, "dam": dam, "layers": layers or [],
+        "receptor_flags": flag_rec, "config": cfg, "dam": dam, "nid_id": nid, "layers": layers or [],
         "run_date": run_date or datetime.datetime.now().astimezone().isoformat(
             timespec="seconds"),
         "catalog_version": cat.get("catalog_version"), "disclaimer": cat.get("disclaimer"),
