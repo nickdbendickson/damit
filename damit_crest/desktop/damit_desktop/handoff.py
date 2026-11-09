@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from damit_desktop.hazard_class import class_ordinal
+from damit_desktop.nid_rule import NID_ID_RE, OTHER_INVENTORY_RE, is_nid_id, nid_rule  # noqa: F401 (DamIT Catalog's rule)
 
 # One lock per dam folder. The desktop server runs one thread per request, so two jobs on the same dam would both
 # read dam.json, merge, and write — the second clobbering the first (a lost field or status entry). Serialise the
@@ -45,15 +46,11 @@ FAILURE_MODES = ("piping", "overtopping")
 DEFAULT_FAILURE_MODE = "piping"
 
 
-NID_ID_RE = re.compile(r"[A-Z]{2}\d{3,}")
+# NID_ID_RE, is_nid_id and nid_rule are DamIT Catalog's (damit_catalog/handoff.py, loaded by damit_desktop.nid_rule):
+# the same rule DamIT Screener, Runner and Hazard apply, so Crest cannot drift from the plugins.
 # The built-in fictional desk examples (src/lib/crest/samples.ts). Their ids are NOT NID IDs; they are handed off as
 # samples (is_sample), never as NID inventory records.
 DESK_SAMPLE_IDS = frozenset({"SAMPLE-4031", "DESK-014"})
-
-
-def is_nid_id(value) -> bool:
-    """An NID ID: two letters and at least three digits (ND00199). DWR-, DUG-, SAMPLE-, NEW and blanks are not."""
-    return bool(NID_ID_RE.fullmatch(str(value or "").strip().upper()))
 
 
 def handoff_ids(dam: dict | None) -> dict:
@@ -76,14 +73,28 @@ def handoff_ids(dam: dict | None) -> dict:
 
 
 def nid_problem(dam: dict | None) -> str | None:
-    """Why the plugins would refuse this record (None when they accept it): no NID ID and neither new nor a sample."""
+    """Why the plugins would refuse this record (None when they accept it).
+
+    The decision is DamIT Catalog's nid_rule applied to exactly the fields Crest hands off (handoff_ids), so Crest
+    refuses what the plugins refuse: no NID ID and neither new nor a sample, an invalid nid_id, another inventory's id
+    (DWR- / DUG- / UNK-) as dam_id even for a new dam or a sample, or two different NID IDs. One desk-side guard on
+    top: a desk record's own id is never taken as its NID ID (the NID ID comes from the NID pick, nidId / nid)."""
     ids = handoff_ids(dam)
-    if ids["nid_id"] or ids["is_new"] or ids["is_sample"]:
+    error, _warning, nid = nid_rule(ids)
+    if error is None and nid != ids["nid_id"]:
+        error = (f"dam {ids['dam_id']!r}: the desk id looks like an NID ID but the record was not picked from the NID "
+                 "(no nidId / nid)")
+    if error is None:
         return None
     shown = str((dam or {}).get("nid") or "").strip()
-    what = f"'{shown}' is not an NID ID" if shown else "This record has no NID ID"
+    rule = f" (DamIT Catalog NID rule: {error})"
+    if (ids["is_new"] or ids["is_sample"]) and OTHER_INVENTORY_RE.match(ids["dam_id"]):
+        return (f"'{ids['dam_id']}' cannot go to the DamIT plugins, not even as a new dam or a sample: the plugins "
+                "refuse another inventory's id (DWR-, DUG-, UNK-) as a dam's id. Pick the dam from the NID (National "
+                "Inventory of Dams), or start a proposed dam from a blank New dam." + rule)
+    what = f"'{shown}' is not an NID ID" if shown and not is_nid_id(shown) else "This record has no NID ID"
     return (f"{what}. The DamIT plugins take NID dams only: pick the dam from the NID (National Inventory of Dams), "
-            "or tick New dam for a proposed dam that is not in the NID yet.")
+            "or tick New dam for a proposed dam that is not in the NID yet." + rule)
 
 
 def resolved_failure_mode(dam: dict | None) -> str:

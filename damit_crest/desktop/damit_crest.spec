@@ -5,6 +5,8 @@
 import sys
 from pathlib import Path
 
+if not Path("../../damit_catalog/handoff.py").is_file():
+    raise SystemExit("../../damit_catalog/handoff.py is missing: build from a checkout of the damit repository.")
 if not Path("damit_desktop/web/index.html").is_file():
     raise SystemExit("damit_desktop/web/index.html is missing: run `npm run build:desktop` from the repo root first.")
 
@@ -14,12 +16,14 @@ a = Analysis(
     ["run.py"],
     pathex=["."],
     binaries=[],
-    datas=[("damit_desktop/web", "damit_desktop/web")],
+    # DamIT Catalog's NID-ID rule: damit_desktop/nid_rule.py loads this file (no copy of the rule in Crest).
+    datas=[("damit_desktop/web", "damit_desktop/web"), ("../../damit_catalog/handoff.py", "damit_catalog")],
     hiddenimports=[
         "damit_desktop",
         "damit_desktop.__main__",
         "damit_desktop.algorithms",
         "damit_desktop.handoff",
+        "damit_desktop.nid_rule",
         "damit_desktop.qgis_run",
         "damit_desktop.layers",
         "damit_desktop.localdem",

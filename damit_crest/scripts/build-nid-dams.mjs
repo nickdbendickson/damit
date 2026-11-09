@@ -185,6 +185,7 @@ export function buildNidDams(csvText, opts = {}) {
     const nid = str(get(r, "NID ID"));
     const fed = str(get(r, "Federal ID"));
     if (!nid) continue;
+    // DamIT Catalog's NID ID format (damit_catalog/handoff.py NID_ID_RE); src/lib/crest/nid-dams.test.ts checks it.
     if (!/^[A-Z]{2}\d{3,}$/.test(nid)) {
       warnings.push(`${nid}: not an NID ID, skipped`);
       continue;

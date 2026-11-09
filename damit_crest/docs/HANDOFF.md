@@ -75,7 +75,12 @@ Details:
   (`is_sample: true`; `SAMPLE-4031` and `DESK-014` are not NID IDs); otherwise the job stops before `qgis_process`
   with "… is not an NID ID". DWR-, DUG- or other inventory ids are never sent or substituted: when a screener's
   outputs name the dam by another id, the log says so and the results are read by the NID ID only. The DamIT
-  plugins apply the same rule (a non-NID id is a FAIL; new / sample records pass with a warning). A Runner whose
+  plugins apply the same rule (a non-NID id is a FAIL; new / sample records pass with a warning). It is one rule, not a
+  copy: the desktop server loads DamIT Catalog's `nid_rule` from `damit_catalog/handoff.py` (`damit_desktop/nid_rule.py`;
+  the PyInstaller build ships that file) and stops a job when that rule refuses the fields it would hand off. So a new
+  dam or sample whose desk id is another inventory's (`DWR-2801`, `DWR_2801`, `DUG-130`) is stopped too; desk-made new
+  dams are `desk-…`, so this only catches old records. The browser's NID ID format check (`nid-dams.ts`) is tested
+  against Catalog's `NID_ID_RE`. A Runner whose
   `damit_run:rundam` lists `NID_ID`, `IS_NEW` and `IS_SAMPLE` gets them too (the NID ID, or `IS_NEW=true` /
   `IS_SAMPLE=true` for a record without one); older Runners simply do not get them.
 - **DAMS layer.** `dam_point.geojson` is this dam alone as a point (EPSG:4326: breach point, else reservoir point,
