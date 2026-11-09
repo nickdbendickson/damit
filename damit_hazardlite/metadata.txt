@@ -1,0 +1,21 @@
+[general]
+name=DamIT Hazard Lite
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=One Processing tool (damit_lite:classify): samples maximum depth / velocity rasters at structures, roads and railroads and suggests a hazard class with any DamIT Catalog preset or custom method set.
+about=A lighter companion to DamIT Hazard: no dialog of its own, one tool. Thresholds, classes, wet depth and sampling distances all come from DamIT Catalog (the same source of truth as DamIT Hazard), so the North Dakota, Nebraska, New York, FEMA 333, USBR (USBR_TM11 alias) and other presets, or custom method IDs, work the same way. 0.1.0 screens the catalog methods about structures, roads and rail; methods about other receptors are listed for review; M1 chart zones are read from a field, not computed. Writes hazard_lite.json, receptors.csv, hazard_lite_summary.md and a receptor point layer. Runs no flood model. Results are suggested classifications only: the engineer of record and the regulating agency make the determination.
+version=0.1.0
+author=N.D. Bendickson
+email=322661428+nickdbendickson@users.noreply.github.com
+repository=https://github.com/nickdbendickson/damit
+tracker=https://github.com/nickdbendickson/damit/issues
+homepage=https://github.com/nickdbendickson/damit
+category=Analysis
+tags=dam,dam safety,hazard classification,processing
+icon=icon.svg
+experimental=True
+deprecated=False
+hasProcessingProvider=yes
+plugin_dependencies=DamIT Core,DamIT Catalog
+changelog=0.1.0 - first release: damit_lite:classify (structures, roads, rail) on DamIT Catalog presets / custom methods.

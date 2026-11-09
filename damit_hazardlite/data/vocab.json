@@ -1,0 +1,33 @@
+{
+ "schema": "damit.hazardlite.vocab",
+ "schema_version": 1,
+ "note": "Field-value vocabularies only (no thresholds): how layer values are read as DamIT receptor attributes. Thresholds, methods and classes come from DamIT Catalog. Edit a copy and pass it as VOCAB to change a mapping.",
+ "structure_type": {
+  "_note": "lower-case layer value (or prefix, see structure_type_prefix) -> DamIT Hazard receptor type (DamIT Catalog hazard.json receptor_types)",
+  "home": "home", "house": "home", "residence": "home", "residential": "home", "single family": "home",
+  "detached": "home", "multi-family": "home", "apartments": "home", "apartment": "home", "dwelling": "home",
+  "mobile home": "mobile_home", "mobile_home": "mobile_home", "manufactured home": "mobile_home", "static_caravan": "mobile_home",
+  "school": "school", "education": "school", "hospital": "hospital", "nursing home": "nursing_home", "nursing_home": "nursing_home",
+  "institution": "institution", "government": "institution", "church": "institution",
+  "commercial": "commercial", "retail": "commercial", "office": "commercial", "industrial": "industrial",
+  "campground": "campground", "camp_site": "campground", "farm": "farm_occupied", "farm_occupied": "farm_occupied",
+  "agriculture": "farm_unoccupied", "farm_unoccupied": "farm_unoccupied", "barn": "outbuilding", "shed": "outbuilding",
+  "garage": "outbuilding", "outbuilding": "outbuilding", "storage": "storage"
+ },
+ "structure_type_prefix": {
+  "_note": "NSI occtype prefixes (longest match wins), e.g. RES1-1SNB -> RES1",
+  "RES1": "home", "RES2": "mobile_home", "RES3": "home", "RES4": "commercial", "RES5": "institution", "RES6": "nursing_home",
+  "COM6": "hospital", "COM": "commercial", "IND": "industrial", "AGR": "farm_unoccupied", "REL": "institution",
+  "GOV": "institution", "EDU": "school"
+ },
+ "road_class": {
+  "_note": "lower-case layer value -> DamIT Catalog road_class (methods M8a, M8c)",
+  "interstate": "interstate", "motorway": "interstate", "motorway_link": "interstate", "i": "interstate",
+  "trunk": "us_state_highway", "primary": "us_state_highway", "us highway": "us_state_highway",
+  "state highway": "us_state_highway", "us_state_highway": "us_state_highway", "highway": "us_state_highway",
+  "main_highway_4lane": "main_highway_4lane", "private": "private", "driveway": "private", "service": "private",
+  "track": "private", "secondary": "local", "tertiary": "local", "residential": "local", "unclassified": "local", "local": "local"
+ },
+ "true_values": ["1", "true", "t", "yes", "y"],
+ "false_values": ["0", "false", "f", "no", "n"]
+}
