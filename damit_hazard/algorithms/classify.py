@@ -254,10 +254,23 @@ class Classify(QgsProcessingAlgorithm):
         return out, geoms
 
     # ------------------------------------------------------------------- main -----------
+    def checkParameterValues(self, parameters, context):
+        # Processing (processing.run, the Toolbox, the DamIT Hazard window) loads the
+        # raster parameters as QGIS layers while checking them, before processAlgorithm; QGIS then
+        # computes their statistics. Check with GDAL PAM off too, so that load writes no
+        # <raster>.aux.xml beside the inputs.
+        with S.no_pam():
+            return super().checkParameterValues(parameters, context)
+
     def processAlgorithm(self, p, context, feedback):
         # The rasters are inputs from a model run (often a product-of-record folder): open them with
         # GDAL PAM off, so neither our reader nor QGIS (raster layer statistics) writes a
         # <raster>.aux.xml beside them. Outputs go to OUTPUT only.
+        # Limits (not covered here; README "Outputs"): a raster that is already a layer in the QGIS
+        # project was opened outside classify, so QGIS may still save its statistics beside it; and
+        # a bare qgis_process opens the rasters outside these two steps, so it still writes
+        # sidecars unless GDAL_PAM_ENABLED=NO is in its environment (DamIT Crest sets it on its
+        # classify call, qgis_run.classify_env).
         with S.no_pam():
             return self._process(p, context, feedback)
 
