@@ -100,6 +100,20 @@ class Agree(unittest.TestCase):
         self.assertEqual(self.hazard("ND", [h], "S3"), 3)
         self.assertEqual(self.screener("ND", [c], summary={"hydraulics_source": "breach_model"}), 3)
 
+    def test_summaries_presets_agree(self):
+        """Catalog 2026.11.09.4 (Nov 2026 Summaries): AL, NC, USACE, TVA and New York's M5 (High at 1+ life)
+        give the same class in both engines."""
+        cases = [(6.5, 1.0, 1), (6.5, 1.0, 3), (0.5, 0.5, 2)]
+        for pid in ("AL", "NC", "USACE", "TVA", "NY"):
+            got = []
+            for case in cases:
+                h, c = self.home_pair("h", *case)
+                hz = self.hazard(pid, [h], "S1")
+                sc = self.screener(pid, [c])
+                self.assertEqual(hz, sc, (pid, case))
+                got.append(hz)
+            self.assertEqual(got[:2], [3, 3], pid)          # one life in jeopardy -> High / Class C
+
 
 if __name__ == "__main__":
     unittest.main()

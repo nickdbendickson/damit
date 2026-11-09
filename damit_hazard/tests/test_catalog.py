@@ -24,10 +24,10 @@ PRESETS = {  # Appendix A.6: preset -> (scenarios, methods, modifiers, labels)
            ["R2", "R3", "R4", "R5", "R7", "R8", "R9"], ["Low", "Medium", "High"]),
     "NE": (["S4"], ["M3", "M4a", "M8c", "M9b", "M11b", "M12a"], ["R4", "R5", "R6"],
            ["Minimal", "Low", "Significant", "High"]),
-    "NY": (["S1", "S5"], ["M1", "M4b", "M8d", "M8f", "M9c", "M10a", "M11c", "M12b"],
+    "NY": (["S1", "S5"], ["M1", "M4b", "M5", "M8d", "M8f", "M9c", "M10a", "M11c", "M12b"],
            ["R1", "R2", "R4", "R8"], ["Class A", "Class B", "Class C"]),
     "VA": (["S1", "S5"], ["M13", "M8e", "M5"], ["R5", "R9"], ["Low", "Significant", "High"]),
-    "TX": ([], ["M4c"], ["R5"], ["Low", "Significant", "High"]),
+    "TX": ([], ["M4c", "M13"], ["R5"], ["Low", "Significant", "High"]),
     "ID": ([], ["M2", "M6"], [], ["Low", "Significant", "High"]),
     "CO": (["S2"], ["M5", "M6"], ["R10"], ["No Public Hazard", "Low", "Significant", "High"]),
     "RI": (["S6"], ["M13", "M8g"], ["R1", "R10"], ["Low", "Significant", "High"]),
@@ -35,6 +35,11 @@ PRESETS = {  # Appendix A.6: preset -> (scenarios, methods, modifiers, labels)
                                                       "High"]),
     "CA": ([], ["M5", "M7"], [], ["Low", "Significant", "High", "Extremely High"]),
     "AK": ([], ["M5", "M12c", "M13"], [], ["Class III", "Class II", "Class I"]),
+    # In-Depth Summaries (Nov. 2026): FEMA-style thin presets (M5 High at 1+ life, M13 fallback)
+    "AL": ([], ["M5", "M13"], [], ["Low", "Significant", "High"]),
+    "NC": ([], ["M5", "M13"], [], ["Class A", "Class B", "Class C"]),
+    "USACE": ([], ["M5", "M13"], [], ["Low", "Significant", "High"]),
+    "TVA": ([], ["M5", "M13"], [], ["Low", "Significant", "High"]),
 }
 
 
@@ -67,7 +72,7 @@ def test_every_preset_matches_a6():
     assert CAT["presets"]["NE"]["modifiers"]["R4"]["strength"] == "rule"
     assert CAT["presets"]["NY"]["domains"] == ["D1"]
     assert CAT["presets"]["VA"]["domains"] == ["D2"]
-    assert "unverified" in CAT["presets"]["USBR"]["optional_scenarios"]["S5"]
+    assert CAT["presets"]["USBR"]["optional_scenarios"]["S5"] == "for borderline dams"   # Summaries F-3
     assert CAT["presets"]["BIA"]["verification"] == "secondary"
 
 

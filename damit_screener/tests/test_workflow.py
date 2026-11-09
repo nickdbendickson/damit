@@ -275,5 +275,43 @@ class CatalogDecisions(unittest.TestCase):
         self.assertEqual(st["screening"]["suggested_label"], "Class C")
         self.assertIn("R8", [m["id"] for m in st["screening"]["modifiers_applied"]])
 
+class Nov2026Summaries(unittest.TestCase):
+    """The Screener reads the catalog 2026.11.09.4 presets (AL, NC, USACE, TVA; TX and AK M13 wordings; NY M5)."""
+
+    def setUp(self):
+        os.environ.pop(C.ENV_DIR, None)
+        self.work = tempfile.mkdtemp(prefix="damit_scr_sum_")
+        self.cat = C.load()
+
+    def tearDown(self):
+        shutil.rmtree(self.work, ignore_errors=True)
+
+    def test_new_presets_in_preflight(self):
+        dams, _ = ST.prepare([raw_dam()], FMAP)
+        for pid in ("AL", "NC", "USACE", "TVA"):
+            checks, _, cfg = WF.preflight(self.work, dict(WF.DEFAULT_SETTINGS, preset=pid), dams, [])
+            titles = {c["title"] for c in checks}
+            self.assertNotIn("Preset / method selection", {c["title"] for c in checks if c["status"] == WF.FAIL}, pid)
+            self.assertEqual(cfg["preset_id"], pid)
+            self.assertIn("Catalog flag: method_fallback_m13", titles, pid)
+            self.assertIn("Catalog flag: scenario_unconfirmed", titles, pid)
+
+    def test_new_preset_suggestions(self):
+        rec = {"id": "h", "receptor_type": "structure", "structure_type": "home", "habitable": True,
+               "depth_ground_ft": 6.5, "velocity_fps": 1.0, "m1_zone": "high_danger", "occupants": 1}
+        for pid, want in (("AL", "High"), ("NC", "Class C"), ("USACE", "High"), ("TVA", "High"), ("NY", "Class C")):
+            st = ST.suggest(self.cat, self.cat.resolve_preset(pid), {}, [rec], {"model_dimension": "2D"})
+            self.assertEqual(st["screening"]["suggested_label"], want, pid)
+            self.assertIn("M5", [d["method"] for d in st["screening"]["driving"]], pid)
+
+    def test_texas_and_alaska_wordings(self):
+        f = {"id": "f", "receptor_type": "feature", "feature_kind": "secondary_highway", "depth_ground_ft": 1.0}
+        st = ST.suggest(self.cat, self.cat.resolve_preset("TX"), {}, [f], {})
+        self.assertEqual(st["screening"]["suggested_label"], "Significant")
+        f = {"id": "f", "receptor_type": "feature", "feature_kind": "major_railroad", "depth_ground_ft": 1.0}
+        st = ST.suggest(self.cat, self.cat.resolve_preset("AK"), {}, [f], {})
+        self.assertEqual(st["screening"]["suggested_label"], "Class II")
+
+
 if __name__ == "__main__":
     unittest.main()

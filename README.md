@@ -13,7 +13,7 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 | `damit_catalog/` | DamIT Catalog | none | Appendix A data catalog (JSON) + Python loader, evaluator and hand-off schema |
 | `damit_screener/` | DamIT Screener | `damit_screen` | Preflight, scenario-driven screening chain, preliminary suggestion, hand-off packages |
 | `damit_runner/` | DamIT Runner | `damit_run` | Prepares and records breach runs from a hand-off package (0.1.0 launches no model) |
-| [`damit_hazard/`](damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 15 jurisdiction presets or a custom method set (`damit:classify`) |
+| [`damit_hazard/`](damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 19 jurisdiction presets or a custom method set (`damit:classify`) |
 | [`damit_core/`](damit_core/README.md) | DamIT Core | none | Shared library: suite settings, DamIT plugin list and version check, US state table, dam-record field helpers, catalog access, HTTP helper. Menu: About only |
 | [`damit_setup/`](damit_setup/README.md) | DamIT Setup | none | Start here: suite data folder, work folder, state / preset, suite check, settings fill, hand-off to `damit_screen:preflight` |
 | [`damit_data/`](damit_data/README.md) | DamIT Data | `damit_data` | Offline NSI, Microsoft footprints, OpenStreetMap (Geofabrik) and USA Structures layers for any US state (`damit_data:download`, `:status`) |
@@ -61,7 +61,7 @@ pages 18–30:
 | `modifiers.json` | Modifiers R1–R10 |
 | `labels.json` | Class-label normalization (ordinal 0 Minimal … 4 Extremely High, local equivalents) |
 | `hazard.json` | DamIT Hazard's engine profile: receptor-type vocabulary, TM-11 chart assignment, sampling defaults, per-preset notes. Repeats no threshold of the other files and holds no rule DamIT Screener would miss |
-| `presets.json` | FEMA 333, USBR (ACER TM-11), BIA, NRCS, North Dakota (REG_05.2026), Nebraska, New York, Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska |
+| `presets.json` | FEMA 333, USBR (ACER TM-11), BIA, NRCS, North Dakota (REG_05.2026), Nebraska, New York, Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska (Appendix A.6); Alabama, North Carolina, USACE, TVA (Nov 2026 Summaries); `no_preset` lists FERC, USFWS, MSHA and the other ~40 states with the reason |
 
 Preset IDs may have aliases (`presets.json` `aliases`): `USBR_TM11` is accepted everywhere `USBR` is (Screener
 `PRESET`, hand-off validation, `damit:classify` `PRESET_ID`) and a run records the stored ID `USBR`.
@@ -76,6 +76,31 @@ document has a dash (no confirmed method) the preset falls back to M13 and engin
 confirms no scenario, the user must pick one and the run is flagged. M1's depth–velocity chart curves are not
 digitized in the catalog: M1 reads a per-structure `m1_zone` (from DamIT Hazard or the engineer) and is
 blocked, with a flag, on a 1D run when the preset requires 2D.
+
+#### Catalog 2026.11.09.4: the two Nov 2026 source documents
+
+The catalog follows two documents (both recorded in `catalog.json` `source`):
+
+* *US Dam Hazard Classification — Corrected Edition* (Nov 9, 2026; re-issued 22:17 UTC). Its text, including
+  Appendix A, is identical to the edition the catalog was built from; the presets were re-checked against
+  Appendix A after the later PRs.
+* *In-Depth Summaries: Dam & Pond Hazard Classification — Federal Agencies and the States* (compiled Nov 2026,
+  printed Nov 9, 2026). Where it is more current or more precise, it corrects or enriches the presets:
+  * New presets **AL**, **NC**, **USACE** (M5 secondary) and **TVA**: FEMA 333-style M5 (High at 1+ life) + M13,
+    no confirmed scenario, flagged `method_fallback_m13` (the sources give no jurisdiction-specific criteria).
+    Alabama notes: AEMA, effective Oct 1, 2026, voluntary for private owners, act number secondary.
+    North Carolina's small-dam exemption is a jurisdiction rule and is not encoded.
+  * **TX** adds M13 with 30 TAC § 299.14's economic-loss wording (isolated homes, secondary highways, minor
+    railroads, utility interruption → Significant; excessive urban economic loss → High) beside M4c.
+  * **AK** M13 uses the 11 AAC 93.157 Class II / III wording; the anadromous-fish criterion is the current
+    one and the old "salmon spawning habitat" wording is named only as superseded.
+  * **NY** adds M5 (High at 1+ life): TOGS 3.1.5 "where loss of a single human life is likely … Class C".
+  * **USBR** S5 for borderline dams is no longer marked unverified (Summaries F-3).
+  * Citations and notes updated (ND REG_05.2026 § 5.5 → "§ 5.1.3" error flagged, NE DWEE, CO Rule 4.13, RI,
+    AZ, VA superseded size-based SDF note, NRCS NEM § 520.21).
+  * FERC, USFWS, MSHA and the remaining ~40 states get no preset (`presets.json` `no_preset` says why).
+* Kept as decided: USBR M1 marks lives and M5 sets the class; M3 institution datums; status marks. NRCS stays
+  `unverified` although the Summaries report NEM § 520.21 verified verbatim (`status_review`): the owner decides.
 
 #### Decisions recorded in catalog 2026.11.09.3
 

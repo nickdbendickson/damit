@@ -1,7 +1,7 @@
 {
  "schema": "damit.catalog.scenarios",
  "schema_version": 1,
- "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
+ "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A; In-Depth Summaries: Dam & Pond Hazard Classification - Federal Agencies and the States (Nov. 2026)",
  "scenarios": {
   "S1": {
    "name": "Sunny-day failure at normal pool",
@@ -34,8 +34,9 @@
     "pmf_peak_elev_ft"
    ],
    "inflow": "none",
-   "source": "North Dakota REG_05.2026 5.1.1",
-   "appendix_ref": "A.2 p.21"
+   "source": "North Dakota REG_05.2026 \u00a7 5.1.1",
+   "appendix_ref": "A.2 p.21",
+   "breach_assumption": "Piping failure or TR-60 peak discharge (REG_05.2026 \u00a7 5.1.1, per the Summaries S-9)"
   },
   "S4": {
    "name": "Peak pool during 100-year flood routing",
@@ -46,7 +47,7 @@
     "emergency_spillway_elev_ft"
    ],
    "inflow": "100yr_routed",
-   "source": "Nebraska guidance 2.32, 2.35",
+   "source": "Nebraska Classification of Dams (Dec. 2023) \u00a7\u00a7 2.32, 2.35 (confirmed in the Dec. 2023 edition, Summaries S-7)",
    "appendix_ref": "A.2 p.21"
   },
   "S5": {

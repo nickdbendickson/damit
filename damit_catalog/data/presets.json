@@ -1,7 +1,7 @@
 {
  "schema": "damit.catalog.presets",
  "schema_version": 1,
- "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
+ "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A; In-Depth Summaries: Dam & Pond Hazard Classification - Federal Agencies and the States (Nov. 2026)",
  "dash_rule": "A dash in the document (no confirmed method) falls back to M13 and engineering judgment; a preset with no confirmed scenario must have one chosen by the user (flagged).",
  "aliases": {
   "USBR_TM11": "USBR"
@@ -41,7 +41,8 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "FEMA P-333"
+   "citation": "FEMA 333 (Oct. 1998; April 2004 ed., FERC-hosted)",
+   "notes": "Summaries F-1: classification reflects incremental consequences of failure or misoperation, never condition or likelihood; loss of an occasional recreational user or passer-by is improbable (R1); no credit for evacuation or EAPs (R3)."
   },
   "USBR": {
    "label": "USBR (ACER TM-11)",
@@ -79,15 +80,15 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "USBR ACER TM-11",
+   "citation": "USBR ACER TM-11 (Dec. 1988, MDE-hosted); Graham (1999) DSO-99-06",
    "conditional_scenarios": [
     {
      "id": "S5",
      "when": "borderline dams",
-     "verification": "unverified"
+     "source": "Summaries F-3: sunny-day default, stepped flood-plus-failure comparison for borderline dams"
     }
    ],
-   "notes": "M1 marks the lives in jeopardy (habitable structures in the high-danger zone) that M5 counts (TM-11: 1-6 Significant, more than 6 High); M1 returns no class by itself (class_zones empty)."
+   "notes": "M1 marks the lives in jeopardy (habitable structures in the high-danger zone) that M5 counts (TM-11: 1-6 Significant, more than 6 High); M1 returns no class by itself (class_zones empty). Summaries F-3: the five depth-velocity charts are used to assess lives in jeopardy; the 1-6 / >6 bands are 'purely arbitrary' (TM-11). S5 for borderline dams was (unverified) in the Corrected Edition and is stated without a mark in the Summaries."
   },
   "BIA": {
    "label": "BIA",
@@ -111,10 +112,11 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "BIA (secondary source)",
+   "citation": "FEMA P-919 (July 2012) summary of BIA practice (secondary); CRS R45981",
    "verification": {
     "M5": "secondary"
-   }
+   },
+   "notes": "Summaries F-8 / Part III: 1-6 lives at risk Significant, more than 6 High (TM-11 bands). The source also says Significant covers 'significant property damage' and that 'any dam creating a hazard to human life' is High; neither clause has its own M-code here, so they need engineering judgment."
   },
   "NRCS": {
    "label": "NRCS",
@@ -137,9 +139,10 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "NRCS TR-60 / NRCS definitions",
+   "citation": "NRCS NEM Title 210 Part 520 \u00a7\u00a7 520.21-520.23 (4th Ed., June 2017); TR-210-60 (2019) p. 1-1",
    "status": "unverified",
-   "notes": "NRCS hazard-definition wording (NEM \u00a7 520.21) is (unverified) in the source document."
+   "notes": "NRCS hazard-definition wording (NEM \u00a7 520.21) is (unverified) in the Corrected Edition. The Summaries F-2 report \u00a7 520.21 verified verbatim (High: 'may cause loss of life or serious damage to homes, industrial or commercial buildings, important public utilities, main highways, or railroads'; TR-210-60 reads 'industrial and commercial'; both read 'township and country roads'). The 'unverified' status is kept pending the owner's decision. Classification considers existing and future downstream development (R5).",
+   "status_review": "Summaries F-2 marks NEM \u00a7 520.21 verified; status kept 'unverified' (owner decision 2026-11-09)."
   },
   "ND": {
    "label": "North Dakota (REG_05.2026)",
@@ -189,12 +192,13 @@
     "2": "Medium",
     "3": "High"
    },
-   "citation": "N.D.A.C. 89-08-01; REG_05.2026; DWR June 2023 release",
+   "citation": "N.D.A.C. \u00a7 89-08-01-01 (amended Jan. 1, 2015; Jan. 1, 2023; July 1, 2024); DWR policy REG_05.2026 \u00a7 5 (eff. April 1, 2026); N.D.C.C. \u00a7 61-03-25 (EAPs); DWR June 2023 release",
    "modifier_overrides": {
     "R4": {
      "strength": "advisory"
     }
-   }
+   },
+   "notes": "REG_05.2026 supersedes REG_05.2024a. 'Significant' means the same as 'Medium'. Modal verbs kept as written: M6 'may' and R4 'should' are advisory. The simplified (no-breach-model) option is \u00a7 5.1.2; REG_05.2026 \u00a7 5.5 cites a non-existent '\u00a7 5.1.3' (an error in the policy, flagged, not propagated). EAPs: N.D.C.C. \u00a7 61-03-25 (not the repealed 89-08-04-03)."
   },
   "NE": {
    "label": "Nebraska",
@@ -230,7 +234,8 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "Nebraska Classification of Dams (Dec. 2023); Safety of Dams statutes"
+   "citation": "NeDNR / DWEE Classification of Dams (Dec. 2023) Table 3, \u00a7\u00a7 2.2, 2.32, 2.35; Title 458; Neb. Rev. Stat. \u00a7 46-1601 et seq. (\u00a7 46-1618 defines hazard potential classification)",
+   "notes": "Agency: Department of Water, Energy, and Environment (DWEE) since July 1, 2025 (LB317). Table 3 rows (homes, institutions, industrial / commercial, campgrounds, roads, railroads, utilities, environmental losses) re-checked against the Summaries S-7: unchanged. M4a stays advisory ('should', Appendix A)."
   },
   "NY": {
    "label": "New York",
@@ -257,7 +262,11 @@
     "M9c": {},
     "M10a": {},
     "M11c": {},
-    "M12b": {}
+    "M12b": {},
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    }
    },
    "methods_confirmed": true,
    "modifiers": [
@@ -276,7 +285,7 @@
     "2": "Class B",
     "3": "Class C"
    },
-   "citation": "TOGS 3.1.5 (draft)",
+   "citation": "6 NYCRR \u00a7 673.5(b); NYSDEC TOGS 3.1.5 (draft)",
    "status": "draft",
    "domain_cutoffs": [
     "D1"
@@ -296,7 +305,7 @@
      }
     }
    },
-   "notes": "DOW TOGS 3.1.5 is still marked DRAFT."
+   "notes": "DOW TOGS 3.1.5 is still marked DRAFT (Summaries S-8). M5 (High at 1+ life): TOGS 3.1.5 'where loss of a single human life is likely, ... a high hazard (Class C) dam is implied' (both source documents; not in the Appendix A.6 bundle). Owners may contest a class with an engineer's analysis."
   },
   "VA": {
    "label": "Virginia",
@@ -341,7 +350,7 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "4VAC50-20-40, -45, -52; Va. Reg. Vol. 42 Iss. 9",
+   "citation": "4VAC50-20-40, -45, -52, -54 (amended eff. Jan. 14, 2026; Va. Reg. Vol. 42 Iss. 9); Va. Code \u00a7 10.1-604 et seq.",
    "domain_cutoffs": [
     "D2"
    ],
@@ -368,7 +377,20 @@
    "scenarios": [],
    "scenarios_confirmed": false,
    "methods": {
-    "M4c": {}
+    "M4c": {},
+    "M13": {
+     "variant": "texas_30TAC299.14",
+     "high_kinds": [
+      "excessive_economic_loss_urban"
+     ],
+     "significant_kinds": [
+      "isolated_home",
+      "secondary_highway",
+      "minor_railroad",
+      "public_utility_interruption"
+     ],
+     "low_kinds": []
+    }
    },
    "methods_confirmed": true,
    "modifiers": [
@@ -384,14 +406,15 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "Tex. Water Code 12.052; 30 TAC 299.14; TCEQ GI-394; SAO 20-036",
+   "citation": "30 TAC \u00a7 299.14; 30 TAC \u00a7 299.1 (as amended eff. Sept. 29, 2022); Tex. Water Code \u00a7 12.052(e-1); TCEQ GI-394; SAO 20-036",
    "modifier_overrides": {
     "R5": {
      "params": {
       "scope": "existing_development"
      }
     }
-   }
+   },
+   "notes": "30 TAC \u00a7 299.14 classifies on 'either potential loss of human life or property damage': M4c (1-6 lives or 1-2 habitable structures Significant; 7+ lives or 3+ habitable structures High) and M13 Texas wording for the economic-loss half (Summaries S-10: appreciable economic loss - isolated homes, secondary highways, minor railroads, interruption of public utilities - Significant; excessive economic loss in or near urban areas High). A breach analysis may address the incremental impact over the flood causing the breach (permissive; no S-code confirmed). The \u00a7 12.052(e-1) exemption and \u00a7 299.1 jurisdiction are not classification rules."
   },
   "ID": {
    "label": "Idaho",
@@ -423,7 +446,7 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "IDWR Dam Safety"
+   "citation": "IDAPA 37.03.06 Rule 25; IDWR Dam Safety Program"
   },
   "CO": {
    "label": "Colorado",
@@ -456,7 +479,8 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "2 CCR 402-1"
+   "citation": "2 CCR 402-1 Rules 4.13-4.16, 5.4 (eff. Jan. 1, 2020)",
+   "notes": "Rule 4.13 (renumbered from Rule 4.2.14). The 'designated recreational sites' sentence in some secondary sources is superseded Rule 4.2.14.1 text and is not used."
   },
   "RI": {
    "label": "Rhode Island",
@@ -483,7 +507,7 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "250-RICR-130-05-1",
+   "citation": "250-RICR-130-05-1 \u00a7\u00a7 1.5(A)(12), (24), (31), 1.9(B), 1.11(A)(5) (current through the May 1, 2025 revision)",
    "modifier_overrides": {
     "R1": {
      "params": {
@@ -518,7 +542,7 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "Arizona dam safety rules",
+   "citation": "A.A.C. R12-15-1206(B), R12-15-1219(A)",
    "modifier_overrides": {
     "R1": {
      "params": {
@@ -557,7 +581,7 @@
     "3": "High",
     "4": "Extremely High"
    },
-   "citation": "23 CCR 335.4; State Auditor 2025-603",
+   "citation": "23 CCR \u00a7 335.4; State Auditor 2025-603",
    "scenario_note": "Sunny-day loading (the document does not map it to a specific S-code; choose S1 or S2 explicitly)."
   },
   "AK": {
@@ -570,7 +594,22 @@
      "high_min": 1
     },
     "M12c": {},
-    "M13": {}
+    "M13": {
+     "variant": "alaska_11AAC93.157",
+     "high_kinds": [],
+     "significant_kinds": [
+      "high_value_property",
+      "major_highway",
+      "major_railroad",
+      "major_utility"
+     ],
+     "low_kinds": [
+      "rural_undeveloped_land",
+      "rural_structure",
+      "secondary_road",
+      "owner_property"
+     ]
+    }
    },
    "methods_confirmed": true,
    "modifiers": [],
@@ -584,7 +623,122 @@
     "2": "Class II",
     "3": "Class I"
    },
-   "citation": "Alaska dam safety (5 AAC 95.011(a) for M12c)"
+   "citation": "11 AAC 93.157 (as amended Oct. 2, 2004); 5 AAC 95.011(a) for M12c",
+   "notes": "Class II anadromous-fish criterion is 11 AAC 93.157(a)(2)(D): probable damage to waters identified under 5 AAC 95.011(a) as important for the spawning, rearing, or migration of anadromous fish. The older 'salmon spawning habitat as identified by the Commissioner of Fish & Game' wording (ASDSO 2020) is superseded and not used. M13 uses the 11 AAC 93.157 Class II / III wording (Summaries S-2); Class II also names a significant health hazard potential, which an engineer checks."
+  },
+  "AL": {
+   "label": "Alabama",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M13": {}
+   },
+   "methods_confirmed": false,
+   "modifiers": [],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "Ala. Code \u00a7\u00a7 33-7-71 to -74 as amended by SB 378 (2026; Act 2026-482 per bill trackers, secondary); SB 284 (Act No. 2023-414)",
+   "notes": "Summaries S-1: High / Significant / Low (FEMA-style). The sources give no Alabama-specific criteria, so M5 (High at 1+ life) and M13 are the FEMA 333 defaults and the run is flagged for engineering judgment. Program administered by the Alabama Emergency Management Agency (AEMA); changes effective October 1, 2026; participation is voluntary for private dam owners; AEMA's implementation plan is due by the 15th day of the 2027 session. The act number (2026-482) is confirmed only by bill trackers (secondary) and the exact signing day is unpublished."
+  },
+  "NC": {
+   "label": "North Carolina",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M13": {}
+   },
+   "methods_confirmed": false,
+   "modifiers": [],
+   "labels": [
+    "Class A",
+    "Class B",
+    "Class C"
+   ],
+   "label_map": {
+    "1": "Class A",
+    "2": "Class B",
+    "3": "Class C"
+   },
+   "citation": "15A NCAC 02K .0105 (exemption pinpoint .0102 vs .0105 open)",
+   "notes": "Summaries S-12 (spot-verified): Class A (low) / B (intermediate) / C (high), FEMA-aligned. No North Carolina-specific criteria in the sources: M5 (High at 1+ life) and M13 are the FEMA 333 defaults (flagged). The small-dam exemption (under 50 ac-ft unless failure could result in loss of human life or significant damage to property below the dam) is a jurisdiction rule, not a class rule, and is not encoded; its pinpoint (.0102 vs .0105) is an open item."
+  },
+  "USACE": {
+   "label": "USACE (FEMA 333 terminology)",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M13": {}
+   },
+   "methods_confirmed": false,
+   "modifiers": [],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "USACE Dam Safety Program; FEMA P-919 summary of USACE incremental analysis; CRS R46946 / R45981",
+   "notes": "Summaries F-4: FEMA 333 terminology for NID hazard fields; incremental consequence analysis with loss of life as the controlling criterion (economic damage expressly not the driver). The Corrected Edition marks this (secondary). No separate numeric matrix: M5 (High at 1+ life) with M13 for the FEMA 333 Low / Significant terms (flagged). DSAC is portfolio risk prioritization, not hazard classification; EM 1110-2-1420 (hydrologic engineering) is not a class rule.",
+   "verification": {
+    "M5": "secondary"
+   }
+  },
+  "TVA": {
+   "label": "TVA (FEMA 333 tiers)",
+   "scenarios": [],
+   "scenarios_confirmed": false,
+   "methods": {
+    "M5": {
+     "sig_min": null,
+     "high_min": 1
+    },
+    "M13": {}
+   },
+   "methods_confirmed": false,
+   "modifiers": [],
+   "labels": [
+    "Low",
+    "Significant",
+    "High"
+   ],
+   "label_map": {
+    "1": "Low",
+    "2": "Significant",
+    "3": "High"
+   },
+   "citation": "TVA impoundment disclosures (EPA-hosted); CRS R45981",
+   "notes": "Summaries F-9: TVA self-regulates and its disclosures classify on FEMA 333 tiers: Low = no lives at risk, flood wave contained on TVA property; High = one or more lives. M5 (High at 1+ life); Significant is not defined in the sources beyond the FEMA 333 tier, so M13 is the fallback (flagged)."
   }
- }
+ },
+ "no_preset": {
+  "FERC": "Summaries F-5: risk-informed consequence assessment (Engineering Guidelines Ch. 2 hazard potential and IDF selection; Ch. 18 Level 2 risk analysis); population at risk and warning time drive life-safety consequences. The sources state no class tiers or desk-screen thresholds, so no method bundle.",
+  "USFWS": "Summaries F-6: 361 FW 2 defines hazard classification (potential loss of life or property damage; not condition) and classifies by hazard and size, but gives no class tiers or thresholds.",
+  "MSHA": "Summaries F-7: Low / Significant / High under 30 CFR 77.216 and 56/57.20010 'based on potential damage', with hazard creep; the sources give no tier criteria to encode.",
+  "OTHER_STATES": "Summaries S-12: the remaining ~40 states follow FEMA 333 with state-specific guidance; no per-state rules are in the sources, so they use an agency preset (e.g. FEMA333) or custom mode."
+ },
+ "no_preset_note": "Agencies and states the source documents cover without a classification rule that can be written as a method bundle. Listed so the gap is documented, not filled with invented rules."
 }

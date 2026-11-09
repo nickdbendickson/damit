@@ -115,6 +115,8 @@ class CatalogAccess(unittest.TestCase):
         self.assertIn("FEMA333", ids)
         self.assertEqual(catalog_access.preset_for_state(cat, "nd"), "ND")
         self.assertIsNone(catalog_access.preset_for_state(cat, "MN"))   # no MN preset: user picks
+        self.assertEqual(catalog_access.preset_for_state(cat, "al"), "AL")    # Nov 2026 Summaries S-1
+        self.assertEqual(catalog_access.preset_for_state(cat, "NC"), "NC")    # Nov 2026 Summaries S-12
         cfg = catalog_access.resolve(cat, "preset", "USBR_TM11")
         self.assertEqual(cfg["preset_id"], "USBR")
 

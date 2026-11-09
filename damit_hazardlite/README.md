@@ -6,7 +6,7 @@ optional velocity) raster and structure, road and rail layers. Depends on DamIT 
 No dialog of its own and no flood model.
 
 **Multi-jurisdiction from DamIT Catalog.** MODE preset (PRESET any catalog ID or alias: ND, NE, NY, VA,
-TX, ID, CO, RI, AZ, CA, AK, FEMA333, USBR / USBR_TM11, BIA, NRCS) or custom (METHODS, e.g. `M2,M6,M8a`).
+TX, ID, CO, RI, AZ, CA, AK, AL, NC, FEMA333, USBR / USBR_TM11, BIA, NRCS, USACE, TVA) or custom (METHODS, e.g. `M2,M6,M8a`).
 Receptor records go to `damit_catalog.evaluate` – the evaluator and data DamIT Hazard uses – so every
 threshold, class, label and modifier is the catalog's. The wet depth, sampling distances (point disc,
 outline edge ring, line step) and the lowest class used when nothing is hit come from the catalog's
