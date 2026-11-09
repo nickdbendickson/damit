@@ -75,7 +75,9 @@ Details:
   (`is_sample: true`; `SAMPLE-4031` and `DESK-014` are not NID IDs); otherwise the job stops before `qgis_process`
   with "… is not an NID ID". DWR-, DUG- or other inventory ids are never sent or substituted: when a screener's
   outputs name the dam by another id, the log says so and the results are read by the NID ID only. The DamIT
-  plugins apply the same rule (a non-NID id is a FAIL; new / sample records pass with a warning).
+  plugins apply the same rule (a non-NID id is a FAIL; new / sample records pass with a warning). A Runner whose
+  `damit_run:rundam` lists `NID_ID`, `IS_NEW` and `IS_SAMPLE` gets them too (the NID ID, or `IS_NEW=true` /
+  `IS_SAMPLE=true` for a record without one); older Runners simply do not get them.
 - **DAMS layer.** `dam_point.geojson` is this dam alone as a point (EPSG:4326: breach point, else reservoir point,
   else the record's lon/lat) with DamIT Screener's field names (`dam_id`, `name`, `nid_id`, `is_new`, `is_sample`, `height_ft`, `storage_acft`,
   `top_of_dam_elev_ft`, `normal_pool_elev_ft`, `surface_area_ac`, `hydrograph_csv` = `inputs/breach_hydrograph.csv`,

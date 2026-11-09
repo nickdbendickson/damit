@@ -103,7 +103,7 @@ if args[:1] == ["help"]:
                           "TERRAIN", "APPLY_ADVISORIES", "SETTINGS", "REPORT"],
             "runchain": ["WORK", "DAMS", "FIELD_MAP", "MODE", "PRESET", "SCENARIOS", "METHODS", "RECEPTORS",
                          "TERRAIN", "APPLY_ADVISORIES", "SETTINGS", "PREFLIGHT", "FAIL_ON_ERROR"],
-            "rundam": ["HANDOFF", "DAM_ID", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT", "MODE", "PRESET",
+            "rundam": ["HANDOFF", "DAM_ID", "NID_ID", "IS_NEW", "IS_SAMPLE", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT", "MODE", "PRESET",
                        "SCENARIOS", "METHODS", "TERRAIN", "HYDROGRAPH", "OUTPUT_FOLDER", "ENGINE", "DRY_RUN"],
         },
     }[style]
@@ -348,6 +348,7 @@ class GateTests(unittest.TestCase):
             "DAMIT_DATA": os.environ.get("DAMIT_DATA"),
             "DAMIT_HANDOFF_CONFIG": os.environ.get("DAMIT_HANDOFF_CONFIG"),
             "QGIS_MISSING": os.environ.get("QGIS_MISSING"),
+            "QGIS_STYLE": os.environ.get("QGIS_STYLE"),
             "HOME": os.environ.get("HOME"),
             **{k: os.environ.get(k) for k in ENV_VARS.values()},
         }
@@ -703,6 +704,28 @@ class GateTests(unittest.TestCase):
         point = json.loads((Path(r["folder"]) / "dam_point.geojson").read_text(encoding="utf-8"))["features"][0]["properties"]
         self.assertEqual((point["dam_id"], point["nid_id"], point["is_sample"]), ("local-sample", None, True))
         self.assertNotIn("SAMPLE-4031", self.calls_text())
+
+    def test_rundam_gets_the_nid_id_or_why_there_is_none(self):
+        # DamIT Runner with the NID-ID rule (NID_ID / IS_NEW / IS_SAMPLE): Crest passes the NID ID, or the exception.
+        os.environ["QGIS_MODE"] = "pass"
+        os.environ["QGIS_STYLE"] = "swe"
+        work = self.root / "work"
+        run_model(DAM, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--DAM_ID=ND00199", text)
+        self.assertIn("--NID_ID=ND00199", text)
+        self.assertNotIn("--IS_NEW", text)
+        self.calls.unlink()
+        run_model({**DAM, "nid": "", "id": "desk-new1", "isNew": True}, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--DAM_ID=desk-new1", text)
+        self.assertIn("--IS_NEW=true", text)
+        self.assertNotIn("--NID_ID", text)
+        self.calls.unlink()
+        run_model({**DAM, "nid": "SAMPLE-4031", "id": "local-sample"}, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--IS_SAMPLE=true", text)
+        self.assertNotIn("SAMPLE-4031", text)
 
     def test_read_back_helpers_without_outputs(self):
         self.assertEqual(chain_names(self.root, "ND00199"), [])

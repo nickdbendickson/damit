@@ -804,7 +804,8 @@ def run_model(
         return stop
     _log_ids(dam, log)
     dams = root / "dams"
-    dam_id = handoff_ids(dam)["dam_id"]
+    ids = handoff_ids(dam)
+    dam_id = ids["dam_id"]
     label, cli_tier, builtin = model_choice(model)
     dem = dem_path(root, dam, source)
     point = _dem_point(dam)
@@ -869,6 +870,10 @@ def run_model(
         # DamIT Runner 0.1.0 (damit_run:rundam): the screener's package when there is one, else the dam as parameters.
         "HANDOFF": str(package) if package.is_file() else None,
         "DAM_ID": dam_id,
+        # Runner with the NID-ID rule: the NID ID, or why there is none (a new / proposed dam, a desk sample).
+        "NID_ID": ids["nid_id"],
+        "IS_NEW": "true" if ids["is_new"] else None,
+        "IS_SAMPLE": "true" if ids["is_sample"] else None,
         "X": lonlat[0] if lonlat else None,
         "Y": lonlat[1] if lonlat else None,
         "CRS": "EPSG:4326" if lonlat else None,
