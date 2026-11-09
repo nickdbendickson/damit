@@ -14,6 +14,11 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 | `damit_screener/` | DamIT Screener | `damit_screen` | Preflight, scenario-driven screening chain, preliminary suggestion, hand-off packages |
 | `damit_runner/` | DamIT Runner | `damit_run` | Prepares and records breach runs from a hand-off package (0.1.0 launches no model) |
 | [`damit_hazard/`](damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 15 jurisdiction presets or a custom method set (`damit:classify`) |
+| [`damit_core/`](damit_core/README.md) | DamIT Core | none | Shared library: suite settings, DamIT plugin list and version check, US state table, dam-record field helpers, catalog access, HTTP helper. Menu: About only |
+| [`damit_setup/`](damit_setup/README.md) | DamIT Setup | none | Start here: suite data folder, work folder, state / preset, suite check, settings fill, hand-off to `damit_screen:preflight` |
+| [`damit_data/`](damit_data/README.md) | DamIT Data | `damit_data` | Offline NSI, Microsoft footprints, OpenStreetMap (Geofabrik) and USA Structures layers for any US state (`damit_data:download`, `:status`) |
+| [`damit_hazardlite/`](damit_hazardlite/README.md) | DamIT Hazard Lite | `damit_lite` | One tool, `damit_lite:classify`: suggested class from depth / velocity rasters at structures, roads and rail with DamIT Catalog presets or custom methods |
+| [`damit_pmp/`](damit_pmp/README.md) | DamIT PMP | `damit_pmp` | NOAA Atlas 14 only: point / basin precipitation-frequency tables, alternating-block hyetograph, Atlas 14 grid basin statistics (no PMP values in 0.1.0) |
 
 **DamIT Hazard** (`damit_hazard/`, provider `damit`, algorithm `damit:classify`) classifies finished runs from
 rasters and receptors. DamIT Screener and DamIT Runner do not use the `damit` provider id and do not classify
@@ -21,6 +26,12 @@ finished rasters.
 
 DamIT Hazard, DamIT Screener and DamIT Runner all declare `plugin_dependencies=DamIT Catalog` and read their
 presets, methods and thresholds from it, so install DamIT Catalog first (the QGIS Plugin Manager offers it). None of the DamIT plugins depend on the DamSafety / DWR plugins.
+
+DamIT Setup, DamIT Data, DamIT Hazard Lite and DamIT PMP declare `plugin_dependencies=DamIT Core` (Setup and
+Hazard Lite also DamIT Catalog). Install order: DamIT Core, DamIT Catalog, then the rest. Provider IDs are all
+distinct: `damit` (Hazard), `damit_lite` (Hazard Lite), `damit_screen`, `damit_run`, `damit_data`, `damit_pmp`;
+no DamIT tool hands off to `nddam:*` or `ndbreach:*`. DamIT Hazard, Screener, Runner and Crest do not import
+DamIT Core yet; they can switch to its settings / plugin registry later.
 
 ## The catalog: Appendix A as data
 
@@ -110,5 +121,8 @@ DAMIT_QGIS_PYTHON="conda run --no-capture-output -n qgis334 python" tests/run_te
 ```
 
 Pure-Python suites (catalog content against Appendix A, combination logic, preflight, chain, hand-off round
-trip, engine refusal, packaging) plus a real-QGIS integration test run offscreen with a throw-away profile,
-`nice -n 19`, single-threaded. No test starts a model (subprocess launches are patched to fail).
+trip, engine refusal, packaging; DamIT Core settings / suite check / states / dam fields, Setup scan and hand-off,
+Data sources and staged updates with a fake HTTP client, Hazard Lite records and catalog classes, PMP Atlas 14
+parsing / cache / hyetograph from recorded PFDS answers) plus real-QGIS integration tests run offscreen with a
+throw-away profile, `nice -n 19`, single-threaded. No test starts a model (subprocess launches are patched to
+fail) and no test touches the network.

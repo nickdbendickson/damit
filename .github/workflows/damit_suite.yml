@@ -1,0 +1,41 @@
+name: damit_suite
+
+on:
+  push:
+    paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**",
+            "damit_catalog/**", "tests/**", ".github/workflows/damit_suite.yml"]
+  pull_request:
+    paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**",
+            "damit_catalog/**", "tests/**", ".github/workflows/damit_suite.yml"]
+
+jobs:
+  pure:
+    name: Core, Setup, Data, Hazard Lite, PMP (no QGIS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pure-Python tests
+        env:
+          DAMIT_SETTINGS: ${{ runner.temp }}/damit_settings.json
+        run: >-
+          python3 -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup
+          damit_data.tests.test_data damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14
+          tests.test_metadata_suite
+
+  qgis:
+    name: QGIS 3.34 offscreen
+    runs-on: ubuntu-latest
+    container: qgis/qgis:3.34
+    steps:
+      - uses: actions/checkout@v4
+      - name: QGIS Python is importable (else the QGIS tests would only skip)
+        run: python3 -c "import qgis.core, osgeo.gdal, numpy"
+      - name: Tests with QGIS
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)" DAMIT_SETTINGS="$(mktemp -d)/s.json"
+          python3 -m unittest -v tests.test_qgis_new_plugins
