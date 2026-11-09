@@ -9,5 +9,5 @@ __pycache__/
 *.pyc
 desktop/build/
 desktop/dist/
-# Raw downloads for the ND example dam bundles (npm run data:nd-dams / data:nd-dams-dwr); never committed.
+# Raw NID downloads (npm run data:nid); never committed.
 data-raw/

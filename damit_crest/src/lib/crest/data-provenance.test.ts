@@ -3,10 +3,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { ageWords, BUNDLE_STALE_DAYS, bundleAge, bundleAgeLine, deskBundles, staleBundleBanner } from "./data-provenance.ts";
-import { loadNdData } from "./nd-dams.ts";
+import { loadNidData } from "./nid-dams.ts";
 
 const NID = "2026-10-29T21:56:00Z";
-const DWR = "2026-10-30T14:31:02Z";
 
 describe("bundleAge", () => {
   it("counts whole days and months from the pull to now, and never negative", () => {
@@ -28,30 +27,30 @@ describe("bundleAge", () => {
 });
 
 describe("banner and lines", () => {
-  const bundles = deskBundles({ nidFetchedUtc: NID, dwrPulledUtc: DWR });
+  const bundles = deskBundles({ nidFetchedUtc: NID });
 
-  it("no banner while the bundles are fresh", () => {
+  it("no banner while the extract is fresh", () => {
     assert.equal(staleBundleBanner(bundles, new Date("2026-11-07T00:00:00Z")), null);
     assert.equal(bundleAgeLine(bundles[0], new Date("2026-11-07T00:00:00Z")), "NID inventory pulled 2026-10-29 (8 days old)");
   });
 
-  it("names the stale bundle, its age and the refresh command", () => {
+  it("names the stale extract, its state, its age and how to refresh it", () => {
     const one = staleBundleBanner(deskBundles({ nidFetchedUtc: NID }), new Date("2027-06-01T00:00:00Z"));
-    assert.equal(one, "NID inventory is 7 months old (pulled 2026-10-29); `npm run data:nd-dams` refreshes it.");
-    const both = staleBundleBanner(bundles, new Date("2027-06-01T00:00:00Z"))!;
-    assert.match(both, /^Inventory is 7 months old \(NID inventory pulled 2026-10-29; DWR dam values pulled 2026-10-30\); `npm run data:nd-dams` and `npm run data:nd-dams-dwr` refresh it\.$/);
-    assert.match(bundleAgeLine(bundles[1], new Date("2027-06-01T00:00:00Z"))!, /^DWR dam values pulled 2026-10-30 \(6 months old; stale, past 180 days: `npm run data:nd-dams-dwr` refreshes it\)$/);
+    assert.equal(one, 'NID inventory is 7 months old (pulled 2026-10-29); "Download latest" in the NID picker refreshes it.');
+    const tx = deskBundles({ nidFetchedUtc: NID, state: "TX" });
+    assert.match(bundleAgeLine(tx[0], new Date("2027-06-01T00:00:00Z"))!, /^NID inventory \(TX\) pulled 2026-10-29 \(7 months old; stale, past 180 days: "Download latest" in the NID picker refreshes it\)$/);
   });
 
-  it("skips bundles whose source is unknown", () => {
+  it("is the NID extract only (no DWR or structures lists), and nothing when its source is unknown", () => {
     assert.deepEqual(deskBundles({}).length, 0);
-    assert.equal(deskBundles({ structuresPulledUtc: null }).length, 1);
-    assert.equal(bundleAgeLine(deskBundles({ structuresPulledUtc: null })[0], new Date()), null);
+    assert.equal(deskBundles({ nidFetchedUtc: null }).length, 1);
+    assert.equal(bundleAgeLine(deskBundles({ nidFetchedUtc: null })[0], new Date()), null);
   });
 
-  it("the committed bundles are not stale as of the day this change was made (the banner would otherwise show today)", async () => {
-    const nd = await loadNdData();
-    const b = deskBundles({ nidFetchedUtc: nd.nidSource.fetchedUtc, dwrPulledUtc: nd.dwrSource?.pulledUtc ?? null });
+  it("the committed example extract is not stale as of the day it was pulled", async () => {
+    const nd = await loadNidData();
+    const b = deskBundles({ nidFetchedUtc: nd.nidSource.fetchedUtc, state: nd.state });
     assert.equal(staleBundleBanner(b, new Date("2026-11-07T00:00:00Z")), null);
+    assert.equal(nd.state, "ND");
   });
 });

@@ -1,5 +1,6 @@
 import { handoffChoice } from "./jurisdiction.ts";
 import { damLocation, ENGINE_VERSION } from "./engine.ts";
+import { handoffIds } from "./nid-dams.ts";
 import type { Analysis, DamRecord, SeriesPoint } from "./types.ts";
 import { CREST_VERSION } from "./version.ts";
 
@@ -18,12 +19,14 @@ export function exportHydrographCsv(series: SeriesPoint[]): string {
 /** Minimal dam.json matching fields the Runner / Screening read. */
 export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
   const loc = damLocation(dam);
+  // dam_id is the NID ID, else the record's own id: a sample's or a new dam's id is never passed off as an NID ID.
+  const ids = handoffIds(dam);
   const obj = {
     // Which Crest wrote this (build "<version>+<git sha>") and which engine method made the numbers, so a dam.json on
     // disk can be matched to a build and a method years on. The Runner and the Screening plugin ignore unknown keys.
     crest_version: CREST_VERSION,
     engine_version: ENGINE_VERSION,
-    dam_id: dam.nid || dam.id,
+    dam_id: ids.damId,
     name: dam.name,
     height_ft: dam.heightFt,
     storage_acft: dam.storageAcFt,
@@ -42,6 +45,7 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
     failure_mode: dam.failureMode === "overtopping" ? "overtopping" : "piping",
     // A new dam only when the Record step's "New dam" box is ticked (never inferred).
     is_new: dam.isNew === true,
+    ...(ids.isSample ? { is_sample: true } : {}),
     // Jurisdiction context for damit:classify (preset or custom mode); no thresholds, those live in its catalog.
     classification: handoffChoice(dam.classification),
     screened: {
@@ -86,7 +90,7 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
           nid_hazard: dam.nidHazard ?? null,
           nid_hazard_note: "As reported to the NID (FEMA class). Not used by the desk screen; not the class of record.",
           provenance: dam.provenance ?? {},
-          attribution: [dam.nidRef?.attribution, dam.nidRef?.dwrAttribution].filter(Boolean),
+          attribution: [dam.nidRef?.attribution].filter(Boolean),
         }
       : {}),
     // Only when an imported model run is the source of record (Results step), so dam.json is unchanged otherwise.

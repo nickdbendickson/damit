@@ -7,7 +7,7 @@
  * map plus "+N more" (C3); nothing is locked, so every step stays open to edit whatever its state (C4).
  */
 import { dashboardFlags, type DashFlag, routedVolumes } from "./dashboard.ts";
-import { missingForNext } from "./nd-dams.ts";
+import { missingForNext } from "./nid-dams.ts";
 import type { OutlineState } from "./outline.ts";
 import { num } from "./format.ts";
 import type { Analysis, DamRecord } from "./types.ts";

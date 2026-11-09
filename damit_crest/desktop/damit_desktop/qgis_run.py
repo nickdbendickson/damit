@@ -22,6 +22,8 @@ from urllib.parse import quote
 
 from damit_desktop.algorithms import HandoffConfig, find_damit_cli, load_config
 from damit_desktop.handoff import (
+    handoff_ids,
+    nid_problem,
     HandoffError,
     _dem_point,
     classification_block,
@@ -496,6 +498,26 @@ def _settings_path(root: Path, log, only_ids: str | None = None, classification:
     return path
 
 
+def _nid_stop(dam: dict, log, folder: Path, root: Path, what: str) -> dict | None:
+    """Stop before qgis_process when the plugins would refuse the record (no NID ID, not new, not a sample)."""
+    problem = nid_problem(dam)
+    if not problem:
+        return None
+    log(problem)
+    log(f"{what} was not started. The dam folder is written.")
+    return {"ok": False, "stopped": True, "nidProblem": problem, "folder": str(folder), "work": str(root)}
+
+
+def _log_ids(dam: dict, log) -> None:
+    ids = handoff_ids(dam)
+    if ids["nid_id"]:
+        return
+    if ids["is_sample"]:
+        log(f"{ids['dam_id']} is a built-in desk example, not an NID dam: handed off as a sample (is_sample) with no NID ID.")
+    elif ids["is_new"]:
+        log(f"{ids['dam_id']} is a new (proposed) dam with no NID ID: handed off with is_new.")
+
+
 def run_folder(dam: dict, analysis: dict, work: str | None, log, files=None) -> dict:
     # A plain folder export does not run a screening, so it does not append a screened status entry;
     # repeated exports of the same dam would otherwise keep growing the status list.
@@ -522,8 +544,9 @@ def chain_names(root: Path, dam_id: str) -> list[str]:
     """The dam_id(s) the screening's dam step gave this dam in <work>/1_dams.gpkg, matched on its dam_id or nid_id.
 
     The desk sends the NID id (e.g. ND00199); a screening that joins a state inventory may name the dam by that
-    inventory's id (the ND screener calls ND00199 DWR-2801), and every later output uses that name. Empty before the
-    first run, and empty when the screener writes no 1_dams.gpkg."""
+    inventory's id, and every later output uses that name. The DamIT plugins now take NID dams only (dam_id = NID
+    ID), so a name other than the NID ID is reported, never used in its place. Empty before the first run, and empty
+    when the screener writes no 1_dams.gpkg."""
     path = Path(root) / "1_dams.gpkg"
     want = str(dam_id or "").strip().upper()
     if not want or not path.is_file():
@@ -641,7 +664,11 @@ def run_screening(
     if prepared is None:
         return {"ok": False, "stopped": True, "folder": "", "work": ""}
     root, folder = prepared
-    dam_id = str(dam.get("nid") or dam.get("id") or "dam")
+    stop = _nid_stop(dam, log, folder, root, "The screening")
+    if stop:
+        return stop
+    _log_ids(dam, log)
+    dam_id = handoff_ids(dam)["dam_id"]
     _log_config(log, cfg, ("preflight", "runchain"))
     exe = find_qgis_process()
     if not exe:
@@ -655,11 +682,9 @@ def run_screening(
         _missing_alg(log, cfg, "runchain", "The screening")
         return {"ok": False, "stopped": True, "missingAlgorithm": chain_alg, "folder": str(folder), "work": str(root)}
     report = root / "preflight.txt"
-    has_id = bool(dam.get("nid") or dam.get("id"))
-    # A work folder that already ran the chain knows the chain's name for this dam: both go in only_ids, so a
-    # screening that filters later steps by dam_id alone keeps it.
-    known = [n for n in chain_names(root, dam_id) if n.upper() != dam_id.upper()] if has_id else []
-    only = ",".join([dam_id, *known]) if has_id else None
+    has_id = bool(dam.get("nid") or dam.get("nidId") or dam.get("id"))
+    # only_ids is the NID ID alone (or the record id of a new dam / sample): never another inventory's id for it.
+    only = dam_id if has_id else None
     settings = _settings_path(root, log, only, _classification(dam))
     point = write_dam_point(folder, dam, analysis or {})
     if point:
@@ -725,9 +750,12 @@ def run_screening(
         written = chain_log.read_text(encoding="utf-8", errors="replace").rstrip()
         if written and written not in text:
             log(written)
-    names = chain_names(root, dam_id) if has_id else []
-    if names and [n.upper() for n in names] != [dam_id.upper()]:
-        log(f"The screening outputs name this dam {', '.join(names)} (DamIT Crest: {dam_id}).")
+    found = chain_names(root, dam_id) if has_id else []
+    names = [n for n in found if n.upper() == dam_id.upper()]
+    other = [n for n in found if n.upper() != dam_id.upper()]
+    if other:
+        log(f"The screening outputs also name this dam {', '.join(other)}, which is not its NID ID {dam_id}. "
+            "DamIT Crest reads results by the NID ID only; check the screener's dam inventory is the NID.")
     out = {"folder": str(folder), "work": str(root), "chainIds": names}
     if code in (STOPPED_TIMEOUT, STOPPED_CANCEL):
         log("The screening chain was stopped. Its outputs so far stay in the work folder; chain_log.txt has the steps that ran.")
@@ -742,7 +770,7 @@ def run_screening(
         out["screening"] = screening
         log(f"Hand-off package: {package}")
         log(_package_line(dam_id, screening))
-    rows = chain_results(root, names or [dam_id])
+    rows = chain_results(root, [dam_id])
     for row in rows:
         log(_result_line(row))
     if not rows and screening is None:
@@ -771,8 +799,12 @@ def run_model(
     if prepared is None:
         return {"ok": False, "stopped": True, "folder": "", "work": ""}
     root, folder = prepared
+    stop = _nid_stop(dam, log, folder, root, "The flood model")
+    if stop:
+        return stop
+    _log_ids(dam, log)
     dams = root / "dams"
-    dam_id = str(dam.get("nid") or dam.get("id") or "dam")
+    dam_id = handoff_ids(dam)["dam_id"]
     label, cli_tier, builtin = model_choice(model)
     dem = dem_path(root, dam, source)
     point = _dem_point(dam)
@@ -939,6 +971,10 @@ def run_classify(
     if prepared is None:
         return {"ok": False, "stopped": True, "folder": "", "work": ""}
     root, folder = prepared
+    stop = _nid_stop(dam, log, folder, root, "The classification")
+    if stop:
+        return stop
+    _log_ids(dam, log)
     _log_config(log, cfg, ("classify",))
     exe = find_qgis_process()
     if not exe:

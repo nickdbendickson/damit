@@ -161,10 +161,12 @@ export const useDesk = create<DeskState>()(
     // version 2 (full test 2026-10-30): the ND00199 sample's class of record no longer claims "TM11 Significant
     // (DWR-2801 benchmark)"; an unedited old text is updated in place.
     // 2026-11-05: the records only (persistedDesk); each dam's inundation layer is kept in IndexedDB (hydrateDesk).
+    // version 3 (2026-11-09, NID only): a record with the old made-up "NEW" id gets an empty NID ID ("NEW" is not an
+    // NID ID). The fictional samples stay.
     {
       name: "crest-desk-v2",
       skipHydration: true,
-      version: 2,
+      version: 3,
       migrate: migrateDesk,
       storage: createJSONStorage(() => deskStorage),
       partialize: (s) => persistedDesk(s) as unknown as DeskState,
@@ -239,6 +241,9 @@ export function migrateDesk(persisted: unknown, version: number): DeskState {
         ? { ...d, classOfRecord: now.classOfRecord, sampleNote: now.sampleNote }
         : d,
     );
+  }
+  if (version < 3 && Array.isArray(state.dams)) {
+    state.dams = state.dams.map((d) => (d.nid === "NEW" ? { ...d, nid: "" } : d));
   }
   return state;
 }

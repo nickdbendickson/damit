@@ -1,7 +1,7 @@
 /**
- * How old the offline dam bundles are. Each bundle records when its source was pulled (nd_dams.json `fetchedUtc`,
- * nd_dams_dwr.json and nd_structures.json `pulledUtc`), the picker footer and the Report print the date, but nothing
- * compared it to today: a desk opened a year on would still say "downloaded 2026-10-29" as if that were fine. This
+ * How old the NID extract in use is. Each extract records when it was downloaded from the NID (`fetchedUtc`: the
+ * committed example data/nid_ND.json, or a state the desktop server downloaded), the picker footer and the Report
+ * print the date, but nothing compared it to today: a desk opened a year on would still say "downloaded 2026-10-29" as if that were fine. This
  * module does the comparison once, for the picker, About the dam data, the Report and the batch CSV. `now` is passed in
  * so the tests (and a reproducible build) never read the clock.
  */
@@ -41,7 +41,7 @@ export type BundleInfo = { label: string; pulledUtc: string | null | undefined; 
 
 /**
  * The amber banner for the picker and About the dam data when any bundle is past BUNDLE_STALE_DAYS, else null.
- * "Inventory is 7 months old; `npm run data:nd-dams` refreshes it."
+ * "NID inventory is 7 months old (pulled 2026-10-29); "Download latest" in the NID picker refreshes it."
  */
 export function staleBundleBanner(bundles: BundleInfo[], now: Date): string | null {
   const stale = bundles
@@ -50,11 +50,11 @@ export function staleBundleBanner(bundles: BundleInfo[], now: Date): string | nu
   if (!stale.length) return null;
   if (stale.length === 1) {
     const { b, age } = stale[0];
-    return `${b.label} is ${ageWords(age)} old (pulled ${age.pulledUtc.slice(0, 10)}); \`${b.refresh}\` refreshes it.`;
+    return `${b.label} is ${ageWords(age)} old (pulled ${age.pulledUtc.slice(0, 10)}); ${b.refresh} refreshes it.`;
   }
   const oldest = stale.reduce((a, x) => (x.age.days > a.age.days ? x : a));
   return `Inventory is ${ageWords(oldest.age)} old (${stale.map(({ b, age }) => `${b.label} pulled ${age.pulledUtc.slice(0, 10)}`).join("; ")}); ${stale
-    .map(({ b }) => `\`${b.refresh}\``)
+    .map(({ b }) => b.refresh)
     .join(" and ")} refresh it.`;
 }
 
@@ -62,19 +62,14 @@ export function staleBundleBanner(bundles: BundleInfo[], now: Date): string | nu
 export function bundleAgeLine(b: BundleInfo, now: Date): string | null {
   const age = bundleAge(b.pulledUtc, now);
   if (!age) return null;
-  return `${b.label} pulled ${age.pulledUtc.slice(0, 10)} (${ageWords(age)} old${age.stale ? `; stale, past ${BUNDLE_STALE_DAYS} days: \`${b.refresh}\` refreshes it` : ""})`;
+  return `${b.label} pulled ${age.pulledUtc.slice(0, 10)} (${ageWords(age)} old${age.stale ? `; stale, past ${BUNDLE_STALE_DAYS} days: ${b.refresh} refreshes it` : ""})`;
 }
 
-/** The three bundles the desk ships, from the loaded sources (nd-dams.ts NdData, batch.ts loadStructures). */
-export function deskBundles(src: {
-  nidFetchedUtc?: string | null;
-  dwrPulledUtc?: string | null;
-  structuresPulledUtc?: string | null;
-}): BundleInfo[] {
-  const out: BundleInfo[] = [];
-  if (src.nidFetchedUtc !== undefined) out.push({ label: "NID inventory", pulledUtc: src.nidFetchedUtc, refresh: "npm run data:nd-dams" });
-  if (src.dwrPulledUtc !== undefined) out.push({ label: "DWR dam values", pulledUtc: src.dwrPulledUtc, refresh: "npm run data:nd-dams-dwr" });
-  if (src.structuresPulledUtc !== undefined)
-    out.push({ label: "DWR structures list", pulledUtc: src.structuresPulledUtc, refresh: "npm run data:nd-structures" });
-  return out;
+/** How to refresh an NID extract: the picker downloads the state again through the desktop server. */
+export const NID_REFRESH = "\"Download latest\" in the NID picker";
+
+/** The NID extract in use (nid-dams.ts NidData): one entry, labelled with its state when known. */
+export function deskBundles(src: { nidFetchedUtc?: string | null; state?: string | null }): BundleInfo[] {
+  if (src.nidFetchedUtc === undefined) return [];
+  return [{ label: src.state ? `NID inventory (${src.state})` : "NID inventory", pulledUtc: src.nidFetchedUtc, refresh: NID_REFRESH }];
 }

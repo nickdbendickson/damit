@@ -1,8 +1,8 @@
 """AOI layers: the DamIT data folder the DamIT plugins share, or a public US download for this dam.
 
-The data folder is jurisdiction-neutral: DAMIT_DATA, else "damit/data_folder" in ~/.damit/config.json. A North Dakota
-suite pack (NDSUITE_DATA / ~/.ndsuite/config.json) is still read as an optional example source when no DamIT folder is
-set, and is labelled as such; it is never the only place the app looks."""
+The data folder is jurisdiction-neutral: DAMIT_DATA, else "damit/data_folder" in ~/.damit/config.json. Nothing else
+(no state suite pack). It holds DEMs, receptors and other layers; the dam inventory is the NID (nid.py), not a file
+in the data folder."""
 
 from __future__ import annotations
 
@@ -17,11 +17,10 @@ from pathlib import Path
 
 THREEDEP = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage"
 NHD = "https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer"
-# Large-scale flowline and waterbody. Public National Map layers, not the DWR inventory.
+# Large-scale flowline and waterbody. Public National Map layers (not a dam inventory).
 NHD_LAYERS = ((6, "streams.geojson"), (12, "waterbodies.geojson"))
 RASTER_EXT = {".tif", ".tiff", ".vrt", ".img"}
 CONFIG_KEY = "damit/data_folder"
-LEGACY_ND_KEY = "ndsuite/data_folder"
 SETTINGS_NAME = "damit_settings.json"
 
 
@@ -49,13 +48,11 @@ def _env_folder(name: str) -> str | None:
 
 
 def find_data_folder_with_source() -> tuple[str | None, str]:
-    """(folder, where it came from). DamIT settings first; the ND suite pack only as an optional example."""
+    """(folder, where it came from): DAMIT_DATA, else damit/data_folder in ~/.damit/config.json."""
     home = Path.home()
     for found, where in (
         (_env_folder("DAMIT_DATA"), "DAMIT_DATA"),
         (_config_folder(home / ".damit" / "config.json", CONFIG_KEY), "~/.damit/config.json"),
-        (_env_folder("NDSUITE_DATA"), "NDSUITE_DATA (North Dakota example pack)"),
-        (_config_folder(home / ".ndsuite" / "config.json", LEGACY_ND_KEY), "~/.ndsuite/config.json (North Dakota example pack)"),
     ):
         if found:
             return found, where
@@ -235,7 +232,7 @@ def download_aoi(work: Path, dam: dict, log, fetch=None) -> dict:
             log(f"Wrote {dest}")
         except OSError as exc:
             log(f"{name} was not downloaded: {exc}")
-    log("State dam inventories, dam lines and structure layers are not on that public service. Put them in the DamIT data folder.")
+    log("Dam lines and structure layers are not on that public service. Put them in the DamIT data folder. The dam inventory is the NID.")
     if dem and dem.is_file():
         write_settings(work, find_data_folder(), str(dem))
         return {"ok": True, "stopped": False, "dem": str(dem)}
@@ -250,8 +247,6 @@ def use_data_folder(work: Path, log) -> dict:
         log("Or choose Download DEM and streams for this area (USGS 3DEP and NHD, United States only).")
         return {"ok": False, "stopped": True}
     log(f"DamIT data folder ({where}): {folder}")
-    if "North Dakota" in where:
-        log("That is the North Dakota suite pack, used here as an example data source. Set DAMIT_DATA for other jurisdictions.")
     dem = data_dem(folder)
     if dem:
         log(f"Data folder DEM: {dem}")

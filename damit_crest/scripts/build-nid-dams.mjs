@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 /**
- * Build src/lib/crest/data/nd_dams.json (the ND dam picker's offline NID bundle) from the USACE National Inventory
- * of Dams ND extract. Run by hand only (`npm run data:nd-dams`), when Nick asks for a refresh; never chained into
- * build, dev or test, and it never touches the database. The output is committed.
+ * Build an NID state extract (the dam picker's inventory) from the USACE National Inventory of Dams bulk CSV for one
+ * state. The dam inventory in DamIT Crest is the NID only (Nick, 2026-11-09): no state dam-safety, dugout or other
+ * inventory. The committed offline example is src/lib/crest/data/nid_ND.json (North Dakota); the desktop app
+ * downloads and caches any other state at runtime (desktop/damit_desktop/nid.py, the same conversion in Python).
+ * Run by hand only (`npm run data:nid`), never chained into build, dev or test.
  *
- *   npm run data:nd-dams                         download the ND bulk CSV (saved to data-raw/, git-ignored)
- *   npm run data:nd-dams -- --from data-raw/nid_ND.csv [--fetched 2026-10-29T21:56:00Z]
- *   ... --allow-shrink                           accept a bundle >20% smaller than the committed one
+ *   npm run data:nid                             refresh the committed ND example (CSV saved to data-raw/, git-ignored)
+ *   npm run data:nid -- --state RI --out /tmp/nid_RI.json     another state (do not commit other states)
+ *   npm run data:nid -- --from data-raw/nid_ND.csv [--fetched 2026-10-29T21:56:00Z]
+ *   ... --allow-shrink                           accept a bundle >20% smaller than the existing one
  *   ... --out <file>                             write somewhere else (tests)
  *
- * No per-dam NID API calls (decision 11): decimal heights come from the DWR file at runtime (nd_dams_dwr.json).
- * No new dependencies: a small RFC 4180 CSV parser lives here.
+ * One bulk CSV per state, no per-dam NID API calls (decision 11). No new dependencies: a small RFC 4180 CSV parser lives here.
  * Never reads "Owner Names" (an NID owner can be a private person; Nick has not decided on showing them), so no
  * owner text reaches the bundle or the picker.
  */
@@ -20,10 +22,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const DEFAULT_OUT = join(ROOT, "src/lib/crest/data/nd_dams.json");
-export const PRIMARY_URL = "https://nid.sec.usace.army.mil/api/query?sy=%40stateKey%3AND&out=csv";
+export const DEFAULT_OUT = join(ROOT, "src/lib/crest/data/nid_ND.json");
+/** The NID bulk CSV query for one state (two-letter code). */
+export const stateUrl = (state) => `https://nid.sec.usace.army.mil/api/query?sy=%40stateKey%3A${state}&out=csv`;
+export const PRIMARY_URL = stateUrl("ND");
 export const NATION_URL = "https://nid.sec.usace.army.mil/api/nation/csv";
 export const ND_BOX = { latMin: 45.9, latMax: 49.05, lonMin: -104.1, lonMax: -96.5 };
+/** Fewest main dams the ND example may have (the shrink guard for the committed extract; other states: at least 1). */
 export const MIN_ROWS = 800;
 export const ATTRIBUTION =
   "Dam inventory data: U.S. Army Corps of Engineers, National Inventory of Dams (nid.sec.usace.army.mil), downloaded {date}. Values as reported by the owning agency; verify against the dam file.";
@@ -157,15 +162,19 @@ export function countiesAt(lat, lon, boxes = loadCountyBoxes()) {
  * Build the bundle object from the CSV text. Throws on a schema error, duplicate main IDs, or too few rows.
  * opts: { fetchedUtc, url, previousRows (committed count, for the shrink guard), allowShrink, log }
  */
-export function buildNdDams(csvText, opts = {}) {
+export function buildNidDams(csvText, opts = {}) {
   const log = opts.log ?? (() => {});
+  const state = (opts.state ?? "ND").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(state)) throw new Error(`not a two-letter state code: ${opts.state}`);
+  const isNd = state === "ND";
   const table = parseCsv(csvText);
   const header = table[0] ?? [];
   const missing = REQUIRED.filter((c) => !header.includes(c));
   if (missing.length) throw new Error(`NID schema changed: missing column(s) ${missing.join(", ")}`);
   const ix = Object.fromEntries(header.map((h, i) => [h, i]));
   const get = (r, c) => r[ix[c]] ?? "";
-  const boxes = loadCountyBoxes();
+  // The county check and the state box are ND-only (the county boxes are North Dakota's); other states as reported.
+  const boxes = isNd ? loadCountyBoxes() : {};
   const ndCounties = new Set(Object.keys(boxes));
 
   const dropped = [];
@@ -176,6 +185,10 @@ export function buildNdDams(csvText, opts = {}) {
     const nid = str(get(r, "NID ID"));
     const fed = str(get(r, "Federal ID"));
     if (!nid) continue;
+    if (!/^[A-Z]{2}\d{3,}$/.test(nid)) {
+      warnings.push(`${nid}: not an NID ID, skipped`);
+      continue;
+    }
     if (fed !== nid) {
       dropped.push({ federalId: fed, nid, name: str(get(r, "Dam Name")) });
       continue;
@@ -186,7 +199,7 @@ export function buildNdDams(csvText, opts = {}) {
     const lat = numv(get(r, "Latitude"), false);
     const lon = numv(get(r, "Longitude"), false);
     let countyNote = null;
-    if (county && !ndCounties.has(county)) {
+    if (isNd && county && !ndCounties.has(county)) {
       const inside = lat != null && lon != null ? countiesAt(lat, lon, boxes) : [];
       countyNote =
         inside.length === 1
@@ -194,7 +207,8 @@ export function buildNdDams(csvText, opts = {}) {
           : `NID county '${county}' is not an ND county`;
       warnings.push(`${nid}: ${countyNote}`);
     }
-    if (lat == null || lon == null || lat < ND_BOX.latMin || lat > ND_BOX.latMax || lon < ND_BOX.lonMin || lon > ND_BOX.lonMax) {
+    if (lat == null || lon == null) warnings.push(`${nid}: no point`);
+    else if (isNd && (lat < ND_BOX.latMin || lat > ND_BOX.latMax || lon < ND_BOX.lonMin || lon > ND_BOX.lonMax)) {
       warnings.push(`${nid}: point ${lat}, ${lon} is outside the ND box`);
     }
     const rec = {
@@ -227,8 +241,9 @@ export function buildNdDams(csvText, opts = {}) {
     };
     out.push(rec);
   }
-  if (out.length < MIN_ROWS && !opts.allowShrink) {
-    throw new Error(`only ${out.length} main dams (minimum ${MIN_ROWS}); pass --allow-shrink to accept`);
+  const minRows = isNd ? MIN_ROWS : 1;
+  if (out.length < minRows && !opts.allowShrink) {
+    throw new Error(`only ${out.length} main dams (minimum ${minRows}); pass --allow-shrink to accept`);
   }
   if (opts.previousRows && out.length < opts.previousRows * 0.8 && !opts.allowShrink) {
     throw new Error(`${out.length} main dams is more than 20% below the committed ${opts.previousRows}; pass --allow-shrink to accept`);
@@ -246,7 +261,8 @@ export function buildNdDams(csvText, opts = {}) {
   }
   const fetchedUtc = opts.fetchedUtc ?? new Date().toISOString().replace(/\.\d+Z$/, "Z");
   const source = {
-    url: opts.url ?? PRIMARY_URL,
+    url: opts.url ?? stateUrl(state),
+    state,
     fetchedUtc,
     sha256Raw: createHash("sha256").update(csvText).digest("hex"),
     rows: out.length,
@@ -274,24 +290,24 @@ async function download(url) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(url, {
-        headers: { "User-Agent": "crest-nd-dams-build" },
+        headers: { "User-Agent": "damit-crest-nid-build" },
         signal: AbortSignal.timeout(60_000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.text();
     } catch (e) {
-      console.error(`[nd-dams] ${url} attempt ${attempt + 1}: ${e.message}`);
+      console.error(`[nid] ${url} attempt ${attempt + 1}: ${e.message}`);
     }
   }
   return null;
 }
 
-/** Keep the header plus the rows whose State is North Dakota (nation CSV fallback). */
-function filterNation(text) {
+/** Keep the header plus the rows of one state, by the NID ID prefix (nation CSV fallback). */
+function filterNation(text, state) {
   const t = parseCsv(text);
-  const si = t[0].indexOf("State");
+  const ni = t[0].indexOf("NID ID");
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  return [t[0], ...t.slice(1).filter((r) => r[si] === "North Dakota")].map((r) => r.map(q).join(",")).join("\n") + "\n";
+  return [t[0], ...t.slice(1).filter((r) => String(r[ni] ?? "").toUpperCase().startsWith(state))].map((r) => r.map(q).join(",")).join("\n") + "\n";
 }
 
 export async function main(argv) {
@@ -299,45 +315,48 @@ export async function main(argv) {
     const i = argv.indexOf(k);
     return i >= 0 ? argv[i + 1] : undefined;
   };
+  const state = (arg("--state") ?? "ND").toUpperCase();
+  if (state !== "ND" && !arg("--out")) throw new Error("--out is required for a state other than ND (only the ND example is committed)");
   const outFile = resolve(arg("--out") ?? DEFAULT_OUT);
   let csv;
-  let url = PRIMARY_URL;
+  let url = stateUrl(state);
   let fetchedUtc = arg("--fetched");
   const from = arg("--from");
   if (from) {
     csv = readFileSync(from, "utf8");
     fetchedUtc ??= statSync(from).mtime.toISOString().replace(/\.\d+Z$/, "Z");
   } else {
-    csv = await download(PRIMARY_URL);
+    csv = await download(url);
     if (csv == null) {
       url = NATION_URL;
       const nation = await download(NATION_URL);
-      if (nation == null) throw new Error("NID download failed (ND query and nation CSV)");
-      csv = filterNation(nation);
+      if (nation == null) throw new Error(`NID download failed (${state} query and nation CSV)`);
+      csv = filterNation(nation, state);
     }
     const raw = join(ROOT, "data-raw");
     mkdirSync(raw, { recursive: true });
-    writeFileSync(join(raw, "nid_ND.csv"), csv);
+    writeFileSync(join(raw, `nid_${state}.csv`), csv);
   }
   const previousRows = existsSync(outFile) ? JSON.parse(readFileSync(outFile, "utf8")).source?.rows : undefined;
-  const bundle = buildNdDams(csv, {
+  const bundle = buildNidDams(csv, {
     url,
+    state,
     fetchedUtc,
     previousRows,
     allowShrink: argv.includes("--allow-shrink"),
-    log: (m) => console.log(`[nd-dams] ${m}`),
+    log: (m) => console.log(`[nid] ${m}`),
   });
   const text = JSON.stringify(bundle);
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile, text);
-  for (const l of summary(bundle)) console.log(`[nd-dams] ${l}`);
-  console.log(`[nd-dams] wrote ${outFile} (${text.length} bytes)`);
+  for (const l of summary(bundle)) console.log(`[nid] ${l}`);
+  console.log(`[nid] wrote ${outFile} (${text.length} bytes)`);
   return bundle;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   main(process.argv.slice(2)).catch((e) => {
-    console.error(`[nd-dams] ${e.message}`);
+    console.error(`[nid] ${e.message}`);
     process.exit(1);
   });
 }

@@ -36,6 +36,30 @@ describe("migrateDesk", () => {
     assert.equal(state.dams[0].crestFt, now?.crestFt);
     assert.equal(state.activeId, "nd00199");
   });
+
+  it("v3 (NID only): clears the made-up NEW id and keeps every record, the fictional samples included", () => {
+    const persisted = {
+      dams: [
+        { id: "nd00199", nid: "ND00199" },
+        { id: "local-sample", nid: "SAMPLE-4031" },
+        { id: "prairie", nid: "DESK-014" },
+        { id: "desk-abc", nid: "NEW", isNew: true },
+      ],
+      activeId: "local-sample",
+      step: "setup",
+    };
+    const state = migrateDesk(persisted, 2);
+    assert.deepEqual(
+      state.dams.map((d) => [d.id, d.nid]),
+      [
+        ["nd00199", "ND00199"],
+        ["local-sample", "SAMPLE-4031"],
+        ["prairie", "DESK-014"],
+        ["desk-abc", ""],
+      ],
+    );
+    assert.equal(state.activeId, "local-sample");
+  });
 });
 
 describe("applyPatch (Docs & QA on #57: a stale NGVD29 note after the crest is retyped)", () => {

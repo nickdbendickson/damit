@@ -1,5 +1,5 @@
 /**
- * Batch screen: pick many structures (one by one, by county, by watershed, or statewide) and run each through the
+ * Batch screen: pick many NID dams of the chosen state (one by one, by county, or statewide) and run each through the
  * desk's own build + triage (src/lib/crest/batch.ts). Results are a Runner worklist: needs-runner first.
  *
  * The builds run on a pool of inundation workers (batch.ts runBatchInBrowser), so the tab stays live. Only the small
@@ -13,7 +13,6 @@ import {
   BATCH_DISCLAIMER,
   BROWSER_BATCH_WARN,
   DEFAULT_STATUSES,
-  KIND_LABEL,
   batchCsv,
   batchCsvMeta,
   facets,
@@ -27,25 +26,24 @@ import {
   type BatchRow,
   type Selection,
   type Structure,
-  type StructureKind,
 } from "@/lib/crest/batch";
 import { BatchRowBuffer, clearBatchRows, clearBatchSummary, loadBatchRows, loadBatchSummary, saveBatchSummary } from "@/lib/crest/batch-store";
 import { poolSize } from "@/lib/crest/inundation-client";
-import { fold, type NdData } from "@/lib/crest/nd-dams";
+import { fold, type NidData } from "@/lib/crest/nid-dams";
+import { EXAMPLE_STATE, NID_STATES, stateName } from "@/lib/crest/nid-state";
 import { saveText } from "@/lib/crest/save";
 import { useDesk } from "@/lib/crest/store";
 import type { DamRecord } from "@/lib/crest/types";
 import { BatchTable } from "./BatchTable";
+import { selectNidState, useSelectedNidState } from "./NidDamPicker";
 import { TerrainSource } from "./TerrainSource";
 
 const btn = "inline-flex h-11 items-center rounded-sm border border-line bg-card px-4 text-sm text-ink disabled:opacity-50";
 const primary = "inline-flex h-11 items-center rounded-sm border border-water bg-water px-4 text-sm text-card disabled:opacity-50";
-const KINDS: StructureKind[] = ["nid", "dam", "dugout", "unknown"];
 const BY: { id: Selection["by"]; label: string }[] = [
-  { id: "pick", label: "Pick structures" },
+  { id: "pick", label: "Pick dams" },
   { id: "county", label: "County" },
-  { id: "watershed", label: "Watershed (HUC8)" },
-  { id: "state", label: "Statewide" },
+  { id: "state", label: "Whole state" },
 ];
 
 /** Rows the previous version kept in localStorage (crest-batch-v1): read once and moved to IndexedDB. */
@@ -68,14 +66,14 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
   const addDam = useDesk((s) => s.addDam);
   const deskDams = useDesk((s) => s.dams);
   const selectDam = useDesk((s) => s.select);
-  const [data, setData] = useState<{ nd: NdData; structures: Structure[]; source: Record<string, unknown> } | null>(null);
+  const [data, setData] = useState<{ nd: NidData; structures: Structure[]; source: Record<string, unknown> } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const nidState = useSelectedNidState();
   const [by, setBy] = useState<Selection["by"]>("county");
-  const [kinds, setKinds] = useState<StructureKind[]>(KINDS);
-  const [statuses, setStatuses] = useState<string[]>([...DEFAULT_STATUSES]);
+  const kinds = useMemo(() => ["nid" as const], []);
+  const statuses = useMemo(() => [...DEFAULT_STATUSES] as string[], []);
   const [ids, setIds] = useState<string[]>([]);
   const [counties, setCounties] = useState<string[]>([]);
-  const [watersheds, setWatersheds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   /** The rows in worklist order (sortRows); a new row is inserted in place, not re-sorted. */
   const [sorted, setSorted] = useState<BatchRow[]>([]);
@@ -102,28 +100,35 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
         await buf.flush();
       }
     })();
-    loadStructures()
-      .then((d) => setData(d))
-      .catch((e) => setLoadErr((e as Error).message));
     return () => {
       live = false;
       ctl.current?.abort();
     };
   }, []);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    setLoadErr(null);
+    setIds([]);
+    setCounties([]);
+    loadStructures(nidState)
+      .then((d) => live && setData(d))
+      .catch((e) => live && setLoadErr((e as Error).message));
+    return () => {
+      live = false;
+    };
+  }, [nidState]);
   const rows = sorted;
 
   const all = useMemo(() => data?.structures ?? [], [data]);
   const byId = useMemo(() => new Map(all.map((s) => [s.id, s])), [all]);
-  const sel: Selection = { by, ids, counties, watersheds, kinds, statuses };
-  const list = useMemo(() => (data ? selectStructures(all, sel) : []), [data, by, ids, counties, watersheds, kinds, statuses]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sel: Selection = { by, ids, counties, kinds, statuses };
+  const list = useMemo(() => (data ? selectStructures(all, sel) : []), [data, by, ids, counties, kinds, statuses]); // eslint-disable-line react-hooks/exhaustive-deps
   const ready = list.filter((s) => !missingData(s)).length;
   // The time estimate: the baseline prior (8 s small / 25 s large) until three rows of this run are timed, then the
   // running mean of row.seconds, over what is still to run, `lanes` at a time (the worker pool). It updates with every finished row.
   const est = useMemo(() => runningEstimate(rows, list.filter((s) => !rows.some((r) => r.id === s.id && r.status !== "failed")), lanes), [rows, list, lanes]);
-  const scoped = useMemo(() => all.filter((s) => kinds.includes(s.kind)), [all, kinds]);
-  const countyF = useMemo(() => facets(scoped.filter((s) => statuses.includes(s.status)), "county"), [scoped, statuses]);
-  const hucF = useMemo(() => facets(scoped.filter((s) => statuses.includes(s.status)), "huc8"), [scoped, statuses]);
-  const statusF = useMemo(() => facets(scoped, "status"), [scoped]);
+  const countyF = useMemo(() => facets(all, "county"), [all]);
   const matches = useMemo(() => {
     const q = fold(query);
     if (!q) return [];
@@ -179,8 +184,8 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
     (id: string) => {
       const d = dams.current.get(id);
       if (!d) return;
-      // A record for this structure may already be on the desk (an earlier Open in desk, or one made from the NID /
-      // DWR pickers): select it instead of adding a copy on every click. The batch record's id ("batch-nd00199") and
+      // A record for this dam may already be on the desk (an earlier Open in desk, or one made from the NID picker):
+      // select it instead of adding a copy on every click. The batch record's id ("batch-nd00199") and
       // the structure id in its `nid` / `nidId` fields are what identify it.
       const existing = deskDams.find((x) => x.nid === id || x.nidId === id || x.id === d.id || x.id.startsWith(`${d.id}-`));
       if (existing) {
@@ -202,13 +207,41 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
     setSaved(r.status === "saved" ? (r.path ? `Saved to ${r.path}` : "Downloaded.") : r.status === "cancelled" ? null : `Not saved: ${r.message}`);
   };
 
+  const statePicker = (
+    <label className="block text-sm">
+      <span className="text-muted">State (NID dams)</span>
+      <select
+        className="mt-1 h-11 w-full max-w-xs rounded-sm border border-line bg-paper px-2"
+        value={nidState}
+        data-testid="batch-nid-state"
+        onChange={(e) => selectNidState(e.target.value)}
+        disabled={running}
+      >
+        {NID_STATES.map(([code, name]) => (
+          <option key={code} value={code}>
+            {name}
+            {code === EXAMPLE_STATE ? " (bundled example)" : ""}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
   if (loadErr)
     return (
-      <p className="text-sm text-red-700" role="alert">
-        Could not load the structure lists: {loadErr}
-      </p>
+      <div className="grid gap-2">
+        {statePicker}
+        <p className="text-sm text-red-700" role="alert">
+          Could not load the NID dams for {stateName(nidState)}: {loadErr}
+        </p>
+      </div>
     );
-  if (!data) return <p className="text-sm text-muted">Loading the NID, DWR dam and dugout lists…</p>;
+  if (!data)
+    return (
+      <div className="grid gap-2">
+        {statePicker}
+        <p className="text-sm text-muted">Loading the NID dams for {stateName(nidState)}…</p>
+      </div>
+    );
 
   const pane = "min-w-0 rounded-md border border-line bg-card p-4";
   const chip = (on: boolean) => `inline-flex min-h-9 items-center gap-1 rounded-sm border px-2 py-1 text-xs ${on ? "border-water bg-water text-card" : "border-line bg-paper text-ink"}`;
@@ -237,10 +270,11 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
       <div className={pane}>
         <h2 className="text-xl">Batch screen</h2>
         <p className="mt-1 text-sm text-muted">
-          Run many structures through the same build and triage as one dam on the desk. Each record is auto-derived: height and
-          storage from the inventory, crest from DWR NAVD 88 where offered or else from 3DEP at the point, and the downstream
+          Run many NID dams through the same build and triage as one dam on the desk. Each record is auto-derived: height and
+          storage from the NID, crest from 3DEP at the NID point, and the downstream
           direction from the 3DEP downhill (or from the local DEM chosen below). Use the results to order the Runner worklist.
         </p>
+        <div className="mt-3">{statePicker}</div>
         <TerrainSource />
 
         <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Select by">
@@ -252,35 +286,15 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
         </div>
 
         <div className="mt-4 grid gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted">Include:</span>
-            {KINDS.map((k) => (
-              <label key={k} className="inline-flex min-h-9 items-center gap-1">
-                <input type="checkbox" checked={kinds.includes(k)} onChange={() => setKinds(kinds.includes(k) ? kinds.filter((x) => x !== k) : [...kinds, k])} />
-                {KIND_LABEL[k]}s
-              </label>
-            ))}
-          </div>
-          {by !== "pick" ? (
-            <div className="flex flex-wrap items-center gap-1 text-sm">
-              <span className="mr-1 text-muted">Status:</span>
-              {statusF.map((x) => (
-                <button key={x.value} type="button" className={chip(statuses.includes(x.value))} onClick={() => toggle(statuses, x.value, setStatuses)}>
-                  {x.value === "Location Incon" ? "Location inconclusive" : x.value} <span className="opacity-70">{x.count}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
           {by === "pick" ? (
             <div>
               <label className="block text-sm">
-                <span className="text-muted">Find a structure (name, NID ID, DWR-/DUG- number, county)</span>
+                <span className="text-muted">Find a dam (name, NID ID, county)</span>
                 <input
                   className="mt-1 h-11 w-full rounded-sm border border-line bg-paper px-3"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="e.g. Absaraka, ND00199, DWR-4031, DUG-130"
+                  placeholder={nidState === "ND" ? "e.g. Absaraka, ND00199" : `e.g. a dam name or ${nidState}00001`}
                 />
               </label>
               {matches.length ? (
@@ -292,7 +306,7 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
                         <span className="min-w-0 flex-1">
                           <span className="font-medium">{s.label}</span>{" "}
                           <span className="text-muted">
-                            · {KIND_LABEL[s.kind]} · {s.county ?? "—"} · {s.status}
+                            · {s.id} · {s.county ?? "—"}
                             {missingData(s) ? " · needs data" : ""}
                           </span>
                         </span>
@@ -313,7 +327,6 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
             </div>
           ) : null}
           {by === "county" ? facetList(countyF, counties, setCounties, "counties") : null}
-          {by === "watershed" ? facetList(hucF, watersheds, setWatersheds, "HUC8 watersheds") : null}
         </div>
 
         <div className="mt-4 rounded-sm bg-sand p-3 text-sm" data-testid="batch-summary">
@@ -332,7 +345,7 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
             <p className="mt-1 text-amber">
               Large batch for a browser tab: keep the tab open, or run it from the command line, which resumes after a stop and can
               read a local DEM mosaic instead of 3DEP:{" "}
-              <code className="break-all">node --experimental-strip-types scripts/batch-dams.mjs --out batch-out {by === "state" ? "--state" : by === "county" ? `--county "${counties.join(",")}"` : by === "watershed" ? `--watershed "${watersheds.join(",")}"` : `--ids ${ids.join(",")}`}</code>
+              <code className="break-all">node --experimental-strip-types scripts/batch-dams.mjs --out batch-out --nid-state {nidState} {by === "state" ? "--all" : by === "county" ? `--county "${counties.join(",")}"` : `--ids ${ids.join(",")}`}</code>
             </p>
           ) : null}
         </div>

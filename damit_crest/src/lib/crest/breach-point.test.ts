@@ -38,11 +38,11 @@ const eOf = (c: number[]) => (c[0] - LON) * kx(LAT);
 const nOf = (c: number[]) => (c[1] - LAT) * M_PER_DEG_LAT;
 
 const S: Structure = {
-  id: "DWR-9",
-  kind: "dam",
-  label: "DWR-9",
-  nid: null,
-  status: "Intact",
+  id: "ND09009",
+  kind: "nid",
+  label: "ND09009",
+  nid: "ND09009",
+  status: "NID",
   county: "Cass",
   lat: LAT,
   lon: LON,

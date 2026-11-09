@@ -21,7 +21,7 @@ import {
 import type { RowData } from "@tanstack/react-table";
 
 import { KIND_LABEL, type BatchRow } from "@/lib/crest/batch";
-import { fold } from "@/lib/crest/nd-dams";
+import { fold } from "@/lib/crest/nid-dams";
 import { RECOMMENDATION_ORDER } from "@/lib/crest/triage";
 
 declare module "@tanstack/react-table" {
@@ -52,7 +52,7 @@ const rowFilter: FilterFn<BatchRow> = (row, _columnId, value) => {
   const q = fold(String(value ?? ""));
   if (!q) return true;
   const r = row.original;
-  return fold(`${r.id} ${r.label} ${r.county ?? ""} ${r.triage?.label ?? ""} ${r.screenLabel ?? ""} ${r.status} ${KIND_LABEL[r.kind]}`).includes(q);
+  return fold(`${r.id} ${r.label} ${r.county ?? ""} ${r.triage?.label ?? ""} ${r.screenLabel ?? ""} ${r.status} ${KIND_LABEL[r.kind] ?? r.kind}`).includes(q);
 };
 
 const col = createColumnHelper<BatchRow>();
@@ -119,7 +119,7 @@ export function BatchTable({
                 <span data-batch-id={r.id}>{r.id}</span>
                 <CopyId id={r.id} />
                 {" · "}
-                {KIND_LABEL[r.kind]}
+                {KIND_LABEL[r.kind] ?? r.kind}
                 {r.crestFrom ? ` · crest from ${r.crestFrom}` : ""}
               </span>
             </>

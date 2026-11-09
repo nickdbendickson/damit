@@ -25,12 +25,11 @@ import {
   sortRows,
   type BatchRow,
   type Structure,
-  type StructuresBundle,
 } from "./batch.ts";
 import { ENGINE_VERSION } from "./engine.ts";
 import type { FloodStrip } from "./floodstrip.ts";
 import { nd911Bbox } from "./nd911.ts";
-import type { NdData } from "./nd-dams.ts";
+import type { NidData } from "./nid-dams.ts";
 import type { DemGrid, DemRequest } from "./outline.ts";
 import { CREST_VERSION } from "./version.ts";
 
@@ -63,11 +62,11 @@ const fakeDem = async (req: DemRequest): Promise<DemGrid> => {
 const noNd911 = (async (area: FloodStrip) => ({ bbox: nd911Bbox(area), fetchedAt: "2026-11-05T00:00:00Z", source: "test", attribution: "test", fields: [], points: [] })) as never;
 
 const S = (over: Partial<Structure> = {}): Structure => ({
-  id: "DWR-1",
-  kind: "dam",
-  label: "DWR-1",
-  nid: null,
-  status: "Intact",
+  id: "ND00001",
+  kind: "nid",
+  label: "Test Dam",
+  nid: "ND00001",
+  status: "NID",
   county: "Cass",
   lat: LAT,
   lon: LON,
@@ -78,7 +77,7 @@ const S = (over: Partial<Structure> = {}): Structure => ({
   year: 1980,
   hazard: "Low",
   purpose: "Livestock",
-  huc8: "Maple (09020205)",
+  huc8: null,
   ...over,
 });
 
@@ -86,48 +85,35 @@ describe("structure list", () => {
   const nd = {
     dams: [
       { nid: "ND00001", name: "Test Dam", otherNames: null, county: "Cass", lat: 47, lon: -97, nidHeightFt: 20, damHeightFt: 20, nidStorageAcFt: 300, maxStorageAcFt: 300, normalStorageAcFt: 100, lengthFt: 500, yearCompleted: 1970, nidHazard: "Low", purpose: "Flood Control" },
-      { nid: "DWR-99", name: "DWR-99 (DWR only)", source: "DWR", county: "Cass", lat: 47, lon: -97 },
+      { nid: "ND00002", name: null, otherNames: "Pond", county: "Barnes", lat: 46.9, lon: -98, nidHeightFt: null, damHeightFt: null, nidStorageAcFt: 12, maxStorageAcFt: 12, normalStorageAcFt: 6, lengthFt: null, yearCompleted: null, nidHazard: "Undetermined", purpose: "Other" },
+      { nid: "ND00003", name: "Third", otherNames: null, county: "Cass", lat: 47.1, lon: -97.1, nidHeightFt: 10, damHeightFt: 10, nidStorageAcFt: 40, maxStorageAcFt: 40, normalStorageAcFt: 20, lengthFt: 300, yearCompleted: 1990, nidHazard: "Low", purpose: "Recreation" },
     ],
-    dwr: new Map(),
-  } as unknown as Pick<NdData, "dams" | "dwr">;
-  const bundle: StructuresBundle = {
-    source: {},
-    nidHuc: { cols: ["nid", "huc8"], rows: [["ND00001", "Maple (09020205)"]] },
-    cols: ["id", "kind", "nid", "status", "county", "lat", "lon", "heightFt", "storageAcFt", "areaAc", "lengthFt", "year", "hazard", "purpose", "huc8"],
-    rows: [
-      ["DWR-99", "dam", "ND10099", "Intact", "Cass", 47.1, -97.1, 10, 40, 5, 300, 1990, "Low", "Livestock", "Maple (09020205)"],
-      ["DUG-5", "dugout", null, "Dugout", "Barnes", 46.9, -98, null, 12, 2, null, null, "Undetermined", "Livestock", "Lower Sheyenne (09020204)"],
-    ],
-  };
-  const all = makeStructures(nd, bundle);
+  } as unknown as Pick<NidData, "dams">;
+  const all = makeStructures(nd);
 
-  it("takes NID main dams from the NID bundle and every DWR dam and dugout from the structures bundle, once each", () => {
+  it("lists the NID main dams only, once each, kind nid", () => {
     assert.deepEqual(
-      all.map((s) => [s.id, s.kind]),
+      all.map((s) => [s.id, s.kind, s.status]),
       [
-        ["ND00001", "nid"],
-        ["DWR-99", "dam"],
-        ["DUG-5", "dugout"],
+        ["ND00001", "nid", "NID"],
+        ["ND00002", "nid", "NID"],
+        ["ND00003", "nid", "NID"],
       ],
     );
     const n = all[0];
     assert.equal(n.label, "Test Dam");
     assert.equal(n.heightFt, 20);
     assert.equal(n.storageAcFt, 300);
-    assert.equal(n.huc8, "Maple (09020205)");
-    assert.equal(all[1].label, "DWR-99 (ND10099)");
+    assert.equal(all[1].label, "Pond");
   });
 
-  it("selects by pick, county, watershed name or HUC code, and statewide, filtered by kind and status", () => {
-    const base = { kinds: ["nid", "dam", "dugout"] as const, statuses: ["NID", "Intact", "Dugout"] };
+  it("selects by pick, county and the whole state", () => {
+    const base = { kinds: ["nid" as const], statuses: ["NID"] };
     const ids = (sel: Parameters<typeof selectStructures>[1]) => selectStructures(all, sel).map((s) => s.id);
-    assert.deepEqual(ids({ ...base, kinds: [...base.kinds], by: "county", counties: ["Cass"] }), ["ND00001", "DWR-99"]);
-    assert.deepEqual(ids({ ...base, kinds: [...base.kinds], by: "watershed", watersheds: ["Lower Sheyenne (09020204)"] }), ["DUG-5"]);
-    assert.deepEqual(ids({ ...base, kinds: [...base.kinds], by: "watershed", watersheds: ["09020205"] }), ["ND00001", "DWR-99"]);
-    assert.deepEqual(ids({ ...base, kinds: ["dugout"], by: "state" }), ["DUG-5"]);
-    assert.deepEqual(ids({ ...base, kinds: [...base.kinds], statuses: ["NID"], by: "state" }), ["ND00001"]);
-    // A structure ticked by name stays in whatever the filters say.
-    assert.deepEqual(ids({ ...base, kinds: ["nid"], statuses: [], by: "pick", ids: ["DUG-5"] }), ["DUG-5"]);
+    assert.deepEqual(ids({ ...base, by: "county", counties: ["Cass"] }), ["ND00001", "ND00003"]);
+    assert.deepEqual(ids({ ...base, by: "state" }), ["ND00001", "ND00002", "ND00003"]);
+    assert.deepEqual(ids({ ...base, by: "pick", ids: ["ND00002"] }), ["ND00002"]);
+    assert.deepEqual(ids({ ...base, by: "pick", ids: ["DWR-99", "DUG-5"] }), [], "no DWR or dugout ids");
   });
 
   it("counts facets and flags structures that cannot run", () => {
@@ -135,15 +121,15 @@ describe("structure list", () => {
       { value: "Barnes", count: 1 },
       { value: "Cass", count: 2 },
     ]);
-    assert.equal(missingData(all[2]), "No height in the inventory.");
+    assert.equal(missingData(all[1]), "No height in the inventory.");
     assert.equal(missingData(S({ heightFt: null, storageAcFt: null, lat: null })), "No location, height or storage in the inventory.");
     assert.equal(missingData(all[0]), null);
-    assert.equal(estimateSeconds([all[0], all[2]]), 8);
+    assert.equal(estimateSeconds([all[0], all[1]]), 8);
   });
 
   it("time estimate: the prior until three rows are timed, then the running mean per size class, over what is left", () => {
     const row = (id: string, seconds: number, storageAcFt: number, status: BatchRow["status"] = "done"): BatchRow =>
-      ({ id, kind: "dam", label: id, county: null, huc8: null, status, reason: null, heightFt: 20, storageAcFt, crestFt: null, crestFrom: null, bearingDeg: null, releasedAcFt: null, peakCfs: null, layer: null, floodedAc: null, screen: null, screenLabel: null, structuresInside: null, structuresFlooded: null, triage: null, seconds }) as BatchRow;
+      ({ id, kind: "nid", label: id, county: null, huc8: null, status, reason: null, heightFt: 20, storageAcFt, crestFt: null, crestFrom: null, bearingDeg: null, releasedAcFt: null, peakCfs: null, layer: null, floodedAc: null, screen: null, screenLabel: null, structuresInside: null, structuresFlooded: null, triage: null, seconds }) as BatchRow;
     const small = [S({ id: "a" }), S({ id: "b" }), S({ id: "c" }), S({ id: "d" })];
     const large = S({ id: "L", storageAcFt: 900 });
     // Nothing timed: the prior, two lanes.
@@ -186,7 +172,9 @@ describe("auto-derived record", () => {
     assert.equal(dam.surfaceAreaAc, 15);
     assert.equal(dam.statedDatum, "NAVD88");
     assert.ok(Math.abs(dam.crestFt - dam.streambedFt - 20) < 0.02);
-    assert.equal(dam.receptorSource, "nd911");
+    assert.equal(dam.receptorSource, "nd911", "an ND NID dam takes ND 911 points");
+    assert.equal(dam.nid, "ND00001");
+    assert.equal(dam.provenance?.heightFt?.src, "NID");
     assert.equal(r.derived.crestFrom, "3DEP");
     assert.equal(dam.provenance?.crestFt?.src, "DEM");
     const res = dam.geometry!.reservoirPoint!.geometry.coordinates as number[];
@@ -271,7 +259,7 @@ describe("worklist order and CSV", () => {
   const row = (id: string, over: Partial<BatchRow>): BatchRow =>
     ({
       id,
-      kind: "dam",
+      kind: "nid",
       label: id,
       county: "Cass",
       huc8: null,
@@ -310,15 +298,15 @@ describe("worklist order and CSV", () => {
 
   it("writes the disclaimer, the versions, the inventory ages, the header and one line per row", () => {
     const now = new Date("2027-06-01T00:00:00Z");
-    const csv = batchCsv(rows, { nidFetchedUtc: "2026-10-29T21:56:00Z", dwrPulledUtc: "2026-10-30T14:31:02Z", structuresPulledUtc: null, now }).trim().split("\n");
+    const csv = batchCsv(rows, { nidFetchedUtc: "2026-10-29T21:56:00Z", state: "ND", now }).trim().split("\n");
     assert.match(csv[0], /^# Screening estimate/);
     assert.equal(csv[1], `# DamIT Crest ${CREST_VERSION}; ${ENGINE_VERSION}. Written 2027-06-01.`);
-    assert.match(csv[2], /^# NID inventory pulled 2026-10-29 \(7 months old; stale, past 180 days: `npm run data:nd-dams` refreshes it\)$/);
-    assert.match(csv[3], /^# DWR dam values pulled 2026-10-30 \(6 months old; stale/);
-    assert.equal(csv[4], BATCH_CSV_HEAD.join(","));
-    assert.equal(csv.length, 5 + rows.length);
-    assert.match(csv[5], /^R,DWR dam,R,Cass,/);
-    assert.match(csv[8], /needs-data/);
+    assert.match(csv[2], /^# NID inventory \(ND\) pulled 2026-10-29 \(7 months old; stale, past 180 days: "Download latest" in the NID picker refreshes it\)$/);
+    assert.equal(csv[3], BATCH_CSV_HEAD.join(","));
+    assert.equal(csv.length, 4 + rows.length);
+    assert.match(csv[4], /^R,NID dam,R,Cass,/);
+    assert.match(csv[7], /needs-data/);
+    assert.ok(!csv.some((l) => /DWR|dugout/i.test(l)));
     // Without the bundle sources: the disclaimer and the version row only.
     const bare = batchCsv(rows, { now }).trim().split("\n");
     assert.equal(bare[2], BATCH_CSV_HEAD.join(","));
@@ -328,22 +316,15 @@ describe("worklist order and CSV", () => {
   });
 });
 
-describe("committed bundle", () => {
-  it("loads, and lists NID dams, DWR dams and dugouts with HUC8 watersheds", async () => {
-    const { structures } = await loadStructures();
-    const kinds = new Set(structures.map((s) => s.kind));
-    assert.deepEqual([...kinds].sort(), ["dam", "dugout", "nid", "unknown"]);
-    assert.ok(structures.length > 10000);
+describe("committed NID example extract", () => {
+  it("loads, and lists only NID dams with NID IDs (no DWR dams, dugouts or unknown structures)", async () => {
+    const { structures, nd } = await loadStructures();
+    assert.deepEqual([...new Set(structures.map((s) => s.kind))], ["nid"]);
+    assert.equal(structures.length, 948);
+    assert.equal(nd.state, "ND");
+    assert.ok(structures.every((s) => /^ND\d{5}$/.test(s.id) && s.nid === s.id));
     assert.equal(new Set(structures.map((s) => s.id)).size, structures.length, "ids are unique");
-    const withHuc = structures.filter((s) => s.huc8 && /\(\d{8}\)$/.test(s.huc8)).length;
-    assert.ok(withHuc / structures.length > 0.999);
-    // ND00199 (Absaraka) is the NID entry, not a duplicate DWR one.
     assert.equal(structures.filter((s) => s.nid === "ND00199").length, 1);
-    // UNK-2400 (Nordell) is DWR-16431 now: found by its old number, not listed twice.
-    const nordell = selectStructures(structures, { by: "pick", ids: ["UNK-2400"], kinds: [], statuses: [] });
-    assert.deepEqual(nordell.map((s) => s.id), ["DWR-16431"]);
-    assert.match(nordell[0].label, /UNK-2400/);
-    assert.ok(!structures.some((s) => s.id === "UNK-2400"));
   });
 });
 

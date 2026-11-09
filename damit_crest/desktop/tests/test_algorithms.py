@@ -556,23 +556,25 @@ class ClassOrdinalTests(unittest.TestCase):
 
 
 class DataFolderTests(Base):
-    def test_damit_data_first_nd_pack_only_as_an_example(self):
+    def test_damit_data_only_no_nd_suite_pack_fallback(self):
         from damit_desktop.layers import find_data_folder_with_source, use_data_folder
 
         nd = self.root / "ndpack"
         nd.mkdir()
-        with mock.patch.dict(os.environ, {"NDSUITE_DATA": str(nd)}):
-            folder, where = find_data_folder_with_source()
-            self.assertEqual(folder, str(nd.resolve()))
-            self.assertIn("North Dakota example", where)
+        (self.home / ".ndsuite").mkdir(exist_ok=True)
+        (self.home / ".ndsuite" / "config.json").write_text(json.dumps({"ndsuite/data_folder": str(nd)}), encoding="utf-8")
+        with mock.patch.dict(os.environ, {"NDSUITE_DATA": str(nd), "DAMIT_DATA": ""}):
+            self.assertEqual(find_data_folder_with_source(), (None, ""))
             (self.root / "work").mkdir()
             result = use_data_folder(self.root / "work", self.log)
-            self.assertTrue(result["ok"])
-            self.assertTrue(any("example data source" in line for line in self.lines))
+            self.assertFalse(result["ok"])
             damit = self.root / "damitdata"
             damit.mkdir()
             with mock.patch.dict(os.environ, {"DAMIT_DATA": str(damit)}):
                 self.assertEqual(find_data_folder_with_source(), (str(damit.resolve()), "DAMIT_DATA"))
+            (self.home / ".damit").mkdir(exist_ok=True)
+            (self.home / ".damit" / "config.json").write_text(json.dumps({"damit/data_folder": str(damit)}), encoding="utf-8")
+            self.assertEqual(find_data_folder_with_source(), (str(damit.resolve()), "~/.damit/config.json"))
 
     def test_default_work_folder_is_damitdams(self):
         with mock.patch.dict(os.environ, {"DAMIT_WORK": ""}):

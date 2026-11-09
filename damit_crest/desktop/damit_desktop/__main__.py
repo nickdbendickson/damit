@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlparse
 
 from damit_desktop import WEB_DIR_NAME
 from damit_desktop import localdem
+from damit_desktop import nid
 from damit_desktop import qgis_run
 from damit_desktop.qgis_run import (
     WorkFolderError,
@@ -237,6 +238,9 @@ class _Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/dem":
             self._send_dem(parse_qs(parsed.query))
             return
+        if parsed.path == "/api/nid/state":
+            self._send_nid(parse_qs(parsed.query))
+            return
         if parsed.path == "/api/handoff":
             # The algorithm ids the buttons will call (DamIT defaults or overrides), for the Report step to show.
             self._send(200, json.dumps(handoff_config().as_json()).encode(), "application/json")
@@ -250,6 +254,18 @@ class _Handler(SimpleHTTPRequestHandler):
             self._send(200, json.dumps(found).encode(), "application/json")
             return
         super().do_GET()
+
+    def _send_nid(self, query: dict) -> None:
+        """One state's NID dams (nid.py): cached in the settings folder, downloaded once per state or on refresh."""
+        state = (query.get("state") or [""])[0]
+        refresh = (query.get("refresh") or [""])[0] in ("1", "true")
+        try:
+            bundle = nid.load_state(state, refresh=refresh)
+        except nid.NidError as exc:
+            code = 400 if "state code" in str(exc) else 502
+            self._send(code, json.dumps({"error": str(exc)}).encode(), "application/json")
+            return
+        self._send(200, json.dumps(bundle, separators=(",", ":")).encode(), "application/json")
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -601,6 +617,7 @@ def main() -> None:
     store.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE = store / "damit-crest-settings.json"
     qgis_run.SETTINGS_DIR = store  # damit-handoff.json is read from here (docs/HANDOFF.md)
+    nid.NID_DIR = store / "nid"  # the per-state NID cache (nid.py), outside the install and any repository
     server = serve()
     url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
     try:

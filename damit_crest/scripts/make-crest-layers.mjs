@@ -9,7 +9,7 @@
  * for a real surveyed record, good enough to compare where the flood goes and how big it is.
  *
  *   node --experimental-strip-types scripts/make-crest-layers.mjs --out <dir> \
- *     --id DWR-2801 --nid ND00199 --name "..." --lon -97.39 --lat 46.98 \
+ *     --id ND00199 --nid ND00199 --name "..." --lon -97.39 --lat 46.98 \
  *     --height 27.5 --length 1700 --storage 1615.5 --area 154.5 [--crest 1071.09 --streambed 1043.59 --datum NAVD88]
  */
 import { mkdirSync, writeFileSync } from "node:fs";

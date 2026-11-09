@@ -1,4 +1,4 @@
-// scripts/build-nd-dams.mjs on a fixture CSV (real NID rows for ND00199, ND00145 + S001/S002, ND00182, ND00971,
+// scripts/build-nid-dams.mjs on a fixture CSV (real NID rows for ND00199, ND00145 + S001/S002, ND00182, ND00971,
 // ND00486, ND00001; two made-up ND9xxxx rows for blank max storage and zero area/length; every Owner Names value
 // replaced by a made-up marker) and the committed bundle.
 import assert from "node:assert/strict";
@@ -7,18 +7,18 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { buildNdDams, COLS, main, parseCsv, REQUIRED } from "./build-nd-dams.mjs";
+import { buildNidDams, COLS, main, parseCsv, REQUIRED } from "./build-nid-dams.mjs";
 import { tempDir } from "./test-tmp.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const csv = readFileSync(join(here, "fixtures/nid_nd_fixture.csv"), "utf8");
-const build = (text = csv, o = {}) => buildNdDams(text, { allowShrink: true, fetchedUtc: "2026-10-29T21:56:00Z", ...o });
+const build = (text = csv, o = {}) => buildNidDams(text, { allowShrink: true, fetchedUtc: "2026-10-29T21:56:00Z", ...o });
 const row = (b, nid) => {
   const r = b.rows.find((x) => x[0] === nid);
   return r && Object.fromEntries(b.cols.map((c, i) => [c, r[i]]));
 };
 
-describe("build-nd-dams (fixture)", () => {
+describe("build-nid-dams (fixture)", () => {
   it("keeps main dams only (Federal ID == NID ID) and logs the dropped associated structures", () => {
     const log = [];
     const b = build(csv, { log: (m) => log.push(m) });
@@ -61,8 +61,10 @@ describe("build-nd-dams (fixture)", () => {
     assert.equal(d.damHeightFt, 16);
   });
 
-  it("records the source, date, hash and attribution; no --inventory pass", () => {
+  it("records the source, state, date, hash and attribution; no --inventory pass", () => {
     const b = build();
+    assert.equal(b.source.state, "ND");
+    assert.match(b.source.url, /stateKey%3AND&out=csv$/);
     assert.equal(b.source.fetchedUtc, "2026-10-29T21:56:00Z");
     assert.match(b.source.sha256Raw, /^[0-9a-f]{64}$/);
     assert.equal(b.source.inventoryPass, null);
@@ -76,7 +78,7 @@ describe("build-nd-dams (fixture)", () => {
     assert.throws(() => build(renamed), /missing column\(s\) NID Height \(Ft\)/);
     const dup = csv + csv.split("\n")[1] + "\n";
     assert.throws(() => build(dup), /duplicate main dam NID ID ND00199/);
-    assert.throws(() => buildNdDams(csv, {}), /minimum 800/);
+    assert.throws(() => buildNidDams(csv, {}), /minimum 800/);
     assert.ok(REQUIRED.every((c) => t[0].includes(c)));
   });
 
@@ -87,6 +89,16 @@ describe("build-nd-dams (fixture)", () => {
     const text = JSON.stringify(build());
     assert.ok(!text.includes("FIXTURE-OWNER-NOT-REAL"));
     assert.ok(!/"owner/i.test(text)); // a key, not the county "Towner"
+  });
+
+  it("another state: no ND county check or ND box, the state's query URL, NID IDs only", () => {
+    const b = build(csv, { state: "RI" });
+    assert.equal(b.source.state, "RI");
+    assert.match(b.source.url, /stateKey%3ARI&out=csv$/);
+    assert.equal(row(b, "ND00182").county, "Clay");
+    assert.equal(row(b, "ND00182").countyNote, null, "the ND county boxes are not applied to another state");
+    assert.ok(!b.source.warnings.some((w) => /ND box|not an ND county/.test(w)));
+    assert.throws(() => build(csv, { state: "North Dakota" }), /two-letter/);
   });
 
   it("main --from writes the bundle and never downloads", async () => {
@@ -105,14 +117,15 @@ describe("build-nd-dams (fixture)", () => {
   });
 });
 
-describe("committed nd_dams.json", () => {
-  const text = readFileSync(join(here, "../src/lib/crest/data/nd_dams.json"), "utf8");
+describe("committed nid_ND.json (the offline NID example)", () => {
+  const text = readFileSync(join(here, "../src/lib/crest/data/nid_ND.json"), "utf8");
   const b = JSON.parse(text);
   it("has the 948 main dams of the 2026-10-29 NID download, no associated structures", () => {
     assert.equal(b.rows.length, 948);
     assert.equal(b.source.rows, 948);
     assert.ok(!b.rows.some((r) => /S\d{3}$/.test(r[0])));
     assert.equal(new Set(b.rows.map((r) => r[0])).size, 948);
+    assert.ok(b.rows.every((r) => /^ND\d{5}$/.test(r[0])), "NID IDs only");
   });
   it("carries no owner field or owner text", () => {
     assert.ok(!b.cols.some((c) => /owner/i.test(c)));

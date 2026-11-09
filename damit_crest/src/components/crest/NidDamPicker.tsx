@@ -1,34 +1,30 @@
 /**
- * ND dam picker (County -> Dam) and the NID / DWR panels on the Record step.
- * All data is offline (nd-dams.ts loads the bundles by dynamic import). No network calls in this module.
+ * NID dam picker (State -> County -> Dam) and the NID panel on the Record step.
+ *
+ * The dam inventory is the USACE National Inventory of Dams only. North Dakota's extract ships with the app as an
+ * offline example; any state (and the latest North Dakota) is downloaded by the desktop server from the NID's bulk
+ * CSV for that state and cached in the settings folder (nid-state.ts). A proposed dam that is not in the NID yet is a
+ * blank record with "New dam" ticked and no NID ID.
  */
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  applyDwrElevationsPatch,
   confirmText,
   countyOptions,
   damOptionLabel,
   demElevationsPatch,
-  DUGOUT_FIELD_HINTS,
-  DWR_FIELD_HINTS,
-  dwrElevationOffer,
-  dwrReference,
   fieldTag,
   heightWarningOnElevations,
   heightWarningOnPick,
-  loadNdData,
-  type NdDam,
-  type NdData,
+  type NidDam,
+  type NidData,
   nidHazardLine,
   prefillPatch,
   revertPatch,
   searchDams,
   storageFor,
   unlinkPatch,
-  dwrAreaPatch,
-  shownCrest,
-  shownSpillwayCrest,
-} from "@/lib/crest/nd-dams";
+} from "@/lib/crest/nid-dams";
+import { EXAMPLE_STATE, isNidState, loadNidState, NID_STATES, rememberedState, rememberState, stateName } from "@/lib/crest/nid-state";
 import { deskBundles, staleBundleBanner } from "@/lib/crest/data-provenance";
 import { blankDam } from "@/lib/crest/samples";
 import { useDesk } from "@/lib/crest/store";
@@ -40,11 +36,11 @@ const MAX_OPTIONS = 60;
  * Amber line when an inventory bundle is past BUNDLE_STALE_DAYS (data-provenance.ts). `now` is read once per mount, in
  * an effect, so the server render and the first client render agree (no banner), as use-online.ts does for the clock.
  */
-export function StaleBundleBanner({ data, className = "mt-2" }: { data: NdData | null; className?: string }) {
+export function StaleBundleBanner({ data, className = "mt-2" }: { data: NidData | null; className?: string }) {
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => setNow(new Date()), []);
   if (!data || !now) return null;
-  const text = staleBundleBanner(deskBundles({ nidFetchedUtc: data.nidSource.fetchedUtc, dwrPulledUtc: data.dwrSource?.pulledUtc ?? null }), now);
+  const text = staleBundleBanner(deskBundles({ nidFetchedUtc: data.nidSource.fetchedUtc, state: data.state }), now);
   if (!text) return null;
   return (
     <p className={`${className} rounded-sm border border-amber bg-amber/10 p-2 text-xs text-amber`} role="status" data-testid="bundle-stale">
@@ -53,33 +49,85 @@ export function StaleBundleBanner({ data, className = "mt-2" }: { data: NdData |
   );
 }
 
-/** The bundles, loaded on first use. */
-export function useNdData(enabled = true): { data: NdData | null; error: string | null } {
-  const [data, setData] = useState<NdData | null>(null);
+// ---------------------------------------------------------------- the chosen state (shared by the panels)
+
+const listeners = new Set<() => void>();
+let selectedState = EXAMPLE_STATE;
+let restored = false;
+function subscribe(l: () => void) {
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
+export function selectNidState(code: string): void {
+  if (!isNidState(code) || code === selectedState) return;
+  selectedState = code;
+  rememberState(code);
+  listeners.forEach((l) => l());
+}
+/** The state the picker shows; the last choice in this browser profile, else the bundled example (North Dakota). */
+export function useSelectedNidState(): string {
+  const v = useSyncExternalStore(subscribe, () => selectedState, () => EXAMPLE_STATE);
+  useEffect(() => {
+    if (restored) return;
+    restored = true;
+    const r = rememberedState();
+    if (r !== selectedState) {
+      selectedState = r;
+      listeners.forEach((l) => l());
+    }
+  }, []);
+  return v;
+}
+
+/**
+ * One state's NID extract, loaded on first use: the chosen state, or `state` when given (a record's own state, from
+ * its NID ID). `reload()` asks the desktop server for the latest download.
+ */
+export function useNidData(
+  enabled = true,
+  state?: string,
+): { data: NidData | null; error: string | null; loading: boolean; reload: () => void } {
+  const chosen = useSelectedNidState();
+  const want = state && isNidState(state) ? state : chosen;
+  const [data, setData] = useState<NidData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => {
     if (!enabled) return;
     let live = true;
-    loadNdData().then(
-      (d) => live && setData(d),
-      (e: unknown) => live && setError(`Could not load the ND dam list: ${(e as Error).message}`),
+    setError(null);
+    setLoading(true);
+    setData((d) => (d && d.state === want ? d : null));
+    loadNidState(want, { refresh: refresh > 0 }).then(
+      (d) => {
+        if (!live) return;
+        setData(d);
+        setLoading(false);
+      },
+      (e: unknown) => {
+        if (!live) return;
+        setError(`Could not load the NID dams for ${stateName(want)}: ${(e as Error).message}`);
+        setLoading(false);
+      },
     );
     return () => {
       live = false;
     };
-  }, [enabled]);
-  return { data, error };
+  }, [enabled, want, refresh]);
+  return { data, error, loading, reload: () => setRefresh((n) => n + 1) };
 }
 
-export function NdDamPicker({ dam }: { dam: DamRecord }) {
-  const { data, error } = useNdData();
+export function NidDamPicker({ dam }: { dam: DamRecord }) {
+  const state = useSelectedNidState();
+  const { data, error, loading, reload } = useNidData();
   const update = useDesk((s) => s.update);
   const addDam = useDesk((s) => s.addDam);
   const [county, setCounty] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const [picked, setPicked] = useState<NdDam | null>(null);
+  const [picked, setPicked] = useState<NidDam | null>(null);
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -88,7 +136,7 @@ export function NdDamPicker({ dam }: { dam: DamRecord }) {
   const shown = results.slice(0, MAX_OPTIONS);
   const confirm = useMemo(() => (picked && data ? prefillPatch(picked, data, dam) : null), [picked, data, dam]);
 
-  const choose = (d: NdDam) => {
+  const choose = (d: NidDam) => {
     setPicked(d);
     setOpen(false);
     setQuery(d.name ?? d.otherNames ?? d.nid);
@@ -111,9 +159,30 @@ export function NdDamPicker({ dam }: { dam: DamRecord }) {
 
   return (
     <div className="rounded-md border border-line bg-paper p-3">
-      <p className="text-sm font-medium">Fill from the NID (North Dakota dams)</p>
+      <p className="text-sm font-medium">Fill from the NID (National Inventory of Dams)</p>
       {error ? <p className="mt-1 text-sm text-amber">{error}</p> : null}
-      <div className="mt-2 grid gap-3 sm:grid-cols-[200px_1fr]">
+      <div className="mt-2 grid gap-3 sm:grid-cols-[180px_200px_1fr]">
+        <label className="block text-sm">
+          <span className="text-muted">State</span>
+          <select
+            value={state}
+            data-testid="nid-state"
+            onChange={(e) => {
+              selectNidState(e.target.value);
+              setCounty("");
+              setQuery("");
+              setPicked(null);
+            }}
+            className="mt-1 h-11 w-full rounded-sm border border-line bg-card px-3 text-ink"
+          >
+            {NID_STATES.map(([code, name]) => (
+              <option key={code} value={code}>
+                {name}
+                {code === EXAMPLE_STATE ? " (bundled example)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="block text-sm">
           <span className="text-muted">County</span>
           <select
@@ -147,7 +216,7 @@ export function NdDamPicker({ dam }: { dam: DamRecord }) {
             aria-activedescendant={open && shown[active] ? `${listId}-opt-${active}` : undefined}
             disabled={!data}
             value={query}
-            placeholder={data ? "e.g. Absaraka, swan buff, ND00199, 199" : "Loading the dam list…"}
+            placeholder={data ? `name, other name or NID ID (e.g. ${data.dams[0]?.nid ?? "ND00199"})` : loading ? `Loading the ${stateName(state)} NID dams…` : "No dam list loaded"}
             onChange={(e) => {
               setQuery(e.target.value);
               setOpen(true);
@@ -162,7 +231,7 @@ export function NdDamPicker({ dam }: { dam: DamRecord }) {
             <ul
               id={`${listId}-list`}
               role="listbox"
-              aria-label="ND dams"
+              aria-label="NID dams"
               className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-sm border border-line bg-card shadow"
             >
               {shown.map((d, i) => (
@@ -178,7 +247,7 @@ export function NdDamPicker({ dam }: { dam: DamRecord }) {
                   onMouseEnter={() => setActive(i)}
                   className={"cursor-pointer px-3 py-2 " + (i === active ? "bg-sand" : "")}
                 >
-                  {damOptionLabel(d, data.dwr.get(d.nid))}
+                  {damOptionLabel(d)}
                 </li>
               ))}
               {results.length === 0 ? <li className="px-3 py-2 text-muted">No dam matches.</li> : null}
@@ -193,7 +262,7 @@ export function NdDamPicker({ dam }: { dam: DamRecord }) {
         <div role="alertdialog" aria-label="Fill from the NID" className="mt-3 rounded-sm border border-line bg-card p-3 text-sm">
           <p>{confirmText(confirm.replaced)}</p>
           <p className="mt-1 text-muted">
-            {damOptionLabel(picked, data.dwr.get(picked.nid))}. Elevations are not in the NID; you enter them next.
+            {damOptionLabel(picked)}. Elevations are not in the NID; you enter them next.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
@@ -225,9 +294,16 @@ export function NdDamPicker({ dam }: { dam: DamRecord }) {
         </div>
       ) : null}
       <StaleBundleBanner data={data} />
-      <p className="mt-2 text-xs text-muted">
-        {data ? data.nidSource.attribution : "Dam inventory data: U.S. Army Corps of Engineers, National Inventory of Dams."}
-        {data?.dwrSource ? ` ${data.dwrSource.attribution}` : ""}
+      <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+        <span>
+          {data ? `${data.dams.length} NID dams, ${stateName(data.state || state)}. ${data.nidSource.attribution}` : "Dam inventory data: U.S. Army Corps of Engineers, National Inventory of Dams."}
+        </span>
+        <button type="button" className="underline" disabled={loading} onClick={reload} data-testid="nid-refresh">
+          {loading ? "Downloading…" : "Download latest from the NID"}
+        </button>
+      </p>
+      <p className="mt-1 text-xs text-muted">
+        A proposed dam that is not in the NID yet: add a new dam, tick New dam and leave the NID field empty.
       </p>
     </div>
   );
@@ -266,24 +342,19 @@ export function NidHazardLine({ dam }: { dam: DamRecord }) {
   );
 }
 
-/** Banners, the DWR card, the NID facts box and "unlink NID" for a record filled from the NID. */
+/** Banners, the NID facts box and "unlink NID" for a record filled from the NID. */
 export function NidRecordPanel({ dam }: { dam: DamRecord }) {
-  const { data } = useNdData(Boolean(dam.nidId));
+  // The record's own state (from its NID ID), not necessarily the one the picker shows.
+  const { data } = useNidData(Boolean(dam.nidId), dam.nidId?.slice(0, 2).toUpperCase());
   const update = useDesk((s) => s.update);
-  const [checked, setChecked] = useState(false);
   const [demCrest, setDemCrest] = useState("");
   const [demBed, setDemBed] = useState("");
   if (!dam.nidId) return null;
   const nd = data?.byNid.get(dam.nidId);
-  const dwr = data?.dwr.get(dam.nidId);
-  const dwrAsOf = data?.dwrSource?.pulledUtc.slice(0, 10) ?? "";
   const elevMissing = !Number.isFinite(dam.crestFt) || !Number.isFinite(dam.streambedFt) || !dam.statedDatum;
-  const offer = dwrElevationOffer(dwr);
-  const dugout = data?.dugouts.get(dam.nidId);
-  const w1 = nd ? heightWarningOnPick(nd, dwr) : null;
+  const w1 = nd ? heightWarningOnPick(nd) : null;
   const w2 = heightWarningOnElevations(dam);
   const storage = nd ? storageFor(nd) : null;
-  const ref = nd && dwr ? dwrReference(nd, dwr, dam.heightFt) : null;
   const r = dam.nidRef;
   const fmt = (v: number | null | undefined, u = "") => (v == null ? "—" : `${v.toLocaleString("en-US")}${u}`);
   const demOk = demCrest !== "" && demBed !== "" && Number.isFinite(Number(demCrest)) && Number.isFinite(Number(demBed));
@@ -300,9 +371,6 @@ export function NidRecordPanel({ dam }: { dam: DamRecord }) {
             Enter the crest (top of dam) and breach bottom and choose their datum before going on. Next stays off until
             they are in; the engine shows Review (elevations missing) and runs no flood.
           </p>
-          {offer.ok ? (
-            <p className="mt-1 text-muted">The DWR Dams file has NAVD 88 elevations for this dam ({offer.sourceNote}); see the DWR card below.</p>
-          ) : null}
           <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
             <label className="block">
               <span className="text-muted">Crest typed from a DEM (ft NAVD88)</span>
@@ -348,7 +416,7 @@ export function NidRecordPanel({ dam }: { dam: DamRecord }) {
 
       {nd?.countyNote ? (
         <p className="rounded-sm border border-line bg-paper px-2 py-1 text-xs" data-testid="county-note">
-          ⓘ {nd.countyNote}.{dwr?.county ? ` The DWR Dams file also lists ${dwr.county} County.` : ""}
+          ⓘ {nd.countyNote}.
         </p>
       ) : null}
       {storage?.warning ? <p className="text-sm text-amber">{storage.warning}</p> : null}
@@ -363,103 +431,6 @@ export function NidRecordPanel({ dam }: { dam: DamRecord }) {
           ) : null}
         </div>
       ))}
-
-      {dwr && data?.dwrSource ? (
-        <div className="rounded-md border border-line bg-card p-3 text-sm" data-testid="dwr-card">
-          <p className="font-medium">
-            ND DWR Dams file <span className="text-muted">(structure {dwr.dwrId}, pulled {dwrAsOf})</span>
-          </p>
-          <p className="mt-1 text-xs text-muted">{data.dwrSource.disclaimer}</p>
-          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-            <dt className="text-muted" title={DWR_FIELD_HINTS.datum}>Datum</dt>
-            <dd>{ref?.datumLabel}</dd>
-            <dt className="text-muted" title={DWR_FIELD_HINTS.topElevFt}>Top of dam (inferred)</dt>
-            <dd data-testid="dwr-crest">
-              {shownCrest(dwr).text}
-              {shownCrest(dwr).note ? <span className="mt-0.5 block text-xs text-muted">{shownCrest(dwr).note}</span> : null}
-            </dd>
-            <dt className="text-muted" title={DWR_FIELD_HINTS.streambedElevFt}>Streambed (inferred)</dt>
-            <dd>{fmt(dwr.streambedElevFt, " ft")}</dd>
-            <dt className="text-muted" title={DWR_FIELD_HINTS.heightFt}>DWR height (inferred)</dt>
-            <dd>{fmt(dwr.heightFt, " ft")}</dd>
-            <dt className="text-muted">Top − streambed (H check only)</dt>
-            <dd>{fmt(ref?.heightCheckFt, " ft")}</dd>
-            <dt className="text-muted" title={DWR_FIELD_HINTS.maxPoolStorageAcFt}>Max-pool storage (inferred)</dt>
-            <dd>{fmt(dwr.maxPoolStorageAcFt, " ac-ft")}</dd>
-            <dt className="text-muted" title={DWR_FIELD_HINTS.auxSpillwayElevFt}>Aux spillway crest (inferred)</dt>
-            <dd data-testid="dwr-spillway-crest">
-              {shownSpillwayCrest(dwr).text}
-              {shownSpillwayCrest(dwr).note ? (
-                <span className="mt-0.5 block text-xs text-muted">{shownSpillwayCrest(dwr).note}</span>
-              ) : null}
-            </dd>
-            <dt className="text-muted" title={DWR_FIELD_HINTS.normalPoolElevFt}>Normal pool (inferred)</dt>
-            <dd>{fmt(dwr.normalPoolElevFt, " ft")}</dd>
-            <dt className="text-muted" title={DWR_FIELD_HINTS.maxPoolAreaAc}>Max-pool area (inferred)</dt>
-            <dd>
-              {fmt(dwr.maxPoolAreaAc, " ac")}
-              {dwr.maxPoolAreaAc != null && dam.surfaceAreaAc !== dwr.maxPoolAreaAc ? (
-                <button type="button" className="ml-2 underline" onClick={() => update(dwrAreaPatch(dam, dwr, dwrAsOf))}>
-                  Use
-                </button>
-              ) : null}
-            </dd>
-            {dwr.county ? (
-              <>
-                <dt className="text-muted">DWR county</dt>
-                <dd>{dwr.county}</dd>
-              </>
-            ) : null}
-          </dl>
-          {ref?.heldNote ? <p className="mt-2 text-amber">{ref.heldNote}</p> : null}
-          {ref?.heightCheckNote ? <p className="mt-2 text-amber">{ref.heightCheckNote}</p> : null}
-          {ref?.storageFlag ? <p className="mt-1 text-amber">{ref.storageFlag}</p> : null}
-          {offer.ok ? (
-            <div className="mt-2 rounded-sm bg-sand p-2">
-              <p data-testid="dwr-offer">
-                Crest {offer.crestNavdFt} ft, breach bottom {offer.streambedNavdFt} ft NAVD88, {offer.sourceNote}
-                {offer.shiftFt != null ? ` (DWR stated ${offer.statedCrestFt} / ${offer.statedStreambedFt} ft NGVD29)` : ""}.
-              </p>
-              <label className="mt-1 flex items-center gap-2">
-                <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-                I checked these against the dam file.
-              </label>
-              <button
-                type="button"
-                disabled={!checked}
-                onClick={() => update(applyDwrElevationsPatch(dam, dwr, dwrAsOf))}
-                className="mt-1 h-10 rounded-sm border border-line bg-card px-3 disabled:opacity-50"
-              >
-                Use DWR elevations (checked against the dam file)
-              </button>
-            </div>
-          ) : (
-            <p className="mt-2 text-muted">{offer.reason}</p>
-          )}
-          <p className="mt-2 text-xs text-muted">{data.dwrSource.attribution}</p>
-        </div>
-      ) : null}
-
-      {dugout ? (
-        <div className="rounded-md border border-line bg-sand/60 p-3 text-sm text-muted" data-testid="dwr-dugout">
-          <p className="font-medium">
-            DWR dugout record (reference only) <span>(structure {dugout.dwrId ?? "—"})</span>
-          </p>
-          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-            <dt title={DUGOUT_FIELD_HINTS.maxDepthFt}>Depth</dt>
-            <dd>{fmt(dugout.maxDepthFt, " ft")}</dd>
-            <dt title={DUGOUT_FIELD_HINTS.maxHeightFt}>Height</dt>
-            <dd>{fmt(dugout.maxHeightFt, " ft")}</dd>
-            <dt title={DUGOUT_FIELD_HINTS.freeboardFt}>Freeboard</dt>
-            <dd>{fmt(dugout.freeboardFt, " ft")}</dd>
-            <dt title={DUGOUT_FIELD_HINTS.maxSurfaceAreaAc}>Surface area</dt>
-            <dd>{fmt(dugout.maxSurfaceAreaAc, " ac")}</dd>
-            <dt title={DUGOUT_FIELD_HINTS.maxStorageAcFt}>Storage</dt>
-            <dd>{fmt(dugout.maxStorageAcFt, " ac-ft")}</dd>
-          </dl>
-          <p className="mt-1 text-xs">Not used by the engine and never fills a field.</p>
-        </div>
-      ) : null}
 
       {r ? (
         <details className="rounded-md border border-line bg-card p-3 text-sm" data-testid="nid-facts">
@@ -503,18 +474,17 @@ export function NidRecordPanel({ dam }: { dam: DamRecord }) {
 /** About text: what Crest is and where its dam data come from. */
 export function AboutData() {
   const [open, setOpen] = useState(false);
-  const { data } = useNdData(open);
+  const { data } = useNidData(open);
   return (
     <details className="mt-8 text-xs text-muted" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
       <summary className="cursor-pointer">About DamIT Crest and its data sources</summary>
       <p className="mt-2">
-        DamIT Crest is a desk screen for dam-breach studies. It does not assign an official hazard class. The ND dam list is an
-        offline copy refreshed only on request.
+        DamIT Crest is a desk screen for dam-breach studies. It does not assign an official hazard class. Its dam inventory
+        is the USACE National Inventory of Dams, loaded one state at a time (North Dakota ships as an offline example;
+        other states are downloaded from the NID by the desktop app). No state dam-safety or other inventory is used.
       </p>
       <StaleBundleBanner data={data} className="mt-1" />
       <p className="mt-1">{data?.nidSource.attribution ?? "Dam inventory data: U.S. Army Corps of Engineers, National Inventory of Dams."}</p>
-      {data?.dwrSource ? <p className="mt-1">{data.dwrSource.attribution}</p> : null}
-      {data?.dwrSource ? <p className="mt-1">{data.dwrSource.disclaimer}</p> : null}
     </details>
   );
 }
