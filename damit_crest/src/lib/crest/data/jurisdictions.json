@@ -1,9 +1,9 @@
 {
-  "generatedFrom": "damit_hazard/data/catalog.json",
+  "generatedFrom": "damit_catalog/data (python3 -m damit_hazard.engine.catalog --export)",
   "note": "Display index only (ids, names, label maps). Thresholds and parameters live in the hazard catalog that damit:classify reads; regenerate with `node scripts/sync-jurisdictions.mjs`.",
-  "catalogVersion": "2026-11-09",
-  "sourceDocument": "US Dam Hazard Classification — Corrected Edition (Nov 9, 2026, Nicholas Bendickson), Appendix A — Methods catalog for plugin hazard screening",
-  "disclaimer": "Informational screening aid, not legal or engineering advice and not a regulatory determination. The output is a suggested classification; the engineer of record and the regulating agency make the determination. Rules change: the current statutes, rules and agency guidance control. Items marked (unverified) or (secondary) should be confirmed before a preset is relied on, and every suggestion still needs an engineer's review.",
+  "catalogVersion": "2026.11.09.2",
+  "sourceDocument": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A pp. 18-30",
+  "disclaimer": "Informational screening aid, not legal or engineering advice and not a regulatory determination. Output is a suggested classification only. The engineer of record and the regulating agency make the determination. Rules change: the current statutes, rules and agency guidance control. Items marked (unverified) or (secondary) should be confirmed before a preset is relied on, and every suggestion still needs an engineer's review.",
   "classes": {
     "0": "Minimal",
     "1": "Low",
@@ -17,185 +17,185 @@
       "verification": "verified"
     },
     "S2": {
-      "name": "Sunny-day failure, reservoir full to the high water line",
+      "name": "Sunny-day failure, reservoir full to high water line",
       "verification": "verified"
     },
     "S3": {
-      "name": "Water at top of dam or PMF peak, whichever is lower",
+      "name": "Top of dam or PMF peak, whichever is lower",
       "verification": "verified"
     },
     "S4": {
-      "name": "Peak pool of the 100-year flood routing",
+      "name": "Peak pool during 100-year flood routing",
       "verification": "verified"
     },
     "S5": {
-      "name": "Flood plus failure (rainy day), incremental",
+      "name": "Flood plus failure (rainy day)",
       "verification": "verified"
     },
     "S6": {
-      "name": "Scenario set by the dam's current class",
+      "name": "Scenario set by current class",
       "verification": "verified"
     },
     "S7": {
-      "name": "Multiple breach locations",
+      "name": "Multiple breach locations along an above-grade impoundment",
       "verification": "verified"
     }
   },
   "domains": {
     "D1": {
-      "name": "Incremental-rise cutoff",
-      "verification": "draft"
+      "name": "Incremental rise cutoff",
+      "verification": "verified"
     },
     "D2": {
-      "name": "Convergence cutoff",
+      "name": "Water-surface convergence cutoff",
       "verification": "verified"
     }
   },
   "methods": {
     "M1": {
-      "name": "Depth–velocity lethality charts",
-      "group": "structures and life safety",
+      "name": "Depth-velocity lethality charts",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M2": {
       "name": "Flat depth threshold at habitable structures",
-      "group": "structures and life safety",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M3": {
       "name": "Structure-type depth and DV matrix",
-      "group": "structures and life safety",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M4a": {
-      "name": "Structure count by depth",
-      "group": "structures and life safety",
+      "name": "Count-by-depth: occupied structure count",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M4b": {
-      "name": "Homes count × depth table",
-      "group": "structures and life safety",
-      "verification": "draft"
+      "name": "Count-by-depth: homes count x depth table",
+      "group": "structures life safety",
+      "verification": "verified"
     },
     "M4c": {
-      "name": "Lives or habitable structures in the inundation area",
-      "group": "structures and life safety",
+      "name": "Count-by-depth: lives or habitable structures",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M5": {
       "name": "Lives-in-jeopardy count",
-      "group": "structures and life safety",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M6": {
       "name": "Non-lethal flooding of occupied structures",
-      "group": "structures and life safety",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M7": {
       "name": "Population threshold for a top tier",
-      "group": "structures and life safety",
+      "group": "structures life safety",
       "verification": "verified"
     },
     "M8a": {
       "name": "Road traffic bands",
-      "group": "roads",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M8b": {
       "name": "Sole access road",
-      "group": "roads",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M8c": {
-      "name": "Road lanes × depth over road",
-      "group": "roads",
+      "name": "Road lanes x depth over road",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M8d": {
       "name": "Road functional class",
-      "group": "roads",
-      "verification": "draft"
+      "group": "infrastructure",
+      "verification": "verified"
     },
     "M8e": {
       "name": "Low-volume road exclusion",
-      "group": "roads",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M8f": {
-      "name": "Isolation of homes",
-      "group": "roads",
-      "verification": "draft"
+      "name": "Isolation from emergency services",
+      "group": "infrastructure",
+      "verification": "verified"
     },
     "M8g": {
       "name": "Road washout examples",
-      "group": "roads",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M9a": {
-      "name": "Rail: active line, heavy freight or passenger",
-      "group": "rail",
+      "name": "Railroad impact (traffic / passenger)",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M9b": {
-      "name": "Rail: main vs minor line by depth",
-      "group": "rail",
+      "name": "Railroad main/minor line x depth",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M9c": {
-      "name": "Rail: line category",
-      "group": "rail",
-      "verification": "draft"
+      "name": "Railroad service type",
+      "group": "infrastructure",
+      "verification": "verified"
     },
     "M10a": {
-      "name": "Critical facilities: isolation and flooding",
-      "group": "critical facilities",
-      "verification": "draft"
+      "name": "Critical facility isolation / hospital flooding",
+      "group": "infrastructure",
+      "verification": "verified"
     },
     "M10b": {
-      "name": "Institutions by depth and DV",
-      "group": "critical facilities",
+      "name": "Institutions by depth and DV (M3 institutions row)",
+      "group": "infrastructure",
       "verification": "verified"
     },
     "M11a": {
-      "name": "Lifelines: reduced effectiveness or blocked access",
+      "name": "Lifeline effectiveness or access",
       "group": "lifelines",
       "verification": "verified"
     },
     "M11b": {
-      "name": "Lifelines: exposure, generation flooding, outage",
+      "name": "Lifeline damage / generation / outage",
       "group": "lifelines",
       "verification": "verified"
     },
     "M11c": {
-      "name": "Lifelines: important utilities and wastewater plants",
+      "name": "Important utilities / wastewater plants",
       "group": "lifelines",
-      "verification": "draft"
+      "verification": "verified"
     },
     "M12a": {
-      "name": "Cultural sites by mitigation",
-      "group": "environment and cultural",
+      "name": "Archaeological / historic sites",
+      "group": "environment",
       "verification": "verified"
     },
     "M12b": {
       "name": "Substantial environmental damage",
-      "group": "environment and cultural",
-      "verification": "draft"
+      "group": "environment",
+      "verification": "verified"
     },
     "M12c": {
-      "name": "Important fish waters",
-      "group": "environment and cultural",
+      "name": "Anadromous fish waters",
+      "group": "environment",
       "verification": "verified"
     },
     "M12d": {
-      "name": "Intangible losses identified by a resource agency",
-      "group": "environment and cultural",
+      "name": "Intangible losses (resource agency)",
+      "group": "environment",
       "verification": "verified"
     },
     "M13": {
       "name": "Qualitative descriptor match",
       "group": "fallback",
-      "verification": "unverified"
+      "verification": "verified"
     }
   },
   "modifiers": {
@@ -298,7 +298,7 @@
       "verification": "secondary"
     },
     "NRCS": {
-      "label": "NRCS (NEM Part 520)",
+      "label": "NRCS",
       "scenarios": [],
       "methods": [
         "M13"
@@ -349,7 +349,7 @@
       "verification": "verified"
     },
     "NE": {
-      "label": "Nebraska (DWEE Classification of Dams, Dec. 2023)",
+      "label": "Nebraska",
       "scenarios": [
         "S4"
       ],
@@ -378,7 +378,7 @@
       "verification": "verified"
     },
     "NY": {
-      "label": "New York (6 NYCRR 673.5; TOGS 3.1.5 draft)",
+      "label": "New York",
       "scenarios": [
         "S1",
         "S5"
@@ -408,7 +408,7 @@
       "verification": "draft"
     },
     "VA": {
-      "label": "Virginia (4VAC50-20-40, amended Jan 14, 2026)",
+      "label": "Virginia",
       "scenarios": [
         "S1",
         "S5"
@@ -433,7 +433,7 @@
       "verification": "verified"
     },
     "TX": {
-      "label": "Texas (30 TAC § 299.14)",
+      "label": "Texas",
       "scenarios": [],
       "methods": [
         "M4c"
@@ -450,7 +450,7 @@
       "verification": "verified"
     },
     "ID": {
-      "label": "Idaho (IDAPA 37.03.06 Rule 25)",
+      "label": "Idaho",
       "scenarios": [],
       "methods": [
         "M2",
@@ -466,7 +466,7 @@
       "verification": "verified"
     },
     "CO": {
-      "label": "Colorado (2 CCR 402-1)",
+      "label": "Colorado",
       "scenarios": [
         "S2"
       ],
@@ -487,7 +487,7 @@
       "verification": "verified"
     },
     "RI": {
-      "label": "Rhode Island (250-RICR-130-05-1)",
+      "label": "Rhode Island",
       "scenarios": [
         "S6"
       ],
@@ -508,7 +508,7 @@
       "verification": "verified"
     },
     "AZ": {
-      "label": "Arizona (A.A.C. R12-15-1206)",
+      "label": "Arizona",
       "scenarios": [],
       "methods": [
         "M13",
@@ -529,7 +529,7 @@
       "verification": "verified"
     },
     "CA": {
-      "label": "California (23 CCR § 335.4)",
+      "label": "California",
       "scenarios": [],
       "methods": [
         "M5",
@@ -546,7 +546,7 @@
       "verification": "verified"
     },
     "AK": {
-      "label": "Alaska (11 AAC 93.157)",
+      "label": "Alaska",
       "scenarios": [],
       "methods": [
         "M5",

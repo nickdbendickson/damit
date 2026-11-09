@@ -199,16 +199,15 @@ and `damit_settings.json`, and sent to the screener as `MODE` + `PRESET` or `SCE
 
 Default: preset mode, **FEMA 333 baseline** (national, not a state). No threshold is written or shown by the app; the
 thresholds live in the hazard catalog data file `damit:classify` reads (Appendix A.7). The desk's preset list is a
-display index, `src/lib/crest/data/jurisdictions.json`, generated from `damit_hazard/data/catalog.json` by
-`node scripts/sync-jurisdictions.mjs` (`--check` fails when it is out of date).
+display index, `src/lib/crest/data/jurisdictions.json`, generated from DamIT Catalog (`damit_catalog/data/`, through
+`python3 -m damit_hazard.engine.catalog --export`) by `node scripts/sync-jurisdictions.mjs` (`--check` fails when it
+is out of date).
 
 ## Open points for review
 
-1. **Preset ids differ between the two catalogs.** QGIS Dev's `damit_hazard/data/catalog.json` (the source of the
-   desk's index) calls the Reclamation preset `USBR`; SWE's `damit_catalog/data/presets.json` calls it `USBR_TM11`.
-   The other 14 ids match. The screener gets the desk's id, so `USBR` fails its preflight until one catalog changes.
-2. The desk index is generated from `damit_hazard`'s catalog; once one shared catalog is merged, point
-   `scripts/sync-jurisdictions.mjs` at it.
+1. **Preset ids (resolved).** DamIT Hazard reads DamIT Catalog, whose stored Reclamation id is `USBR` with
+   `USBR_TM11` as an alias, so the desk's `USBR` passes Screener preflight and `damit:classify`.
+2. **One catalog (resolved).** The desk index is generated from DamIT Catalog; `damit_hazard/data/catalog.json` is gone.
 3. No batch algorithm and no runner CLI are published; the CLI search and the `batch` name stay for a later runner.
 4. If review renames any id or parameter: change `DEFAULT_ALGORITHMS` in `desktop/damit_desktop/algorithms.py` and
    `src/lib/crest/handoff.ts` (and their tests), rebuild the bundle (`npm run build:desktop`) and commit; until then

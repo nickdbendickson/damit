@@ -85,12 +85,13 @@ describe("jurisdiction presets (Appendix A.6)", () => {
     assert.match(screenAgainstChoice("Review", { mode: "preset", preset: "FEMA333" }), /is at Review/);
   });
 
-  it("matches the damit_hazard catalog when it is in this checkout", () => {
-    const url = new URL("../../../../damit_hazard/data/catalog.json", import.meta.url);
-    if (!existsSync(url)) return; // damit_hazard is published separately; scripts/sync-jurisdictions.mjs --check
+  it("matches DamIT Catalog when it is in this checkout", () => {
+    const url = new URL("../../../../damit_catalog/data/presets.json", import.meta.url);
+    if (!existsSync(url)) return; // full check: scripts/sync-jurisdictions.mjs --check
     const cat = JSON.parse(readFileSync(url, "utf8"));
     assert.deepEqual(Object.keys(cat.presets).sort(), presetIds().sort());
-    assert.deepEqual(Object.keys(cat.methods).sort(), Object.keys(CATALOG.methods).sort());
+    const methods = JSON.parse(readFileSync(new URL("methods.json", url), "utf8"));
+    assert.deepEqual(Object.keys(methods.methods).sort(), Object.keys(CATALOG.methods).sort());
   });
 });
 
