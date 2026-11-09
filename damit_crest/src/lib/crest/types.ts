@@ -127,7 +127,8 @@ export type DamRecord = {
   /** Desk reach length (km). Default: until the schematic depth falls below 0.1 ft. */
   reachKm?: number;
   receptors: ReceptorSeed[];
-  /** Jurisdiction context for the hand-off to damit:classify. Absent = DEFAULT_CLASSIFICATION (FEMA 333 baseline). */
+  /** Jurisdiction context for the hand-off to damit:classify. Absent = the record's state preset when the
+   *  catalog has one (ND -> North Dakota REG_05.2026; jurisdiction.ts defaultPresetFor), else FEMA 333 baseline. */
   classification?: ClassificationChoice;
   /**
    * The last damit:classify result for this dam (Report step, Classify button): the class the chosen preset or custom

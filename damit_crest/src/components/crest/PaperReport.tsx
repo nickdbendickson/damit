@@ -14,6 +14,7 @@ import {
 } from "@/lib/crest/paper";
 import { saveText } from "@/lib/crest/save";
 import { choiceText, paperStamp, reportLead } from "@/lib/crest/classify-receptors";
+import { damChoice } from "@/lib/crest/jurisdiction";
 import type { Analysis, DamRecord } from "@/lib/crest/types";
 import { CREST_VERSION } from "@/lib/crest/version";
 
@@ -108,7 +109,7 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
   // desk screen is a schematic preview on the ND / ACER TM 11 rules and is never stamped as the chosen state's class.
   const lead = reportLead(dam, result);
   const hazardClass = lead.kind === "hazard" ? dam.hazardResult?.suggestedClass : undefined;
-  const chosen = choiceText(dam.classification);
+  const chosen = choiceText(damChoice(dam));
   const wet = result.flood.receptors.filter((r) => r.flooded).length;
   const { rows, shown, total } = paperRows(result);
   const flags = paperFlagsCoded(result, runWarnings);

@@ -15,7 +15,8 @@
  * preset's labels; it is never presented as that preset's class.
  */
 import index from "./data/jurisdictions.json" with { type: "json" };
-import type { ClassificationChoice, ScreenLevel } from "./types.ts";
+import { handoffIds } from "./nid-dams.ts";
+import type { ClassificationChoice, DamRecord, ScreenLevel } from "./types.ts";
 
 export type { ClassificationChoice, ClassificationMode } from "./types.ts";
 
@@ -45,11 +46,38 @@ type Index = {
 export const CATALOG = index as unknown as Index;
 
 /**
- * Default posture is multi-jurisdiction: the FEMA 333 national baseline preset, not any one state. Nothing about the
- * dam's location picks a preset for the user.
+ * Default posture is multi-jurisdiction: the FEMA 333 national baseline preset, not any one state, for a record with
+ * no state (no NID ID) or a state that has no preset of its own. A record whose NID ID names a state with a catalog
+ * preset of that ID (ND -> "North Dakota (REG_05.2026)") starts on that preset instead (defaultPresetFor). The user's
+ * explicit choice (DamRecord.classification) always wins.
  */
 export const DEFAULT_PRESET = "FEMA333";
 export const DEFAULT_CLASSIFICATION: ClassificationChoice = { mode: "preset", preset: DEFAULT_PRESET };
+
+/**
+ * The catalog preset whose ID is the state's postal code, else undefined. Same rule as DamIT Setup
+ * (damit_core/lib/catalog_access.py preset_for_state): ND, NE, NY, VA, TX, ID, CO, RI, AZ, CA, AK have one; any
+ * other state has none and keeps DEFAULT_PRESET. No other state-to-preset mapping is assumed.
+ */
+export function presetForState(state: string | undefined | null): string | undefined {
+  const code = String(state ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) && CATALOG.presets[code] ? code : undefined;
+}
+
+/**
+ * The preset a record starts on when the user has not chosen one: its state's preset (the state is the first two
+ * letters of its NID ID, the hand-off's own id rule), else FEMA 333. Nick, 2026-11-09: an ND dam (e.g. ND00199,
+ * bundled North Dakota NID) starts on North Dakota REG_05.2026, not FEMA 333.
+ */
+export function defaultPresetFor(dam: Pick<DamRecord, "id"> & Partial<Pick<DamRecord, "nid" | "nidId" | "isNew">> | undefined | null): string {
+  const nidId = dam ? handoffIds(dam).nidId : null;
+  return presetForState(nidId?.slice(0, 2)) ?? DEFAULT_PRESET;
+}
+
+/** The record's jurisdiction choice, resolved: its own choice, else its state's default preset (defaultPresetFor). */
+export function damChoice(dam: DamRecord): ClassificationChoice {
+  return resolveChoice(dam.classification, defaultPresetFor(dam));
+}
 
 /** Generic labels by ordinal (0 Minimal … 4 Extremely High). */
 export function genericLabel(ordinal: number): string {
@@ -75,15 +103,19 @@ export function customOptions(): { section: "scenarios" | "domains" | "methods" 
   return out;
 }
 
-/** The record's choice made valid: unknown presets and ids dropped, a missing choice = DEFAULT_CLASSIFICATION. */
-export function resolveChoice(choice: ClassificationChoice | undefined | null): ClassificationChoice {
-  if (!choice || typeof choice !== "object") return { ...DEFAULT_CLASSIFICATION, catalogVersion: CATALOG.catalogVersion };
+/**
+ * The record's choice made valid: unknown presets and ids dropped, a missing choice (or preset) = `fallback`
+ * (DEFAULT_PRESET unless the caller passes the record's defaultPresetFor).
+ */
+export function resolveChoice(choice: ClassificationChoice | undefined | null, fallback: string = DEFAULT_PRESET): ClassificationChoice {
+  const dflt = CATALOG.presets[fallback] ? fallback : DEFAULT_PRESET;
+  if (!choice || typeof choice !== "object") return { mode: "preset", preset: dflt, catalogVersion: CATALOG.catalogVersion };
   if (choice.mode === "custom") {
     const known = new Set(customOptions().map((o) => o.id));
     const methods = [...new Set((choice.methods ?? []).filter((m) => typeof m === "string" && ID_RE.test(m) && known.has(m)))];
     return { mode: "custom", methods, advisory: choice.advisory === true, catalogVersion: CATALOG.catalogVersion };
   }
-  const id = choice.preset && CATALOG.presets[choice.preset] ? choice.preset : DEFAULT_PRESET;
+  const id = choice.preset && CATALOG.presets[choice.preset] ? choice.preset : dflt;
   return { mode: "preset", preset: id, advisory: choice.advisory === true, catalogVersion: CATALOG.catalogVersion };
 }
 
@@ -125,9 +157,9 @@ export function screenAgainstChoice(level: ScreenLevel, choice: ClassificationCh
   );
 }
 
-/** The block the desktop hand-off sends (dam.classification), already resolved. */
-export function handoffChoice(choice: ClassificationChoice | undefined | null): ClassificationChoice {
-  const c = resolveChoice(choice);
+/** The block the desktop hand-off sends (dam.classification), already resolved (missing = `fallback`). */
+export function handoffChoice(choice: ClassificationChoice | undefined | null, fallback: string = DEFAULT_PRESET): ClassificationChoice {
+  const c = resolveChoice(choice, fallback);
   const label = c.mode === "preset" ? CATALOG.presets[c.preset ?? DEFAULT_PRESET]?.label : undefined;
   return label ? { ...c, presetLabel: label } : c;
 }

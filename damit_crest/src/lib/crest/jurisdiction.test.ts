@@ -5,7 +5,11 @@ import {
   CATALOG,
   classLabel,
   customOptions,
+  damChoice,
   DEFAULT_CLASSIFICATION,
+  defaultPresetFor,
+  handoffChoice,
+  presetForState,
   enabledIds,
   presetIds,
   resolveChoice,
@@ -132,7 +136,10 @@ describe("hand-off to the DamIT plugins", () => {
     const j = JSON.parse(exportDamJson(noMode as DamRecord, analyze(nd)));
     assert.equal(j.failure_mode, "piping");
     assert.equal(j.classification.mode, "preset");
-    assert.equal(j.classification.preset, "FEMA333");
+    // No choice on the record: an ND dam goes out on its state's preset (Nick, 2026-11-09), a blank one on FEMA 333.
+    assert.equal(j.classification.preset, "ND");
+    const blank = blankDam();
+    assert.equal(JSON.parse(exportDamJson(blank, analyze(blank))).classification.preset, "FEMA333");
   });
 
   it("is_new is false unless the New dam box is ticked, and never inferred from a missing class of record", () => {
@@ -147,3 +154,44 @@ describe("hand-off to the DamIT plugins", () => {
     assert.equal(handoffDam({ ...nd, isNew: true }).isNew, true);
   });
 });
+
+describe("default preset from the record's state (GUI chain walk, ND00199, 2026-11-09)", () => {
+  const nd = SAMPLE_DAMS.find((x) => x.nid === "ND00199")!;
+
+  it("an ND dam with no choice starts on North Dakota (REG_05.2026), not FEMA 333", () => {
+    const rec: DamRecord = { ...blankDam(), nid: "ND00199", nidId: "ND00199", classification: undefined };
+    assert.equal(defaultPresetFor(rec), "ND");
+    const c = damChoice(rec);
+    assert.equal(c.mode, "preset");
+    assert.equal(c.preset, "ND");
+    assert.equal(CATALOG.presets[c.preset!].label, "North Dakota (REG_05.2026)");
+    assert.equal(handoffDam(rec).classification?.preset, "ND");
+    assert.equal(handoffDam(rec).classification?.presetLabel, "North Dakota (REG_05.2026)");
+    assert.equal(damChoice({ ...nd, classification: undefined }).preset, "ND");
+  });
+
+  it("the user's explicit choice wins over the state default", () => {
+    const rec: DamRecord = { ...nd, classification: { mode: "preset", preset: "FEMA333" } };
+    assert.equal(damChoice(rec).preset, "FEMA333");
+    assert.equal(handoffDam(rec).classification?.preset, "FEMA333");
+    assert.equal(damChoice({ ...nd, classification: { mode: "custom", methods: ["M2"] } }).mode, "custom");
+    // An unknown preset id falls back to the state's preset, not to FEMA 333.
+    assert.equal(damChoice({ ...nd, classification: { mode: "preset", preset: "XX" } }).preset, "ND");
+  });
+
+  it("no NID ID, or a state with no preset of its own, keeps FEMA 333; DamIT Setup's postal-code rule otherwise", () => {
+    assert.equal(defaultPresetFor(blankDam()), "FEMA333");
+    assert.equal(damChoice(blankDam()).preset, "FEMA333");
+    assert.equal(defaultPresetFor({ id: "x", nid: "MN00123" }), "FEMA333");
+    assert.equal(defaultPresetFor({ id: "x", nid: "NE01234" }), "NE");
+    assert.equal(defaultPresetFor({ id: "x", nid: "DWR-2801" }), "FEMA333", "not an NID ID");
+    assert.equal(presetForState("nd"), "ND");
+    assert.equal(presetForState("MN"), undefined);
+    assert.equal(presetForState("FEMA333"), undefined);
+    assert.equal(presetForState(""), undefined);
+    // resolveChoice / handoffChoice without a record keep the national baseline.
+    assert.equal(resolveChoice(undefined).preset, "FEMA333");
+    assert.equal(handoffChoice(undefined).preset, "FEMA333");
+  });
+});
+

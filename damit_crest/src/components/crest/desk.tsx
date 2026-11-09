@@ -73,7 +73,7 @@ import type {
   ScreenLevel,
   StepId,
 } from "@/lib/crest/types";
-import { resolveChoice, screenAgainstChoice } from "@/lib/crest/jurisdiction";
+import { damChoice, screenAgainstChoice } from "@/lib/crest/jurisdiction";
 import { HydroChart, ValleyMap } from "./charts";
 import { useOnline } from "./use-online";
 import { AboutData, FieldTag, NidDamPicker, NidHazardLine, NidRecordPanel, useNidData } from "./NidDamPicker";
@@ -1474,7 +1474,7 @@ function HazardLead({ dam, result }: { dam: DamRecord; result: ReturnType<typeof
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-xs text-muted">{screenAgainstChoice(result.screen.level, resolveChoice(dam.classification))}</p>
+      <p className="mt-2 text-xs text-muted">{screenAgainstChoice(result.screen.level, damChoice(dam))}</p>
     </div>
   );
 }
@@ -1570,7 +1570,7 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
       // methods judge them. The keys tie the result to this choice and these receptors.
       const receptors = path === "/api/classify" ? classifyReceptors(dam, result) : undefined;
       const ran = receptors
-        ? { damId: dam.id, choiceKey: choiceKey(dam.classification), receptorKey: receptorKey(receptors), choiceText: choiceText(dam.classification) }
+        ? { damId: dam.id, choiceKey: choiceKey(damChoice(dam)), receptorKey: receptorKey(receptors), choiceText: choiceText(damChoice(dam)) }
         : null;
       let response: Response;
       try {
