@@ -17,6 +17,6 @@ plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
     0.1.0 - 2026-11-09
-      * damit:classify writes nothing beside its input rasters: parameters are checked and the run is done with GDAL PAM off (no .tif.aux.xml from the window, the Toolbox or processing.run). A raster already loaded in the project, or a bare qgis_process without GDAL_PAM_ENABLED=NO, can still get a sidecar.
+      * damit:classify writes nothing beside file-path input rasters: parameters are checked and the run is done with GDAL PAM off (no .tif.aux.xml from processing.run or Toolbox file-path inputs). The Hazard window and already-loaded project layers still get QGIS's own sidecars; a bare qgis_process without GDAL_PAM_ENABLED=NO can still get a sidecar.
       * Presets, methods and thresholds come from DamIT Catalog (plugin dependency); no bundled catalog.json. PRESET_ID accepts preset IDs and aliases (USBR or USBR_TM11).
       * First version: catalog-driven classifier (S1-S7, D1-D2, M1-M13, R1-R10, 15 presets), damit:classify, preset / custom window, receptor GeoPackage styled by class, Markdown / HTML / JSON run report.

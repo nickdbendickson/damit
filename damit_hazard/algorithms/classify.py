@@ -255,10 +255,11 @@ class Classify(QgsProcessingAlgorithm):
 
     # ------------------------------------------------------------------- main -----------
     def checkParameterValues(self, parameters, context):
-        # Processing (processing.run, the Toolbox, the DamIT Hazard window) loads the
-        # raster parameters as QGIS layers while checking them, before processAlgorithm; QGIS then
-        # computes their statistics. Check with GDAL PAM off too, so that load writes no
-        # <raster>.aux.xml beside the inputs.
+        # Processing (processing.run, Toolbox file-path inputs) loads the raster parameters as
+        # QGIS layers while checking them, before processAlgorithm; QGIS then computes their
+        # statistics. Check with GDAL PAM off too, so that load writes no <raster>.aux.xml beside
+        # file-path inputs. The Hazard window (and Toolbox project-layer picks) pass layers already
+        # open in the project; QGIS may still write sidecars for those outside this override.
         with S.no_pam():
             return super().checkParameterValues(parameters, context)
 
@@ -266,11 +267,12 @@ class Classify(QgsProcessingAlgorithm):
         # The rasters are inputs from a model run (often a product-of-record folder): open them with
         # GDAL PAM off, so neither our reader nor QGIS (raster layer statistics) writes a
         # <raster>.aux.xml beside them. Outputs go to OUTPUT only.
-        # Limits (not covered here; README "Outputs"): a raster that is already a layer in the QGIS
-        # project was opened outside classify, so QGIS may still save its statistics beside it; and
-        # a bare qgis_process opens the rasters outside these two steps, so it still writes
-        # sidecars unless GDAL_PAM_ENABLED=NO is in its environment (DamIT Crest sets it on its
-        # classify call, qgis_run.classify_env).
+        # Limits (not covered here; README "Outputs"): the DamIT Hazard window always passes
+        # layers already loaded in the project (Toolbox project-layer dropdown too); QGIS writes
+        # .tif.aux.xml just from loading/removing those layers, with no classify at all. A bare
+        # qgis_process opens the rasters outside these two steps, so it still writes sidecars
+        # unless GDAL_PAM_ENABLED=NO is in its environment (DamIT Crest sets it on its classify
+        # call, qgis_run.classify_env).
         with S.no_pam():
             return self._process(p, context, feedback)
 

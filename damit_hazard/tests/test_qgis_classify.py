@@ -170,10 +170,11 @@ def _processing():
 
 
 def test_processing_run_writes_nothing_beside_its_input_rasters():
-    """Docs & QA re-test of #13: through processing.run (as the DamIT Hazard window and the
-    Toolbox run it), QGIS loads the raster parameters while checking them, before
-    processAlgorithm, and that load used to write <raster>.tif.aux.xml beside the inputs.
-    checkParameterValues now runs with PAM off too."""
+    """Docs & QA re-test of #13: through processing.run with file-path inputs (as the Toolbox
+    does when paths are typed or browsed), QGIS loads the raster parameters while checking them,
+    before processAlgorithm, and that load used to write <raster>.tif.aux.xml beside the inputs.
+    checkParameterValues now runs with PAM off too. The Hazard window always passes already-loaded
+    project layers; that path is outside this test."""
     _app()
     processing = _processing()
     d = tempfile.mkdtemp(prefix="damit_smoke_")
