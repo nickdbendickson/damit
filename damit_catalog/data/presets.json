@@ -3,6 +3,10 @@
  "schema_version": 1,
  "source": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A",
  "dash_rule": "A dash in the document (no confirmed method) falls back to M13 and engineering judgment; a preset with no confirmed scenario must have one chosen by the user (flagged).",
+ "aliases": {
+  "USBR_TM11": "USBR"
+ },
+ "aliases_note": "Alternate preset IDs accepted everywhere a preset ID is (resolve_preset, hand-off validation, screener PRESET, damit:classify PRESET_ID). Each alias maps to one stored ID; a run records the stored ID.",
  "presets": {
   "FEMA333": {
    "label": "FEMA 333 baseline",
@@ -34,7 +38,7 @@
    },
    "citation": "FEMA P-333"
   },
-  "USBR_TM11": {
+  "USBR": {
    "label": "USBR (ACER TM-11)",
    "scenarios": [
     "S1"
