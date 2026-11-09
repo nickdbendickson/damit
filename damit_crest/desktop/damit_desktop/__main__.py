@@ -91,6 +91,7 @@ def start_job(
     files=None,
     source: str = "pack",
     timeout: float | None = None,
+    receptors: dict | None = None,
 ) -> dict:
     """Write the dam folder, fetch layers, or call the plugins on a background thread. Returns immediately.
 
@@ -114,7 +115,7 @@ def start_job(
             elif kind == "model":
                 result = run_model(dam or {}, analysis or {}, work, log, model, files, source, cancel=cancel)
             elif kind == "classify":
-                result = run_classify(dam or {}, analysis or {}, work, log, files, cancel=cancel)
+                result = run_classify(dam or {}, analysis or {}, work, log, files, cancel=cancel, receptors=receptors)
             else:
                 result = run_screening(dam or {}, analysis or {}, work, log, files, timeout=timeout, cancel=cancel)
             with _jobs_lock:
@@ -126,6 +127,12 @@ def start_job(
                     job["chainIds"] = list(result["chainIds"])
                 if result.get("chainResult"):
                     job["chainResult"] = list(result["chainResult"])
+                if isinstance(result.get("classification"), dict):
+                    # damit:classify's class for the chosen jurisdiction; the Report step stores and leads with it.
+                    job["classification"] = dict(result["classification"])
+                for flag in ("noReceptors", "noDepth"):
+                    if result.get(flag):
+                        job[flag] = True
                 job["folder"] = result.get("folder") or ""
                 job["work"] = result.get("work") or ""
         except Exception as exc:
@@ -302,8 +309,10 @@ class _Handler(SimpleHTTPRequestHandler):
         if payload.get("dem"):
             dam = dict(dam)
             dam["demPath"] = payload.get("dem")
-        # Classify: the model run's rasters (paths on this computer), for damit:classify's DEPTH / VELOCITY.
-        for key, field in (("depth", "depthRaster"), ("velocity", "velocityRaster")):
+        # Classify: the model run's rasters (paths on this computer), for damit:classify's DEPTH / VELOCITY / DV / WSE /
+        # NONBREACH / ARRIVAL.
+        for key, field in (("depth", "depthRaster"), ("velocity", "velocityRaster"), ("dv", "dvRaster"),
+                           ("wse", "wseRaster"), ("nonbreach", "nonbreachRaster"), ("arrival", "arrivalRaster")):
             if isinstance(payload.get(key), str) and payload[key].strip():
                 dam = dict(dam)
                 dam[field] = payload[key].strip()
@@ -322,7 +331,9 @@ class _Handler(SimpleHTTPRequestHandler):
         except WorkFolderError as exc:
             self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
             return
-        body = json.dumps(start_job(kind, dam, analysis, work, model, files, source, timeout))
+        # Classify: the downstream receptor layers the desk built (classify-receptors.ts); receptors.py validates them.
+        receptors = payload.get("receptors") if kind == "classify" and isinstance(payload.get("receptors"), dict) else None
+        body = json.dumps(start_job(kind, dam, analysis, work, model, files, source, timeout, receptors))
         self._send(200, body.encode(), "application/json")
 
     def _send_dem(self, query: dict) -> None:

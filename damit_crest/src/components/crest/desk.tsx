@@ -4,6 +4,7 @@ import { analyze, crestNavdLabel, INPUT_RANGE, inputRangeWarning, STEPS } from "
 import { datumFlags, floodFlags, warningKey, type Warning } from "@/lib/crest/warnings";
 import { locationProblem } from "@/lib/crest/guided";
 import { DEFAULT_ALGORITHMS, handoffDam } from "@/lib/crest/handoff";
+import { choiceKey, choiceText, classifyReceptors, receptorKey, reportLead } from "@/lib/crest/classify-receptors";
 import { ClassificationPanel } from "@/components/crest/ClassificationPanel";
 import { lookupPads, padPoints, padsToRetry, resetFailedPads } from "@/lib/crest/nd911-pads";
 import { exportDamJson, exportHydrographCsv, generateLisfloodPackage } from "@/lib/crest/export";
@@ -67,9 +68,11 @@ import type {
   DatumName,
   EngineName,
   FailureMode,
+  HazardResult,
   ScreenLevel,
   StepId,
 } from "@/lib/crest/types";
+import { resolveChoice, screenAgainstChoice } from "@/lib/crest/jurisdiction";
 import { HydroChart, ValleyMap } from "./charts";
 import { useOnline } from "./use-online";
 import { AboutData, FieldTag, NdDamPicker, NidHazardLine, NidRecordPanel, useNdData } from "./NdDamPicker";
@@ -1352,7 +1355,8 @@ function ScreenStep({ dam, result: deskResult }: { dam: DamRecord; result: Retur
     <section className="space-y-4">
       <div className="rounded-md border border-line bg-card p-4">
         <p className="text-xs tracking-widest text-muted uppercase" data-testid="screen-source">
-          {ref ? `Screen on the source of record: ${ref.label}` : "Desk screen"}
+          {ref ? `Schematic preview on the source of record: ${ref.label}` : "Desk screen: schematic preview"} (ND / ACER TM 11
+          desk rules, not the DamIT classification)
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <LevelBadge level={result.screen.level} label={result.screen.label} />
@@ -1442,6 +1446,7 @@ function ReportStep({ dam, result: deskResult }: { dam: DamRecord; result: Retur
         </div>
         <ViewExport target={view} kind="report" dam={dam} result={result} />
       </div>
+      <HazardLead dam={dam} result={result} />
       <AoiNote flood={result.flood} />
       <PaperReport dam={dam} result={result} source={label} runWarnings={ref?.warnings ?? []} bundles={bundles} />
       <ExportPanel dam={dam} result={result} desk={deskResult} />
@@ -1452,9 +1457,36 @@ function ReportStep({ dam, result: deskResult }: { dam: DamRecord; result: Retur
   );
 }
 
+/**
+ * The Report's lead: the class damit:classify gave the downstream receptors with the chosen preset or custom methods.
+ * The desk screen is shown under it only as a schematic preview (ND / ACER TM 11 desk rules), never as that class.
+ */
+function HazardLead({ dam, result }: { dam: DamRecord; result: ReturnType<typeof analyze> }) {
+  const lead = useMemo(() => reportLead(dam, result), [dam, result]);
+  const tone = lead.kind === "hazard" ? "border-water bg-card" : lead.kind === "stale" ? "border-amber bg-sand" : "border-line bg-sand";
+  return (
+    <div className={`rounded-md border p-4 ${tone}`} data-testid="hazard-lead" data-kind={lead.kind}>
+      <p className="text-xs tracking-widest text-muted uppercase">Downstream consequences, judged by the chosen jurisdiction</p>
+      <h3 className="mt-1 text-xl">{lead.title}</h3>
+      <ul className="mt-2 space-y-1 text-sm">
+        {lead.lines.map((l) => (
+          <li key={l} className="break-words">
+            {l}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-muted">{screenAgainstChoice(result.screen.level, resolveChoice(dam.classification))}</p>
+    </div>
+  );
+}
+
 const handoff = {
   depth: "",
   velocity: "",
+  dv: "",
+  wse: "",
+  nonbreach: "",
+  arrival: "",
   work: "",
   dem: "",
   model: "lisflood",
@@ -1486,6 +1518,7 @@ function crestApiHeaders(json = false): Record<string, string> {
 
 function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeof analyze> }) {
   const [, bump] = useState(0);
+  const update = useDesk((st) => st.update);
   useEffect(() => {
     const id = window.setInterval(() => {
       if (handoff.busy) bump((n) => n + 1);
@@ -1544,6 +1577,12 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
       handoff.busy = true;
       handoff.log = "Starting…\n";
       bump((n) => n + 1);
+      // Classify: the downstream receptors (and drawn area) go to damit:classify, so the chosen preset or custom
+      // methods judge them. The keys tie the result to this choice and these receptors.
+      const receptors = path === "/api/classify" ? classifyReceptors(dam, result) : undefined;
+      const ran = receptors
+        ? { damId: dam.id, choiceKey: choiceKey(dam.classification), receptorKey: receptorKey(receptors), choiceText: choiceText(dam.classification) }
+        : null;
       let response: Response;
       try {
         response = await fetch(path, {
@@ -1557,6 +1596,11 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
             dem: handoff.dem,
             depth: path === "/api/classify" ? handoff.depth : undefined,
             velocity: path === "/api/classify" ? handoff.velocity : undefined,
+            dv: path === "/api/classify" ? handoff.dv : undefined,
+            wse: path === "/api/classify" ? handoff.wse : undefined,
+            nonbreach: path === "/api/classify" ? handoff.nonbreach : undefined,
+            arrival: path === "/api/classify" ? handoff.arrival : undefined,
+            receptors,
             model: handoff.model,
             source: handoff.source,
             files: path === "/api/layers" ? undefined : files,
@@ -1579,6 +1623,30 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
           try {
             const found = await (await fetch(`/api/job?id=${job.id}`, { headers: crestApiHeaders() })).json();
             handoff.log = String(found.log || "");
+            if (found.done && ran && found.ok && found.classification?.suggestedClass && useDesk.getState().activeId === ran.damId) {
+              const c = found.classification as Record<string, unknown>;
+              const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+              update({
+                hazardResult: {
+                  suggestedClass: String(c.suggestedClass),
+                  ordinal: c.ordinal == null ? null : String(c.ordinal),
+                  genericLabel: str(c.genericLabel),
+                  report: str(c.report),
+                  gpkg: str(c.gpkg),
+                  ranPreset: str(c.ranPreset),
+                  ranPresetLabel: str(c.ranPresetLabel),
+                  ranMode: str(c.ranMode),
+                  driving: Array.isArray(c.driving) ? (c.driving as NonNullable<HazardResult["driving"]>).slice(0, 8) : [],
+                  warnings: typeof c.warnings === "number" ? c.warnings : 0,
+                  layers: (c.layers as Record<string, number>) ?? {},
+                  skipped: typeof c.skipped === "number" ? c.skipped : 0,
+                  classifiedAt: new Date().toISOString(),
+                  choiceKey: ran.choiceKey,
+                  receptorKey: ran.receptorKey,
+                  choiceText: ran.choiceText,
+                },
+              });
+            }
             if (found.done) {
               window.clearInterval(handoffTimer);
               handoffTimer = 0;
@@ -1602,7 +1670,7 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
         bump((n) => n + 1);
       }
     },
-    [dam, result, files],
+    [dam, result, files, update],
   );
 
   const cancel = useCallback(async () => {
@@ -1624,7 +1692,9 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
         Writes the dam folder the DamIT plugins read, including the LISFLOOD package and the flood strip. Get layers
         downloads a DEM and streams for this area (USGS, United States), or uses the DamIT data folder (DAMIT_DATA).
         Screening runs {algs.preflight} and starts {algs.runchain} only if the preflight is READY. Classify hands the
-        folder, the jurisdiction choice and the model run&apos;s depth raster to {algs.classify}. The flood model runs
+        folder, the jurisdiction choice, the model run&apos;s depth raster and the downstream receptors (structures, roads,
+        the drawn area) to {algs.classify}, so the chosen preset or custom methods judge the downstream consequences; it
+        is not started without a depth raster or a receptor it can place. The flood model runs
         {algs.rundam} for this dam only (DamIT Runner 0.1.0 prepares and records the run; it launches no engine). A
         missing algorithm, a missing DEM or depth raster, or a preflight FAIL stops there. Cancel stops QGIS; DAMIT_SCREENING_TIMEOUT_S sets a time limit. The result is a suggested class,
         not an official one.
@@ -1681,6 +1751,54 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
             placeholder="blank = none"
             onChange={(e) => {
               handoff.velocity = e.target.value;
+              bump((n) => n + 1);
+            }}
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Depth × velocity raster (Classify, optional)
+          <input
+            className={field}
+            value={handoff.dv}
+            placeholder="blank = none"
+            onChange={(e) => {
+              handoff.dv = e.target.value;
+              bump((n) => n + 1);
+            }}
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Water-surface elevation raster (Classify, optional)
+          <input
+            className={field}
+            value={handoff.wse}
+            placeholder="blank = none"
+            onChange={(e) => {
+              handoff.wse = e.target.value;
+              bump((n) => n + 1);
+            }}
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Non-breach depth raster (Classify, optional)
+          <input
+            className={field}
+            value={handoff.nonbreach}
+            placeholder="blank = none"
+            onChange={(e) => {
+              handoff.nonbreach = e.target.value;
+              bump((n) => n + 1);
+            }}
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Arrival time raster (hours) (Classify, optional)
+          <input
+            className={field}
+            value={handoff.arrival}
+            placeholder="blank = none"
+            onChange={(e) => {
+              handoff.arrival = e.target.value;
               bump((n) => n + 1);
             }}
           />

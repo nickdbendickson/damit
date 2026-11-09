@@ -52,7 +52,7 @@ export function resultsContext(dam: DamRecord, result: Analysis) {
   };
 }
 
-function halfAt(stations: Analysis["flood"]["stations"], xKm: number) {
+export function halfAt(stations: Analysis["flood"]["stations"], xKm: number) {
   if (stations.length === 0) return 28;
   if (xKm <= stations[0].xKm) return stations[0].halfM;
   for (let i = 1; i < stations.length; i++)

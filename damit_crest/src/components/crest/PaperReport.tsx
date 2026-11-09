@@ -13,6 +13,7 @@ import {
   stampClass,
 } from "@/lib/crest/paper";
 import { saveText } from "@/lib/crest/save";
+import { choiceText, paperStamp, reportLead } from "@/lib/crest/classify-receptors";
 import type { Analysis, DamRecord } from "@/lib/crest/types";
 import { CREST_VERSION } from "@/lib/crest/version";
 
@@ -103,6 +104,11 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
   // Which inventory the record came from and how old it was when this was printed (data-provenance.ts).
   const ages = (bundles ? deskBundles(bundles) : []).map((b) => bundleAgeLine(b, now)).filter((l): l is string => l != null);
   const level = result.screen.label;
+  // The class for the chosen jurisdiction is damit:classify's (when it ran for this choice and these receptors); the
+  // desk screen is a schematic preview on the ND / ACER TM 11 rules and is never stamped as the chosen state's class.
+  const lead = reportLead(dam, result);
+  const hazardClass = lead.kind === "hazard" ? dam.hazardResult?.suggestedClass : undefined;
+  const chosen = choiceText(dam.classification);
   const wet = result.flood.receptors.filter((r) => r.flooded).length;
   const { rows, shown, total } = paperRows(result);
   const flags = paperFlagsCoded(result, runWarnings);
@@ -113,7 +119,7 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
     <article className="paper">
       <header className="p-title">
         <div>
-          <div className="kicker">NORTH DAKOTA DAM SAFETY SCREENING</div>
+          <div className="kicker">DAMIT DAM SAFETY SCREENING · {chosen.toUpperCase()}</div>
           <h1>
             {dam.name}
             {dam.nid ? ` (${dam.nid})` : ""}
@@ -121,8 +127,8 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
             Dam-Breach Consequence Estimate
           </h1>
         </div>
-        <div className={`stamp stamp--${stampClass(result.screen.level)}`}>
-          DESK SCREEN: {level.toUpperCase()}
+        <div className={`stamp stamp--${hazardClass ? "hazard" : stampClass(result.screen.level)}`} data-testid="paper-stamp">
+          {paperStamp(level, lead, hazardClass)}
         </div>
       </header>
       <hr className="rule" />
@@ -243,8 +249,16 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
 
       <section className="p-section">
         <h2>What this means</h2>
+        <p data-testid="paper-lead">
+          <b>{lead.title}.</b>
+        </p>
+        <ul>
+          {lead.lines.map((l) => (
+            <li key={l}>{l}</li>
+          ))}
+        </ul>
         <p>
-          Desk screen: <b>{level}</b>.
+          Schematic preview only (ND / ACER TM 11 desk rules, not {chosen}; not the DamIT classification): <b>{level}</b>.
         </p>
         {result.screen.reasons.length ? (
           <ul>
