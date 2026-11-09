@@ -240,8 +240,6 @@ export type NidRef = {
   /** NID download date (YYYY-MM-DD). */
   downloaded: string;
   attribution: string;
-  /** Set when the dam joined the DWR Dams layer. */
-  dwrAttribution?: string;
 };
 
 export type SeriesPoint = { tHr: number; qCfs: number };

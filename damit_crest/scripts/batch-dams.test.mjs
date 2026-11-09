@@ -94,3 +94,27 @@ describe("resume skip-set from a truncated file (the fix end to end)", () => {
     assert.deepEqual(out, { skip: ["A"], retry: ["B"] });
   });
 });
+
+describe("NID-only selection (Nick 2026-11-09: the dam inventory is the NID)", () => {
+  it("parses --all / --county / --ids and --nid-state; no DWR kinds, statuses or watersheds", () => {
+    const o = inChild(`return m.parseArgs(argv);`, "--all", "--list");
+    assert.equal(o.by, "state");
+    assert.deepEqual(o.kinds, ["nid"]);
+    assert.equal(o.nidState, "ND");
+    for (const gone of ["--kinds", "--statuses", "--watershed", "--state"])
+      assert.throws(() => inChild(`return m.parseArgs(argv);`, gone, "x", "--list"), /unexpected|pick one/);
+    assert.throws(() => inChild(`return m.parseArgs(argv);`, "--all", "--list", "--nid-state", "RI"), /needs --nid-file/);
+  });
+
+  it("--list on the committed ND example selects NID dams by county, and a --nid-file extract must match --nid-state", () => {
+    const lines = inChild(`const out = []; await m.main(argv, (l) => out.push(l)); return out;`, "--county", "Cass", "--list");
+    assert.match(lines[0], /NID dams selected \(ND\)/);
+    assert.ok(lines.slice(1).every((l) => /^ND\d{5}\tnid\tCass\t/.test(l)), lines.slice(1, 3).join("|"));
+    const dir = tempDir("nid-file-");
+    const f = join(dir, "nid_RI.json");
+    writeFileSync(f, JSON.stringify({ v: 2, source: { url: "u", state: "RI", fetchedUtc: "2026-11-09T00:00:00Z", rows: 1, attribution: "a" }, cols: ["nid", "name", "county", "lat", "lon"], rows: [["RI00001", "Test", "Kent", 41.7, -71.5]] }));
+    const ri = inChild(`const out = []; await m.main(argv, (l) => out.push(l)); return out;`, "--all", "--list", "--nid-state", "RI", "--nid-file", f);
+    assert.match(ri[0], /^1 NID dams selected \(RI\)/);
+    assert.throws(() => inChild(`return m.main(argv, () => {});`, "--all", "--list", "--nid-state", "CT", "--nid-file", f), /is the RI extract, not CT/);
+  });
+});

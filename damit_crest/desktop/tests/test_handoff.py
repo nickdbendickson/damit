@@ -27,6 +27,7 @@ from damit_desktop.qgis_run import (  # noqa: E402
     _taskkill_tree,
     chain_names,
     chain_results,
+    run_classify,
     run_folder,
     run_model,
     run_screening,
@@ -102,7 +103,7 @@ if args[:1] == ["help"]:
                           "TERRAIN", "APPLY_ADVISORIES", "SETTINGS", "REPORT"],
             "runchain": ["WORK", "DAMS", "FIELD_MAP", "MODE", "PRESET", "SCENARIOS", "METHODS", "RECEPTORS",
                          "TERRAIN", "APPLY_ADVISORIES", "SETTINGS", "PREFLIGHT", "FAIL_ON_ERROR"],
-            "rundam": ["HANDOFF", "DAM_ID", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT", "MODE", "PRESET",
+            "rundam": ["HANDOFF", "DAM_ID", "NID_ID", "IS_NEW", "IS_SAMPLE", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT", "MODE", "PRESET",
                        "SCENARIOS", "METHODS", "TERRAIN", "HYDROGRAPH", "OUTPUT_FOLDER", "ENGINE", "DRY_RUN"],
         },
     }[style]
@@ -160,7 +161,8 @@ if "runchain" in joined or "rundam" in joined:
     if mode == "slow":
         import time
         time.sleep(60)
-    if mode == "outputs" and "runchain" in joined:
+    if mode in ("outputs", "outputs_alias") and "runchain" in joined:
+        name = "DWR-2801" if mode == "outputs_alias" else "ND00199"
         import csv, sqlite3
         work = Path(next(a.split("=", 1)[1] for a in args if a.startswith("--WORK=")))
         (work / "1_dams.gpkg").unlink(missing_ok=True)
@@ -168,15 +170,15 @@ if "runchain" in joined or "rundam" in joined:
         con.execute("CREATE TABLE gpkg_contents (table_name TEXT, data_type TEXT)")
         con.execute("INSERT INTO gpkg_contents VALUES ('dams', 'features')")
         con.execute("CREATE TABLE dams (fid INTEGER PRIMARY KEY, dam_id TEXT, nid_id TEXT)")
-        con.execute("INSERT INTO dams (dam_id, nid_id) VALUES ('DWR-2801', 'ND00199'), ('DWR-1', 'ND00001')")
+        con.execute("INSERT INTO dams (dam_id, nid_id) VALUES (?, 'ND00199'), ('ND00001', 'ND00001')", (name,))
         con.commit()
         con.close()
         (work / "10_reports").mkdir(exist_ok=True)
         with (work / "10_reports" / "summary.csv").open("w", newline="") as fh:
             w = csv.writer(fh)
             w.writerow(["dam_id", "name", "hz_class", "haz_existing", "hz_vs_existing", "hz_conf", "review"])
-            w.writerow(["DWR-2801", "Test dam", "Significant", "Significant", "same", "medium", ""])
-            w.writerow(["DWR-1", "Other", "High", "Low", "higher", "low", "check"])
+            w.writerow([name, "Test dam", "Significant", "Significant", "same", "medium", ""])
+            w.writerow(["ND00001", "Other", "High", "Low", "higher", "low", "check"])
     sys.exit(0)
 print("unexpected", joined)
 sys.exit(9)
@@ -346,6 +348,7 @@ class GateTests(unittest.TestCase):
             "DAMIT_DATA": os.environ.get("DAMIT_DATA"),
             "DAMIT_HANDOFF_CONFIG": os.environ.get("DAMIT_HANDOFF_CONFIG"),
             "QGIS_MISSING": os.environ.get("QGIS_MISSING"),
+            "QGIS_STYLE": os.environ.get("QGIS_STYLE"),
             "HOME": os.environ.get("HOME"),
             **{k: os.environ.get(k) for k in ENV_VARS.values()},
         }
@@ -511,12 +514,12 @@ class GateTests(unittest.TestCase):
         self.assertEqual(config["model"]["tier"], "lisflood")
         self.assertEqual(config["model"]["lisflood_exe"], "builtin")
 
-    def test_pack_dem_is_used_without_a_network(self):
+    def test_data_folder_dem_is_used_without_a_network(self):
         pack = self.root / "pack"
         (pack / "dem").mkdir(parents=True)
         (pack / "dem" / "lidar_1m").mkdir()
         (pack / "dem" / "mosaic.vrt").write_text("<VRTDataset></VRTDataset>", encoding="utf-8")
-        os.environ["NDSUITE_DATA"] = str(pack)
+        os.environ["DAMIT_DATA"] = str(pack)
         os.environ["QGIS_MODE"] = "pass"
         result = run_model(DAM, ANALYSIS, str(self.root / "work"), self.log(), source="pack")
         self.assertTrue(result["ok"])
@@ -650,21 +653,83 @@ class GateTests(unittest.TestCase):
         work = self.root / "work"
         result = run_screening(DAM, ANALYSIS, str(work), self.log())
         self.assertTrue(result["ok"])
-        self.assertEqual(result["chainIds"], ["DWR-2801"])
-        self.assertEqual([r["dam_id"] for r in result["chainResult"]], ["DWR-2801"])
+        self.assertEqual(result["chainIds"], ["ND00199"])
+        self.assertEqual([r["dam_id"] for r in result["chainResult"]], ["ND00199"])
         text = "\n".join(self.lines)
-        self.assertIn("name this dam DWR-2801 (DamIT Crest: ND00199)", text)
-        self.assertIn("Screening result for DWR-2801: Significant", text)
+        self.assertIn("Screening result for ND00199: Significant", text)
         self.assertIn("not an official class", text)
-        # A second run in the same work folder sends both names, so later tools keep the dam.
         run_screening(DAM, ANALYSIS, str(work), self.log())
-        self.assertIn("--DAM_ID=ND00199,DWR-2801", self.calls_text())
+        self.assertIn("--DAM_ID=ND00199", self.calls_text())
         settings = json.loads((work / "damit_settings.json").read_text(encoding="utf-8"))
-        self.assertEqual(settings["only_ids"], "ND00199,DWR-2801")
+        self.assertEqual(settings["only_ids"], "ND00199")
+
+    def test_another_inventory_id_is_reported_never_substituted(self):
+        # A screener that still names the dam by a state inventory id (DWR-2801): Crest says so and keeps the NID ID.
+        os.environ["QGIS_MODE"] = "outputs_alias"
+        work = self.root / "work"
+        result = run_screening(DAM, ANALYSIS, str(work), self.log())
+        self.assertEqual(result["chainIds"], [])
+        self.assertEqual(result["chainResult"], [])
+        text = "\n".join(self.lines)
+        self.assertIn("also name this dam DWR-2801, which is not its NID ID ND00199", text)
+        run_screening(DAM, ANALYSIS, str(work), self.log())
+        self.assertNotIn("DWR-2801", self.calls_text())
+        settings = json.loads((work / "damit_settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["only_ids"], "ND00199")
+
+    def test_a_record_without_an_nid_id_is_stopped_unless_new_or_a_sample(self):
+        os.environ["QGIS_MODE"] = "pass"
+        work = str(self.root / "work")
+        for bad in ({**DAM, "nid": "DWR-4031"}, {**DAM, "nid": "", "id": "desk-x"}, {**DAM, "nid": "NEW", "id": "desk-y"}):
+            for run in (run_screening, run_classify):
+                r = run(bad, ANALYSIS, work, self.log())
+                self.assertFalse(r["ok"])
+                self.assertIn("NID", r["nidProblem"])
+            r = run_model(bad, ANALYSIS, work, self.log(), model="builtin")
+            self.assertIn("nidProblem", r)
+        self.assertNotIn("DWR-4031", self.calls_text())
+        # A new (proposed) dam: handed off under its desk id, is_new, no nid_id.
+        new = {**DAM, "nid": "", "id": "desk-new1", "isNew": True}
+        r = run_screening(new, ANALYSIS, work, self.log())
+        self.assertTrue(r["ok"], "\n".join(self.lines))
+        self.assertIn("--DAM_ID=desk-new1", self.calls_text())
+        rec = json.loads((Path(r["folder"]) / "dam.json").read_text(encoding="utf-8"))["fields"]
+        self.assertEqual((rec["dam_id"], rec.get("nid_id"), rec["is_new"]), ("desk-new1", None, True))
+        # A built-in fictional sample: is_sample, never its made-up id as an NID ID.
+        sample = {**DAM, "nid": "SAMPLE-4031", "id": "local-sample"}
+        r = run_screening(sample, ANALYSIS, work, self.log())
+        self.assertTrue(r["ok"])
+        rec = json.loads((Path(r["folder"]) / "dam.json").read_text(encoding="utf-8"))["fields"]
+        self.assertEqual((rec["dam_id"], rec.get("nid_id"), rec.get("is_sample")), ("local-sample", None, True))
+        point = json.loads((Path(r["folder"]) / "dam_point.geojson").read_text(encoding="utf-8"))["features"][0]["properties"]
+        self.assertEqual((point["dam_id"], point["nid_id"], point["is_sample"]), ("local-sample", None, True))
+        self.assertNotIn("SAMPLE-4031", self.calls_text())
+
+    def test_rundam_gets_the_nid_id_or_why_there_is_none(self):
+        # DamIT Runner with the NID-ID rule (NID_ID / IS_NEW / IS_SAMPLE): Crest passes the NID ID, or the exception.
+        os.environ["QGIS_MODE"] = "pass"
+        os.environ["QGIS_STYLE"] = "swe"
+        work = self.root / "work"
+        run_model(DAM, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--DAM_ID=ND00199", text)
+        self.assertIn("--NID_ID=ND00199", text)
+        self.assertNotIn("--IS_NEW", text)
+        self.calls.unlink()
+        run_model({**DAM, "nid": "", "id": "desk-new1", "isNew": True}, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--DAM_ID=desk-new1", text)
+        self.assertIn("--IS_NEW=true", text)
+        self.assertNotIn("--NID_ID", text)
+        self.calls.unlink()
+        run_model({**DAM, "nid": "SAMPLE-4031", "id": "local-sample"}, ANALYSIS, str(work), self.log(), model="builtin")
+        text = self.calls_text()
+        self.assertIn("--IS_SAMPLE=true", text)
+        self.assertNotIn("SAMPLE-4031", text)
 
     def test_read_back_helpers_without_outputs(self):
         self.assertEqual(chain_names(self.root, "ND00199"), [])
-        self.assertEqual(chain_results(self.root, ["DWR-2801"]), [])
+        self.assertEqual(chain_results(self.root, ["ND00199"]), [])
 
 
 class RobustnessTests(unittest.TestCase):

@@ -43,8 +43,8 @@ describe("csvCell", () => {
 describe("the exports use it", () => {
   it("a 911-derived name starting with = never reaches the batch CSV as a formula", () => {
     const row: BatchRow = {
-      id: "DWR-1",
-      kind: "dam",
+      id: "ND00001",
+      kind: "nid",
       label: "=cmd|' /C calc'!A0",
       county: "Cass",
       huc8: null,
@@ -67,7 +67,7 @@ describe("the exports use it", () => {
       seconds: 0,
     };
     const csv = batchCsv([row]);
-    const line = csv.trim().split("\n").find((l) => l.startsWith("DWR-1,"))!;
+    const line = csv.trim().split("\n").find((l) => l.startsWith("ND00001,"))!;
     assert.ok(line.includes("\"'=cmd|' /C calc'!A0\""), line);
     assert.ok(line.endsWith("\"'-no height\""), line);
     assert.ok(!/,=cmd/.test(line));

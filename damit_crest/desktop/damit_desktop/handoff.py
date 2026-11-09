@@ -45,6 +45,47 @@ FAILURE_MODES = ("piping", "overtopping")
 DEFAULT_FAILURE_MODE = "piping"
 
 
+NID_ID_RE = re.compile(r"[A-Z]{2}\d{3,}")
+# The built-in fictional desk examples (src/lib/crest/samples.ts). Their ids are NOT NID IDs; they are handed off as
+# samples (is_sample), never as NID inventory records.
+DESK_SAMPLE_IDS = frozenset({"SAMPLE-4031", "DESK-014"})
+
+
+def is_nid_id(value) -> bool:
+    """An NID ID: two letters and at least three digits (ND00199). DWR-, DUG-, SAMPLE-, NEW and blanks are not."""
+    return bool(NID_ID_RE.fullmatch(str(value or "").strip().upper()))
+
+
+def handoff_ids(dam: dict | None) -> dict:
+    """The ids a dam is handed to the DamIT plugins under (Nick, 2026-11-09: the dam inventory is the NID only).
+
+    dam_id is the NID ID (ND00199) and nid_id the same, when the record has one (nidId, else nid). A record without a
+    real NID ID is never given a made-up one: nid_id is None and dam_id is the desk record's own id. is_new is the
+    desk's "New dam" box; is_sample marks a built-in fictional example. The plugins accept a record without an NID ID
+    only when one of those is set (with a warning); anything else is rejected there."""
+    dam = dam or {}
+    nid = ""
+    for raw in (dam.get("nidId"), dam.get("nid")):
+        if is_nid_id(raw):
+            nid = str(raw).strip().upper()
+            break
+    is_new = dam.get("isNew") is True
+    is_sample = str(dam.get("nid") or "").strip().upper() in DESK_SAMPLE_IDS
+    dam_id = nid or str(dam.get("id") or "").strip() or "dam"
+    return {"dam_id": dam_id, "nid_id": nid or None, "is_new": is_new, "is_sample": is_sample}
+
+
+def nid_problem(dam: dict | None) -> str | None:
+    """Why the plugins would refuse this record (None when they accept it): no NID ID and neither new nor a sample."""
+    ids = handoff_ids(dam)
+    if ids["nid_id"] or ids["is_new"] or ids["is_sample"]:
+        return None
+    shown = str((dam or {}).get("nid") or "").strip()
+    what = f"'{shown}' is not an NID ID" if shown else "This record has no NID ID"
+    return (f"{what}. The DamIT plugins take NID dams only: pick the dam from the NID (National Inventory of Dams), "
+            "or tick New dam for a proposed dam that is not in the NID yet.")
+
+
 def resolved_failure_mode(dam: dict | None) -> str:
     mode = str((dam or {}).get("failureMode") or DEFAULT_FAILURE_MODE).strip().lower()
     return mode if mode in FAILURE_MODES else DEFAULT_FAILURE_MODE
@@ -232,7 +273,8 @@ def write_dam_folder(work: Path, dam: dict, analysis: dict, append_status: bool 
     datum_block = analysis.get("datum") if isinstance(analysis.get("datum"), dict) else {}
     breach_block = analysis.get("breach") if isinstance(analysis.get("breach"), dict) else {}
     screen = analysis.get("screen") if isinstance(analysis.get("screen"), dict) else {}
-    dam_id = str(dam.get("nid") or dam.get("id") or "dam")
+    ids = handoff_ids(dam)
+    dam_id = ids["dam_id"]
     folder = Path(work) / "dams" / safe_name(dam_id)
     folder.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
@@ -244,13 +286,12 @@ def write_dam_folder(work: Path, dam: dict, analysis: dict, append_status: bool 
     # The breach bottom, tied the same way as the crest (Docs & QA N3). Written with its own datum field.
     streambed = _num(datum_block.get("streambedNavdFt"))
     datum_text = _tied_datum_text(dam, datum_block)
-    nid = str(dam.get("nidId") or "")
-    if not nid and re.fullmatch(r"[A-Za-z]{2}\d+", str(dam.get("nid") or "")):
-        nid = str(dam.get("nid"))
     incoming = {
         "dam_id": dam_id,
         "name": dam.get("name") or None,
-        "nid_id": nid or None,
+        "nid_id": ids["nid_id"],
+        "is_new": ids["is_new"],
+        **({"is_sample": True} if ids["is_sample"] else {}),
         "county": dam.get("county") or None,
         "height_ft": _num(dam.get("heightFt")),
         "storage_acft": _num(dam.get("storageAcFt")),
@@ -425,7 +466,7 @@ def write_named_files(folder: Path, files) -> list[str]:
 
 
 #: Fields of the one-dam point layer, named as DamIT Screener's dam record (damit_screener.core.steps.DAM_FIELDS).
-POINT_FIELDS = ("dam_id", "name", "nid_id", "height_ft", "storage_acft", "top_of_dam_elev_ft", "normal_pool_elev_ft",
+POINT_FIELDS = ("dam_id", "name", "nid_id", "is_new", "is_sample", "height_ft", "storage_acft", "top_of_dam_elev_ft", "normal_pool_elev_ft",
                 "surface_area_ac", "hydrograph_csv", "failure_mode")
 
 
@@ -442,12 +483,14 @@ def write_dam_point(folder: Path, dam: dict, analysis: dict | None = None) -> Pa
         pos = (float(dam["lon"]), float(dam["lat"]))
     if not pos:
         return None
-    dam_id = str(dam.get("nid") or dam.get("id") or "dam")
+    ids = handoff_ids(dam)
     hydro = Path(folder) / "inputs" / "breach_hydrograph.csv"
     props = {
-        "dam_id": dam_id,
+        "dam_id": ids["dam_id"],
         "name": dam.get("name") or None,
-        "nid_id": dam.get("nidId") or None,
+        "nid_id": ids["nid_id"],
+        "is_new": ids["is_new"],
+        "is_sample": ids["is_sample"],
         "height_ft": _num(dam.get("heightFt")),
         "storage_acft": _num(dam.get("storageAcFt")),
         "top_of_dam_elev_ft": _num(datum.get("crestNavdFt")),
@@ -475,14 +518,17 @@ def write_classify_record(folder: Path, dam: dict) -> Path:
     as a boolean, false unless the desk's "New dam" box is ticked."""
     dam = dam or {}
     raw_class = dam.get("classOfRecord")
+    ids = handoff_ids(dam)
     record = {
-        "dam_id": str(dam.get("nid") or dam.get("id") or "dam"),
+        "dam_id": ids["dam_id"],
+        "nid_id": ids["nid_id"],
         "name": dam.get("name") or None,
         "storage_acft": _num(dam.get("storageAcFt")),
         "height_ft": _num(dam.get("heightFt")),
         "current_class": class_ordinal(raw_class),
         "class_of_record_text": raw_class.strip() if isinstance(raw_class, str) and raw_class.strip() else None,
-        "is_new": dam.get("isNew") is True,
+        "is_new": ids["is_new"],
+        "is_sample": True if ids["is_sample"] else None,
         "failure_mode": resolved_failure_mode(dam),
     }
     path = Path(folder) / "damit_dam.json"

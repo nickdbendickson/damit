@@ -25,9 +25,21 @@ what changed is the posture and the hand-off:
 - **Local only.** No web deploy, server-side state, sign-in, OAuth or client secret: Crest's TanStack Start / Vercel
   web app, its CI and its secret-scanning allowlists were left out.
 
-North Dakota stays available as **optional example data**: the bundled NID / ND DWR dam picker, the ND sample dams,
-ND NG911 address points and the ND batch screen still work, and an ND suite data pack (`NDSUITE_DATA`) is read as an
-example data folder when no DamIT data folder is set. Nothing defaults to North Dakota.
+**The dam inventory is the NID only** (USACE National Inventory of Dams; Nick, 2026-11-09). The Record step's
+*Fill from the NID* picker and the Batch screen list the NID main dams of one **state** the user picks: the desktop
+server downloads that state's NID bulk CSV once (`GET /api/nid/state?state=XX`, `desktop/damit_desktop/nid.py`),
+converts it and caches it in the settings folder (`<settings>/nid/nid_XX.json`; *Download latest from the NID*
+refreshes it). One bulk CSV per state, no per-dam API calls, and the NID's owner columns are never read. North Dakota
+(`src/lib/crest/data/nid_ND.json`, 948 main dams) is committed as the offline example, so the desk works without a
+network for ND; no national bundle is committed. No state dam-safety inventory (the ND DWR dams file), no dugout or
+unknown-structure layer and no state suite pack (`NDSUITE_DATA`, `~/.ndsuite`) is read or shipped. Receptors (ND 911
+address points for ND dams, or the user's own), DEMs (3DEP or a local DEM) and NHD streams are separate inputs.
+
+The built-in samples are the NID dam ND00199 (Swan Buffalo Detention 12) and two fictional desk examples
+(*Local-datum sample* `SAMPLE-4031`, *Prairie holding pond* `DESK-014`). Those two ids are **not** NID IDs: the hand-off
+sends them as samples (`is_sample`, no `nid_id`), never as NID inventory records. A new dam (*+ New dam*) starts with an
+empty NID ID; tick **New dam** for a proposed dam that is not in the NID yet (`is_new`). Nothing defaults to North
+Dakota except that example state.
 
 The desk is a screen, not the layer of record, and not an official class: the engineer of record and the regulating
 agency make the determination. Where its flood footprint can be trusted is in
@@ -46,10 +58,10 @@ damit_crest/
     lib/crest/jurisdiction.ts  preset / custom mode, label maps (no thresholds)
     lib/crest/handoff.ts       what the Report step sends; DamIT default ids
     components/crest/ClassificationPanel.tsx
-  scripts/                  tests, data refresh for the ND example bundles, sync-jurisdictions.mjs
+  scripts/                  tests, build-nid-dams.mjs (NID state extract), batch-dams.mjs, sync-jurisdictions.mjs
   desktop/                  the pywebview app (adapted from Crest's crest-desktop/)
     run.py, requirements.txt, INSTALL.txt, damit_crest.spec, build_mac.sh
-    damit_desktop/          __main__ (window + local API), algorithms (hand-off ids), qgis_run, handoff, layers, localdem
+    damit_desktop/          __main__ (window + local API), nid (NID by state), algorithms (hand-off ids), qgis_run, handoff, layers, localdem
     damit_desktop/web/      the built desk (committed, so `python run.py` needs no Node)
     tests/                  headless tests; fake qgis_process, nothing real is started
 ```
@@ -113,8 +125,10 @@ npm run build:desktop    # rebuild desktop/damit_desktop/web/ after changing src
 
 `npm test` fails while the committed bundle is older than `src/`. `npm run build:html` builds an optional one-file
 `DamIT.html` (not committed). `node scripts/sync-jurisdictions.mjs [catalog.json]` regenerates the preset index
-from the hazard catalog (`--check` to verify). The `data:nd-*` and `batch:dams` scripts refresh and run the North
-Dakota example bundles, as in Crest.
+from the hazard catalog (`--check` to verify). `npm run data:nid` refreshes the committed ND NID example
+(`-- --state XX --out <file>` builds another state's extract; do not commit it), and `npm run batch:dams` runs the
+batch screen from the command line (`--nid-state XX --nid-file <extract>` for a state other than ND). Tests use
+fixtures and never download the NID.
 
 Every export carries the build (`crest_version`, `<package version>+<git sha>`, labelled "DamIT Crest") and the engine
 method version (`engine_version`); the field names are Crest's so existing readers keep working.

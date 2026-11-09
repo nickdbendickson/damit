@@ -12,7 +12,7 @@ import {
   stackFlags,
   type StepState,
 } from "./guided.ts";
-import { fieldTag, revertPatch } from "./nd-dams.ts";
+import { fieldTag, revertPatch } from "./nid-dams.ts";
 import type { OutlineState, RoutedSummary } from "./outline.ts";
 import { SAMPLE_DAMS } from "./samples.ts";
 import { activeDam, useDesk } from "./store.ts";

@@ -1,0 +1,20 @@
+[general]
+name=DamIT Catalog
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Data catalog for DamIT dam hazard screening: methods M1-M13, scenarios S1-S7, domain cutoffs D1-D2, modifiers R1-R10, class labels and jurisdiction presets from Appendix A of US Dam Hazard Classification - Corrected Edition (Nov 9, 2026), as JSON data files with a Python loader. No Processing tools.
+about=Single source of truth for the DamIT plugins (DamIT Screener, DamIT Runner, DamIT Hazard). Every threshold, label map, method parameter, scenario and modifier lives in data/*.json, so presets can be updated without a plugin code release; set the DAMIT_CATALOG_DIR environment variable to use an edited copy. Preset mode loads a state or agency bundle; custom mode shows method IDs and parameters without branding. Output of the DamIT plugins is a suggested classification only; the engineer of record and the regulating agency make the determination.
+version=0.1.0
+author=Nick Bendickson
+email=322661428+nickdbendickson@users.noreply.github.com
+repository=https://github.com/nickdbendickson/damit
+tracker=https://github.com/nickdbendickson/damit/issues
+homepage=https://github.com/nickdbendickson/damit
+category=Plugins
+tags=dam,dam safety,hazard classification,catalog
+icon=icon.svg
+experimental=True
+deprecated=False
+hasProcessingProvider=no
+changelog=0.1.0 - first release: Appendix A catalog (Nov 9, 2026 corrected edition), loader, evaluator and the damit.handoff v1 schema shared by DamIT Screener and DamIT Runner.

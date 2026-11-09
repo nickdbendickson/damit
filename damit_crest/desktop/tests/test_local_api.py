@@ -89,6 +89,36 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(info["roles"]["classify"]["status"], "published")
         self.assertEqual(info["roles"]["batch"]["status"], "not published")
 
+    def test_nid_state_endpoint_needs_the_token_and_serves_the_cached_state(self):
+        from damit_desktop import nid
+
+        status, _ = self.req("GET", "/api/nid/state?state=RI", token=False)
+        self.assertEqual(status, 403)
+        fixture = (DESKTOP / "tests" / "fixtures" / "nid_ri_fixture.csv").read_text(encoding="utf-8")
+        calls = []
+        cache = Path(self.tmp.name) / "settings" / "nid"
+
+        def fake_download(url, timeout=120):
+            calls.append(url)
+            return fixture
+
+        with mock.patch.object(nid, "NID_DIR", cache), mock.patch.object(nid, "_download", fake_download):
+            # load_state's default fetch was bound at import, so patch the bound default too.
+            with mock.patch.object(nid.load_state, "__defaults__", (False, fake_download, None)):
+                status, data = self.req("GET", "/api/nid/state?state=RI")
+                self.assertEqual(status, 200, data)
+                body = json.loads(data)
+                self.assertEqual(body["source"]["state"], "RI")
+                self.assertTrue(all(r[0].startswith("RI") for r in body["rows"]))
+                self.req("GET", "/api/nid/state?state=RI")
+                self.assertEqual(len(calls), 1, "cached after the first download")
+                self.req("GET", "/api/nid/state?state=RI&refresh=1")
+                self.assertEqual(len(calls), 2)
+                status, data = self.req("GET", "/api/nid/state?state=North%20Dakota")
+                self.assertEqual(status, 400)
+                self.assertIn("state code", json.loads(data)["error"])
+        self.assertTrue((cache / "nid_RI.json").is_file())
+
     def test_classify_job_kind_is_routed(self):
         with mock.patch.object(m, "start_job", return_value={"id": "abc"}) as sj:
             status, data = self.req("POST", "/api/classify", {"dam": {"id": "x"}})

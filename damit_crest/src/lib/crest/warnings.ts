@@ -1,5 +1,5 @@
 /**
- * The warning catalogue (2026-11-08). Until now only the two NID height checks had codes (W-H1, W-H2 in nd-dams.ts);
+ * The warning catalogue (2026-11-08). Until now only the two NID height checks had codes (W-H1, W-H2 in nid-dams.ts);
  * every other flag the engine, the inundation build and the picker raise was free text, rendered with the text as its
  * React key (two equal texts collided) and impossible to point at in a report or a bug. Each warning now carries a
  * stable code and a severity beside its text. The text is unchanged everywhere: `warningText()` hands consumers and
@@ -19,7 +19,7 @@
  *             terrain for it could not be read
  *   W-S1      outline.ts outlineState: the saved layer   info
  *             is stale (inputs changed, old trace)
- *   W-H1/H2   nd-dams.ts NID height checks               warn
+ *   W-H1/H2   nid-dams.ts NID height checks               warn
  *
  * The README lists the codes under "Warning codes".
  */

@@ -1,0 +1,58 @@
+{
+ "schema": "damit.catalog",
+ "schema_version": 1,
+ "catalog_version": "2026.11.09.2",
+ "source": {
+  "title": "US Dam Hazard Classification - Corrected Edition",
+  "date": "2026-11-09",
+  "appendix": "A",
+  "pages": "18-30",
+  "sections": [
+   "A.1",
+   "A.2",
+   "A.3",
+   "A.4",
+   "A.5",
+   "A.6",
+   "A.7"
+  ]
+ },
+ "files": {
+  "methods": "methods.json",
+  "scenarios": "scenarios.json",
+  "modifiers": "modifiers.json",
+  "labels": "labels.json",
+  "presets": "presets.json",
+  "hazard": "hazard.json"
+ },
+ "modes": {
+  "preset": "User picks a state or agency; the preset's scenarios, method IDs, parameters and class labels are loaded.",
+  "custom": "User ticks method IDs with no state or agency names shown; parameters stay editable; results use generic labels. Source citations are kept in the run report."
+ },
+ "combination": {
+  "scenarios": "most_severe",
+  "class": "highest_rule_strength_across_receptors",
+  "advisories": "reported_beside_applied_only_if_opted_in",
+  "modifiers": "after_methods",
+  "report": "driving_receptors_and_method_ids",
+  "steps": [
+   "Run every enabled scenario; the most severe consequence governs.",
+   "Sample hydraulics at every receptor and apply every enabled method; each hit returns class, receptor, method ID and strength.",
+   "Suggested class = highest rule-strength result across all receptors; advisories reported and applied only if opted in.",
+   "Apply modifier rules (R-codes).",
+   "Report the driving receptor(s) and method ID(s) with every suggestion."
+  ]
+ },
+ "validation_flags": [
+  "missing_input",
+  "one_d_run_with_2d_only_method",
+  "m1_judgment_zone",
+  "advisory_only_hit",
+  "outside_routed_domain",
+  "unverified_or_secondary",
+  "scenario_unconfirmed",
+  "method_fallback_m13",
+  "manual_method"
+ ],
+ "disclaimer": "Output is a suggested classification only. The engineer of record and the regulating agency make the determination."
+}

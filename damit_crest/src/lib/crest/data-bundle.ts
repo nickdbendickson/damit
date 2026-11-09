@@ -1,17 +1,17 @@
 /**
- * The three data bundles (nd_dams, nd_dams_dwr, nd_structures: 2.2 MB of JSON) on demand.
+ * The committed NID example extract (nid_example = data/nid_ND.json, about 200 KB) on demand. Other states' NID
+ * extracts are downloaded by the desktop server (nid-state.ts); no other dam inventory is bundled.
  *
  * Web and desktop builds: a dynamic `import()` of the JSON, which Vite keeps as its own chunk (vite.desktop.config.ts
- * keeps them out of the first parse), exactly as before. The one-file Crest.html cannot have a separate chunk, and
- * with every chunk flattened into it the 1.64 MB structures table rode along in the page's one script. There the
- * build packs each bundle as gzip + base64 (about 450 KB for all three) into data/packed.ts and leaves the JSON
+ * keeps it out of the first parse). The one-file DamIT.html cannot have a separate chunk, so there the
+ * build packs the bundle as gzip + base64 into data/packed.ts and leaves the JSON
  * modules out; this inflates one with DecompressionStream the first time it is asked for, or with fflate's gunzip
  * (already a dependency, for the results import) in a browser without that API.
  *
  * Node (the tests, the batch command line) and Vite dev have an empty `packed` table and take the JSON import.
  */
 
-export type BundleName = "nd_dams" | "nd_dams_dwr" | "nd_structures";
+export type BundleName = "nid_example";
 
 /** gzip + base64 of each bundle when the single-file build packed it; empty otherwise (data/packed.ts). */
 type Packed = Partial<Record<BundleName, string>>;
@@ -58,9 +58,7 @@ const loaders: Record<BundleName, () => Promise<unknown>> = {
   // which the attribute then rejects with a MIME-type error ("Expected a JSON module script … responded with
   // text/javascript"). So the attribute is dropped under Vite dev only. The `import.meta.env` guard is needed because
   // `import.meta.env` is undefined under `node --test`.
-  nd_dams: () => (viteDev() ? import("./data/nd_dams.json") : import("./data/nd_dams.json", { with: { type: "json" } })),
-  nd_dams_dwr: () => (viteDev() ? import("./data/nd_dams_dwr.json") : import("./data/nd_dams_dwr.json", { with: { type: "json" } })),
-  nd_structures: () => (viteDev() ? import("./data/nd_structures.json") : import("./data/nd_structures.json", { with: { type: "json" } })),
+  nid_example: () => (viteDev() ? import("./data/nid_ND.json") : import("./data/nid_ND.json", { with: { type: "json" } })),
 };
 
 const viteDev = () => typeof import.meta !== "undefined" && typeof import.meta.env !== "undefined" && import.meta.env.DEV === true;

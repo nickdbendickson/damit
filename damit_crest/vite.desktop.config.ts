@@ -62,15 +62,13 @@ function buildInfo(moduleIds: Iterable<string>, builtBy = "npm run build:desktop
 }
 
 /**
- * The three data bundles (2.2 MB of JSON) inside the one-file DamIT.html: gzip + base64 (about 450 KB) instead of the
- * JSON flattened into the page's one script, so the file is about 1.8 MB smaller and opening the desk no longer
- * carries the 1.64 MB structures table the Batch view alone needs. src/lib/crest/data/packed.ts is the empty
- * stand-in every other build sees; here it is replaced by a module whose default export carries each bundle packed,
- * and the JSON modules data-bundle.ts would otherwise import are replaced by an empty stub so they are not inlined
- * as well. data-bundle.ts inflates a bundle on first use with DecompressionStream, or fflate's gunzip (already a
- * dependency) where a browser lacks it.
+ * The committed NID example extract inside the one-file DamIT.html: gzip + base64 instead of the JSON flattened into
+ * the page's one script. src/lib/crest/data/packed.ts is the empty stand-in every other build sees; here it is
+ * replaced by a module whose default export carries the bundle packed, and the JSON module data-bundle.ts would
+ * otherwise import is replaced by an empty stub so it is not inlined as well. data-bundle.ts inflates it on first use
+ * with DecompressionStream, or fflate's gunzip (already a dependency) where a browser lacks it.
  */
-const PACKED_BUNDLES = ["nd_dams", "nd_dams_dwr", "nd_structures"] as const;
+const PACKED_BUNDLES = { nid_example: "nid_ND" } as const;
 const OMITTED_JSON = "\0damit:json-omitted";
 function packedDataPlugin(): Plugin {
   const stub = r("./src/lib/crest/data/packed.ts");
@@ -81,14 +79,14 @@ function packedDataPlugin(): Plugin {
     enforce: "pre",
     resolveId(source, importer) {
       // Only data-bundle.ts's own fallback imports are stubbed; a test or script importing a bundle is left alone.
-      if (importer && importer.split("?")[0] === loader && /^\.\/data\/nd_[a-z_]+\.json$/.test(source)) return OMITTED_JSON;
+      if (importer && importer.split("?")[0] === loader && /^\.\/data\/nid_[A-Za-z_]+\.json$/.test(source)) return OMITTED_JSON;
       return null;
     },
     load(id) {
       if (id === OMITTED_JSON) return "export default null;\n";
       if (id.split("?")[0] !== stub) return null;
-      const entries = PACKED_BUNDLES.map((name) => {
-        const json = readFileSync(r(`./src/lib/crest/data/${name}.json`), "utf8");
+      const entries = Object.entries(PACKED_BUNDLES).map(([name, file]) => {
+        const json = readFileSync(r(`./src/lib/crest/data/${file}.json`), "utf8");
         return `  ${name}: ${JSON.stringify(gzipSync(Buffer.from(json, "utf8"), { level: 9 }).toString("base64"))},`;
       });
       return `const packed = {\n${entries.join("\n")}\n};\nexport default packed;\n`;
@@ -138,7 +136,7 @@ function singleFilePlugin(): Plugin {
 export default defineConfig(({ mode }) => (mode === "singlefile" ? singleFile : desktop));
 
 /** Chunks the groups below name; kept at their own names (a group chunk is not a dynamic entry). */
-const LAZY_CHUNKS = ["nd_structures", "nd_dams", "geotiff"];
+const LAZY_CHUNKS = ["nid_dams", "geotiff"];
 
 const desktop = defineConfig({
   root: r("./src/desktop"),
@@ -164,15 +162,14 @@ const desktop = defineConfig({
         entryFileNames: "assets/[name].js",
         chunkFileNames: (chunk) => (chunk.isDynamicEntry || LAZY_CHUNKS.includes(chunk.name) ? "assets/[name].js" : "assets/samples.js"),
         assetFileNames: "assets/[name][extname]",
-        // The data bundles (nd_dams, nd_dams_dwr, nd_structures: 2.2 MB) and geotiff stay their own chunks, loaded
-        // only when the picker, the Batch view or a results import asks for them, whatever else shares a module with
+        // The NID example extract and geotiff stay their own chunks, loaded only when the picker, the Batch view or
+        // a results import asks for them, whatever else shares a module with
         // them. Rolldown's `codeSplitting.groups` is the manualChunks of Vite 8 (Rollup's manualChunks is deprecated
         // there); the test is on the module id. `priority` puts a data module in its group before the default
         // sharing rules could fold it into the desk chunk.
         codeSplitting: {
           groups: [
-            { name: "nd_structures", test: /[\\/]src[\\/]lib[\\/]crest[\\/]data[\\/]nd_structures\.json/, priority: 30 },
-            { name: "nd_dams", test: /[\\/]src[\\/]lib[\\/]crest[\\/]data[\\/]nd_dams(_dwr)?\.json/, priority: 30 },
+            { name: "nid_dams", test: /[\\/]src[\\/]lib[\\/]crest[\\/]data[\\/]nid_[A-Za-z_]+\.json/, priority: 30 },
             { name: "geotiff", test: /[\\/]node_modules[\\/]geotiff[\\/]/, priority: 20 },
           ],
         },

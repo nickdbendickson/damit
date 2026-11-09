@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 
 import { analyze } from "./engine.ts";
 import { volumeCheck } from "./inundation.ts";
-import { heightWarningOnElevations } from "./nd-dams.ts";
+import { heightWarningOnElevations } from "./nid-dams.ts";
 import { outlineState } from "./outline.ts";
 import { SAMPLE_DAMS } from "./samples.ts";
 import {

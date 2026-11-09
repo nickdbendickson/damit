@@ -28,7 +28,8 @@ const ND00199_GEOMETRY: DamGeometry = {
   reservoirPoint: point(-97.39171369, 46.98463491),
 };
 
-// The other two samples are fictional. Their placement is illustrative, not a surveyed dam: a straight
+// The other two samples are fictional desk examples (Nick, 2026-11-09: kept). Their ids SAMPLE-4031 and DESK-014 are
+// NOT NID IDs: the handoff never sends them as nid_id (handoff.py), and the dam inventory itself is the NID only. Their placement is illustrative, not a surveyed dam: a straight
 // east-west embankment of the record's crest length on open ND prairie, pool to the north, so the
 // valley runs south; breach point at the middle of the dam line.
 const LOCAL_SAMPLE_GEOMETRY: DamGeometry = {
@@ -226,7 +227,9 @@ export function blankDam(): DamRecord {
   return {
     id: `desk-${Math.random().toString(36).slice(2, 8)}`,
     name: "Untitled embankment",
-    nid: "NEW",
+    // No NID ID until the user picks one from the NID (never a made-up id like "NEW"): a proposed dam is marked
+    // "New dam" (isNew) instead.
+    nid: "",
     county: "",
     year: new Date().getFullYear(),
     heightFt: 20,

@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 /**
  * Batch screen from the command line: the same per-structure path as the desk's Batch screen (src/lib/crest/batch.ts),
- * for runs too big for a browser tab (statewide is ~10,000 structures and a day or more of 3DEP requests). Progress is
+ * for runs too big for a browser tab (a whole state's NID dams can be a day or more of 3DEP requests). The dams are
+ * the NID main dams of one state only (the dam inventory is the NID): the committed ND example by default, or a
+ * state extract made with `npm run data:nid -- --state XX --out <file>` and passed as --nid-file. Progress is
  * appended to a JSON-lines file, so a stopped run picks up where it left off when started again with the same --out.
  *
- *   node --experimental-strip-types scripts/batch-dams.mjs --out <dir> (--state | --county Cass[,Barnes] | --watershed "Maple" | --ids ND00199,DWR-4031)
- *        [--kinds nid,dam,dugout,unknown] [--statuses NID,Intact,Dugout,...] [--concurrency 2] [--limit N] [--list]
+ *   node --experimental-strip-types scripts/batch-dams.mjs --out <dir> (--all | --county Cass[,Barnes] | --ids ND00199,ND00486)
+ *        [--nid-state ND] [--nid-file nid_XX.json] [--concurrency 2] [--limit N] [--list]
  *        [--dem /path/ND_1m_EPSG26914.vrt [--dem-feet] [--gdalwarp <path>]]
  *
  * --dem reads the terrain from a local raster (the statewide 1 m mosaic) through gdalwarp instead of the 3DEP service
  * (scripts/local-dem.mjs): no per-dam download, and the crest is read on a 2 m grid. The VRT must be in metres
- * (--dem-feet for a feet DEM). 911 address points still come from the ND GIS Hub.
+ * (--dem-feet for a feet DEM). 911 address points come from the ND GIS Hub for ND dams only.
  *
  * Writes <dir>/batch.jsonl (one row per structure, appended as each finishes) and <dir>/batch.csv (sorted, rewritten
  * at the end and every 25 rows). --list prints the selection and the time estimate without running anything.
@@ -21,7 +23,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { localDemFetcher } from "./local-dem.mjs";
-import { DEFAULT_STATUSES, batchCsv, batchCsvMeta, estimateSeconds, loadStructures, runBatch, selectStructures } from "../src/lib/crest/batch.ts";
+import { DEFAULT_STATUSES, batchCsv, batchCsvMeta, estimateSeconds, loadStructures, makeStructures, runBatch, selectStructures } from "../src/lib/crest/batch.ts";
+import { makeNidData } from "../src/lib/crest/nid-dams.ts";
 
 /**
  * The rows of a batch.jsonl, one JSON object per line.
@@ -65,17 +68,16 @@ export function appendRow(file, row) {
 }
 
 export function parseArgs(argv) {
-  const o = { kinds: ["nid", "dam", "dugout", "unknown"], statuses: [...DEFAULT_STATUSES], concurrency: 2 };
+  const o = { kinds: ["nid"], statuses: [...DEFAULT_STATUSES], concurrency: 2, nidState: "ND" };
   const list = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--state") o.by = "state";
+    if (a === "--all") o.by = "state";
+    else if (a === "--nid-state") o.nidState = String(argv[++i] ?? "").toUpperCase();
+    else if (a === "--nid-file") o.nidFile = argv[++i];
     else if (a === "--list") o.list = true;
     else if (a === "--county") Object.assign(o, { by: "county", counties: list(argv[++i]) });
-    else if (a === "--watershed") Object.assign(o, { by: "watershed", watersheds: list(argv[++i]) });
     else if (a === "--ids") Object.assign(o, { by: "pick", ids: list(argv[++i]) });
-    else if (a === "--kinds") o.kinds = list(argv[++i]);
-    else if (a === "--statuses") o.statuses = list(argv[++i]);
     else if (a === "--concurrency") o.concurrency = Number(argv[++i]);
     else if (a === "--limit") o.limit = Number(argv[++i]);
     else if (a === "--out") o.out = argv[++i];
@@ -84,19 +86,29 @@ export function parseArgs(argv) {
     else if (a === "--gdalwarp") o.gdalwarp = argv[++i];
     else throw new Error(`unexpected ${a}`);
   }
-  if (!o.by) throw new Error("pick one of --state, --county, --watershed, --ids");
+  if (!o.by) throw new Error("pick one of --all, --county, --ids");
+  if (!/^[A-Z]{2}$/.test(o.nidState)) throw new Error(`--nid-state takes a two-letter state code, not ${o.nidState}`);
+  if (o.nidState !== "ND" && !o.nidFile) throw new Error(`--nid-state ${o.nidState} needs --nid-file (npm run data:nid -- --state ${o.nidState} --out <file>); only the ND example is committed`);
   if (!o.out && !o.list) throw new Error("--out <dir> is required");
   return o;
 }
 
+/** The NID dams to pick from: a --nid-file state extract, else the committed ND example. */
+export async function loadNid(o) {
+  if (!o.nidFile) return loadStructures();
+  const nd = makeNidData(JSON.parse(readFileSync(o.nidFile, "utf8")));
+  if (nd.state !== o.nidState) throw new Error(`${o.nidFile} is the ${nd.state} extract, not ${o.nidState}`);
+  return { nd, structures: makeStructures(nd), source: nd.nidSource };
+}
+
 export async function main(argv, log = console.log) {
   const o = parseArgs(argv);
-  const bundles = await loadStructures();
+  const bundles = await loadNid(o);
   const { nd, structures } = bundles;
-  let sel = selectStructures(structures, { by: o.by, ids: o.ids, counties: o.counties, watersheds: o.watersheds, kinds: o.kinds, statuses: o.statuses });
+  let sel = selectStructures(structures, { by: o.by, ids: o.ids, counties: o.counties, kinds: o.kinds, statuses: o.statuses });
   if (o.limit) sel = sel.slice(0, o.limit);
   const est = estimateSeconds(sel);
-  log(`${sel.length} structures selected; about ${(est / 3600).toFixed(1)} h at one at a time (${o.concurrency} side by side: ~${(est / 3600 / o.concurrency).toFixed(1)} h).`);
+  log(`${sel.length} NID dams selected (${nd.state}); about ${(est / 3600).toFixed(1)} h at one at a time (${o.concurrency} side by side: ~${(est / 3600 / o.concurrency).toFixed(1)} h).`);
   if (o.list) {
     for (const s of sel) log(`${s.id}\t${s.kind}\t${s.county ?? ""}\t${s.huc8 ?? ""}\tH ${s.heightFt ?? "—"}\tV ${s.storageAcFt ?? "—"}`);
     return { selected: sel.length };

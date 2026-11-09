@@ -32,6 +32,16 @@ Override with DAMIT_ALG_CLASSIFY / _PREFLIGHT / _RUNCHAIN / _RUNDAM / _BATCH,
 DAMIT_CLI, or a damit-handoff.json file. North Dakota suite ids (nddam:*,
 ndbreach:*) are refused.
 
+Dam inventory
+  The NID (USACE National Inventory of Dams) only, one state at a time. Pick
+  the state in "Fill from the NID": the app downloads that state's NID bulk
+  CSV once and caches it in the settings folder (nid/nid_XX.json); "Download
+  latest from the NID" refreshes it. North Dakota is bundled for offline use.
+  No state dam-safety, dugout or suite-pack inventory is read (NDSUITE_DATA
+  and ~/.ndsuite are not used). Records are handed off under their NID ID;
+  a proposed dam needs the New dam box, the two fictional samples go as
+  samples.
+
 Get layers
   DamIT data folder (DAMIT_DATA, or damit/data_folder in ~/.damit/config.json),
   or download a USGS 3DEP DEM and NHD streams for the drawn area.

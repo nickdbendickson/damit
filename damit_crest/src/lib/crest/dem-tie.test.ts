@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { demTieOffer, needsDemTie } from "./nd-dams.ts";
+import { demTieOffer, needsDemTie } from "./nid-dams.ts";
 import { blankDam } from "./samples.ts";
 
 const rec = (o: object) => ({ ...blankDam(), ...o });

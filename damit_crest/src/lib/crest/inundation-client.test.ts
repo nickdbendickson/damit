@@ -186,10 +186,10 @@ describe("InundationPool and poolSize", () => {
 describe("runBatch on a worker pool", () => {
   const S = (id: string): Structure => ({
     id,
-    kind: "dam",
+    kind: "nid",
     label: id,
-    nid: null,
-    status: "Intact",
+    nid: id,
+    status: "NID",
     county: "Cass",
     lat: LOC.lat,
     lon: LOC.lon,

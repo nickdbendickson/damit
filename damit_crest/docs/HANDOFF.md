@@ -68,8 +68,18 @@ such a port also works. Enums are sent as the option index read from `help` (QGI
 
 Details:
 
+- **NID IDs.** The dam inventory is the NID only. `dam_id` **is the NID ID** (e.g. `ND00199`) and `nid_id` the same,
+  in `dam.json`, the DAMS layer, `damit_dam.json`, `only_ids` and `DAM_ID`. A record without a real NID ID is never
+  given one: `nid_id` is left out and `dam_id` is the desk record's own id. Such a record is handed off only when it
+  is a **new (proposed) dam** (`is_new: true`, the *New dam* box) or one of the built-in fictional **samples**
+  (`is_sample: true`; `SAMPLE-4031` and `DESK-014` are not NID IDs); otherwise the job stops before `qgis_process`
+  with "… is not an NID ID". DWR-, DUG- or other inventory ids are never sent or substituted: when a screener's
+  outputs name the dam by another id, the log says so and the results are read by the NID ID only. The DamIT
+  plugins apply the same rule (a non-NID id is a FAIL; new / sample records pass with a warning). A Runner whose
+  `damit_run:rundam` lists `NID_ID`, `IS_NEW` and `IS_SAMPLE` gets them too (the NID ID, or `IS_NEW=true` /
+  `IS_SAMPLE=true` for a record without one); older Runners simply do not get them.
 - **DAMS layer.** `dam_point.geojson` is this dam alone as a point (EPSG:4326: breach point, else reservoir point,
-  else the record's lon/lat) with DamIT Screener's field names (`dam_id`, `name`, `height_ft`, `storage_acft`,
+  else the record's lon/lat) with DamIT Screener's field names (`dam_id`, `name`, `nid_id`, `is_new`, `is_sample`, `height_ft`, `storage_acft`,
   `top_of_dam_elev_ft`, `normal_pool_elev_ft`, `surface_area_ac`, `hydrograph_csv` = `inputs/breach_hydrograph.csv`,
   `failure_mode`), so no `FIELD_MAP` is needed. Without a position no layer is written and the preflight reports it.
 - **One dam.** `damit_settings.json` carries `dam_ids` (DamIT Screener's filter) and `only_ids`, so `runchain`
@@ -78,8 +88,8 @@ Details:
 - **READY.** Read from the preflight's `READY:` output, else `FAILS:`, else the report's first line. Anything else
   stops before `runchain`.
 - **Read-back.** After the chain the app reads `screening` from this dam's `damit_handoff.json` (preliminary label,
-  ordinal, flags; logged as a screening suggestion, not an official class), and, for an ND-style port,
-  `10_reports/summary.csv`.
+  ordinal, flags; logged as a screening suggestion, not an official class), and the dam's row of
+  `10_reports/summary.csv`, both by the NID ID.
 - **Flood model.** `damit_run:rundam` takes no DEM parameter, so a missing DEM is logged as a gap instead of
   stopping; for an algorithm that declares `DEM` (or for the CLI) a missing DEM still stops. DamIT Runner 0.1.0
   prepares `run_setup.json` in a new folder under `<work>/runs`; the app reports `RUN_FOLDER`. It never sends an
@@ -90,7 +100,7 @@ Details:
   *Downstream receptors for classify* below). Without a depth raster, without a receptor it can place, when the
   installed algorithm lists none of the receptor layers, or when it does not list the chosen preset, the job stops
   before running and the log says why.
-  `damit_dam.json` is a flat record: `dam_id`, `name`, `storage_acft`, `height_ft`, `current_class`, `is_new`,
+  `damit_dam.json` is a flat record: `dam_id`, `nid_id`, `name`, `storage_acft`, `height_ft`, `current_class`, `is_new`, `is_sample` (samples only),
   `failure_mode`, and `class_of_record_text` (the original class-of-record text, for people; classify ignores it).
   See *Class of record and new dams* below.
 

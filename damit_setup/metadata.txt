@@ -1,0 +1,21 @@
+[general]
+name=DamIT Setup
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Start here for the DamIT plugins: choose the suite data folder and work folder, check that DamIT Core, DamIT Catalog and the other DamIT plugins are installed, fill empty settings from the folder, and continue in DamIT Screener (damit_screen:preflight) with the folder handed over.
+about=One window (Plugins > DamIT > Start here...). Scans the suite data folder for dams, terrain, structures / footprints, roads and railroads (any jurisdiction; no North Dakota pack is required, and DamIT Data's download folders are recognized), lists the DamIT plugins and their versions, proposes the DamIT Catalog preset for the chosen state (or leave it for an agency preset or custom mode), saves the choices in the DamIT suite settings without overwriting values already set, and writes damit_screen_settings.json in the work folder. Continue opens DamIT Screener's preflight with the work folder, dams, terrain, receptors, preset and the settings file filled in. Hand-off targets are damit_screen:preflight / :runchain and damit_run:rundam only; nddam / ndbreach ids are refused.
+version=0.1.0
+author=N.D. Bendickson
+email=322661428+nickdbendickson@users.noreply.github.com
+repository=https://github.com/nickdbendickson/damit
+tracker=https://github.com/nickdbendickson/damit/issues
+homepage=https://github.com/nickdbendickson/damit
+category=Plugins
+tags=dam,dam safety,setup
+icon=icon.svg
+experimental=True
+deprecated=False
+hasProcessingProvider=no
+plugin_dependencies=DamIT Core,DamIT Catalog
+changelog=0.1.0 - first release: Start here window, folder scan, suite check, settings fill, hand-off to damit_screen:preflight.

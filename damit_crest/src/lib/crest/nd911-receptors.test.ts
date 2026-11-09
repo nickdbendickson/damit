@@ -5,13 +5,13 @@ import { describe, it } from "node:test";
 import { analyze } from "./engine.ts";
 import { floodStrip } from "./floodstrip.ts";
 import { fetchNd911, nd911AutoPatch, nd911State, removeNd911Seeds, wantsNd911Lookup } from "./nd911.ts";
-import { loadNdData, prefillPatch } from "./nd-dams.ts";
+import { loadNidData, prefillPatch } from "./nid-dams.ts";
 import { blankDam, SAMPLE_DAMS } from "./samples.ts";
 import type { DamRecord } from "./types.ts";
 
 const PAGE = JSON.parse(readFileSync(new URL("./__fixtures__/nd911_nd00199.json", import.meta.url), "utf8"));
 const fake = async () => ({ ok: true, status: 200, json: async () => PAGE });
-const data = await loadNdData();
+const data = await loadNidData();
 
 describe("real receptors: picked ND dams screen ND 911 points, samples keep the generic seeds", () => {
   const sample = SAMPLE_DAMS.find((d) => d.nid === "ND00199")!;

@@ -28,9 +28,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "data:nd-dams": "node scripts/build-nd-dams.mjs",
-    "data:nd-dams-dwr": "node scripts/build-nd-dams-dwr.mjs",
-    "data:nd-structures": "node scripts/build-nd-structures.mjs",
+    "data:nid": "node scripts/build-nid-dams.mjs",
     "batch:dams": "node --experimental-strip-types scripts/batch-dams.mjs",
     "validate:crest": "node --experimental-strip-types scripts/validate-crest.mjs"
   },

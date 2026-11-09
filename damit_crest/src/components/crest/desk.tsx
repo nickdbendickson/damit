@@ -5,6 +5,7 @@ import { datumFlags, floodFlags, warningKey, type Warning } from "@/lib/crest/wa
 import { locationProblem } from "@/lib/crest/guided";
 import { DEFAULT_ALGORITHMS, handoffDam } from "@/lib/crest/handoff";
 import { choiceKey, choiceText, classifyReceptors, receptorKey, reportLead } from "@/lib/crest/classify-receptors";
+import { crestApiHeaders } from "@/lib/crest/desktop-server";
 import { ClassificationPanel } from "@/components/crest/ClassificationPanel";
 import { lookupPads, padPoints, padsToRetry, resetFailedPads } from "@/lib/crest/nd911-pads";
 import { exportDamJson, exportHydrographCsv, generateLisfloodPackage } from "@/lib/crest/export";
@@ -58,7 +59,7 @@ import { layerOfRecord } from "@/lib/crest/layer-of-record";
 import { CONFIDENCE_LABEL, triageDam } from "@/lib/crest/triage";
 import { num } from "@/lib/crest/format";
 import { saveText } from "@/lib/crest/save";
-import { demTieOffer, missingForNext, needsDemTie } from "@/lib/crest/nd-dams";
+import { demTieOffer, missingForNext, needsDemTie } from "@/lib/crest/nid-dams";
 import { onOutlineSaveChange, outlineSaveError } from "@/lib/crest/outline-store";
 import { activeDam, hydrateDesk, useDesk, useSaveStatus } from "@/lib/crest/store";
 import type {
@@ -75,7 +76,7 @@ import type {
 import { resolveChoice, screenAgainstChoice } from "@/lib/crest/jurisdiction";
 import { HydroChart, ValleyMap } from "./charts";
 import { useOnline } from "./use-online";
-import { AboutData, FieldTag, NdDamPicker, NidHazardLine, NidRecordPanel, useNdData } from "./NdDamPicker";
+import { AboutData, FieldTag, NidDamPicker, NidHazardLine, NidRecordPanel, useNidData } from "./NidDamPicker";
 import { ResultsStep } from "./ResultsStep";
 import { useAnalysisOfRecord, useResultsSync, useStripOfRecord } from "./results-flow";
 import { PaperReport } from "./PaperReport";
@@ -83,7 +84,6 @@ import { Dashboard } from "./Dashboard";
 import { HybridSetup } from "./HybridSetup";
 import { ViewExport } from "./ViewExport";
 import { ClientOnly } from "./ClientOnly";
-import { StructurePicker } from "./StructurePicker";
 import { TerrainSource } from "./TerrainSource";
 import { ensureDemSource } from "@/lib/crest/dem-source";
 import type { PointRole } from "./MapDraw";
@@ -460,8 +460,7 @@ function RecordStep({ dam, result }: { dam: DamRecord; result: ReturnType<typeof
       <div className="rounded-md border border-line bg-card p-4">
         <h2 className="text-xl">Dam record</h2>
         <div className="mt-3">
-          <NdDamPicker dam={dam} />
-          <StructurePicker />
+          <NidDamPicker dam={dam} />
         </div>
         <NidHazardLine dam={dam} />
         <p className="mt-2 text-sm text-muted">{result.datum.rule}</p>
@@ -1416,8 +1415,8 @@ function ReportStep({ dam, result: deskResult }: { dam: DamRecord; result: Retur
   const update = useDesk((s) => s.update);
   const view = useRef<HTMLElement>(null);
   // The inventory pull dates for the Report's age line, only for a record that came from the inventories.
-  const { data: nd } = useNdData(Boolean(dam.nidId || dam.nidRef));
-  const bundles = nd ? { nidFetchedUtc: nd.nidSource.fetchedUtc, dwrPulledUtc: nd.dwrSource?.pulledUtc ?? null } : undefined;
+  const { data: nd } = useNidData(Boolean(dam.nidId || dam.nidRef));
+  const bundles = nd ? { nidFetchedUtc: nd.nidSource.fetchedUtc, state: nd.state } : undefined;
   return (
     <section ref={view} className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -1505,16 +1504,6 @@ let handoffInfo: HandoffInfo | null = null;
 
 /** Shown until the desktop server answers (or in a page with no server): the compiled-in DamIT defaults. */
 const DEFAULT_ALGS: Record<string, string> = { ...DEFAULT_ALGORITHMS };
-
-/** The desktop server puts a per-launch token in <meta name="damit-token"> of the page it serves; every /api/ call
- * must send it back (desktop/damit_desktop/__main__.py). */
-function crestApiHeaders(json = false): Record<string, string> {
-  const token =
-    typeof document === "undefined"
-      ? ""
-      : (document.querySelector('meta[name="damit-token"]')?.getAttribute("content") ?? "");
-  return { ...(json ? { "Content-Type": "application/json" } : {}), "X-DamIT-Token": token };
-}
 
 function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeof analyze> }) {
   const [, bump] = useState(0);
@@ -1887,7 +1876,6 @@ function SourcesNote({ dam }: { dam: DamRecord }) {
         )}
       </ul>
       {dam.nidRef ? <p className="mt-2 text-xs text-muted">{dam.nidRef.attribution}</p> : null}
-      {dam.nidRef?.dwrAttribution ? <p className="mt-1 text-xs text-muted">{dam.nidRef.dwrAttribution}</p> : null}
     </div>
   );
 }
