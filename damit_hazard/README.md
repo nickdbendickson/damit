@@ -127,6 +127,19 @@ sizes, citations) and `damit_hazard_receptors.gpkg` (one layer per input layer; 
 `src_fid`, `kind`, `type`, `class`, `label`, `adv_class`, `methods`, `depth_ft`, `vel_fps`,
 `dv_ft2s`, `rise_ft`, `flags`, `sampling`), styled by class.
 
+File-path inputs through `processing.run` or the Processing Toolbox leave nothing beside the
+input rasters. Classify checks its parameters and runs with GDAL PAM off
+(`GDAL_PAM_ENABLED=NO`, the previous value restored afterwards), so that path does not write
+`<raster>.aux.xml` next to the files. Limits remain:
+
+* The DamIT Hazard window always passes layers already loaded in the project, and the Toolbox
+  does the same when inputs are picked from the project-layer dropdown. QGIS writes the same
+  `.tif.aux.xml` files just from loading and removing those layers, with no classify at all;
+  this plugin cannot stop that.
+* A bare `qgis_process run damit:classify` still writes the sidecars, because `qgis_process` opens
+  the rasters outside the algorithm's own steps. Set `GDAL_PAM_ENABLED=NO` in its environment.
+  DamIT Crest already does this on its classify call (`qgis_run.classify_env`).
+
 ## Only partly evaluable
 
 * **M1 TM-11 charts:** houses and mobile homes are digitized; passenger vehicles, adults and

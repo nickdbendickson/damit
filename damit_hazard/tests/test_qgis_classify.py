@@ -153,6 +153,53 @@ def test_classify_writes_nothing_beside_its_input_rasters():
     assert gdal.GetConfigOption("GDAL_PAM_ENABLED") == old
 
 
+def _processing():
+    """The QGIS Processing Python module, initialized (its plugins folder put on sys.path if needed)."""
+    import sys
+    try:
+        import processing  # noqa: F401
+    except ImportError:
+        sys.path.append(os.path.join(QgsApplication.pkgDataPath(), "python", "plugins"))
+    try:
+        import processing
+        from processing.core.Processing import Processing
+    except ImportError as e:
+        raise unittest.SkipTest("QGIS Processing plugin not importable: {}".format(e))
+    Processing.initialize()
+    return processing
+
+
+def test_processing_run_writes_nothing_beside_its_input_rasters():
+    """Docs & QA re-test of #13: through processing.run with file-path inputs (as the Toolbox
+    does when paths are typed or browsed), QGIS loads the raster parameters while checking them,
+    before processAlgorithm, and that load used to write <raster>.tif.aux.xml beside the inputs.
+    checkParameterValues now runs with PAM off too. The Hazard window always passes already-loaded
+    project layers; that path is outside this test."""
+    _app()
+    processing = _processing()
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    src = os.path.join(d, "source_run")
+    os.makedirs(src)
+    dep, vel = _rasters(src)
+    before = sorted(os.listdir(src))
+    s, p, r = _layers(d)
+    from damit_hazard.engine import catalog as C
+    pids = [None] + list(C.load()["presets"])
+    old = gdal.GetConfigOption("GDAL_PAM_ENABLED")
+    out = os.path.join(d, "out")
+    res = processing.run("damit:classify", {
+        "PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep,
+        "VELOCITY": vel, "METRES": True, "STRUCTURES": s, "FACILITIES": p, "ROADS": r,
+        "OUTPUT": out})
+    assert res["CLASS"] == "High", res
+    import gc
+    gc.collect()
+    assert sorted(os.listdir(src)) == before, os.listdir(src)
+    assert not [f for f in os.listdir(src) if f.endswith(".aux.xml")]
+    assert os.path.isfile(os.path.join(out, "damit_hazard_report.json"))
+    assert gdal.GetConfigOption("GDAL_PAM_ENABLED") == old
+
+
 def test_preset_id_and_alias_headless():
     """PRESET_ID takes a preset ID or alias (USBR or USBR_TM11) and wins over the PRESET list;
     the list shows 'ID: label'; an unknown ID fails with the known ones listed."""
