@@ -60,7 +60,7 @@ pages 18–30:
 | `scenarios.json` | Scenarios S1–S7 (pool rule, dam fields each needs) and domain cutoffs D1, D2 |
 | `modifiers.json` | Modifiers R1–R10 |
 | `labels.json` | Class-label normalization (ordinal 0 Minimal … 4 Extremely High, local equivalents) |
-| `hazard.json` | DamIT Hazard's engine profile: receptor-type vocabulary, TM-11 chart assignment, sampling defaults, per-preset notes. Repeats no threshold of the other files |
+| `hazard.json` | DamIT Hazard's engine profile: receptor-type vocabulary, TM-11 chart assignment, sampling defaults, per-preset notes. Repeats no threshold of the other files and holds no rule DamIT Screener would miss |
 | `presets.json` | FEMA 333, USBR (ACER TM-11), BIA, NRCS, North Dakota (REG_05.2026), Nebraska, New York, Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska |
 
 Preset IDs may have aliases (`presets.json` `aliases`): `USBR_TM11` is accepted everywhere `USBR` is (Screener
@@ -76,6 +76,28 @@ document has a dash (no confirmed method) the preset falls back to M13 and engin
 confirms no scenario, the user must pick one and the run is flagged. M1's depth–velocity chart curves are not
 digitized in the catalog: M1 reads a per-structure `m1_zone` (from DamIT Hazard or the engineer) and is
 blocked, with a flag, on a 1D run when the preset requires 2D.
+
+#### Decisions recorded in catalog 2026.11.09.3
+
+These were open questions in PR #5. They are catalog data, so DamIT Hazard and DamIT Screener (and Hazard
+Lite, which uses the same evaluator) apply them the same way.
+
+* **USBR M1.** M1 marks the lives in jeopardy (habitable structures in the high-danger zone) and M5 sets the
+  class: 1–6 Significant, 7 or more High. In `presets.json`, the USBR preset gives M1 `class_zones: []`, so M1
+  cannot return High by itself. Other presets keep the general M1 rule (high-danger zone → High).
+* **M3 institutions.** The Significant / Low split uses depth above the foundation ground line, and the High
+  test (2 ft, DV 15) uses depth above the lowest occupied floor. These are the catalog's existing M3 rules and
+  values. DamIT Hazard now reads each M3 row's datums from those rules instead of using the floor for both.
+  M10b uses the same datums.
+* **Status marks.** A preset's document status is `presets.json` `status` (allowed values: `status_values`).
+  NRCS is `unverified` because its hazard-definition wording is unverified, and New York is `draft` because
+  TOGS 3.1.5 is marked DRAFT. `resolve_preset` returns the status and raises a `preset_status` flag, and
+  DamIT Hazard shows it beside the preset name. Methods stay `as_documented`, so DamIT Hazard's older
+  method-level draft marks (M4b, M8d, M8f, M9c, M10a, M11c, M12b, D1; M13 unverified) are not restored: they
+  came from the NY and NRCS presets.
+* **New York R2 / R8.** `modifiers.json` adds R2 `floor_presumption` (default false) and R8 `variant` (default
+  `storage_limit`). New York's `modifier_overrides` set `floor_presumption: true` and `lowering_from_high`.
+  Before, these were only in `hazard.json`, which DamIT Screener does not read.
 
 ### Preset mode and custom mode
 

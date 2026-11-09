@@ -234,5 +234,46 @@ class NidOnly(unittest.TestCase):
         self.assertEqual(HO.validate(pkg), [])
 
 
+
+class CatalogDecisions(unittest.TestCase):
+    """The Screener's preliminary suggestion and preflight read PR #5's decisions from DamIT Catalog."""
+
+    def setUp(self):
+        os.environ.pop(C.ENV_DIR, None)
+        self.work = tempfile.mkdtemp(prefix="damit_scr_dec_")
+        self.cat = C.load()
+
+    def tearDown(self):
+        shutil.rmtree(self.work, ignore_errors=True)
+
+    def test_preset_status_surfaces_in_preflight(self):
+        dams, _ = ST.prepare([raw_dam()], FMAP)
+        for pid in ("NRCS", "NY"):
+            checks, _, cfg = WF.preflight(self.work, dict(WF.DEFAULT_SETTINGS, preset=pid), dams, [])
+            self.assertEqual(cfg["status"], self.cat.presets[pid]["status"])
+            st = [c for c in checks if c["title"] == "Catalog flag: preset_status"]
+            self.assertEqual(len(st), 1, pid)
+            self.assertEqual(st[0]["status"], WF.WARN)
+            self.assertIn("(" + self.cat.presets[pid]["status"] + ")", st[0]["detail"])
+        checks, _, _ = WF.preflight(self.work, dict(WF.DEFAULT_SETTINGS, preset="ND"), dams, [])
+        self.assertFalse([c for c in checks if c["title"] == "Catalog flag: preset_status"])
+
+    def test_usbr_suggestion_m1_marks_m5_classes(self):
+        cfg = self.cat.resolve_preset("USBR")
+        for n, want in ((3, "Significant"), (7, "High")):
+            rec = {"id": "h", "receptor_type": "structure", "structure_type": "home", "habitable": True,
+                   "depth_ground_ft": 6.5, "velocity_fps": 1.0, "m1_zone": "high_danger", "occupants": n}
+            st = ST.suggest(self.cat, cfg, {}, [rec], {"model_dimension": "2D"})
+            self.assertEqual(st["screening"]["suggested_label"], want, n)
+            self.assertEqual([d["method"] for d in st["screening"]["driving"]], ["M5"])
+
+    def test_ny_r8_reads_existing_class(self):
+        cfg = self.cat.resolve_preset("NY")
+        rec = {"id": "h", "receptor_type": "structure", "structure_type": "home", "habitable": True,
+               "depth_ground_ft": 0.5, "velocity_fps": 0.1, "m1_zone": "low_danger"}
+        st = ST.suggest(self.cat, cfg, {"existing_class": "Class C"}, [rec], {"model_dimension": "2D"})
+        self.assertEqual(st["screening"]["suggested_label"], "Class C")
+        self.assertIn("R8", [m["id"] for m in st["screening"]["modifiers_applied"]])
+
 if __name__ == "__main__":
     unittest.main()

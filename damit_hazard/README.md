@@ -56,9 +56,11 @@ translates the catalog to the classifier's configuration:
 * `hazard.json` (in DamIT Catalog): only what the Appendix A files do not express — the
   receptor-type vocabulary of Hazard's layers, which TM-11 chart applies to which receptor,
   sampling defaults (5 ft edge ring, 20 ft point disc, 10 ft line step), the M13 type →
-  descriptor guesses, and per-preset notes and switches (e.g. USBR: M1 marks lives for M5 and
-  returns no class itself; New York: R2 floor presumption, R8 lowering-from-High). A test
-  checks that it repeats no parameter the other files carry.
+  descriptor guesses, per-preset notes, and which catalog M3 rule sets each M3 row's datums. A
+  test checks that it repeats no parameter the other files carry. The USBR M1 reading (M1 marks
+  lives for M5 and returns no class itself: `class_zones: []`), New York's R2 floor presumption
+  and R8 lowering-from-High, and the preset status marks are in `presets.json` /
+  `modifiers.json`, so DamIT Screener applies them too (catalog 2026.11.09.3).
 * `damit_hazard/data/tm11_charts.json` stays here: the digitized TM-11 curves.
 
 Edit a copy of DamIT Catalog's `data/` and set `DAMIT_CATALOG_DIR` to change presets or
@@ -136,8 +138,12 @@ sizes, citations) and `damit_hazard_receptors.gpkg` (one layer per input layer; 
   receptor is flagged.
 * **M8f** isolation needs `isolates_homes` / `crossings_failed` attributes; no network
   analysis is done.
-* Draft, secondary or unverified items follow DamIT Catalog's verification fields: the BIA
-  (secondary), NRCS (unverified) and New York (draft) presets are marked beside their names.
+* Draft, secondary or unverified items follow DamIT Catalog's fields: preset `status` in
+  `presets.json` (NRCS unverified, New York draft) and per-method marks (BIA M5 secondary). Those
+  presets are marked beside their names. Methods are as documented, with no method-level draft marks.
+* **M3 institutions:** Significant / Low is split at the foundation ground line, and High
+  (2 ft or DV 15) is tested at the lowest occupied floor. The datums come from DamIT Catalog's M3
+  rules. M10b uses the same datums.
 
 ## Tests
 

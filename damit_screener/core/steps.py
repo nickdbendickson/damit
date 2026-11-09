@@ -323,7 +323,8 @@ def suggest(cat, config, dam, receptors, summary=None, apply_advisories=False):
                     "the finished run)", screening={"status": "not_computed", "suggested_ordinal": None,
                                                     "suggested_label": None, "driving": [], "flags": []})
     summ = {"storage_acft": dam.get("storage_acft"), "downstream_dam_class": dam.get("downstream_dam_class"),
-            "new_dam": str(dam.get("new_or_existing") or "").lower() == "new"}
+            "new_dam": str(dam.get("new_or_existing") or "").lower() == "new",
+            "current_class": dam.get("existing_class")}            # R8 lowering-from-High (New York)
     summ.update(summary or {})
     res = ev.evaluate(cat, config, receptors, summ, apply_advisories=apply_advisories)
     res["status"] = "computed_preliminary"

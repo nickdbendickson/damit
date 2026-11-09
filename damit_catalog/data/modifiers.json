@@ -20,7 +20,11 @@
    "strength": "rule",
    "source": "North Dakota; New York",
    "evaluation": "auto",
-   "appendix_ref": "A.5 p.26-27"
+   "appendix_ref": "A.5 p.26-27",
+   "params": {
+    "floor_presumption": false
+   },
+   "notes": "floor_presumption true (New York): a home shown flooded with no floor data is taken as flooded above its lowest occupied floor (its ground depth is used at the floor datum). false: no presumption; a missing floor elevation is a missing input."
   },
   "R3": {
    "name": "No evacuation credit",
@@ -82,8 +86,10 @@
    "evaluation": "auto",
    "appendix_ref": "A.5 p.26-27",
    "params": {
-    "storage_acft_limit": 200
-   }
+    "storage_acft_limit": 200,
+    "variant": "storage_limit"
+   },
+   "notes": "variant storage_limit (North Dakota): no breach model and storage at or over storage_acft_limit (or unknown) -> High. variant lowering_from_high (New York): a dam whose current class is High is not lowered unless the analysis is TM-11-based unsteady modeling (analysis = unsteady_tm11)."
   },
   "R9": {
    "name": "Incremental damage analysis scope",

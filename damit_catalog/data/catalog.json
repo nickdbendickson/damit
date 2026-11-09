@@ -1,7 +1,7 @@
 {
  "schema": "damit.catalog",
  "schema_version": 1,
- "catalog_version": "2026.11.09.2",
+ "catalog_version": "2026.11.09.3",
  "source": {
   "title": "US Dam Hazard Classification - Corrected Edition",
   "date": "2026-11-09",
@@ -50,6 +50,7 @@
   "advisory_only_hit",
   "outside_routed_domain",
   "unverified_or_secondary",
+  "preset_status",
   "scenario_unconfirmed",
   "method_fallback_m13",
   "manual_method"

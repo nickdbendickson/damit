@@ -233,6 +233,155 @@ class DataDriven(unittest.TestCase):
             C.load(self.dir)
 
 
+
+def inst(found, floor, dv=1.0, ground=None, **kw):
+    """An institution with depths at its foundation ground line and its lowest occupied floor."""
+    r = {"id": kw.pop("id", "s"), "receptor_type": "structure", "structure_type": "institution", "habitable": True,
+         "depth_ground_ft": found if ground is None else ground, "depth_foundation_ft": found,
+         "depth_floor_ft": floor, "dv_ft2s": dv}
+    r.update(kw)
+    return r
+
+
+class AcceptedRecommendations(unittest.TestCase):
+    """Nick's decisions on PR #5's open questions (catalog 2026.11.09.3): USBR M1 marks lives and M5 sets
+    the class; M3 institutions split Significant / Low at the foundation and test High at the floor;
+    preset status (NRCS unverified, NY draft) lives in presets.json; NY R2 / R8 variants are catalog data."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.pop(C.ENV_DIR, None)
+        cls.cat = C.load()
+
+    def _m(self, r, mid):
+        return [h for h in r["hits"] if h["method"] == mid]
+
+    def test_usbr_m1_does_not_assign_high_alone(self):
+        self.assertEqual(self.cat.presets["USBR"]["methods"]["M1"]["class_zones"], [])
+        cfg = self.cat.resolve_preset("USBR")
+        self.assertEqual(cfg["methods"]["M1"]["params"]["class_zones"], [])
+        summ = {"model_dimension": "2D"}
+        for n, want in ((1, 2), (6, 2), (7, 3), (12, 3)):
+            r = E.evaluate(self.cat, cfg, [home(6.5, m1_zone="high_danger", occupants=n)], summ)
+            self.assertEqual(r["suggested_ordinal"], want, n)
+            self.assertEqual(self._m(r, "M1"), [], n)            # M1 returns no class
+            self.assertEqual([h["method"] for h in r["driving"]], ["M5"], n)
+        # lives spread over several high-danger structures are summed by M5
+        recs = [home(6.5, id="a", m1_zone="high_danger", occupants=4), home(6.5, id="b", m1_zone="high_danger",
+                                                                           occupants=3)]
+        self.assertEqual(E.evaluate(self.cat, cfg, recs, summ)["suggested_ordinal"], 3)
+        # judgment zone: still flagged, not counted
+        r = E.evaluate(self.cat, cfg, [home(4.0, m1_zone="judgment", occupants=9)], summ)
+        self.assertIn("m1_judgment_zone", [f["code"] for f in r["flags"]])
+        self.assertIsNone(r["suggested_ordinal"])
+
+    def test_m1_still_assigns_high_where_the_preset_says_so(self):
+        for pid in ("ND",):
+            r = E.evaluate(self.cat, self.cat.resolve_preset(pid), [home(6.5, m1_zone="high_danger")],
+                           {"model_dimension": "2D", "hydraulics_source": "breach_model"})
+            self.assertEqual(r["suggested_ordinal"], 3, pid)
+            self.assertEqual(self._m(r, "M1")[0]["class"], 3, pid)
+        cfg = self.cat.resolve_custom(["M1"], ["S1"])            # catalog default: high_danger returns High
+        r = E.evaluate(self.cat, cfg, [home(6.5, m1_zone="high_danger")], {"model_dimension": "2D"})
+        self.assertEqual(r["suggested_ordinal"], 3)
+
+    def test_m3_institution_datums(self):
+        m3 = self.cat.methods["M3"]
+        rules = {r["label"]: json.dumps(r["when"]) for r in m3["receptor_rules"]}
+        self.assertIn("depth_floor_ft", rules["institution High"])
+        self.assertNotIn("depth_foundation_ft", rules["institution High"])
+        self.assertIn("depth_foundation_ft", rules["institution Significant"])
+        self.assertNotIn("depth_floor_ft", rules["institution Significant"])
+        self.assertEqual((m3["params"]["institution_high_depth_ft"], m3["params"]["institution_high_dv"]), (2.0, 15))
+        cfg = self.cat.resolve_preset("NE")
+
+        def cls(found, floor, dv=1.0, ground=None):
+            r = E.evaluate(self.cat, cfg, [inst(found, floor, dv, ground)], {})
+            return max([h["class"] for h in self._m(r, "M3")] or [None])
+        self.assertEqual(cls(1.0, -0.5), 2)      # water above the foundation, below the floor: Significant
+        self.assertEqual(cls(0.0, -1.5, ground=0.3), 1)   # wet ground, at the foundation line: Low
+        self.assertEqual(cls(3.0, 1.9), 2)       # 3 ft at the foundation but under 2 ft at the floor: not High
+        self.assertEqual(cls(3.5, 2.0), 3)       # 2 ft at the floor: High
+        self.assertEqual(cls(0.5, -1.0, dv=15), 3)
+        r = E.evaluate(self.cat, self.cat.resolve_custom(["M10b"], ["S1"]), [inst(3.0, 1.9)], {})
+        self.assertEqual(r["suggested_ordinal"], 2)               # M10b reads the same datums
+
+    def test_preset_status_is_catalog_data(self):
+        self.assertEqual(self.cat.presets["NRCS"]["status"], "unverified")
+        self.assertEqual(self.cat.presets["NY"]["status"], "draft")
+        self.assertEqual(self.cat.preset_status("NRCS"), "unverified")
+        self.assertIsNone(self.cat.preset_status("ND"))
+        for pid in ("NRCS", "NY"):
+            cfg = self.cat.resolve_preset(pid)
+            self.assertEqual(cfg["status"], self.cat.presets[pid]["status"])
+            self.assertIn("preset_status", [f["code"] for f in cfg["flags"]], pid)
+        self.assertNotIn("preset_status", [f["code"] for f in self.cat.resolve_preset("ND")["flags"]])
+        with open(os.path.join(PKG, "data", "catalog.json"), encoding="utf-8") as fh:
+            self.assertIn("preset_status", json.load(fh)["validation_flags"])
+        # methods stay as documented: Hazard's old method-level draft / unverified marks are not restored
+        marked = {mid: m["verification"] for mid, m in self.cat.methods.items() if m["verification"] != "as_documented"}
+        self.assertEqual(marked, {})
+
+    def test_ny_r2_floor_presumption_and_r8_lowering(self):
+        self.assertFalse(self.cat.modifiers["R2"]["params"]["floor_presumption"])
+        self.assertEqual(self.cat.modifiers["R8"]["params"]["variant"], "storage_limit")
+        ny = self.cat.resolve_preset("NY")
+        mods = {m["id"]: m for m in ny["modifiers"]}
+        self.assertTrue(mods["R2"]["params"]["floor_presumption"])
+        self.assertEqual(mods["R8"]["params"]["variant"], "lowering_from_high")
+        nd = {m["id"]: m for m in self.cat.resolve_preset("ND")["modifiers"]}
+        self.assertFalse(nd["R2"]["params"]["floor_presumption"])
+        rec = dict(home(0.5), m1_zone="low_danger")
+        r = E.evaluate(self.cat, ny, [rec], {"model_dimension": "2D"})
+        self.assertIn("r2_presumption", [f["code"] for f in r["flags"]])
+        cfg = self.cat.resolve_custom(["M4b"], ["S1"], ["R2"])
+        r = E.evaluate(self.cat, cfg, [rec], {"model_dimension": "2D"})
+        self.assertNotIn("r2_presumption", [f["code"] for f in r["flags"]])
+        # R8, New York: a High dam is not lowered without TM-11 unsteady modeling
+        for cur in (3, "Class C", "High"):
+            r = E.evaluate(self.cat, ny, [rec], {"model_dimension": "2D", "current_class": cur,
+                                                 "analysis": "breach_model"})
+            self.assertEqual(r["suggested_ordinal"], 3, cur)
+            self.assertIn("R8", [m["id"] for m in r["modifiers_applied"]])
+        r = E.evaluate(self.cat, ny, [rec], {"model_dimension": "2D", "current_class": 3, "analysis": "unsteady_tm11"})
+        self.assertNotEqual(r["suggested_ordinal"], 3)
+        r = E.evaluate(self.cat, ny, [rec], {"model_dimension": "2D", "current_class": 1, "hydraulics_source":
+                                             "simplified", "storage_acft": 900})
+        self.assertNotEqual(r["suggested_ordinal"], 3)            # NY has no storage-limit variant
+
+
+class StatusDataDriven(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="damit_cat_st_")
+        self.dir = os.path.join(self.tmp, "data")
+        shutil.copytree(os.path.join(PKG, "data"), self.dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _edit(self, fn):
+        p = os.path.join(self.dir, "presets.json")
+        with open(p, encoding="utf-8") as fh:
+            d = json.load(fh)
+        fn(d)
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(d, fh)
+
+    def test_status_read_from_data(self):
+        def edit(d):
+            d["presets"]["ND"]["status"] = "draft"
+            d["presets"]["NY"].pop("status")
+        self._edit(edit)
+        cat = C.load(self.dir)
+        self.assertEqual(cat.resolve_preset("ND")["status"], "draft")
+        self.assertIsNone(cat.resolve_preset("NY")["status"])
+        self.assertNotIn("preset_status", [f["code"] for f in cat.resolve_preset("NY")["flags"]])
+
+    def test_unknown_status_rejected(self):
+        self._edit(lambda d: d["presets"]["ND"].__setitem__("status", "rumoured"))
+        with self.assertRaises(C.CatalogError):
+            C.load(self.dir)
+
 class Combination(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

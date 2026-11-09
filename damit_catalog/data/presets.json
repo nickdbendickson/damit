@@ -7,6 +7,11 @@
   "USBR_TM11": "USBR"
  },
  "aliases_note": "Alternate preset IDs accepted everywhere a preset ID is (resolve_preset, hand-off validation, screener PRESET, damit:classify PRESET_ID). Each alias maps to one stored ID; a run records the stored ID.",
+ "status_values": {
+  "unverified": "The source document marks the preset's governing wording (Unverified); confirm before relying on it.",
+  "draft": "The governing guidance is itself marked DRAFT in the source document."
+ },
+ "status_note": "A preset 'status' marks the whole preset (its governing document), not a method: the methods it uses stay as documented in methods.json. Method-level marks for one preset go in the preset's 'verification' map (e.g. BIA M5 secondary).",
  "presets": {
   "FEMA333": {
    "label": "FEMA 333 baseline",
@@ -52,7 +57,8 @@
       "passenger_vehicles",
       "adults",
       "children"
-     ]
+     ],
+     "class_zones": []
     },
     "M5": {
      "sig_min": 1,
@@ -80,7 +86,8 @@
      "when": "borderline dams",
      "verification": "unverified"
     }
-   ]
+   ],
+   "notes": "M1 marks the lives in jeopardy (habitable structures in the high-danger zone) that M5 counts (TM-11: 1-6 Significant, more than 6 High); M1 returns no class by itself (class_zones empty)."
   },
   "BIA": {
    "label": "BIA",
@@ -130,7 +137,9 @@
     "2": "Significant",
     "3": "High"
    },
-   "citation": "NRCS TR-60 / NRCS definitions"
+   "citation": "NRCS TR-60 / NRCS definitions",
+   "status": "unverified",
+   "notes": "NRCS hazard-definition wording (NEM \u00a7 520.21) is (unverified) in the source document."
   },
   "ND": {
    "label": "North Dakota (REG_05.2026)",
@@ -268,14 +277,26 @@
     "3": "Class C"
    },
    "citation": "TOGS 3.1.5 (draft)",
+   "status": "draft",
    "domain_cutoffs": [
     "D1"
    ],
    "modifier_overrides": {
+    "R2": {
+     "params": {
+      "floor_presumption": true
+     }
+    },
     "R4": {
      "strength": "advisory"
+    },
+    "R8": {
+     "params": {
+      "variant": "lowering_from_high"
+     }
     }
-   }
+   },
+   "notes": "DOW TOGS 3.1.5 is still marked DRAFT."
   },
   "VA": {
    "label": "Virginia",

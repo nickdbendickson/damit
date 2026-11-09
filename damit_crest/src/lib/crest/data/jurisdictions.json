@@ -1,7 +1,7 @@
 {
   "generatedFrom": "damit_catalog/data (python3 -m damit_hazard.engine.catalog --export)",
   "note": "Display index only (ids, names, label maps). Thresholds and parameters live in the hazard catalog that damit:classify reads; regenerate with `node scripts/sync-jurisdictions.mjs`.",
-  "catalogVersion": "2026.11.09.2",
+  "catalogVersion": "2026.11.09.3",
   "sourceDocument": "US Dam Hazard Classification - Corrected Edition (2026-11-09), Appendix A pp. 18-30",
   "disclaimer": "Informational screening aid, not legal or engineering advice and not a regulatory determination. Output is a suggested classification only. The engineer of record and the regulating agency make the determination. Rules change: the current statutes, rules and agency guidance control. Items marked (unverified) or (secondary) should be confirmed before a preset is relied on, and every suggestion still needs an engineer's review.",
   "classes": {
