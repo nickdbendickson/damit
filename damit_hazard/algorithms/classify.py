@@ -255,6 +255,13 @@ class Classify(QgsProcessingAlgorithm):
 
     # ------------------------------------------------------------------- main -----------
     def processAlgorithm(self, p, context, feedback):
+        # The rasters are inputs from a model run (often a product-of-record folder): open them with
+        # GDAL PAM off, so neither our reader nor QGIS (raster layer statistics) writes a
+        # <raster>.aux.xml beside them. Outputs go to OUTPUT only.
+        with S.no_pam():
+            return self._process(p, context, feedback)
+
+    def _process(self, p, context, feedback):
         cat = _cat()
         cfg = self._config(cat, p, context)
         out_dir = self.parameterAsString(p, "OUTPUT", context)

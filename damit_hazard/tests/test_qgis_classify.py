@@ -125,6 +125,34 @@ def test_nd_preset_headless():
     assert os.path.isfile(os.path.join(out, "damit_hazard_report.html"))
 
 
+def test_classify_writes_nothing_beside_its_input_rasters():
+    """GUI chain walk 2026-11-09: classify on read-only model rasters left <raster>.tif.aux.xml
+    (QGIS layer statistics through GDAL PAM) in the product-of-record folder. The inputs sit in
+    their own folder here; after the run (and after the layers are released) that folder holds
+    exactly the rasters it held before, and the PAM option is back as it was."""
+    _app()
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    src = os.path.join(d, "source_run")
+    os.makedirs(src)
+    dep, vel = _rasters(src)
+    before = sorted(os.listdir(src))
+    s, p, r = _layers(d)
+    from damit_hazard.engine import catalog as C
+    pids = [None] + list(C.load()["presets"])
+    old = gdal.GetConfigOption("GDAL_PAM_ENABLED")
+    out = os.path.join(d, "out")
+    res = _alg_run({"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0,
+                    "DEPTH": dep, "VELOCITY": vel, "METRES": True, "STRUCTURES": s,
+                    "FACILITIES": p, "ROADS": r, "OUTPUT": out})
+    assert res["CLASS"] == "High", res
+    import gc
+    gc.collect()
+    assert sorted(os.listdir(src)) == before, os.listdir(src)
+    assert not [f for f in os.listdir(src) if f.endswith(".aux.xml")]
+    assert os.path.isfile(os.path.join(out, "damit_hazard_report.json"))
+    assert gdal.GetConfigOption("GDAL_PAM_ENABLED") == old
+
+
 def test_preset_id_and_alias_headless():
     """PRESET_ID takes a preset ID or alias (USBR or USBR_TM11) and wins over the PRESET list;
     the list shows 'ID: label'; an unknown ID fails with the known ones listed."""

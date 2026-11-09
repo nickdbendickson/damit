@@ -271,15 +271,25 @@ def _collect_bounded(stream, head_cap: int = _OUTPUT_HEAD_CHARS, tail_cap: int =
     return text + "".join(tail)
 
 
-def _run(cmd: list[str], timeout: float | None, cancel: threading.Event | None = None) -> tuple[int, str]:
+def classify_env() -> dict[str, str]:
+    """Environment for the classify qgis_process: GDAL PAM off. The depth / velocity / WSE / arrival rasters are a
+    model run's (often a product-of-record folder) and are read only; with PAM on, GDAL and QGIS (layer statistics)
+    write <raster>.aux.xml sidecars beside them. damit:classify writes only its OUTPUT folder (reports, GeoPackage)."""
+    return {**os.environ, "GDAL_PAM_ENABLED": "NO"}
+
+
+def _run(
+    cmd: list[str], timeout: float | None, cancel: threading.Event | None = None, env: dict[str, str] | None = None
+) -> tuple[int, str]:
     """Run cmd and return (exit code, output). timeout (seconds) gives 124, cancel.set() gives 130;
-    both stop the process (and its children) and keep the output so far. Very long output is kept head + tail only."""
+    both stop the process (and its children) and keep the output so far. Very long output is kept head + tail only.
+    env: the child's environment (None = this process's)."""
     kwargs = {"start_new_session": True} if os.name == "posix" else {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                errors="replace", **kwargs)
+                                errors="replace", env=env, **kwargs)
     except OSError as exc:
         return 127, f"Could not start {cmd[0]}: {exc}\n"
     captured: list[str] = []
@@ -1088,7 +1098,7 @@ def run_classify(
     cmd = [exe, "run", alg, *_args(exe, alg, values, log)]
     log(f"Classification for {chosen}: {' '.join(cmd[1:3])} judges the downstream receptors with these methods.")
     log("The result is a suggested class; the engineer of record and the regulating agency make the determination.")
-    code, text = _run(cmd, timeout=None, cancel=cancel)
+    code, text = _run(cmd, timeout=None, cancel=cancel, env=classify_env())
     log(text.rstrip())
     if code == STOPPED_CANCEL:
         return {**base, "ok": False, "stopped": True, "cancelled": True}

@@ -99,6 +99,7 @@ if any(a.endswith(":classify") for a in args):
         sys.exit(1)
     out = Path(vals["OUTPUT"])
     out.mkdir(parents=True, exist_ok=True)
+    (out / "fake_env.json").write_text(json.dumps({"GDAL_PAM_ENABLED": os.environ.get("GDAL_PAM_ENABLED")}))
     preset = {"1": "FEMA333", "2": "NE", "3": "ND"}.get(vals.get("PRESET", ""))
     (out / "damit_hazard_report.json").write_text(json.dumps({
         "suggested_class": 2, "suggested_label": "Significant", "generic_label": "Significant",
@@ -515,6 +516,19 @@ class ClassificationTests(Base):
         self.assertEqual(record["storage_acft"], 300)
         self.assertIn("--DAM_JSON=" + str(Path(result["folder"]) / "damit_dam.json"), run)
         self.assertEqual(result["suggestedClass"], "Significant")
+
+    def test_classify_runs_with_gdal_pam_off(self):
+        # GUI chain walk 2026-11-09: classify left <raster>.tif.aux.xml in a read-only run folder. The classify
+        # qgis_process gets GDAL_PAM_ENABLED=NO; the desk's own environment is untouched.
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(),
+               "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        before = os.environ.get("GDAL_PAM_ENABLED")
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(result["ok"], self.lines)
+        env = json.loads((Path(result["folder"]) / "classify" / "fake_env.json").read_text(encoding="utf-8"))
+        self.assertEqual(env["GDAL_PAM_ENABLED"], "NO")
+        self.assertEqual(os.environ.get("GDAL_PAM_ENABLED"), before)
+        self.assertEqual(qr.classify_env()["GDAL_PAM_ENABLED"], "NO")
 
     def test_classify_record_maps_the_class_of_record_and_writes_is_new(self):
         dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(), "classOfRecord": "ND MEDIUM (NID hazard Significant)",

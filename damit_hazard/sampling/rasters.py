@@ -13,7 +13,12 @@ Per receptor: depth_ft (max), velocity_fps (max over wet cells), dv_ft2s (DV ras
 the largest d x v of one cell: dv_source "cells"), cells [(d, v)] of the wet cells, wse_ft (max),
 rise_ft (max of depth - non-breach depth), arrival_h (min), in_domain (False when the receptor
 lies outside the depth raster).
+
+The input rasters are someone else's run (often a product-of-record folder) and are opened read
+only with GDAL PAM off (no_pam): nothing, not even a .aux.xml statistics sidecar, is written
+beside them.
 """
+import contextlib
 import math
 
 import numpy as np
@@ -23,14 +28,38 @@ from . import fastsample as FS
 FT_PER_M = 3.280839895013123
 
 
+PAM_OPTION = "GDAL_PAM_ENABLED"
+
+
+@contextlib.contextmanager
+def no_pam():
+    """GDAL PAM off while the block runs (process-wide GDAL config option), then the previous
+    value back. A dataset whose PAM is first touched inside the block (opened, statistics
+    computed) keeps PAM off until it is closed, so neither GDAL nor QGIS (layer statistics for the
+    renderer) writes <raster>.aux.xml beside an input. Wrap the whole read, not just the open."""
+    try:
+        from osgeo import gdal
+    except ImportError:          # no GDAL: nothing can write PAM either
+        yield
+        return
+    old = gdal.GetConfigOption(PAM_OPTION)
+    gdal.SetConfigOption(PAM_OPTION, "NO")
+    try:
+        yield
+    finally:
+        gdal.SetConfigOption(PAM_OPTION, old)
+
+
 class Raster(object):
-    """One band of a GDAL raster, NoData as NaN, values scaled (m -> ft)."""
+    """One band of a GDAL raster, NoData as NaN, values scaled (m -> ft). Opened read only with
+    PAM off (no_pam); it only reads pixels, so nothing is written beside the input."""
     backend = "gdal"
 
     def __init__(self, path, scale=1.0):
         from osgeo import gdal
         self.path = path
-        self.ds = gdal.Open(path)
+        with no_pam():
+            self.ds = gdal.OpenEx(path, gdal.OF_RASTER | gdal.OF_READONLY)
         if self.ds is None:
             raise IOError("cannot open raster " + str(path))
         self.band = self.ds.GetRasterBand(1)

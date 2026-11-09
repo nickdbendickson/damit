@@ -97,3 +97,29 @@ def test_fastsample_point_disc():
     xs, ys = cs.centres(gt)
     assert all((x - 5) ** 2 + (y - 5) ** 2 <= 1.5 ** 2 + 1e-9 for x, y in zip(xs, ys))
     assert len(xs) == 4
+
+
+def test_reader_and_no_pam_write_no_sidecar():
+    """Input rasters are read with PAM off: the reader leaves nothing beside the raster, and
+    statistics computed inside no_pam (as QGIS does for a layer during damit:classify) write no
+    .aux.xml; no_pam puts the option back."""
+    d = tempfile.mkdtemp(prefix="damit_pam_")
+    path = _tif(os.path.join(d, "hmax.tif"), np.ones((10, 10), np.float32))
+    old = gdal.GetConfigOption("GDAL_PAM_ENABLED")
+    r = S.Raster(path)
+    assert r.values_at([0.5], [99.5])[0] == 1.0
+    r.band = r.ds = None
+    assert sorted(os.listdir(d)) == ["hmax.tif"], os.listdir(d)
+    with S.no_pam():
+        assert gdal.GetConfigOption("GDAL_PAM_ENABLED") == "NO"
+        ds = gdal.Open(path)
+        ds.GetRasterBand(1).ComputeStatistics(False)
+        ds = None
+    assert gdal.GetConfigOption("GDAL_PAM_ENABLED") == old
+    assert sorted(os.listdir(d)) == ["hmax.tif"], os.listdir(d)
+    # Control: outside no_pam the same statistics do write the sidecar (what classify used to do).
+    if old is None:
+        ds = gdal.Open(path)
+        ds.GetRasterBand(1).ComputeStatistics(False)
+        ds = None
+        assert os.path.isfile(path + ".aux.xml")
