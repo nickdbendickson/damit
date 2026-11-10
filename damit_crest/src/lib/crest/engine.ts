@@ -1,7 +1,7 @@
 import { rankReceptor } from "./acer.ts";
 import { type AoiExtent, aoiExtent, downstreamDirection, fmtAc, fmtKm, hasAoi, readAoi } from "./aoi.ts";
 import { isGenericSeed } from "./samples.ts";
-import { vertconShiftFt } from "./vertcon_nd.ts";
+import { vertconShiftFt } from "./vertcon.ts";
 import { warning, warningTexts, type Warning } from "./warnings.ts";
 import { ACFT, ACRE, CFS, FT, froehlich1995Peak, froehlich2008, routedHydrograph, thin } from "./breach.ts";
 import type {
