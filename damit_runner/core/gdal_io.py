@@ -453,10 +453,10 @@ class GdalTerrain:
             return None
         g = self._warp(self.manning_path, bounds, cell, "near")
         if self.manning_lut:
-            from . import nd_data
+            from . import data_conventions
             lut = dict(self.manning_lut)
             lut["default"] = self.default_n
-            g.data = nd_data.nlcd_to_manning(g.data, lut)
+            g.data = data_conventions.nlcd_to_manning(g.data, lut)
             return g
         bad = ~np.isfinite(g.data) | (g.data <= 0) | (g.data > 1.0)
         g.data[bad] = self.default_n
@@ -713,7 +713,7 @@ def nlcd_to_manning_raster(nlcd_path, out_path, lut=None, like_path=None):
     """Write a Manning's n raster from an NLCD class raster (offline). The
     output is on the NLCD grid unless `like_path` is given (a DEM, say), in
     which case it is resampled (nearest) onto that grid first."""
-    from . import nd_data
+    from . import data_conventions
     gdal, _ = _gdal()
     src = GS.open_raster(nlcd_path)
     if like_path:
@@ -730,7 +730,7 @@ def nlcd_to_manning_raster(nlcd_path, out_path, lut=None, like_path=None):
     nd = band.GetNoDataValue()
     if nd is not None:
         codes[codes == nd] = np.nan
-    n = nd_data.nlcd_to_manning(codes, lut or nd_data.manning_lut()).astype(np.float32)
+    n = data_conventions.nlcd_to_manning(codes, lut or data_conventions.manning_lut()).astype(np.float32)
     drv = gdal.GetDriverByName("GTiff")
     if os.path.exists(out_path):
         drv.Delete(out_path)
@@ -742,7 +742,7 @@ def nlcd_to_manning_raster(nlcd_path, out_path, lut=None, like_path=None):
     out.GetRasterBand(1).SetNoDataValue(-9999)
     out = None
     seen = sorted({int(c) for c in np.unique(codes[np.isfinite(codes)])})
-    unknown = [c for c in seen if c not in (lut or nd_data.NLCD_N)]
+    unknown = [c for c in seen if c not in (lut or data_conventions.NLCD_N)]
     return {"out": out_path, "classes": seen, "unknown_classes": unknown}
 
 

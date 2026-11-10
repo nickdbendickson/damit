@@ -1,23 +1,12 @@
-# -*- coding: utf-8 -*-
-"""v3.13.0 (Nick: "downstream slope data is in dwr data"): the dam's downstream slope from its
-ND DWR dam record, for the breach inflow's toe band (workflow._toe_kwargs ->
-terrain.toe_band_for_dam: the band runs out to H x (slope + 1)).
+"""Downstream slope lookup from the dam record, for the breach inflow toe band.
 
-The DWR_dams layer has `downstream_slope` (text): H of H:1V as typed, mostly "3", "2.5",
-"3.0", sometimes "2:1", "2.5;3", "3,3.5,", "4 STEP", "3`", "varies", "0" or a stray number
-("37.5", "80"). parse_ds_slope() reads it; anything it cannot read as a slope of 1:1 to 10:1
-is "not known" (the toe band then uses 3:1 and the run warns).
+The slope (H:1V) comes from the dam's own record (dam.json or GeoPackage).
+parse_ds_slope reads various text formats ("3", "2.5:1", "3,3.5,").
+Anything outside 1:1 to 10:1 is "not known" (the toe band then uses 3:1 and warns).
 
-Order (workflow._toe_kwargs): RunSettings.inflow_toe_ds_slope_h, then the dam's own
-DS_SLOPE / F_DS (DamData.ds_slope_h), then this DWR value (DamData.dwr_ds_slope_h, set by
-apply_to_dam), else 3:1 with a warning. Only the toe band uses the DWR value: the breach
-model and the HEC-RAS embankment keep DS_SLOPE / F_DS as before.
-
-The record is looked up by the dam's DWR structure number (dam.json dwr_structure_id, else the
-digits of a "DWR-2801" dam ID) in, first, the dam folder's DWR dams (Data's "Get data for this
-dam": data/dwr_dams.gpkg in dam.json's data section), then the suite's DWR dams
-(damsuite.suitedata.dwr_layers: the dwr/ drop-in, else the offline pack). Read-only; never
-raises."""
+Order: RunSettings.inflow_toe_ds_slope_h, then the dam's own DS_SLOPE / F_DS
+(DamData.ds_slope_h), then the record's slope field (DamData.dwr_ds_slope_h,
+set by apply_to_dam), else 3:1 with a warning. Read-only; never raises."""
 import math
 import os
 import re

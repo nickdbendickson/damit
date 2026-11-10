@@ -34,7 +34,7 @@ culvert_candidates.csv and had no effect on the flow.
 
 import math
 
-from . import nddot_text as _nt
+from . import culvert_text as _nt
 
 FT = 0.3048
 MATCH_M = 75.0                 # default guess-to-inventory match distance (m)

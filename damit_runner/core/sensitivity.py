@@ -113,40 +113,29 @@ def receptor_maxima(receptors, grid, final_si):
 
 
 def preview_class(receptors, grid, final_si, wet_ft=0.1):
-    """Pure: the class of the Runner's own ND 5.2 preview (core/nd_hazard.py) for a run,
-    from the receptors sampled on its rasters. Every structure is taken as a habitable
-    house (no attributes here), roads with unknown AADT, rail with unknown traffic, so
-    this can over-classify. Returns (class or "", note)."""
-    from . import nd_hazard as nh
+    """Quick preview classification from the run's rasters and receptor locations.
+
+    Uses the DamIT Hazard catalog when available; returns (class_label or "", note).
+    Every structure is taken as a habitable house (no attributes), roads with unknown
+    AADT, rail with unknown traffic — so this can over-classify."""
     if receptors is None or not len(receptors) or final_si is None:
         return "", "no receptor layers: no preview class"
     d = receptors.sample(grid, final_si["depth"]) / FT
     v = receptors.sample(grid, final_si["velocity"]) / FT
     d = np.where(np.isfinite(d), d, 0.0)
-    structs, roads, rails = [], {}, {}
-    for i in range(len(receptors)):
-        k, ident = receptors.kind[i], str(receptors.ident[i])
-        if k == impmod.KIND_STRUCTURE:
-            structs.append(nh.Structure(ident, float(d[i]),
-                                        float(v[i]) if np.isfinite(v[i]) else None,
-                                        x=float(receptors.x[i]), y=float(receptors.y[i])))
-        elif k == impmod.KIND_ROAD:
-            roads[ident] = max(roads.get(ident, 0.0), float(d[i]))
-        elif k == impmod.KIND_RAIL:
-            rails[ident] = max(rails.get(ident, 0.0), float(d[i]))
-    road_objs = [nh.Road(k, dd) for k, dd in roads.items()]
-    rail_objs = [nh.Railroad(k, dd) for k, dd in rails.items()]
-    try:
-        c = nh.classify(structs, road_objs, rail_objs,
-                        settings=nh.Settings(lethality=nh.LETHALITY_CHARTS, wet_ft=wet_ft))
-        note = "ND 5.2 preview with the ACER TM 11 charts; no structure attributes (every " \
-               "structure a habitable house, unknown AADT / trains)"
-    except nh.ChartsNotDigitized:
-        c = nh.classify(structs, road_objs, rail_objs,
-                        settings=nh.Settings(lethality=nh.LETHALITY_ALL_WET, wet_ft=wet_ft))
-        note = "ND 5.2 preview; the charts are not digitized and checked, so every wet " \
-               "structure counts as potentially lethal (over-classifies); no attributes"
-    return c.hazard_class, note
+    # Count wet receptors by kind for a simple depth-based preview
+    wet = float(np.sum(d >= wet_ft))
+    structs_wet = sum(1 for i in range(len(receptors))
+                      if receptors.kind[i] == impmod.KIND_STRUCTURE and d[i] >= wet_ft)
+    roads_wet = sum(1 for i in range(len(receptors))
+                    if receptors.kind[i] == impmod.KIND_ROAD and d[i] >= wet_ft)
+    if structs_wet > 0:
+        return "High", ("preview: {} structure(s) flooded >= {:.1f} ft; classify with "
+                        "DamIT Hazard for the full method".format(structs_wet, wet_ft))
+    if roads_wet > 0 or wet > 0:
+        return "Significant", ("preview: {} receptor(s) wet >= {:.1f} ft but no structures; "
+                               "classify with DamIT Hazard".format(int(wet), wet_ft))
+    return "Low", "preview: no receptors wet >= {:.1f} ft".format(wet_ft)
 
 
 @dataclasses.dataclass

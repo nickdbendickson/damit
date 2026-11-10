@@ -16,7 +16,7 @@ the run report with both values. A "modelled" status is added with the result
      "extent_ft": farthest flooded cell from the dam point (straight line, ft),
      "domain_mi": [width, height], "scenario", "final_model", "breach_occurs"}
 (no "class_preview": the run itself does not classify; the ND 5.2 screening classification
-tool adds its own "classified" status with {"preview": True, "tool": "nd_hazard.py"} - a
+tool adds its own "classified" status with {"preview": True, "tool": "damit_hazard preview"} - a
 preview, never the authority).
 top_of_dam_datum: "DEM" when the run took the top of dam from the DEM or from the tool's
 parameter (whose datum is the DEM's by definition); nothing is written when the value came
@@ -279,13 +279,13 @@ def extent_ft(grid, depth, dam_xy, wet_m=0.003):
     return round(float(np.hypot(xs - dam_xy[0], ys - dam_xy[1]).max()) / 0.3048, 0)
 
 
-PREVIEW_RESULT = {"preview": True, "tool": "nd_hazard.py"}
+PREVIEW_RESULT = {"preview": True, "tool": "damit_hazard preview"}
 
 
 def classified_preview(folder, version=None):
     """The ND 5.2 screening classification ran on this dam folder: add a "classified"
     status to its existing dam.json, marked as a preview (result exactly
-    {"preview": True, "tool": "nd_hazard.py"}) - never the authority, which is ND Dam Hazard.
+    {"preview": True, "tool": "damit_hazard preview"}) - never the authority, which is ND Dam Hazard.
     A folder without dam.json is left alone (no record is created for a preview).
     Returns (state, text): state "added", "skipped" or "error"."""
     rec, problem = load(folder)
@@ -299,7 +299,7 @@ def classified_preview(folder, version=None):
         rec.save()
     except OSError as e:
         return "error", "dam.json could not be written: {}".format(e)
-    return "added", "dam.json: status 'classified' added as a PREVIEW (tool nd_hazard.py); " \
+    return "added", "dam.json: status 'classified' added as a PREVIEW (tool damit_hazard); " \
                     "the classification authority is ND Dam Hazard"
 
 

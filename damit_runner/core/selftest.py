@@ -514,8 +514,8 @@ def check_manning_rasters(case):
     codes, blocks = class_codes()
     q = case.file("nlcd.tif")
     gdal_io.GeoTiffWriter(CRS)(g.like(codes), q)
-    from . import nd_data
-    lut = nd_data.manning_lut(None, 0.07)
+    from . import data_conventions
+    lut = data_conventions.manning_lut(None, 0.07)
     tl = gdal_io.GdalTerrain(case.path, CRS, gdal_io.Z_METERS, q, 0.07, manning_lut=lut)
     ml = tl.manning(case.bounds, case.cell)
     seen = []
@@ -670,12 +670,12 @@ def check_fill_gaps(case):
 
 
 def check_nlcd_raster(case):
-    from . import nd_data
+    from . import data_conventions
     g = case.grid
     codes, blocks = class_codes()
     p = case.file("nlcd_classes.tif")
     gdal_io.GeoTiffWriter(CRS)(g.like(codes), p)
-    lut = nd_data.manning_lut(None, 0.06)
+    lut = data_conventions.manning_lut(None, 0.06)
     out = case.file("n_from_nlcd.tif")
     r = gdal_io.nlcd_to_manning_raster(p, out, lut)
     assert r["classes"] == [11, 23, 41, 82, 99], "classes found {}".format(r["classes"])
@@ -1066,7 +1066,7 @@ def main(argv=None):
     """python -m nd_breach_runner.core.selftest [--workdir D] [--lisflood EXE] [--anuga-python PY]
     [--no-model] [--report FILE] [--keep]"""
     import argparse
-    from . import nd_data
+    from . import data_conventions
     ap = argparse.ArgumentParser(prog="selftest", description=main.__doc__)
     ap.add_argument("--workdir", default="")
     ap.add_argument("--lisflood", default="")
@@ -1076,8 +1076,8 @@ def main(argv=None):
     ap.add_argument("--report", default="")
     ap.add_argument("--keep", action="store_true", help="keep the working files")
     a = ap.parse_args(argv)
-    exe = a.lisflood or nd_data.detect_lisflood()
-    py = a.anuga_python or nd_data.detect_anuga_python()
+    exe = a.lisflood or data_conventions.detect_lisflood()
+    py = a.anuga_python or data_conventions.detect_anuga_python()
     work = a.workdir or tempfile.mkdtemp(prefix="ndbreach_selftest_")
     rep = Report(on_result=lambda r: print("[{}] {}".format(r.status, r.name), flush=True))
     rep.info = environment_info()

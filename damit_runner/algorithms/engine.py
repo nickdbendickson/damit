@@ -23,7 +23,7 @@ from . import qgis_io as qio
 from ..qgis_compat import (NUM_DOUBLE, NUM_INT, FILE_FILE, FILE_FOLDER, SOURCE_POINT, SOURCE_LINE,
                            SOURCE_POLYGON, FIELD_NUMERIC, FIELD_ANY, set_advanced)
 from ..core import (workflow, breach as brmod, flood as floodmod, impacts as impmod,
-                   structures as structmod, conditioning as condmod, nd_data, handoff,
+                   structures as structmod, conditioning as condmod, data_conventions, handoff,
                    sensitivity as sensmod, cascade as cascmod, estimate as estmod,
                    outlets as outmod, damjson, stoprule, products as prodmod)
 from ..core.lisflood import Cancelled, ModelError, check_lisflood
@@ -32,7 +32,7 @@ from ..compat import structure_flags as sflags
 from ..core.anuga_model import check_anuga
 from ..core.units import FT, MILE, ARRIVAL_DEPTH_FT
 from ..core import vdatum_run as vdrun
-from ..core import dwr_slope
+from ..core import dam_slope
 
 PROVIDER_ID = "damit_run"
 SET_LISFLOOD = "NDBREACH_LISFLOOD_EXE"
@@ -790,7 +790,7 @@ class _Base(QgsProcessingAlgorithm):
         if exe and str(exe).strip().lower() in lfmod.BUILTIN_WORDS:
             return lfmod.BUILTIN_EXE
         if not exe or not os.path.isfile(exe):
-            found = nd_data.detect_lisflood()
+            found = data_conventions.detect_lisflood()
             if found:
                 exe = found
             elif str(_setting(SET_BUILTIN, "") or "").strip().lower() in ("1", "true", "yes", "on"):
@@ -802,7 +802,7 @@ class _Base(QgsProcessingAlgorithm):
         if py:
             py = os.path.realpath(py)
         if not py or not os.path.isfile(py):
-            found = nd_data.detect_anuga_python()
+            found = data_conventions.detect_anuga_python()
             if found:
                 py = os.path.realpath(found)
         return py
@@ -1053,7 +1053,7 @@ class _Base(QgsProcessingAlgorithm):
         kw = {}
         if man is None and nlcd is not None:
             try:
-                kw["manning_lut"] = nd_data.manning_lut(self._str(parameters, "NLCD_N", context),
+                kw["manning_lut"] = data_conventions.manning_lut(self._str(parameters, "NLCD_N", context),
                                                         n_default)
             except ValueError as e:
                 raise QgsProcessingException(str(e))
@@ -1731,7 +1731,7 @@ class RunDamAlgorithm(_Base):
         feedback.pushInfo("Model CRS {}; DEM elevations in {}".format(work.authid(), src.z_note))
         self._crest_ids = _dwr_ids(dam.dam_id, getattr(self, "_dam_rec", None))
         # v3.13.0 (Nick): the toe band's downstream slope from the DWR record when DS_SLOPE is empty
-        n = dwr_slope.apply_to_dam(dam, folder, getattr(self, "_dam_rec", None))
+        n = dam_slope.apply_to_dam(dam, folder, getattr(self, "_dam_rec", None))
         if n:
             feedback.pushInfo(n)
         for n in self.apply_features(st, parameters, context, work, (dam_xy.x(), dam_xy.y())):
@@ -1739,7 +1739,7 @@ class RunDamAlgorithm(_Base):
         try:
             if st.scenario == workflow.SCENARIO_FLOOD:
                 st.flood = self.flood_inputs(parameters, context, dam,
-                                             nd_data.dam_input_files(folder))
+                                             data_conventions.dam_input_files(folder))
         except brmod.BreachInputError as e:
             raise QgsProcessingException(str(e))
         xy = (dam_xy.x(), dam_xy.y()) if hasattr(dam_xy, "x") else dam_xy
@@ -2105,7 +2105,7 @@ class BatchAlgorithm(_Base):
 
     def _mapping(self, parameters, context, src_layer, feedback):
         names = qio.field_names(src_layer)
-        auto, how = nd_data.suggest_fields(names)
+        auto, how = data_conventions.suggest_fields(names)
         fld, used = {}, []
         for key, _d, _n in BATCH_FIELD_KEYS:
             chosen = self._str(parameters, key, context)
@@ -2223,10 +2223,10 @@ class BatchAlgorithm(_Base):
                     breach_bottom_ft=val(feat, "F_BOTTOM"), crest_width_ft=val(feat, "F_CREST"),
                     us_slope_h=val(feat, "F_US"), ds_slope_h=val(feat, "F_DS"),
                     crest_length_ft=val(feat, "F_LENGTH"), name=vals.get("DAM_NAME") or "")
-                n_ = dwr_slope.apply_to_dam(dam, folder, rec)     # v3.13.0: F_DS empty
+                n_ = dam_slope.apply_to_dam(dam, folder, rec)     # v3.13.0: F_DS empty
                 if n_:
                     feedback.pushInfo("{}: {}".format(dam_id, n_))
-                files = nd_data.dam_input_files(folder)
+                files = data_conventions.dam_input_files(folder)
                 st = copy.copy(base_st)
                 flood = scen_i == 1 or (scen_i == 2 and "pmf_inflow" in files)
                 st.scenario = workflow.SCENARIO_FLOOD if flood else workflow.SCENARIO_SUNNY
@@ -2378,7 +2378,7 @@ class CascadeAlgorithm(_Base):
                                METHODS[self.parameterAsEnum(parameters, "METHOD", context)][0])
         st.scenario = workflow.SCENARIO_SUNNY
         names = qio.field_names(src_layer)
-        auto, _how = nd_data.suggest_fields(names)
+        auto, _how = data_conventions.suggest_fields(names)
         fld = {k: (self._str(parameters, k, context) or auto.get(k, ""))
                for k, _d, _n in BATCH_FIELD_KEYS}
         order = self._str(parameters, "F_ORDER", context)
@@ -2413,10 +2413,10 @@ class CascadeAlgorithm(_Base):
                 if dv not in (None, "") and str(dv).strip().upper() != "NULL":
                     dam.elev_datum_stated = str(dv).strip()
             fi = None
-            n_ = dwr_slope.apply_to_dam(dam, os.path.join(parent, _safe_name(dam_id)))  # 3.13.0
+            n_ = dam_slope.apply_to_dam(dam, os.path.join(parent, _safe_name(dam_id)))  # 3.13.0
             if n_:
                 feedback.pushInfo("{}: {}".format(dam_id, n_))
-            files = nd_data.dam_input_files(os.path.join(parent, _safe_name(dam_id)))
+            files = data_conventions.dam_input_files(os.path.join(parent, _safe_name(dam_id)))
             pool = val(f, "F_POOL")
             if pool is not None or files.get("pmf_inflow"):
                 try:

@@ -1,0 +1,63 @@
+name: damit_runner
+
+on:
+  push:
+    paths: ["damit_runner/**", ".github/workflows/damit_runner.yml"]
+  pull_request:
+    paths: ["damit_runner/**", ".github/workflows/damit_runner.yml"]
+
+jobs:
+  syntax:
+    name: Syntax check (all .py files parse)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: ast.parse every .py
+        run: |
+          python3 -c "
+          import ast, sys, os
+          errors = []
+          for root, dirs, files in os.walk('damit_runner'):
+              dirs[:] = [d for d in dirs if d != '__pycache__']
+              for f in sorted(files):
+                  if not f.endswith('.py'): continue
+                  path = os.path.join(root, f)
+                  try:
+                      with open(path, 'r') as fh: ast.parse(fh.read(), path)
+                  except SyntaxError as e:
+                      errors.append(f'{path}: line {e.lineno}: {e.msg}')
+          if errors:
+              for e in errors: print(e)
+              sys.exit(1)
+          total = sum(1 for r,d,fs in os.walk('damit_runner') for f in fs if f.endswith('.py') if '__pycache__' not in r)
+          print(f'All {total} .py files parse OK')
+          "
+
+  imports:
+    name: Import chain + smoke tests (no QGIS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install numpy (the one non-stdlib dep the core modules need)
+        run: pip install numpy
+      - name: Run smoke tests
+        run: python3 -I -m pytest damit_runner/tests/test_engine_imports.py -v
+
+  no-damsuite:
+    name: Zero damsuite imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Grep for damsuite imports
+        run: |
+          if grep -rn "from \.\.damsuite\|from damsuite" damit_runner/ --include="*.py"; then
+            echo "FAIL: damsuite imports found"
+            exit 1
+          fi
+          echo "PASS: zero damsuite imports"
