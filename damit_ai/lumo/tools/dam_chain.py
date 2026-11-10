@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# dam_chain.py v1.5 — run both dam-plugin sets headless from Terminal (macOS, conda), stdlib only.
+# dam_chain.py v1.5.1 — run both dam-plugin sets headless from Terminal (macOS, conda), stdlib only.
 #
 #   dam_chain.py setup                       one-time: batch profiles that point at your QGIS
 #                                            profiles "nd" and "damsafety", plugins enabled
@@ -117,10 +117,32 @@ class QP:
         self.env.update({"QGIS_CUSTOM_CONFIG_PATH": self.base, "QT_QPA_PLATFORM": "offscreen",
                          "OMP_NUM_THREADS": str(args.threads), "NDBREACH_ANUGA_MESHER": "gmsh"})
         self.envname = args.env
+        if not self.dry:
+            self._pick_anuga()
         lis = os.path.expanduser(args.lisflood or "")
         if lis and os.path.isfile(lis):
             # Also read by tools that get no EXE parameter (DamSafety Screening's self-test before 0.18.5).
             self.env["NDBREACH_LISFLOOD"] = lis
+
+    def _pick_anuga(self):
+        """v1.5.1: the Runner takes the first conda env named *anuga* in alphabetical order, so an
+        older env "anuga" (no gmsh) wins over the suite's "ndanuga". Point it at ndanuga unless
+        NDBREACH_ANUGA_PYTHON is set, and ask for gmsh only when that Python can import gmsh
+        (otherwise gmsh_or_default: the default ANUGA mesh, with a note in the log)."""
+        py = self.env.get("NDBREACH_ANUGA_PYTHON", "")
+        if not py:
+            cand = os.path.join(os.path.dirname(self.prefix), "ndanuga", "bin", "python")
+            if os.path.isfile(cand):
+                py = self.env["NDBREACH_ANUGA_PYTHON"] = cand
+        if py and "NDBREACH_ANUGA_MESHER" not in os.environ:
+            try:
+                ok = subprocess.run([py, "-c", "import gmsh"], capture_output=True, timeout=120).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+            if not ok:
+                self.env["NDBREACH_ANUGA_MESHER"] = "gmsh_or_default"
+                print("  note: %s has no gmsh; ANUGA uses its default mesh (conda install -n <env> "
+                      "python-gmsh gmsh to add it)" % py)
 
     def argv(self, *qp_args):
         return [self.conda, "run", "--no-capture-output", "-n", self.envname, self.qp] + list(qp_args)
