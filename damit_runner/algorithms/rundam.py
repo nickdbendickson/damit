@@ -7,7 +7,7 @@ from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, Qgs
                        QgsProcessingParameterNumber, QgsProcessingParameterPoint, QgsProcessingParameterString,
                        QgsProject)
 
-from ..compat import FILE_FILE, FILE_FOLDER
+from ..qgis_compat import FILE_FILE, FILE_FOLDER
 from ..core import catalog_bridge as CB
 from ..core import rundam as RD
 

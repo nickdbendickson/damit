@@ -35,6 +35,9 @@ class Feedback(object):
         return False
 
 
+ARCGIS_INTERVAL_DAYS = 30       # ArcGIS feature service re-check interval
+
+
 def update(plan, http, root_dir, force=False, feedback=None, max_mb=1500, nsi_interval_days=NSI_INTERVAL_DAYS):
     """Returns {'status': 'updated'|'unchanged'|'skipped', 'entry': manifest entry, 'message': ...}."""
     fb = feedback or Feedback()
@@ -49,6 +52,18 @@ def update(plan, http, root_dir, force=False, feedback=None, max_mb=1500, nsi_in
                     "message": "{}: checked {} (less than {} days ago); use force to re-check.".format(
                         plan["name"], old.get("checked"), nsi_interval_days)}
         staging, files, version = _fetch_nsi(plan, http, target, fb)
+    elif plan["kind"] == "arcgis_feature_service":
+        if old and not force and os.path.isdir(target) and _age_days(old.get("checked")) < ARCGIS_INTERVAL_DAYS:
+            return {"status": "skipped", "entry": old,
+                    "message": "{}: checked {} (less than {} days ago).".format(
+                        plan["name"], old.get("checked"), ARCGIS_INTERVAL_DAYS)}
+        staging, files, version = _fetch_arcgis(plan, http, target, fb)
+    elif plan["kind"] == "arcgis_feature_service_multi":
+        if old and not force and os.path.isdir(target) and _age_days(old.get("checked")) < ARCGIS_INTERVAL_DAYS:
+            return {"status": "skipped", "entry": old,
+                    "message": "{}: checked {} (less than {} days ago).".format(
+                        plan["name"], old.get("checked"), ARCGIS_INTERVAL_DAYS)}
+        staging, files, version = _fetch_arcgis_multi(plan, http, target, fb)
     else:
         url = plan["urls"][0]
         try:
@@ -167,6 +182,82 @@ def _fetch_nsi(plan, http, target, fb):
         with open(os.path.join(staging, "nsi_source.json"), "w", encoding="utf-8") as fh:
             json.dump({"requests": len(plan["urls"]), "structures": len(feats), "sha256": h.hexdigest(),
                        "fetched": store.now(), "citation": plan["citation"]}, fh, indent=1)
+        return staging, _list(staging), "sha256:" + h.hexdigest()
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def _arcgis_query_all(url, http, where, fields, fb, label=""):
+    """Page through an ArcGIS FeatureServer and return all features as GeoJSON."""
+    import urllib.parse
+    feats = []
+    offset = 0
+    page_size = 2000
+    while True:
+        if fb.cancelled():
+            raise UpdateError("cancelled")
+        params = {
+            "f": "geojson", "where": where or "1=1",
+            "outFields": fields or "*",
+            "resultOffset": str(offset), "resultRecordCount": str(page_size),
+            "returnGeometry": "true"
+        }
+        query_url = url.rstrip("/") + "/query?" + urllib.parse.urlencode(params)
+        raw = http.get_bytes(query_url, timeout=300)
+        try:
+            d = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as e:
+            raise UpdateError("{}: invalid JSON from {} ({})".format(label, url, e))
+        batch = d.get("features") or []
+        feats.extend(batch)
+        fb.log("{}: {} features (offset {})".format(label or url, len(batch), offset))
+        if len(batch) < page_size or not d.get("exceededTransferLimit", False):
+            break
+        offset += len(batch)
+    return {"type": "FeatureCollection", "features": feats}
+
+
+def _fetch_arcgis(plan, http, target, fb):
+    """Fetch one ArcGIS FeatureServer layer, optionally filtered by state."""
+    staging = _staging(target)
+    try:
+        url = plan["urls"][0]
+        where = plan.get("state_filter", "1=1")
+        fields = plan.get("fields", "*")
+        label = plan["name"]
+        fc = _arcgis_query_all(url, http, where, fields, fb, label)
+        out_name = plan["filename"]
+        with open(os.path.join(staging, out_name), "w", encoding="utf-8") as fh:
+            json.dump(fc, fh)
+        h = hashlib.sha256(json.dumps(fc, sort_keys=True).encode()).hexdigest()
+        fb.log("{}: {} features saved to {}".format(label, len(fc["features"]), out_name))
+        return staging, _list(staging), "sha256:" + h
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def _fetch_arcgis_multi(plan, http, target, fb):
+    """Fetch multiple ArcGIS FeatureServer layers (HIFLD: hospitals, schools, etc.)."""
+    staging = _staging(target)
+    try:
+        where = plan.get("state_filter", "1=1")
+        h = hashlib.sha256()
+        multi = plan.get("multi_files", [])
+        for i, (url, filename) in enumerate(multi):
+            if fb.cancelled():
+                raise UpdateError("cancelled")
+            label = "{} ({})".format(plan["name"], filename)
+            fc = _arcgis_query_all(url, http, where, "*", fb, label)
+            with open(os.path.join(staging, filename), "w", encoding="utf-8") as fh:
+                text = json.dumps(fc)
+                fh.write(text)
+                h.update(text.encode())
+            fb.progress(100.0 * (i + 1) / len(multi))
+        with open(os.path.join(staging, "source.json"), "w", encoding="utf-8") as fh:
+            json.dump({"layers": len(multi), "fetched": store.now(),
+                       "sha256": h.hexdigest(), "citation": plan["citation"]}, fh, indent=1)
         return staging, _list(staging), "sha256:" + h.hexdigest()
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)

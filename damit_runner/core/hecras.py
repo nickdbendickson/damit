@@ -1,0 +1,1573 @@
+"""HEC-RAS interchange.
+
+EXPORT (this plugin -> HEC-RAS)
+
+* `write_hydrograph_files`: the breach hydrograph as an unsteady-flow text block in the
+  HEC-RAS `.u##` convention ("Flow Hydrograph= N", then 10 values per line in 8-character
+  fields) and as a plain CSV (time hr, cfs), on a regular time step (default 5 min). The
+  peak is kept exactly (see `resample_hydrograph`).
+* `write_breach_table`: the values HEC-RAS's breach editor asks for, from the DamData and the
+  parameters dict of the breach module, with the plugin's estimates marked.
+
+IMPORT (HEC-RAS 2D plan HDF -> rasters)
+
+* `read_mesh` reads the maximum results of one 2D flow area from a `.p##.hdf`, `to_grids`
+  turns them into regular north-up `Grid`s, `import_as_reference` samples them straight onto a
+  Grid (the plugin's own, say) as arrays for `benchmark.compare_fields`.
+
+Only numpy and the standard library are used. The HDF file is read with h5py, which is
+optional: without it the reader stops with a message saying how to install it. h5py is not
+part of QGIS; install it into QGIS's own Python.
+
+HDF layout assumed (RAS 5.0.x to 6.x; layouts vary, so datasets are found by walking the file
+and matching names case-insensitively, see `discover`). Paths are examples only:
+
+    Geometry/2D Flow Areas/<area>/Cells Center Coordinate      (N, 2) x, y in the CRS units
+    Geometry/2D Flow Areas/<area>/Cells Minimum Elevation      (N,)
+    Geometry/2D Flow Areas/<area>/Faces Cell Indexes           (F, 2) cells either side of a face
+    Results/Unsteady/Output/Output Blocks/Base Output/Summary Output/2D Flow Areas/<area>/
+        Maximum Water Surface                                  (2, N) row 0 value, row 1 time (days)
+        Maximum Face Velocity                                  (2, F) row 0 value, row 1 time
+        (a per-cell "Maximum ... Velocity" dataset is used instead when there is one)
+    Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/
+        Time                                                   (nt,) days since the start
+        2D Flow Areas/<area>/Water Surface                     (nt, N) for the arrival time
+
+The result datasets can have fewer cells than the geometry (RAS adds ghost cells beyond the
+real ones): the first N cells are used, N being the length of Maximum Water Surface.
+Units come from the 'Units' attribute on the dataset, its groups or the file root ('Units
+System'); the default, when none is found, is US customary. Everything returned is US ft,
+ft/s and hours.
+"""
+import csv
+import math
+import os
+import re
+
+import numpy as np
+
+from .grid import Grid
+from .units import ACFT, CFS, FT, ARRIVAL_DEPTH_FT
+
+RAS_INTERVALS_MIN = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60, 120, 180, 240, 360, 480, 720,
+                     1440)
+DEFAULT_STEP_MIN = 5.0
+MODEL_FOLDER = "_breach_model"            # where workflow.py writes the run's files
+HYDROGRAPH_CSV = "breach_hydrograph.csv"
+RUN_REPORT_JSON = "run_report.json"
+
+BASIS_EST = "Plugin estimate"
+BASIS_USER = "Your input"
+BASIS_ASSUME = "Plugin assumption"
+BASIS_BLANK = "Blank: you enter it"
+BASIS_NONE = "Not given by this method"
+BASIS_REF = "Reference only"
+
+
+# 3.10.79: what the depth is measured from (info['depth_basis'])
+DEPTH_BASIS_TERRAIN = "terrain"     # WSE minus the terrain under each grid cell (terrain_depth)
+DEPTH_BASIS_CELL_MIN = "cell_min"   # WSE minus the HEC cell's minimum elevation (read_mesh)
+# 3.10.84: the mapped depth was the cell's max WSE minus the cell's MINIMUM terrain elevation
+# by default (Nick, Oct 26 2026). 3.10.92 (Nick, Oct 27 2026): the default is the actual
+# terrain again - max WSE minus the run's fine (1 m) terrain at the centre of each output
+# pixel (hecras_engine.fine_terrain_on_grid) - reversing the 3.10.84 default. The cell-min
+# basis stays selectable: RunSettings.hecras_depth_basis, the import algorithm's Depth
+# basis, `ndbreach_cli.py hecras-reexport --depth-basis cell_min`, or this variable.
+DEPTH_BASIS_ENV = "NDBREACH_HECRAS_DEPTH_BASIS"
+DEPTH_BASIS_DEFAULT = DEPTH_BASIS_TERRAIN
+# 3.10.92 (Nick, Oct 27 2026, review of #204): three more bases, all on the run's fine
+# terrain, all with the same datum check; 'terrain' stays the default.
+#   terrain_mean: minus the MEAN ground over the whole output pixel (3.10.79's behaviour)
+#   terrain_max:  the depth at every fine-terrain point (the WSE of the HEC-RAS cell nearest
+#                 the point minus the fine ground), the MAX of them per output pixel;
+#                 arrival is the first time any fine point of the pixel reaches the arrival
+#                 depth. Conservative: the deepest spot of the pixel, wetter than any other.
+#   fine:         RAS Mapper style: the WSE interpolated between the cell centres
+#                 (barycentric over the triangle of three wet neighbouring cells, never across
+#                 a dry cell nor into a cell whose WSE is below its ground) minus the fine
+#                 ground at the DEM's resolution, written as extra rasters (hecras_fine), and
+#                 aggregated to the output pixel by max or mean (hecras_fine.FINE_AGG_ENV).
+#                 An APPROXIMATION of RAS Mapper's sloped water surface, not identical to it.
+DEPTH_BASIS_TERRAIN_MEAN = "terrain_mean"
+DEPTH_BASIS_TERRAIN_MAX = "terrain_max"
+DEPTH_BASIS_FINE = "fine"
+DEPTH_BASES = (DEPTH_BASIS_TERRAIN, DEPTH_BASIS_CELL_MIN, DEPTH_BASIS_TERRAIN_MEAN,
+               DEPTH_BASIS_TERRAIN_MAX, DEPTH_BASIS_FINE)
+# the bases measured from the terrain (they need it, and stop on a datum mismatch)
+TERRAIN_BASES = (DEPTH_BASIS_TERRAIN, DEPTH_BASIS_TERRAIN_MEAN, DEPTH_BASIS_TERRAIN_MAX,
+                 DEPTH_BASIS_FINE)
+# the bases computed at the fine terrain's resolution (hecras_fine)
+FINE_BASES = (DEPTH_BASIS_TERRAIN_MAX, DEPTH_BASIS_FINE)
+DEPTH_BASIS_TEXT = {
+    DEPTH_BASIS_CELL_MIN: "max WSE of the HEC-RAS cell minus the cell's minimum terrain "
+                          "elevation (Cells Minimum Elevation), over the whole cell",
+    DEPTH_BASIS_TERRAIN: "max WSE of the HEC-RAS cell minus the actual terrain (the run's "
+                         "fine DEM) at the centre of each output grid cell (per pixel)",
+    DEPTH_BASIS_TERRAIN_MEAN: "max WSE of the HEC-RAS cell minus the mean of the actual "
+                              "terrain over each output grid cell (3.10.79's)",
+    DEPTH_BASIS_TERRAIN_MAX: "the deepest point of each output grid cell: max WSE of the "
+                             "HEC-RAS cell nearest each fine-terrain point minus that point's "
+                             "ground, the maximum per grid cell (conservative)",
+    DEPTH_BASIS_FINE: "max WSE interpolated between the HEC-RAS cell centres (an "
+                      "approximation of RAS Mapper's sloped surface) minus the fine terrain at "
+                      "its own resolution, aggregated to each output grid cell"}
+# 3.10.92: the terrain basis compares its ground with the model's own cell minimum
+# elevations (same datum and unit as the WSE): a terrain on another vertical datum or in
+# another unit stops the terrain basis (DatumMismatch) unless this variable is 'warn'
+DATUM_CHECK_ENV = "NDBREACH_HECRAS_DATUM_CHECK"
+DATUM_TOL_FT = 1.0                  # median terrain below the cell minimum by more: a mismatch
+DATUM_UNIT_RATIO = 0.10             # median terrain / median cell minimum off 1 by more: units
+_BASIS_ALIASES = {"cell_min": DEPTH_BASIS_CELL_MIN, "cellmin": DEPTH_BASIS_CELL_MIN,
+                  "cell-min": DEPTH_BASIS_CELL_MIN, "cell_minimum": DEPTH_BASIS_CELL_MIN,
+                  "min": DEPTH_BASIS_CELL_MIN, "cell": DEPTH_BASIS_CELL_MIN,
+                  "terrain": DEPTH_BASIS_TERRAIN, "pixel": DEPTH_BASIS_TERRAIN,
+                  "per_pixel": DEPTH_BASIS_TERRAIN, "per-pixel": DEPTH_BASIS_TERRAIN,
+                  "perpixel": DEPTH_BASIS_TERRAIN,
+                  # 3.10.92 review of #204 (no bare 'mean' / 'average' / 'max': ambiguous)
+                  "terrain_mean": DEPTH_BASIS_TERRAIN_MEAN,
+                  "terrain-mean": DEPTH_BASIS_TERRAIN_MEAN,
+                  "terrain_max": DEPTH_BASIS_TERRAIN_MAX, "terrain-max": DEPTH_BASIS_TERRAIN_MAX,
+                  "fine": DEPTH_BASIS_FINE, "ras_mapper": DEPTH_BASIS_FINE}
+
+
+def depth_basis(value=None, environ=None):
+    """The depth basis to use: `value` when given, else NDBREACH_HECRAS_DEPTH_BASIS, else
+    DEPTH_BASIS_DEFAULT ('terrain' since 3.10.92). Accepts 'cell_min' / 'cellmin' / 'min',
+    'terrain' / 'pixel' / 'per_pixel', 'terrain_mean' / 'mean', 'terrain_max' / 'max' and
+    'fine' (any case). Raises HecRasError for anything else."""
+    env = os.environ if environ is None else environ
+    raw = value if value not in (None, "") else env.get(DEPTH_BASIS_ENV, "")
+    if raw in (None, ""):
+        return DEPTH_BASIS_DEFAULT
+    b = _BASIS_ALIASES.get(str(raw).strip().lower())
+    if b is None:
+        src = "depth basis" if value not in (None, "") else DEPTH_BASIS_ENV
+        raise HecRasError("{} {!r}: use 'terrain' (default), 'cell_min', 'terrain_mean', "
+                          "'terrain_max' or 'fine'".format(src, raw))
+    return b
+
+
+class HecRasError(ValueError):
+    pass
+
+
+class DatumMismatch(HecRasError):
+    """3.10.92: the terrain is not on the vertical datum / unit of the HEC-RAS model."""
+
+
+def datum_check(ground_ft, cmin_ft, mask=None, environ=None):
+    """3.10.92: is the terrain `ground_ft` on the same vertical datum and unit as the HEC-RAS
+    model? The model's WSE is on the datum of its own terrain, whose minimum over each cell
+    is `cmin_ft` (Cells Minimum Elevation, read with the HDF's unit). A point of the actual
+    terrain inside a cell is at or above that minimum, so over many pixels:
+
+      median(ground - cmin) < -DATUM_TOL_FT       the terrain sits lower: another datum
+      |median(ground) / median(cmin) - 1| > 10%   another unit (feet read as metres...)
+      5th percentile(ground - cmin) > +DATUM_TOL_FT  the terrain sits higher nearly
+                                                  everywhere: probably another datum
+
+    Returns {'status': 'ok' | 'mismatch' | 'suspect' | 'no_data', 'pixels', 'median_ft',
+    'p05_ft', 'ratio', 'message', 'fatal'}: 'mismatch' is fatal unless
+    NDBREACH_HECRAS_DATUM_CHECK=warn ('suspect' only warns)."""
+    env = os.environ if environ is None else environ
+    g = np.asarray(ground_ft, dtype=np.float64)
+    c = np.asarray(cmin_ft, dtype=np.float64)
+    ok = np.isfinite(g) & np.isfinite(c)
+    if mask is not None:
+        ok &= np.asarray(mask, dtype=bool)
+    rec = {"status": "no_data", "pixels": int(ok.sum()), "median_ft": None, "p05_ft": None,
+           "ratio": None, "tol_ft": DATUM_TOL_FT, "message": "", "fatal": False}
+    if rec["pixels"] < 3:
+        rec["message"] = ("Terrain datum check: too few pixels with both the terrain and a "
+                          "HEC-RAS cell to compare.")
+        return rec
+    dz = g[ok] - c[ok]
+    med, p05 = float(np.median(dz)), float(np.percentile(dz, 5))
+    mc = float(np.median(c[ok]))
+    ratio = float(np.median(g[ok]) / mc) if abs(mc) >= 100.0 else None
+    rec.update(median_ft=round(med, 3), p05_ft=round(p05, 3),
+               ratio=None if ratio is None else round(ratio, 4))
+    head = ("TERRAIN DATUM/UNIT MISMATCH: the terrain is {:+.2f} ft (median) from the HEC-RAS "
+            "model's cell minimum elevations over {:,} pixels{}. ").format(
+                med, rec["pixels"], "" if ratio is None else
+                " (ratio of the medians {:.3f})".format(ratio))
+    if ratio is not None and abs(ratio - 1.0) > DATUM_UNIT_RATIO:
+        rec["status"] = "mismatch"
+        rec["message"] = head + ("The terrain and the water surface are in different "
+                                 "elevation units: check the terrain's elevation unit "
+                                 "(hecras-reexport --terrain-z) or the run's DEM unit.")
+    elif med < -DATUM_TOL_FT:
+        rec["status"] = "mismatch"
+        rec["message"] = head + ("The terrain sits below the model's own ground, so it is "
+                                 "on another vertical datum (e.g. NGVD29 vs NAVD88) or another "
+                                 "surface than the model's terrain.")
+    elif p05 > DATUM_TOL_FT:
+        rec["status"] = "suspect"
+        rec["message"] = head + ("The terrain sits above the model's own ground at almost "
+                                 "every pixel (5th percentile {:+.2f} ft): check that it is on "
+                                 "the model's vertical datum.".format(p05))
+    else:
+        rec["status"] = "ok"
+        rec["message"] = ("Terrain datum check: the terrain matches the HEC-RAS model's cell "
+                          "minimum elevations (median {:+.2f} ft, 5th percentile {:+.2f} ft "
+                          "over {:,} pixels): the same vertical datum and unit.".format(
+                              med, p05, rec["pixels"]))
+    if rec["status"] == "mismatch":
+        if str(env.get(DATUM_CHECK_ENV, "")).strip().lower() == "warn":
+            rec["message"] += " Kept because {}=warn.".format(DATUM_CHECK_ENV)
+        else:
+            rec["fatal"] = True
+            rec["message"] += (" The terrain depth basis was stopped; fix the terrain, use "
+                               "the 'cell_min' depth basis, or set {}=warn to keep it."
+                               .format(DATUM_CHECK_ENV))
+    return rec
+
+
+# Export: hydrograph
+def ras_interval_label(dt_min):
+    """HEC-RAS data interval text ('5MIN', '1HOUR', ...) or None when the step is not one of
+    the intervals the boundary-condition editor offers."""
+    m = float(dt_min)
+    if m not in RAS_INTERVALS_MIN:
+        return None
+    m = int(m)
+    if m < 60:
+        return "{}MIN".format(m)
+    if m < 1440:
+        return "{}HOUR".format(m // 60)
+    return "1DAY"
+
+
+def resample_hydrograph(hy, dt_min=DEFAULT_STEP_MIN):
+    """The hydrograph on a regular step from time zero of the record: (t_hr, q_cfs, info).
+
+    Values are linear interpolations of the record. The regular grid may miss a sharp peak, so
+    the sample nearest the peak time is set to the exact peak discharge (the peak time moves by
+    at most half a step; the volume grows a little, both reported in `info`)."""
+    dt_min = float(dt_min)
+    if not dt_min > 0:
+        raise HecRasError("the time step must be greater than 0")
+    dt = dt_min * 60.0
+    t_src = np.asarray(hy.t_s, dtype=float)
+    q_src = np.asarray(hy.q_cms, dtype=float)
+    if len(t_src) < 2:
+        raise HecRasError("the hydrograph needs at least two points")
+    t_end = float(t_src[-1])
+    n = int(math.ceil(t_end / dt - 1e-9)) + 1
+    n = max(n, 2)
+    t = np.arange(n) * dt
+    q = np.clip(np.interp(t, t_src, q_src, right=0.0), 0.0, None)
+    ip = int(np.argmax(q_src))
+    peak = float(q_src[ip])
+    k = min(int(round(float(t_src[ip]) / dt)), n - 1)
+    if q.max() < peak:
+        q[k] = peak
+    q_cfs = q / CFS
+
+    def vol(tt, qq):
+        return float(np.trapezoid(qq, tt)) if hasattr(np, "trapezoid") else float(np.trapz(qq, tt))
+    v0, v1 = vol(t_src, q_src), vol(t, q)
+    info = {"n": n, "dt_min": dt_min, "interval": ras_interval_label(dt_min),
+            "peak_cfs": peak / CFS, "peak_time_hr": float(t_src[ip]) / 3600.0,
+            "peak_time_exported_hr": float(t[int(np.argmax(q))]) / 3600.0,
+            "volume_acft": v0 / ACFT, "volume_exported_acft": v1 / ACFT,
+            "volume_change_pct": 100.0 * (v1 - v0) / v0 if v0 > 0 else 0.0,
+            "notes": []}
+    if info["interval"] is None:
+        info["notes"].append("{:g} min is not one of the data intervals HEC-RAS offers "
+                             "(1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 min, 1, 2, 3, 4, 6, 8, 12 "
+                             "h, 1 day); pick one of those.".format(dt_min))
+    if getattr(hy, "t_ref_s", 0.0):
+        info["notes"].append(
+            "Breach initiation is {:.3f} h into this record (a flood-scenario hydrograph starts "
+            "with the inflow). Time zero of the block is the start of the record.".format(
+                hy.t_ref_s / 3600.0))
+    return t / 3600.0, q_cfs, info
+
+
+class FixedWidthError(HecRasError):
+    """A number that does not fit a HEC-RAS fixed-width field."""
+
+
+def field8(v, width=8, max_decimals=2):
+    """`v` right-justified in exactly `width` characters (HEC-RAS's fixed-width tables:
+    .u## hydrographs, .g## elevation-volume and station-elevation tables, .p## breach
+    progression). As many decimals (up to `max_decimals`) as fit, then fewer:
+    12345.67 -> '12345.67', 123456.7 -> '123456.7', 1234567 -> ' 1234567'.
+
+    A field may use all `width` characters, so neighbouring values can touch
+    ('7895.8811063.36'); HEC-RAS reads these tables by column, and HEC's own example files
+    are written the same way (e.g. Example 18 InlineStructureE.u01, Baxter.u01). A value that
+    cannot be written in `width` characters even with no decimals raises FixedWidthError
+    (never an overflowing field or exponent notation, which would shift every later column).
+    NaN/inf raise too; callers that want a blank field pass None to their own wrapper."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        raise FixedWidthError("not a number for a HEC-RAS {}-character field: {!r}".format(
+            width, v))
+    if not math.isfinite(x):
+        raise FixedWidthError("{!r} cannot be written in a HEC-RAS {}-character field".format(
+            v, width))
+    for d in range(int(max_decimals), -1, -1):
+        s = "{:.{}f}".format(x, d)
+        if s.startswith("-") and float(s) == 0.0:
+            s = s[1:]                                   # no '-0.00'
+        if len(s) <= width:
+            return s.rjust(width)
+    raise FixedWidthError(
+        "{:g} does not fit in a HEC-RAS {}-character field (largest {}, smallest {}); "
+        "check the units or the value".format(x, width, "9" * width, "-" + "9" * (width - 1)))
+
+
+_field8 = field8                                   # older name, same formatter
+
+
+def flow_hydrograph_block(q_cfs, per_line=10, width=8, interval=None):
+    """The `.u##` text: 'Flow Hydrograph= N' and the values, `per_line` to a line in
+    `width`-character fields. With `interval` ('5MIN') an 'Interval=' line goes first."""
+    q = [float(x) for x in q_cfs]
+    lines = []
+    if interval:
+        lines.append("Interval={}".format(interval))
+    lines.append("Flow Hydrograph= {}".format(len(q)))
+    for i in range(0, len(q), per_line):
+        lines.append("".join(field8(x, width) for x in q[i:i + per_line]))
+    return "\n".join(lines) + "\n"
+
+
+def write_hydrograph_files(hy, folder, dt_min=DEFAULT_STEP_MIN, stem="HECRAS Breach Hydrograph",
+                           include_interval=False):
+    """Writes '<stem>.txt' (the .u## block) and '<stem>.csv' (time_hr, discharge_cfs).
+    Returns {'txt', 'csv', 'info'}."""
+    t_hr, q_cfs, info = resample_hydrograph(hy, dt_min)
+    os.makedirs(folder, exist_ok=True)
+    txt = os.path.join(folder, stem + ".txt")
+    with open(txt, "w", encoding="utf-8", newline="") as f:
+        f.write(flow_hydrograph_block(q_cfs, interval=info["interval"] if include_interval
+                                      else None))
+    csv_path = os.path.join(folder, stem + ".csv")
+    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+        f.write("time_hr,discharge_cfs\n")
+        for t, q in zip(t_hr, q_cfs):
+            f.write("{:.5f},{:.2f}\n".format(t, q))
+    return {"txt": txt, "csv": csv_path, "info": info}
+
+
+# Export: breach parameter table
+BREACH_WEIR_COEF = 3.1        # the breach module's broad-crested weir, US units (Fread)
+
+
+def _num(v):
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return ("%.3f" % v).rstrip("0").rstrip(".")
+    return str(v)
+
+
+PIPING_COEF = 0.5                     # HEC-RAS piping coefficient default
+F08_AUTO = "Froehlich (2008) piping, auto"
+F08_OVERWRITE, F08_FILL = "overwrite", "fill_missing"
+F08_POLICIES = (F08_OVERWRITE, F08_FILL)
+VW_CURVE_TOL = 0.05                   # curve vs maximum storage: warn above 5 %
+
+
+def _run_vw_acft(dam, params):
+    """Vw of the run (3.16.4): the run report's vw_acft when it has one (sunny day: the
+    maximum storage; PMF / flood inflow: the storage at the pool when the breach started),
+    else for a flood-inflow run its storage at failure, else the dam's maximum storage."""
+    p = params or {}
+    if p.get("vw_acft"):
+        return float(p["vw_acft"])
+    if str(p.get("scenario") or "").startswith("flood inflow") and \
+            p.get("storage_at_failure_acft"):
+        return float(p["storage_at_failure_acft"])
+    return float(dam.storage_top_acft)
+
+
+def froehlich_2008_piping_ft(dam, params, bottom_ft):
+    """Froehlich (2008) piping breach (K0 1.0, z 0.7). Vw is the run's Vw (3.16.4,
+    _run_vw_acft): for a sunny-day run the dam's maximum storage as given (DWR's max storage:
+    DamData.storage_top_acft), for a PMF / flood-inflow run the storage at the pool when the
+    breach started (ND standards); hb = top - bottom, from the run's dam (NAVD88: the DWR value
+    plus the run's VERTCON shift, core/vdatum_run.apply). Returns {'avg_width_ft', 'tf_hr',
+    'z', 'vw_acft', 'curve_warning'} ('curve_warning' is always '' since 3.16.4: the curve is
+    anchored at the maximum storage, so a difference only means the pool started below the
+    crest; breach.py notes that) or None when it cannot be computed."""
+    from . import breach
+    hb_ft = dam.top_of_dam_ft - bottom_ft
+    try:
+        vw_acft = _run_vw_acft(dam, params)
+        b_m, tf_s, z = breach.froehlich_2008(float(vw_acft) * ACFT, hb_ft * FT, "piping")
+    except (TypeError, ValueError):
+        return None
+    return {"avg_width_ft": b_m / FT, "tf_hr": tf_s / 3600.0, "z": z,
+            "vw_acft": round(float(vw_acft), 2), "curve_warning": ""}
+
+
+def breach_parameter_rows(dam, params, peak_cfs=None):
+    """Rows (dicts item, value, units, basis, note) of the HEC-RAS breach editor.
+
+    `dam` is a breach.DamData, `params` the parameters dict of the breach module
+    (Hydrograph.params or the 'hydrograph' block of run_report.json). The centre station is
+    always blank. Rows whose basis is 'Plugin estimate' are computed by regression equations
+    and are not design values."""
+    p = dict(params or {})
+    src = str(p.get("breach_parameters") or "")
+    rows = []
+
+    def add(item, value, units, basis, note=""):
+        rows.append({"item": item, "value": value, "units": units, "basis": basis,
+                     "note": note})
+
+    bottom = p.get("breach_bottom_ft")
+    bottom_basis = BASIS_EST
+    if bottom is None:
+        bottom = (dam.breach_bottom_ft if dam.breach_bottom_ft is not None
+                  else dam.top_of_dam_ft - dam.dam_height_ft)
+    if dam.breach_bottom_ft is not None:
+        bottom_basis = BASIS_USER
+    hb = dam.top_of_dam_ft - bottom
+    z = p.get("side_slope_h")
+    avg = p.get("avg_breach_width_ft")
+    b_bottom = p.get("bottom_width_ft")
+    if b_bottom is None and avg is not None and z is not None:
+        b_bottom = max(0.0, float(avg) - float(z) * hb)
+    tf = p.get("formation_time_hr")
+    # 3.16.1 (Nick, 2026-11-06): the HEC-RAS breach defaults to piping, Froehlich (2008)
+    mode_given = bool(p.get("failure_mode"))
+    mode = str(p.get("failure_mode") or "piping").lower()
+    f08 = None
+    # 3.16.2 (Nick, 2026-11-06 1:17 PM): Froehlich (2008) piping always overwrites the run's
+    # width / side slopes / formation time (also MLM or Froehlich 1995 values);
+    # breach_f2008 = 'fill_missing' (opt-in) only fills what the run lacks
+    policy = str(p.get("breach_f2008") or F08_OVERWRITE).strip().lower()
+    if policy not in F08_POLICIES:
+        raise HecRasError("breach_f2008 must be one of {} (got {!r})".format(
+            ", ".join(F08_POLICIES), policy))
+    overwrite = policy == F08_OVERWRITE
+    if mode == "piping" and (overwrite or b_bottom is None or z is None or tf is None):
+        f08 = froehlich_2008_piping_ft(dam, p, bottom)
+        if f08 is not None:
+            if overwrite:
+                z, avg, tf = f08["z"], f08["avg_width_ft"], f08["tf_hr"]
+                b_bottom = max(0.0, avg - z * hb)
+                src = F08_AUTO
+            else:
+                if z is None:
+                    z = f08["z"]
+                if avg is None:
+                    avg = f08["avg_width_ft"]
+                if b_bottom is None:
+                    b_bottom = max(0.0, avg - z * hb)
+                if tf is None:
+                    tf = f08["tf_hr"]
+                src = (src + "; " if src else "") + F08_AUTO
+
+    add("Breach center station", None, "station", BASIS_BLANK,
+        "Where the breach sits along the embankment; depends on your HEC-RAS geometry.")
+    add("Final bottom elevation", bottom, "ft", bottom_basis,
+        "Top of dam minus dam height unless a breach bottom was given; same datum as the DEM.")
+    add("Final bottom width", b_bottom, "ft",
+        BASIS_EST if b_bottom is not None else BASIS_NONE,
+        "Average breach width {} ft minus side slope x breach height ({:.1f} ft){}.".format(
+            _num(avg) if avg is not None else "?", hb,
+            "; the average width is yours" if "width from user" in src else "")
+        if b_bottom is not None else
+        "This method gives no breach width; enter your own.")
+    z_basis = BASIS_USER if "side slope from user" in src else (
+        BASIS_EST if z is not None else BASIS_NONE)
+    for side in ("Left", "Right"):
+        add(side + " side slope", z, "H:1V", z_basis,
+            "The plugin breaches a symmetric trapezoid, so left = right." if z is not None
+            else "This method gives no side slope; enter your own.")
+    add("Breach weir coefficient", BREACH_WEIR_COEF, "US units", BASIS_ASSUME,
+        "The breach module's weir equation Q = 3.1 b h^1.5 + 2.45 z h^2.5 (Fread). The HEC-RAS "
+        "default is 2.6; use 3.1 to match this plugin's hydrograph, or your reviewer's value.")
+    if tf is not None:
+        add("Full formation time", tf, "hr",
+            BASIS_USER if "formation time from user" in src else BASIS_EST,
+            "Time from breach initiation to the full final opening.")
+    else:
+        rise = p.get("rise_time_hr")
+        add("Full formation time", None, "hr", BASIS_NONE,
+            "TR-60 gives a peak discharge, not a formation time; the plugin's hydrograph rose "
+            "over {} h. Enter your own.".format(_num(rise) if rise is not None else "?"))
+    add("Breach progression", "Linear", "", BASIS_ASSUME,
+        "The plugin lowers the crest and widens the bottom linearly over the formation time; "
+        "HEC-RAS's sine-wave option gives a different hydrograph shape.")
+    add("Breach mode", mode.capitalize(), "", BASIS_EST if mode_given else BASIS_ASSUME,
+        ("Froehlich parameters for a {} failure. The plugin routes the opening as a weir "
+         "either way (except with the pipe phase).".format(mode)) if mode_given else
+        "The run gives no failure mode; HEC-RAS piping is the default (Froehlich 2008).")
+    if f08 is not None:
+        add("Froehlich (2008) piping", "auto", "", BASIS_ASSUME,
+            "{}: Vw {} ac-ft, hb {:.2f} ft, K0 1.0, side slope 0.7, average width {} ft, "
+            "formation time {} h; {}.".format(
+                F08_AUTO, _num(f08["vw_acft"]), hb, _num(f08["avg_width_ft"]),
+                _num(f08["tf_hr"]), "replaces the run's values" if overwrite else
+                "filled where the run's method gives none") + (" " + f08["curve_warning"] if f08["curve_warning"]
+                                       else ""))
+    if mode == "piping":
+        cd = p.get("pipe_cd")
+        add("Piping coefficient", float(cd) if cd is not None else PIPING_COEF, "",
+            BASIS_ASSUME, "Orifice coefficient used for the pipe phase." if cd is not None
+            else "HEC-RAS piping coefficient (its default, 0.5).")
+        if p.get("pipe_initial_dia_ft") is not None:
+            add("Initial piping elevation", bottom + float(p["pipe_initial_dia_ft"]) / 2.0,
+                "ft", BASIS_ASSUME,
+                "Centre of the starting pipe ({} ft across) resting on the breach bottom."
+                .format(_num(p["pipe_initial_dia_ft"])))
+        else:
+            add("Initial piping elevation", round(bottom + 0.5 * hb, 2), "ft", BASIS_ASSUME,
+                "Half way up the breach (breach bottom + 0.5 x breach height).")
+    trig = p.get("breach_trigger")
+    if trig == "time":
+        add("Breach initiation trigger", "Set time", "", BASIS_USER,
+            "The dam fails at a time you chose in the flood scenario.")
+        add("Trigger value", p.get("breach_initiation_hr"), "hr after the start of the inflow",
+            BASIS_USER, "")
+    elif trig in ("peak", "wse"):
+        add("Breach initiation trigger", "Water surface elevation", "", BASIS_EST
+            if trig == "peak" else BASIS_USER,
+            "Flood scenario: the dam fails at the highest pool level of the no-breach "
+            "routing." if trig == "peak" else
+            "Flood scenario: the dam fails when the pool reaches the elevation you chose.")
+        add("Trigger value", p.get("pool_at_breach_ft"), "ft", BASIS_EST if trig == "peak"
+            else BASIS_USER, "Pool elevation when the breach starts ({} h into the inflow)."
+            .format(_num(p.get("breach_initiation_hr"))))
+    else:
+        add("Breach initiation trigger", "Water surface elevation", "", BASIS_ASSUME,
+            "Sunny day (ND 5.1.1): the breach starts with the pool at the top of dam, or at "
+            "the PMF maximum level when that is lower; start the HEC-RAS pool there.")
+        add("Trigger value", p.get("starting_wse_ft"), "ft", BASIS_EST,
+            "Starting water surface: {}.".format(p.get("starting_wse_rule") or "top of dam"))
+    add("Top of dam", dam.top_of_dam_ft, "ft", BASIS_REF, "As given for the run.")
+    if avg is not None:
+        add("Average breach width", avg, "ft", BASIS_REF,
+            "The width regression's result; HEC-RAS asks for the bottom width above.")
+    peak = peak_cfs if peak_cfs is not None else p.get("peak_cfs")
+    if peak is not None:
+        add("Peak breach outflow (plugin)", peak, "cfs", BASIS_REF,
+            "Compare this with the HEC-RAS result.")
+    return rows
+
+
+def write_breach_table(dam, params, folder, stem="HECRAS Breach Parameters", peak_cfs=None,
+                       notes=None):
+    """Writes '<stem>.csv' and '<stem>.md'. Returns {'csv', 'md', 'rows'}."""
+    rows = breach_parameter_rows(dam, params, peak_cfs)
+    os.makedirs(folder, exist_ok=True)
+    csv_path = os.path.join(folder, stem + ".csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["item", "value", "units", "basis", "note"])
+        for r in rows:
+            w.writerow([r["item"], _num(r["value"]), r["units"], r["basis"], r["note"]])
+    src = (params or {}).get("breach_parameters") or "the run's breach method"
+
+    def cell(s):
+        return str(s).replace("|", "/")
+    md = ["# HEC-RAS breach parameters: {}".format(dam.dam_id), "",
+          "**These are the plugin's estimates**, not design values: they come from {} and from "
+          "the dam data you gave, in US units. Rows marked *{}* are computed by regression "
+          "equations; *{}* are choices this plugin made; *{}* is for you to fill in. Review "
+          "them (geotechnical input, the breach method your reviewer expects) before using "
+          "them in a submittal.".format(src, BASIS_EST, BASIS_ASSUME, BASIS_BLANK), "",
+          "| Item | Value | Units | Basis | Note |", "|---|---|---|---|---|"]
+    for r in rows:
+        md.append("| {} | {} | {} | {} | {} |".format(
+            cell(r["item"]), cell(_num(r["value"]) or "(blank)"), cell(r["units"]),
+            cell(r["basis"]), cell(r["note"])))
+    if notes:
+        md += ["", "Notes from the run:", ""] + ["- " + cell(n) for n in notes]
+    md.append("")
+    md_path = os.path.join(folder, stem + ".md")
+    with open(md_path, "w", encoding="utf-8", newline="") as f:
+        f.write("\n".join(md))
+    return {"csv": csv_path, "md": md_path, "rows": rows}
+
+
+def load_run(dam_folder, model_folder=MODEL_FOLDER):
+    """(Hydrograph, DamData, params) from a dam folder written by the workflow: the
+    hydrograph CSV and run_report.json in `<dam folder>/<model folder>/`."""
+    import json
+    from . import breach
+    base = os.path.join(dam_folder, model_folder)
+    csv_path = os.path.join(base, HYDROGRAPH_CSV)
+    rep_path = os.path.join(base, RUN_REPORT_JSON)
+    missing = [p for p in (csv_path, rep_path) if not os.path.exists(p)]
+    if missing:
+        raise HecRasError("Not a finished breach run: missing {}".format(
+            ", ".join(missing)))
+    with open(rep_path, encoding="utf-8") as f:
+        report = json.load(f)
+    if "dam" not in report or "hydrograph" not in report:
+        raise HecRasError("{} has no 'dam' and 'hydrograph' entries".format(rep_path))
+    try:
+        hy = breach.read_user_hydrograph(csv_path)
+    except breach.BreachInputError as e:
+        raise HecRasError(str(e))
+    params = dict(report["hydrograph"])
+    if report.get("vertical_datum") is not None:
+        params.setdefault("vertical_datum", report["vertical_datum"])  # NAVD88 record
+    hy.method = params.get("method", hy.method)
+    hy.params = params
+    hy.t_ref_s = float(params.get("breach_initiation_hr") or 0.0) * 3600.0
+    dam = breach.dam_from_dict(report["dam"])
+    return hy, dam, params
+
+
+def export_run(dam_folder, out_folder=None, dt_min=DEFAULT_STEP_MIN,
+               model_folder=MODEL_FOLDER):
+    """Everything the export algorithm writes for a finished run."""
+    hy, dam, params = load_run(dam_folder, model_folder)
+    out = out_folder or os.path.join(dam_folder, "_hecras")
+    h = write_hydrograph_files(hy, out, dt_min)
+    t = write_breach_table(dam, params, out, peak_cfs=params.get("peak_cfs"),
+                           notes=h["info"]["notes"])
+    return {"hydrograph_txt": h["txt"], "hydrograph_csv": h["csv"], "table_csv": t["csv"],
+            "table_md": t["md"], "info": h["info"], "rows": t["rows"]}
+
+
+def write_ras_project(*args, **kwargs):
+    """RETIRED in 3.10.16. It wrote a project skeleton with keywords HEC-RAS does not use
+    ('2D Flow Area Name=', 'BC Line SA=', 'Geometry File=' ...: none of them is in HEC's own
+    example files), so HEC-RAS could not read its geometry. The HEC-RAS 2D model is now built by
+    `core/hecras_model.build_model` (HEC's keyword lines, CRLF, US or SI units from the CRS) and
+    packaged by `core/hecras_package.build_package`."""
+    raise HecRasError("write_ras_project was retired in 3.10.16 (its geometry keywords are not "
+                      "HEC-RAS's); use core.hecras_package.build_package")
+
+
+# Import: HDF discovery
+def _norm(s):
+    return re.sub(r"\s+", " ", str(s).lower()).strip()
+
+
+def _text(v):
+    if isinstance(v, (bytes, np.bytes_)):
+        return v.decode("utf-8", "replace")
+    if isinstance(v, np.ndarray):
+        return _text(v.reshape(-1)[0]) if v.size else ""
+    return str(v)
+
+
+def _attrs(obj):
+    try:
+        return {str(k): v for k, v in dict(obj.attrs).items()}
+    except Exception:
+        return {}
+
+
+def _is_dataset(obj):
+    return hasattr(obj, "shape") and hasattr(obj, "dtype")
+
+
+def _open_hdf(hdf):
+    """(file object, close function). `hdf` is a path, or an already open h5py-like file."""
+    if hasattr(hdf, "visititems"):
+        return hdf, (lambda: None)
+    try:
+        import h5py
+    except ImportError:
+        raise HecRasError(
+            "Reading HEC-RAS results needs the Python package h5py, which QGIS does not "
+            "include. Install it into QGIS's own Python (for example from the OSGeo4W Shell "
+            "on Windows: python -m pip install h5py; on macOS: the python3 inside "
+            "QGIS.app/Contents/MacOS/bin, with -m pip install h5py), then restart QGIS.")
+    if not os.path.exists(str(hdf)):
+        raise HecRasError("No such file: {}".format(hdf))
+    try:
+        f = h5py.File(str(hdf), "r")
+    except OSError as e:
+        raise HecRasError("{} is not a readable HDF5 file ({})".format(hdf, e))
+    return f, f.close
+
+
+class Catalog:
+    """Every dataset of the file by path, with the attributes of the groups above it."""
+
+    def __init__(self, f):
+        self.datasets = []
+        self.group_attrs = {"": _attrs(f)}
+
+        def visit(name, obj):
+            if _is_dataset(obj):
+                self.datasets.append((name, obj))
+            else:
+                self.group_attrs[name] = _attrs(obj)
+        f.visititems(visit)
+
+    def find(self, keys, area=None, prefer=(), forbid=(), exact=False, under=None):
+        """Datasets whose base name contains all `keys` (or equals the single key when
+        `exact`), inside the area group when `area` is given and under a path containing
+        `under`; best first: preferred path words, then the shortest base name."""
+        keys = [_norm(k) for k in ([keys] if isinstance(keys, str) else keys)]
+        out = []
+        for path, obj in self.datasets:
+            parts = [_norm(p) for p in path.split("/")]
+            base = parts[-1]
+            if exact:
+                if base != keys[0]:
+                    continue
+            elif not all(k in base for k in keys):
+                continue
+            if any(fb in base for fb in forbid):
+                continue
+            if area is not None and _norm(area) not in parts[:-1]:
+                continue
+            npath = "/".join(parts)
+            if under is not None and _norm(under) not in npath:
+                continue
+            rank = (0 if any(_norm(w) in npath for w in prefer) else 1, len(base), len(path))
+            out.append((rank, path, obj))
+        out.sort(key=lambda r: r[0])
+        return [(p, o) for _, p, o in out]
+
+    def units_of(self, path):
+        """'us', 'si' or None from the 'Units' attribute of the dataset, its groups, the root."""
+        obj = dict(self.datasets).get(path)
+        chain = [_attrs(obj)] if obj is not None else []
+        parts = path.split("/")
+        for i in range(len(parts) - 1, -1, -1):
+            chain.append(self.group_attrs.get("/".join(parts[:i]), {}))
+        for at in chain:
+            for k, v in at.items():
+                if _norm(k) in ("units", "units system", "unit", "unit system"):
+                    u = parse_units(_text(v))
+                    if u:
+                        return u
+        return None
+
+    def listing(self, limit=40):
+        words = ("cell", "face", "water surface", "velocity", "elevation", "depth")
+        rel = [p for p, _ in self.datasets if any(w in p.lower() for w in words)]
+        shown = rel[:limit]
+        s = "; ".join(shown) or "(nothing that looks like 2D results)"
+        if len(rel) > limit:
+            s += "; ... and {} more".format(len(rel) - limit)
+        return "{} datasets in the file, relevant ones: {}".format(len(self.datasets), s)
+
+
+def parse_units(text):
+    """'us' for ft / US Customary, 'si' for m / SI Metric, else None."""
+    toks = set(re.findall(r"[a-z]+", str(text).lower()))
+    if toks & {"si", "metric", "m", "meter", "meters", "metre", "metres", "ms"}:
+        return "si"
+    if toks & {"us", "ft", "feet", "foot", "customary", "english", "imperial", "fps", "usft"}:
+        return "us"
+    return None
+
+
+def _values(a):
+    """Split a summary dataset into (values, time or None): (2, N) rows, (N, 2) columns or
+    (N,) values."""
+    a = np.asarray(a, dtype=np.float64)
+    a = np.squeeze(a) if a.ndim > 2 else a
+    if a.ndim == 1:
+        return a, None
+    if a.ndim != 2:
+        raise HecRasError("unexpected shape {} for a summary dataset".format(a.shape))
+    if a.shape[0] <= 2 and a.shape[1] > 2:
+        return a[0], (a[1] if a.shape[0] == 2 else None)
+    if a.shape[1] <= 2 and a.shape[0] > 2:
+        return a[:, 0], (a[:, 1] if a.shape[1] == 2 else None)
+    return a[0], (a[1] if a.shape[0] > 1 else None)
+
+
+def _clean(a):
+    a = np.array(a, dtype=np.float64)
+    a[~np.isfinite(a) | (a <= -9998.0) | (a > 1e12)] = np.nan
+    return a
+
+
+def _read(ds):
+    return np.asarray(ds[...])
+
+
+def _time_factor_hr(catalog, path, obj):
+    """Hours per unit of a RAS time dataset (days unless an attribute says otherwise)."""
+    at = _attrs(obj)
+    at.update({k: v for k, v in catalog.group_attrs.get(path.rsplit("/", 1)[0], {}).items()
+               if k not in at})
+    for k, v in at.items():
+        if _norm(k) in ("time", "units", "unit", "time units"):
+            s = _text(v).lower()
+            if "sec" in s:
+                return 1.0 / 3600.0
+            if "min" in s:
+                return 1.0 / 60.0
+            if "hour" in s or s.strip() in ("hr", "hrs", "h"):
+                return 1.0
+            if "day" in s:
+                return 24.0
+    return 24.0
+
+
+def _block_of(path):
+    """The output block of a results path: the part up to and including 'Unsteady Time
+    Series' (e.g. '.../Output Blocks/Base Output/Unsteady Time Series'), or None."""
+    parts = path.split("/")
+    for i, p in enumerate(parts):
+        if _norm(p) == "unsteady time series":
+            return "/".join(parts[:i + 1])
+    return None
+
+
+def pair_time(times, series):
+    """v3.10.17: the 'Time' dataset of the same output block as `series` (path, obj) whose
+    length is the series' row count; HEC-RAS writes several blocks (Base Output, DSS
+    Hydrograph Output every minute, DSS Profile Output once per profile) and taking the first
+    'Time' paired a series with another block's times (DWR-3161 readout: 33 profile rows read
+    against the 385 base-output times). Falls back to the first time when there is no series."""
+    if not times:
+        return None
+    if series is None:
+        return times[0]
+    blk = _block_of(series[0])
+    rows = series[1].shape[0] if len(getattr(series[1], "shape", ())) else None
+    same = [t for t in times if _block_of(t[0]) == blk]
+    for t in same + list(times):
+        if rows is None or t[1].shape[0] == rows:
+            return t
+    return (same or times)[0]
+
+
+def connection_timeseries(hdf, name, prefer_block="DSS Hydrograph Output"):
+    """v3.10.17: the time series of an SA/2D area connection (the dam) from a plan HDF:
+    {'block', 'path', 't_hr', 'columns', 'values' (n, k), 'units'}. Uses the 'Structure
+    Variables' (Total Flow, Weir Flow, Stage HW, Stage TW) of the block with the most time
+    steps that are a TIME SERIES (rows = that block's Time), preferring `prefer_block`
+    (every minute when HEC-RAS writes it); never the DSS Profile Output table.
+    v3.10.22: with a breach, also 'breach' (the Breaching Variables: Stage HW/TW, Bottom-Width,
+    Bottom-Elevation, side slopes, Breach Flow, Velocity, Flow Area), 'breach_flow' (HEC's own
+    Breach Flow; Weir Flow INCLUDES it) and 'other_flow' (Total - Breach: the spillway);
+    None without a breach."""
+    f, close = _open_hdf(hdf)
+    try:
+        cat = Catalog(f)
+        hits = [(p, o) for p, o in cat.find("structure variables", exact=True)
+                if "/sa 2d area conn/" in "/".join(_norm(x) for x in p.split("/")) + "/"
+                and _norm(p.split("/")[-2]) == _norm(name)]
+        times = cat.find("time", exact=True, under="time series")
+        best = None
+        for p, o in hits:
+            blk = _block_of(p)
+            if blk is None or "profile" in _norm(blk):
+                continue
+            t = [x for x in times if _block_of(x[0]) == blk and x[1].shape[0] == o.shape[0]]
+            if not t:
+                continue
+            key = (0 if _norm(prefer_block) in _norm(blk) else 1, -o.shape[0])
+            if best is None or key < best[0]:
+                best = (key, p, o, t[0], blk)
+        if best is None:
+            raise HecRasError("No time series of connection '{}' in {} (found: {})".format(
+                name, hdf, ", ".join(p for p, _ in hits) or "nothing"))
+        _, p, o, (tp, to), blk = best
+        cols, units = [], []
+        for row in _attrs(o).get("Variable_Unit", []):
+            vals = [_text(v) for v in (row if hasattr(row, "__len__") and not isinstance(
+                row, (bytes, str)) else [row])]
+            cols.append(vals[0] if vals else "")
+            units.append(vals[1] if len(vals) > 1 else "")
+        t_hr = np.asarray(_read(to), dtype=np.float64).reshape(-1) * _time_factor_hr(cat, tp, to)
+        values = np.asarray(_read(o), dtype=np.float64)
+        out = {"block": blk.split("/")[-2] if "/" in blk else blk, "path": p, "t_hr": t_hr,
+               "columns": cols, "units": units, "values": values,
+               "breach": None, "breach_flow": None, "other_flow": None}
+        # v3.10.22: HEC-RAS counts the breach flow inside 'Weir Flow' (Absaraka v2: Total -
+        # Weir = 0 all through); its own 'Breach Flow' is in the connection's 'Breaching
+        # Variables' next to the Structure Variables. Total - Breach is what else crosses the
+        # connection (the spillway notch, the weir away from the breach).
+        bp = p.rsplit("/", 1)[0] + "/Breaching Variables"
+        bo = [x for q, x in cat.find("breaching variables", exact=True) if q == bp]
+        if bo and bo[0].shape[0] == values.shape[0]:
+            bcols, bunits = [], []
+            for row in _attrs(bo[0]).get("Variable_Unit", []):
+                vals = [_text(v) for v in (row if hasattr(row, "__len__") and not isinstance(
+                    row, (bytes, str)) else [row])]
+                bcols.append(vals[0] if vals else "")
+                bunits.append(vals[1] if len(vals) > 1 else "")
+            bv = np.asarray(_read(bo[0]), dtype=np.float64)
+            out["breach"] = {"path": bp, "columns": bcols, "units": bunits, "values": bv}
+            low = [_norm(c) for c in bcols]
+            tot = [i for i, c in enumerate(cols) if _norm(c) == _norm("Total Flow")]
+            if _norm("Breach Flow") in low:
+                # NaN before the breach starts (Absaraka v2): no breach flow yet
+                out["breach_flow"] = np.nan_to_num(bv[:, low.index(_norm("Breach Flow"))],
+                                                   nan=0.0)
+                if tot:
+                    out["other_flow"] = values[:, tot[0]] - out["breach_flow"]
+        return out
+    finally:
+        close()
+
+
+def discover(catalog, area=None):
+    """The datasets to use for one 2D flow area. Raises HecRasError listing what was found
+    when a required one is missing. Returns a dict of paths and objects."""
+    centers = catalog.find("cells center coordinate")
+    if not centers:
+        raise HecRasError("No 'Cells Center Coordinate' dataset: is this a HEC-RAS 2D plan "
+                          "HDF (.p##.hdf)? " + catalog.listing())
+    areas = {}
+    for path, obj in centers:
+        parts = path.split("/")
+        name = parts[-2] if len(parts) >= 2 else ""
+        areas.setdefault(name, (path, obj))
+    notes = []
+    if area:
+        hit = [n for n in areas if _norm(n) == _norm(area)]
+        if not hit:
+            raise HecRasError("2D flow area '{}' not found; the file has: {}".format(
+                area, ", ".join(areas)))
+        name = hit[0]
+    else:
+        name = max(areas, key=lambda n: areas[n][1].shape[0])
+        if len(areas) > 1:
+            notes.append("The file has {} 2D flow areas ({}); using '{}', the largest. Name "
+                         "one to choose another.".format(len(areas), ", ".join(areas), name))
+    cpath, cobj = areas[name]
+    geo = cpath.rsplit("/", 1)[0]
+    res = {"area": name, "areas": list(areas), "notes": notes, "centers": (cpath, cobj)}
+
+    def pick(keys, **kw):
+        hits = catalog.find(keys, area=name, **kw)
+        same = [h for h in hits if h[0].rsplit("/", 1)[0] == geo]
+        return (same or hits or [None])[0]
+
+    res["min_elev"] = pick("cells minimum elevation")
+    res["face_cells"] = pick("faces cell indexes")
+    summ = ("summary output",)
+    res["max_wse"] = pick("maximum water surface", prefer=summ, forbid=("error",))
+    res["cell_vel"] = pick(("maximum", "velocity"), prefer=summ, forbid=("face", "error"))
+    res["face_vel"] = pick(("maximum", "face", "velocity"), prefer=summ, forbid=("error",))
+    res["ts_wse"] = pick("water surface", prefer=("unsteady time series",), exact=True,
+                         under="time series")
+    times = catalog.find("time", exact=True, under="time series")
+    res["ts_time"] = pair_time(times, res["ts_wse"])
+    missing = [label for key, label in (("min_elev", "Cells Minimum Elevation"),
+                                        ("max_wse", "Maximum Water Surface"))
+               if res[key] is None]
+    if missing:
+        raise HecRasError("Area '{}': cannot find {}. {}".format(
+            name, " and ".join(missing), catalog.listing()))
+    return res
+
+
+# Import: mesh results
+class Mesh:
+    """Per-cell results of one 2D flow area in US units, cells as points."""
+
+    def __init__(self, x, y, fields, info, crs_wkt=None):
+        self.x, self.y = x, y
+        self.fields = fields          # name -> (N,) array; NaN where dry or unknown
+        self.info = info
+        self.crs_wkt = crs_wkt
+        self._nn = None
+        # 3.10.79: per-cell values before the cell wet mask (US units): 'wse' (max WSE),
+        # 'min_elev' (Cells Minimum Elevation), 'velocity', 'time_of_max' when known.
+        # terrain_depth uses them with the terrain under each grid cell.
+        self.raw = {}
+        self._series = None           # (dataset, times h, file->ft factor) while the file is open
+
+    @property
+    def n(self):
+        return len(self.x)
+
+    def nn_distance(self):
+        """Distance from each cell centre to the nearest other one, and the median."""
+        if self._nn is None:
+            self._nn = cell_spacing(self.x, self.y)
+        return self._nn
+
+
+def _unit_factor(u):
+    return 1.0 / FT if u == "si" else 1.0
+
+
+def read_mesh(hdf, area=None, units=None, arrival_depth_ft=ARRIVAL_DEPTH_FT, t0_hr=0.0, wet_ft=0.01,
+              want_arrival=True):
+    """The maximum results of a 2D flow area as a Mesh (fields depth, wse, velocity,
+    arrival in ft, ft, ft/s, hours; time_of_max in hours when the file has it).
+
+    units: None to read them from the file (default US when absent), 'us' or 'si'.
+    Cells drier than `wet_ft` are NaN in every field. Arrival is the first time the depth
+    reaches `arrival_depth_ft` (interpolated between output steps) minus `t0_hr`, from the
+    Water Surface time series; without it there is no arrival.
+
+    The depth here is per CELL: the water surface minus the cell's MINIMUM elevation (its
+    lowest subgrid point), so a large cell with a ditch has the ditch's depth everywhere.
+    For mapped results use terrain_depth (3.10.79), which measures from the terrain under
+    each grid cell; this per-cell depth stays for cell diagnostics and as its fallback."""
+    f, close = _open_hdf(hdf)
+    try:
+        return _read_mesh(f, area, units, arrival_depth_ft, t0_hr, wet_ft, want_arrival)
+    finally:
+        close()
+
+
+def _read_mesh(f, area, units, arrival_depth_ft, t0_hr, wet_ft, want_arrival):
+    cat = Catalog(f)
+    lay = discover(cat, area)
+    notes = list(lay["notes"])
+    used = {}
+
+    def unit_for(item, what):
+        if units in ("us", "si"):
+            return units
+        u = cat.units_of(item[0])
+        if u is None:
+            notes.append("No units attribute found for {}; taken as US customary. Pass "
+                         "units='si' if the model was in metric.".format(what))
+            return "us"
+        return u
+
+    wse_raw, t_max_raw = _values(_read(lay["max_wse"][1]))
+    used["max_wse"] = lay["max_wse"][0]
+    n = len(wse_raw)
+    xy = np.asarray(_read(lay["centers"][1]), dtype=np.float64)
+    if xy.ndim != 2 or xy.shape[1] < 2 or xy.shape[0] < n:
+        raise HecRasError("Cells Center Coordinate has shape {} but Maximum Water Surface has "
+                          "{} cells".format(xy.shape, n))
+    x, y = xy[:n, 0], xy[:n, 1]
+    used["centers"] = lay["centers"][0]
+    elev_raw = _clean(_read(lay["min_elev"][1]).reshape(-1))
+    used["min_elev"] = lay["min_elev"][0]
+    if len(elev_raw) < n:
+        raise HecRasError("Cells Minimum Elevation has {} values, fewer than the {} cells"
+                          .format(len(elev_raw), n))
+    elev_raw = elev_raw[:n]
+    u_wse = unit_for(lay["max_wse"], "Maximum Water Surface")
+    u_elev = unit_for(lay["min_elev"], "Cells Minimum Elevation")
+    wse = _clean(wse_raw) * _unit_factor(u_wse)
+    elev = elev_raw * _unit_factor(u_elev)
+    with np.errstate(invalid="ignore"):
+        depth = np.clip(wse - elev, 0.0, None)
+        wet = depth >= wet_ft
+    fields = {}
+    dry = np.nan
+
+    def masked(a):
+        return np.where(wet, a, dry)
+    fields["depth"] = masked(depth)
+    fields["wse"] = masked(wse)
+
+    # velocity: per cell if the file has it, else the face values averaged onto the cells
+    vel = None
+    if lay["cell_vel"] is not None:
+        v, _ = _values(_read(lay["cell_vel"][1]))
+        if len(v) >= n:
+            vel = np.abs(_clean(v[:n])) * _unit_factor(unit_for(lay["cell_vel"], "cell velocity"))
+            used["velocity"] = lay["cell_vel"][0]
+    if vel is None and lay["face_vel"] is not None and lay["face_cells"] is not None:
+        fv, _ = _values(_read(lay["face_vel"][1]))
+        fc = np.asarray(_read(lay["face_cells"][1]))
+        if fc.ndim == 2 and fc.shape[1] >= 2:
+            m = min(len(fv), len(fc))
+            if len(fv) != len(fc):
+                notes.append("Maximum Face Velocity has {} faces but Faces Cell Indexes {}; "
+                             "the first {} were used.".format(len(fv), len(fc), m))
+            fv = np.abs(_clean(fv[:m])) * _unit_factor(unit_for(lay["face_vel"],
+                                                                "face velocity"))
+            s = np.zeros(n)
+            c = np.zeros(n)
+            for col in (0, 1):
+                idx = fc[:m, col].astype(np.int64)
+                ok = (idx >= 0) & (idx < n) & np.isfinite(fv)
+                s += np.bincount(idx[ok], weights=fv[ok], minlength=n)
+                c += np.bincount(idx[ok], minlength=n)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                vel = np.where(c > 0, s / np.maximum(c, 1), np.nan)
+            used["velocity"] = lay["face_vel"][0] + " (faces averaged to cells)"
+            notes.append("Velocity is the mean of the maximum face velocities around each "
+                         "cell, an approximation of the cell's maximum velocity.")
+    if vel is not None:
+        fields["velocity"] = masked(vel)
+    else:
+        notes.append("No maximum velocity found (need 'Maximum Face Velocity' with 'Faces "
+                     "Cell Indexes', or a per-cell maximum velocity); no velocity raster.")
+
+    # time of the maximum, and the arrival time from the time series
+    tmax = None
+    if t_max_raw is not None:
+        tmax = _clean(t_max_raw[:n]) * _time_factor_hr(cat, lay["max_wse"][0], lay["max_wse"][1])
+        fields["time_of_max"] = masked(tmax)
+    series = None
+    if lay["ts_wse"] is not None and lay["ts_time"] is not None:
+        tobj = lay["ts_time"]
+        t_hr = np.asarray(_read(tobj[1]), dtype=np.float64).reshape(-1) * _time_factor_hr(
+            cat, tobj[0], tobj[1])
+        sh = lay["ts_wse"][1].shape
+        if len(sh) == 2 and sh[0] == len(t_hr) and sh[1] >= n:
+            series = (lay["ts_wse"][1], t_hr, _unit_factor(u_wse))
+            used["series"] = lay["ts_wse"][0]
+        elif want_arrival:
+            notes.append("The Water Surface time series has shape {} for {} times and {} "
+                         "cells; no arrival time.".format(sh, len(t_hr), n))
+    if want_arrival and series is not None:
+        ts, t_hr, fac = series
+        thr = float(arrival_depth_ft) / fac
+        arr = _first_reach(ts, t_hr, elev / fac, thr, n) - float(t0_hr)
+        fields["arrival"] = masked(np.clip(arr, 0.0, None))
+        used["arrival"] = lay["ts_wse"][0]
+    elif want_arrival and (lay["ts_wse"] is None or lay["ts_time"] is None):
+        notes.append("No Water Surface time series in the file: no arrival time (the time "
+                     "of the maximum is written instead when it exists).")
+    info = {"area": lay["area"], "areas": lay["areas"], "n_cells": n, "units": u_wse,
+            "used": used, "notes": notes, "arrival_depth_ft": float(arrival_depth_ft),
+            "t0_hr": float(t0_hr), "depth_basis": DEPTH_BASIS_CELL_MIN}
+    crs = None
+    for k, v in cat.group_attrs.get("", {}).items():
+        if _norm(k) in ("projection", "projection wkt", "crs"):
+            crs = _text(v) or None
+    mesh = Mesh(x, y, fields, info, crs)
+    mesh.raw = {"wse": wse, "min_elev": elev}
+    if vel is not None:
+        mesh.raw["velocity"] = vel
+    if tmax is not None:
+        mesh.raw["time_of_max"] = tmax
+    mesh._series = series
+    return mesh
+
+
+def _first_reach(ts, t_hr, elev, thr, n, cols=None, rows=None, weights=None):
+    """Per cell the first time (hours) the depth (water surface minus `elev`) reaches `thr`,
+    interpolated between output steps; NaN when it never does. Reads a few rows at a time.
+
+    3.10.79: with `cols` (cell index per point), per POINT instead: the series of cell
+    cols[i] minus elev[i] (the terrain under a grid cell), so `elev` has len(cols) values.
+    3.10.92: `cols` (m, k) with `weights` (m, k): the water surface of point i is the
+    weighted sum of the series of its k cells (the 'fine' basis's interpolated surface)."""
+    nt = ts.shape[0]
+    pick = None if cols is None else np.asarray(cols, dtype=np.int64)
+    wts = None if weights is None else np.asarray(weights, dtype=np.float64)
+    out = np.full(n if pick is None else len(pick), np.nan)
+    if not len(out):
+        return out
+    rows = rows or max(2, int(4_000_000 // max(n, 1)))
+    prev_d, prev_t = None, None
+    for i in range(0, nt, rows):
+        blk = _clean(np.asarray(ts[i:i + rows, :n], dtype=np.float64))
+        if pick is not None and wts is not None:
+            blk = (blk[:, pick] * wts[None]).sum(axis=2)
+        elif pick is not None:
+            blk = blk[:, pick]
+        blk = blk - elev[None, :]
+        tt = t_hr[i:i + rows]
+        if prev_d is not None:
+            blk = np.vstack([prev_d[None, :], blk])
+            tt = np.concatenate([[prev_t], tt])
+        un = np.flatnonzero(np.isnan(out))
+        if not len(un):
+            break
+        d = blk[:, un]
+        with np.errstate(invalid="ignore"):
+            hit = d >= thr
+        any_hit = hit.any(axis=0)
+        if any_hit.any():
+            cols = np.flatnonzero(any_hit)
+            j = hit[:, cols].argmax(axis=0)
+            d1 = d[j, cols]
+            t1 = tt[j]
+            jm = np.maximum(j - 1, 0)
+            d0 = d[jm, cols]
+            t0 = tt[jm]
+            with np.errstate(invalid="ignore", divide="ignore"):
+                frac = np.where(np.isfinite(d0) & (d1 > d0) & (j > 0), (thr - d0) / (d1 - d0),
+                                1.0)
+            out[un[cols]] = np.where(j > 0, t0 + np.clip(frac, 0.0, 1.0) * (t1 - t0), t1)
+        prev_d, prev_t = blk[-1].copy(), tt[-1]
+    return out
+
+
+# Import: unstructured cells -> regular raster (pure-numpy nearest cell)
+class SpatialHash:
+    """Uniform-grid spatial hash for nearest-point queries (a KD-tree substitute)."""
+
+    def __init__(self, x, y, h):
+        self.x = np.asarray(x, dtype=np.float64)
+        self.y = np.asarray(y, dtype=np.float64)
+        n = len(self.x)
+        self.x0, self.y0 = float(self.x.min()), float(self.y.min())
+        w = float(self.x.max()) - self.x0
+        ht = float(self.y.max()) - self.y0
+        h = float(h) if h > 0 else 1.0
+        while True:
+            nx, ny = int(w // h) + 1, int(ht // h) + 1
+            if nx * ny <= 16 * n + 4096:
+                break
+            h *= 1.5
+        self.h, self.nx, self.ny = h, nx, ny
+        ix = ((self.x - self.x0) // h).astype(np.int64)
+        iy = ((self.y - self.y0) // h).astype(np.int64)
+        key = iy * nx + ix
+        self.order = np.argsort(key, kind="stable")
+        self.count = np.bincount(key, minlength=nx * ny)
+        self.start = np.concatenate(([0], np.cumsum(self.count)[:-1]))
+
+    def nearest(self, qx, qy, max_dist=None, exclude=None):
+        """(index of the nearest point, distance) for each query; index -1 and distance inf
+        when none lies within `max_dist`. `exclude`: per query, a point index to ignore (the
+        query's own, for neighbour distances)."""
+        qx = np.asarray(qx, dtype=np.float64)
+        qy = np.asarray(qy, dtype=np.float64)
+        m = len(qx)
+        h = self.h
+        best_d2 = np.full(m, np.inf)
+        best_i = np.full(m, -1, dtype=np.int64)
+        qix = np.floor((qx - self.x0) / h).astype(np.int64)
+        qiy = np.floor((qy - self.y0) / h).astype(np.int64)
+        active = np.ones(m, dtype=bool)
+        if max_dist is None:
+            rmax = min(max(self.nx, self.ny) + 1, 64)
+        else:
+            rmax = int(math.ceil(max_dist / h))
+            far = ((qx < self.x0 - max_dist) | (qx > self.x0 + self.nx * h + max_dist)
+                   | (qy < self.y0 - max_dist) | (qy > self.y0 + self.ny * h + max_dist))
+            active[far] = False
+        for r in range(rmax + 1):
+            idx = np.flatnonzero(active)
+            if not len(idx):
+                break
+            for ox in range(-r, r + 1):
+                for oy in range(-r, r + 1):
+                    if max(abs(ox), abs(oy)) != r:
+                        continue
+                    cx, cy = qix[idx] + ox, qiy[idx] + oy
+                    ok = (cx >= 0) & (cx < self.nx) & (cy >= 0) & (cy < self.ny)
+                    if not ok.any():
+                        continue
+                    sel = idx[ok]
+                    k = cy[ok] * self.nx + cx[ok]
+                    cnt, st = self.count[k], self.start[k]
+                    for j in range(int(cnt.max())):
+                        s2 = cnt > j
+                        qi = sel[s2]
+                        cand = self.order[st[s2] + j]
+                        d2 = (self.x[cand] - qx[qi]) ** 2 + (self.y[cand] - qy[qi]) ** 2
+                        if exclude is not None:
+                            d2 = np.where(cand == exclude[qi], np.inf, d2)
+                        better = d2 < best_d2[qi]
+                        best_d2[qi[better]] = d2[better]
+                        best_i[qi[better]] = cand[better]
+            active &= ~(best_d2 <= (r * h) ** 2)
+        d = np.sqrt(best_d2)
+        if max_dist is not None:
+            best_i[d > max_dist] = -1
+            d[d > max_dist] = np.inf
+        best_i[~np.isfinite(d)] = -1
+        return best_i, d
+
+
+def cell_spacing(x, y, chunk=250000):
+    """(nn, median): distance from each point to its nearest neighbour, and the median."""
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    n = len(x)
+    if n < 2:
+        raise HecRasError("the mesh has fewer than two cells")
+    w, ht = float(x.max() - x.min()), float(y.max() - y.min())
+    if w == 0 and ht == 0:
+        raise HecRasError("all cell centres are at the same place")
+    area = w * ht
+    h0 = math.sqrt(area / n) if area > 0 else max(w, ht) / n
+    samp = np.linspace(0, n - 1, min(n, 2000)).astype(np.int64)
+    _, d = SpatialHash(x, y, h0).nearest(x[samp], y[samp], exclude=samp)
+    ok = np.isfinite(d) & (d > 0)
+    med0 = float(np.median(d[ok])) if ok.any() else h0
+    hs = SpatialHash(x, y, 2.0 * med0)
+    nn = np.full(n, np.inf)
+    for i in range(0, n, chunk):
+        idx = np.arange(i, min(n, i + chunk))
+        nn[idx] = hs.nearest(x[idx], y[idx], exclude=idx)[1]
+    good = np.isfinite(nn) & (nn > 0)
+    med = float(np.median(nn[good])) if good.any() else med0
+    nn = np.where(good, nn, med)
+    return nn, med
+
+
+def _round_cell(s):
+    """Median spacing rounded: whole units from 1 up, two significant figures below."""
+    return float(max(1, round(s))) if s >= 1 else float("{:.2g}".format(s))
+
+
+def grid_spec(mesh, cell_size=None, extent=None):
+    """(x0, y0_top, dx, nx, ny) for the raster. Default: the cells' extent plus half a
+    spacing, snapped to multiples of the cell size, cell size = median spacing rounded."""
+    nn, med = mesh.nn_distance()
+    dx = float(cell_size) if cell_size else _round_cell(med)
+    if not dx > 0:
+        raise HecRasError("the cell size must be greater than 0")
+    if extent:
+        xmin, ymin, xmax, ymax = (float(v) for v in extent)
+        x0, ytop = xmin, ymax
+    else:
+        xmin, xmax = float(mesh.x.min()) - 0.5 * med, float(mesh.x.max()) + 0.5 * med
+        ymin, ymax = float(mesh.y.min()) - 0.5 * med, float(mesh.y.max()) + 0.5 * med
+        x0, ytop = math.floor(xmin / dx) * dx, math.ceil(ymax / dx) * dx
+        ymin = math.floor(ymin / dx) * dx
+    if not (xmax > x0 and ytop > ymin):
+        raise HecRasError("the extent is empty")
+    nx, ny = int(math.ceil((xmax - x0) / dx - 1e-9)), int(math.ceil((ytop - ymin) / dx - 1e-9))
+    if nx * ny > 60_000_000:
+        raise HecRasError("a {} x {} grid is too large; use a larger cell size or a smaller "
+                          "extent".format(nx, ny))
+    return x0, ytop, dx, nx, ny
+
+
+def rasterise(mesh, x0, ytop, dx, nx, ny, names=None, reach=0.75, block=400000):
+    """Fields of the mesh on a regular grid by nearest cell centre. A grid cell farther than
+    `reach` x the spacing of the nearest cell (the cell's distance to its own nearest
+    neighbour) from every centre is outside the mesh: NaN. Returns {name: (ny, nx)}."""
+    cell = cell_index(mesh, x0, ytop, dx, nx, ny, reach=reach, block=block)
+    ok = cell >= 0
+    ci = np.maximum(cell, 0)
+    names = [k for k in (names or list(mesh.fields)) if k in mesh.fields]
+    return {k: np.where(ok, mesh.fields[k][ci], np.nan) for k in names}
+
+
+def cell_radius(mesh, reach=0.75):
+    """Per cell, how far from its centre a grid point still takes it (cell_index)."""
+    nn, med = mesh.nn_distance()
+    return np.maximum(reach * nn, 0.25 * med)
+
+
+def cell_index(mesh, x0, ytop, dx, nx, ny, reach=0.75, block=400000, cache=None,
+               allow_empty=False):
+    """(ny, nx) index of the nearest mesh cell centre for each grid cell, -1 outside the mesh
+    (farther than `reach` x that cell's own neighbour spacing). Raises HecRasError when the
+    mesh does not overlap the grid (allow_empty=True: all -1 instead).
+
+    Two passes keep empty parts of the grid cheap: first every cell within 1.5 x the typical
+    reach, then, for what is left, only the cells whose own reach is larger (coarse cells).
+    `cache` (a dict): keeps the search structures for the next call on the same mesh (3.10.92,
+    the fine-terrain bases call it once per tile)."""
+    key = ("cell_index", float(reach))
+    if cache is not None and key in cache:
+        radius, tiers, hashes = cache[key]
+    else:
+        nn, med = mesh.nn_distance()
+        radius = cell_radius(mesh, reach)
+        cap = 20.0 * med
+        r1 = min(1.5 * float(np.median(radius)), cap)
+        tiers = [(np.arange(mesh.n), r1)]
+        big = np.flatnonzero(radius > r1)
+        if len(big):
+            tiers.append((big, min(float(radius[big].max()), cap)))
+        hashes = [SpatialHash(mesh.x[ids], mesh.y[ids], 2.0 * float(np.median(nn[ids])))
+                  for ids, _ in tiers]
+        if cache is not None:
+            cache[key] = (radius, tiers, hashes)
+    out = np.full((ny, nx), -1, dtype=np.int64)
+    xs = x0 + (np.arange(nx) + 0.5) * dx
+    rows = max(1, block // max(nx, 1))
+    covered = 0
+    for r0 in range(0, ny, rows):
+        r1_ = min(ny, r0 + rows)
+        ys = ytop - (np.arange(r0, r1_) + 0.5) * dx
+        qx = np.tile(xs, r1_ - r0)
+        qy = np.repeat(ys, nx)
+        cell = np.full(len(qx), -1, dtype=np.int64)
+        todo = np.arange(len(qx))
+        for (ids, md), hs in zip(tiers, hashes):
+            idx, dist = hs.nearest(qx[todo], qy[todo], max_dist=md)
+            gi = np.where(idx >= 0, ids[np.maximum(idx, 0)], -1)
+            ok = (gi >= 0) & (dist <= radius[np.maximum(gi, 0)])
+            cell[todo[ok]] = gi[ok]
+            todo = todo[~ok]
+            if not len(todo):
+                break
+        covered += int((cell >= 0).sum())
+        out[r0:r1_, :] = cell.reshape(r1_ - r0, nx)
+    if not covered and not allow_empty:
+        raise HecRasError("The mesh does not overlap the grid (mesh x {:.1f} to {:.1f}, y "
+                          "{:.1f} to {:.1f}; grid x {:.1f} to {:.1f}, y {:.1f} to {:.1f}). "
+                          "Check that both are in the same coordinate system.".format(
+                              mesh.x.min(), mesh.x.max(), mesh.y.min(), mesh.y.max(), x0,
+                              x0 + nx * dx, ytop - ny * dx, ytop))
+    return out
+
+
+FIELD_NAMES = ("depth", "wse", "velocity", "arrival", "time_of_max")
+
+
+# 3.10.79: depth on the terrain of each grid cell (not the HEC cell's minimum);
+# 3.10.84: or (the default then) on the HEC cell's minimum, with the same pixel mapping;
+# 3.10.92: the terrain basis is the default again, with a datum/unit check
+def terrain_depth(hdf, x0, ytop, dx, nx, ny, terrain_ft, area=None, units=None,
+                  arrival_depth_ft=ARRIVAL_DEPTH_FT, t0_hr=0.0, wet_ft=0.01, to_grid_xy=None,
+                  want_arrival=True, reach=0.75, basis=None, fine=None):
+    """The HEC-RAS maxima on a regular grid with depth from the terrain under each GRID cell.
+
+    `terrain_ft` (ny, nx): the ground (ft) of each grid cell, e.g. the run's fine terrain
+    at each grid cell's centre (hecras_engine.fine_terrain_on_grid). Each grid cell takes the water
+    surface of its nearest HEC-RAS cell centre (the cell's WSE held flat over the cell, as
+    RAS Mapper's default 'horizontal' surface), then
+
+        depth   = max(0, WSE_max(cell) - terrain(grid cell))
+        wet     = depth >= wet_ft             (every field is NaN where not wet)
+        arrival = first time WSE(cell, t) - terrain(grid cell) >= arrival_depth_ft, minus
+                  t0_hr (interpolated between output steps), from the Water Surface series
+
+    so a 150 ft cell with a ditch is deep only over the ditch: its dry high ground stays dry
+    (read_mesh's depth is WSE minus the cell's MINIMUM elevation, the ditch bottom, over the
+    whole cell). Where the terrain has no data inside the mesh the cell's minimum elevation
+    is used (counted in the notes). to_grid_xy maps the HEC-RAS cell centres into the grid's
+    CRS (None: the same). Returns ({name: (ny, nx)} in ft, ft, ft/s, h; info).
+
+    3.10.84 `basis` (depth_basis(): None = NDBREACH_HECRAS_DEPTH_BASIS, else 'terrain'
+    since 3.10.92):
+    'cell_min' measures from the HEC-RAS cell's minimum elevation over the whole cell (then
+    `terrain_ft` may be None; it is used only for the comparison depth), 'terrain' from
+    `terrain_ft` as above. The wet mask and the arrival time (first time WSE - ground >=
+    arrival_depth_ft) always use the same ground as the depth. info: 'depth_basis',
+    'depth_cell_min' and 'depth_terrain' (both bases on the grid, ft, for comparison;
+    'depth_terrain' None without a terrain).
+
+    3.10.92: with a terrain, datum_check() compares it with the cells' minimum elevations;
+    a mismatch raises DatumMismatch for the 'terrain' basis (NDBREACH_HECRAS_DATUM_CHECK=warn
+    keeps it with a warning). info 'datum_check' (the record, None without a terrain) and
+    'datum_warnings' (messages to show loudly).
+
+    3.10.92 review of #204: 'terrain_mean' is 'terrain' with `terrain_ft` the MEAN ground of
+    each grid cell (the caller reads it so); 'terrain_max' and 'fine' work at the fine
+    terrain's resolution (hecras_fine.fine_on_grid) and need `fine`, a dict: 'ground'
+    (x0f, ytopf, dxf, nxf, nyf) -> fine ground ft, 'k' (fine points per grid cell side), and
+    optional 'agg' ('max' / 'mean', for 'fine'), 'rasters' (the fine rasters' writer factory),
+    'limit' (points); `terrain_ft` (the ground at each grid cell's centre) then gives the
+    datum check and the comparison depth. info 'fine' holds the fine record."""
+    basis = depth_basis(basis)
+    if terrain_ft is not None:
+        terrain_ft = np.asarray(terrain_ft, dtype=np.float64)
+        if terrain_ft.shape != (ny, nx):
+            raise HecRasError("the terrain is {} but the grid is {}".format(
+                terrain_ft.shape, (ny, nx)))
+    elif basis in TERRAIN_BASES:
+        raise HecRasError("the per-pixel terrain depth basis needs the terrain")
+    if basis in FINE_BASES and not (fine and callable(fine.get("ground"))):
+        raise HecRasError("the '{}' depth basis needs the fine terrain".format(basis))
+    f, close = _open_hdf(hdf)
+    try:
+        mesh = _read_mesh(f, area, units, arrival_depth_ft, t0_hr, wet_ft, False)
+        if to_grid_xy is not None:
+            xy = np.asarray(to_grid_xy(np.column_stack([mesh.x, mesh.y])), dtype=float)
+            mesh.x, mesh.y = xy[:, 0], xy[:, 1]
+            mesh._nn = None
+        cell = cell_index(mesh, x0, ytop, dx, nx, ny, reach=reach)
+        inside = cell >= 0
+        ci = np.maximum(cell, 0)
+        raw = mesh.raw
+        wse = np.where(inside, raw["wse"][ci], np.nan)
+        cmin = np.where(inside, raw["min_elev"][ci], np.nan)
+        if terrain_ft is not None:
+            no_terrain = inside & ~np.isfinite(terrain_ft)
+            g_terrain = np.where(no_terrain, cmin, terrain_ft)
+        else:
+            no_terrain = np.zeros((ny, nx), dtype=bool)
+            g_terrain = None
+        datum = None
+        if terrain_ft is not None:
+            datum = datum_check(terrain_ft, cmin, inside)
+            if datum["fatal"] and basis in TERRAIN_BASES:
+                raise DatumMismatch(datum["message"])
+        ground = cmin if basis == DEPTH_BASIS_CELL_MIN else g_terrain
+        with np.errstate(invalid="ignore"):
+            depth = np.clip(wse - ground, 0.0, None)
+            wet = np.isfinite(depth) & (depth >= wet_ft)
+            d_cmin = np.clip(wse - cmin, 0.0, None)
+            d_terr = None if g_terrain is None else np.clip(wse - g_terrain, 0.0, None)
+        out = {"depth": np.where(wet, depth, np.nan), "wse": np.where(wet, wse, np.nan)}
+        for k in ("velocity", "time_of_max"):
+            if k in raw:
+                out[k] = np.where(wet, raw[k][ci], np.nan)
+        info = dict(mesh.info)
+        notes = list(info["notes"])
+        finfo = None
+        if basis in FINE_BASES:
+            from . import hecras_fine
+            out, finfo = hecras_fine.fine_on_grid(
+                mesh, x0, ytop, dx, nx, ny, fine["ground"], fine.get("k") or 1, basis,
+                wet_ft=wet_ft, arrival_depth_ft=arrival_depth_ft, t0_hr=t0_hr,
+                want_arrival=want_arrival, reach=reach, agg=fine.get("agg"),
+                rasters=fine.get("rasters"), limit=fine.get("limit"))
+            notes.extend(finfo.pop("notes"))
+            if want_arrival and mesh._series is not None:
+                info["used"] = dict(info["used"], arrival=info["used"].get("series"))
+        elif want_arrival and mesh._series is not None:
+            ts, t_hr, fac = mesh._series
+            with np.errstate(invalid="ignore"):
+                reach_px = np.flatnonzero((wet & (depth >= float(arrival_depth_ft))).ravel())
+            arr = np.full(ny * nx, np.nan)
+            if len(reach_px):
+                t = _first_reach(ts, t_hr, ground.ravel()[reach_px] / fac,
+                                 float(arrival_depth_ft) / fac, mesh.n,
+                                 cols=ci.ravel()[reach_px])
+                # the max WSE is kept every computation step, the series only every output
+                # step: a pixel whose max depth reaches the arrival depth between two output
+                # steps takes the cell's time of the max, so arrival follows the depth mask
+                missed = ~np.isfinite(t)
+                if missed.any() and "time_of_max" in raw:
+                    t[missed] = raw["time_of_max"][ci.ravel()[reach_px][missed]]
+                    n_tmax = int(np.isfinite(t[missed]).sum())
+                    if n_tmax:
+                        notes.append("{:,} grid cells reach the arrival depth only between "
+                                     "output steps; their arrival is the cell's time of the "
+                                     "maximum.".format(n_tmax))
+                arr[reach_px] = np.clip(t - float(t0_hr), 0.0, None)
+            out["arrival"] = arr.reshape(ny, nx)
+            info["used"] = dict(info["used"], arrival=info["used"].get("series"))
+        elif want_arrival:
+            notes.append("No usable Water Surface time series in the file: no arrival time.")
+        if no_terrain.any() and basis in TERRAIN_BASES:
+            notes.append("{:,} grid cells inside the mesh have no terrain; the HEC-RAS cell's "
+                         "minimum elevation was used there.".format(int(no_terrain.sum())))
+        warns = []
+        if datum is not None:
+            datum = {k: v for k, v in datum.items() if k != "fatal"}
+            if datum["status"] in ("mismatch", "suspect"):
+                warns.append(datum["message"] + ("" if basis in TERRAIN_BASES else
+                             " (the terrain gives only the comparison depth here)"))
+            elif datum["status"] == "ok":
+                notes.append(datum["message"])
+        info.update({"notes": notes, "depth_basis": basis, "datum_check": datum,
+                     "datum_warnings": warns,
+                     "no_terrain_cells": int(no_terrain.sum()), "depth_cell_min": d_cmin,
+                     "depth_terrain": d_terr, "inside_cells": int(inside.sum()),
+                     "fine": finfo})
+        return out, info
+    finally:
+        close()
+
+
+def to_grids(mesh, cell_size=None, extent=None, crs_wkt=None):
+    """{name: Grid} on a regular north-up grid; info has the grid spec."""
+    x0, ytop, dx, nx, ny = grid_spec(mesh, cell_size, extent)
+    arrays = rasterise(mesh, x0, ytop, dx, nx, ny)
+    crs = crs_wkt or mesh.crs_wkt
+    grids = {k: Grid(a, x0, ytop, dx, crs_wkt=crs) for k, a in arrays.items()}
+    info = dict(mesh.info)
+    info.update({"cell_size": dx, "nx": nx, "ny": ny, "x0": x0, "y_top": ytop,
+                 "median_spacing": mesh.nn_distance()[1]})
+    return grids, info
+
+
+def import_results(hdf, cell_size=None, extent=None, area=None, **kw):
+    """read_mesh + to_grids: ({name: Grid}, info)."""
+    mesh = read_mesh(hdf, area=area, **kw)
+    return to_grids(mesh, cell_size, extent)
+
+
+def import_as_reference(hdf_path, like_grid, area=None, **kw):
+    """The HEC-RAS maximum results on the grid of `like_grid` (a core Grid; the same
+    coordinate system as the HEC-RAS geometry is assumed), as arrays of the same shape for
+    benchmark.compare_fields: {'depth', 'wse', 'velocity', 'arrival'} in ft, ft, ft/s and
+    hours (NaN where dry or outside the mesh). Fields the file cannot supply are left out.
+    Keyword arguments go to read_mesh (units, arrival_depth_ft, t0_hr, wet_ft)."""
+    mesh = read_mesh(hdf_path, area=area, **kw)
+    arrays = rasterise(mesh, like_grid.x0, like_grid.y0, like_grid.dx, like_grid.nx,
+                       like_grid.ny, names=("depth", "wse", "velocity", "arrival"))
+    return arrays

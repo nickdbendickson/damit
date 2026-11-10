@@ -16,6 +16,7 @@
  * - NID hazard is shown as reported (FEMA class), never used by the screen and never the class of record.
  */
 import type { DamRecord, NidHazard, NidRef, Provenance } from "./types.ts";
+import { classificationForState } from "./jurisdiction.ts";
 import { loadBundle } from "./data-bundle.ts";
 import type { Warning } from "./warnings.ts";
 
@@ -350,16 +351,20 @@ export function prefillPatch(
       sampleNote: undefined,
       geometry: undefined,
       reachKm: undefined,
-      // Real receptors (Nick 2026-10-31): a picked dam drops the generic demo seeds. In North Dakota it screens the
-      // state's NG911 address points inside the flood strip (added automatically once looked up); elsewhere the user
-      // adds receptors (the NID has no buildings).
+      // Real receptors: a picked dam drops the generic demo seeds. ND dams use ND 911 address points
+      // (added automatically); all other states use NSI (National Structure Inventory) as the default
+      // receptor source — the user can add or replace layers in the classify step. The NID itself has
+      // no buildings; NSI provides structure type, occupancy and foundation elevation nationally.
       receptors: [],
-      receptorSource: d.nid.toUpperCase().startsWith("ND") ? "nd911" : undefined,
+      receptorSource: d.nid.toUpperCase().startsWith("ND") ? "nd911" : "nsi",
       nd911AutoAdded: undefined,
       nd911: undefined,
       judgmentAsProbable: false,
       // A classify result belongs to the dam and receptors it was run on.
       hazardResult: undefined,
+      // Auto-select the state's preset (ND -> North Dakota REG_05.2026, etc.) or FEMA 333 when the
+      // state has no specific preset. Explicit on the record so it travels with the hand-off.
+      classification: classificationForState(d.nid.slice(0, 2)),
     } as Partial<DamRecord>);
     if (current?.surfaceAreaAc != null) replaced.push("surfaceAreaAc");
     if (current?.classOfRecord) replaced.push("classOfRecord");
