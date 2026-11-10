@@ -1280,7 +1280,7 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     warnings = []
     _check_solver(st, model_dir, log)                                  # 3.16.0
     flood_mode = st.scenario == SCENARIO_FLOOD
-    report = {"tool": "ND Dam Breach Runner " + VERSION,
+    report = {"tool": "DamIT Runner " + VERSION,
               "run_started": datetime.datetime.now().isoformat(timespec="seconds"),
               "dam": brmod.dam_to_dict(dam), "dam_xy": list(dam_xy),
               "settings": st.as_dict(), "scenario": st.scenario,

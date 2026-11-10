@@ -59,7 +59,7 @@ def stated_from_record(rec):
     if d:
         return d, ""
     src = (getattr(rec, "sources", None) or {}).get("top_of_dam_ft") or {}
-    if rec.get("top_of_dam_ft") is not None and str(src.get("tool") or "") == "ndbreach":
+    if rec.get("top_of_dam_ft") is not None and str(src.get("tool") or "") == "damit_run":
         return "DEM", ("dam.json's top of dam has no datum and was written by an earlier "
                        "Runner run from the TOP_FT parameter (DEM datum): taken as NAVD88.")
     return "", ""
