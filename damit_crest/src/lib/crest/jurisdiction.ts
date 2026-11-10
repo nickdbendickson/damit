@@ -79,6 +79,33 @@ export function damChoice(dam: DamRecord): ClassificationChoice {
   return resolveChoice(dam.classification, defaultPresetFor(dam));
 }
 
+/**
+ * The classification a new dam should start with: its state's preset in preset mode, already resolved. Use this when
+ * building the record so the choice is explicit (written to dam.json) rather than resolved at display time.
+ */
+export function classificationForState(stateCode: string | undefined | null): ClassificationChoice {
+  const pid = presetForState(stateCode) ?? DEFAULT_PRESET;
+  return resolveChoice({ mode: "preset", preset: pid }, pid);
+}
+
+/**
+ * One-line explanation of why this preset was chosen — for the UI to show beside the preset selector so the engineer
+ * knows the reasoning. Returns null when the user made an explicit choice (nothing to explain).
+ */
+export function presetExplanation(dam: DamRecord): string | null {
+  // If the user has explicitly chosen a classification, don't override their understanding.
+  if (dam.classification && (dam.classification.preset || dam.classification.mode === "custom")) return null;
+  const nidId = handoffIds(dam).nidId;
+  if (!nidId) return "No NID ID — using FEMA 333 national baseline. Switch to custom mode for agency-specific rules.";
+  const stateCode = nidId.slice(0, 2);
+  const statePreset = presetForState(stateCode);
+  if (statePreset) {
+    const label = CATALOG.presets[statePreset]?.label ?? statePreset;
+    return `Auto-selected: ${label} (from NID ID ${nidId}).`;
+  }
+  return `${stateCode} has no specific preset in the catalog — using FEMA 333 national baseline. Switch to custom mode for state-specific adjustments.`;
+}
+
 /** Generic labels by ordinal (0 Minimal … 4 Extremely High). */
 export function genericLabel(ordinal: number): string {
   return CATALOG.classes[String(ordinal)] ?? "Unclassified";

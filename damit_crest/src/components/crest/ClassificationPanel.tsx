@@ -9,6 +9,7 @@ import {
   damChoice,
   defaultPresetFor,
   enabledIds,
+  presetExplanation,
   presetIds,
   resolveChoice,
   screenAgainstChoice,
@@ -38,6 +39,7 @@ export function ClassificationPanel({
   const options = useMemo(() => customOptions(), []);
   const enabled = new Set(enabledIds(choice));
   const p = choice.mode === "preset" ? CATALOG.presets[choice.preset ?? ""] : undefined;
+  const explanation = presetExplanation(dam);
   const field = "mt-1 h-10 w-full rounded-sm border border-line bg-paper px-3 text-sm";
   return (
     <div className="rounded-md border border-line bg-card p-4" data-testid="classification-panel">
@@ -47,6 +49,11 @@ export function ClassificationPanel({
         tick method ids. The choice is written into dam.json and sent to damit:classify; the thresholds come from the
         hazard catalog data file, not from this desk. {CATALOG.disclaimer}
       </p>
+      {explanation ? (
+        <p className="mt-2 rounded-sm border border-teal/30 bg-teal/5 px-3 py-2 text-xs text-foreground" data-testid="preset-explanation">
+          {explanation}
+        </p>
+      ) : null}
       <div className="mt-3 flex flex-wrap gap-4 text-sm" role="radiogroup" aria-label="Classification mode">
         <label className="inline-flex items-center gap-2">
           <input
