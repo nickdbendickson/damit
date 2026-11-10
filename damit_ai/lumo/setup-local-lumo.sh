@@ -1,6 +1,6 @@
 #!/bin/zsh
 # ============================================================================
-# setup-local-lumo.sh v3.2 — local Ollama auditing for the dam suite (macOS)
+# setup-local-lumo.sh v3.4 — local Ollama auditing for the dam suite (macOS)
 #
 #   NO sudo · NO Homebrew. Prefers your existing conda (the nd-dam-suite one)
 #   for the Python side; falls back to downloading wheels only without conda.
@@ -87,9 +87,22 @@ say "Step 2/9 — Ollama (download + install, no sudo)"
 if [[ -x "$OLLAMA_EXE" ]]; then
   ok "Ollama already installed"
 else
+  # Bundled zip first (damit_ai/offline/ollama, checked against its SHA256SUMS): no download.
+  BUNDLED_OLLAMA="${0:A:h}/../offline/ollama/Ollama-darwin.zip"
+  if [[ -f "$BUNDLED_OLLAMA" ]]; then
+    want=$(awk '$2 ~ /Ollama-darwin.zip$/ {print $1}' "${BUNDLED_OLLAMA:h}/SHA256SUMS" 2>/dev/null)
+    got=$(shasum -a 256 "$BUNDLED_OLLAMA" | awk '{print $1}')
+    if [[ -n "$want" && "$want" == "$got" ]]; then
+      cp "$BUNDLED_OLLAMA" "$TMPDIR_L/Ollama.zip"; ok "using the bundled Ollama zip (sha256 checked)"
+    else
+      warn "bundled Ollama zip does not match its SHA256SUMS; ignoring it"
+    fi
+  fi
   URL="https://ollama.com/download/Ollama-darwin.zip"
-  say "Trying direct download: $URL"
-  curl -fL --connect-timeout 20 -o "$TMPDIR_L/Ollama.zip" "$URL" 2>/dev/null
+  if [[ ! -f "$TMPDIR_L/Ollama.zip" ]]; then
+    say "Trying direct download: $URL"
+    curl -fL --connect-timeout 20 -o "$TMPDIR_L/Ollama.zip" "$URL" 2>/dev/null
+  fi
   if [[ -f "$TMPDIR_L/Ollama.zip" ]] && is_zip "$TMPDIR_L/Ollama.zip"; then
     ok "downloaded Ollama zip ($(du -h "$TMPDIR_L/Ollama.zip" | cut -f1))"
   else
@@ -247,6 +260,27 @@ if [[ -n "$CONDA" ]]; then
   ENVPATH=$("$CONDA" env list | awk -v n="$LUMO_ENV" '$1==n {print $NF}')
   if [[ -z "$ENVPATH" ]]; then
     # Separate small env: adding packages to ndqgis could make conda re-solve QGIS.
+    # Bundled packages first (damit_ai/offline/conda/<subdir>/, the same set dam-research uses:
+    # Python 3.12, PyMuPDF, pypdf, numpy): sha256-checked, installed with nothing downloaded.
+    SUBDIR=$("$CONDA" info --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin).get("platform",""))' 2>/dev/null)
+    PKG_DIR="${0:A:h}/../offline/conda/${SUBDIR:-none}"; PKG_DIR="${PKG_DIR:A}"
+    if [[ -f "$PKG_DIR/ndresearch.txt" ]]; then
+      TMPX="$(mktemp "${TMPDIR:-/tmp}/ndlumo.XXXXXX")"; print "@EXPLICIT" > "$TMPX"; BAD=0
+      while read -r fn md5; do
+        [[ -z "$fn" || "$fn" == \#* || "$fn" == @* ]] && continue
+        want="$(awk -v n="$fn" '$2==n{print $1}' "$PKG_DIR/SHA256SUMS")"
+        got="$(shasum -a 256 "$PKG_DIR/$fn" 2>/dev/null | awk '{print $1}')"
+        [[ -n "$want" && "$want" == "$got" ]] || { warn "bundled package missing or bad sha256: $fn"; BAD=1; break; }
+        print "file://${PKG_DIR// /%20}/$fn#$md5" >> "$TMPX"
+      done < "$PKG_DIR/ndresearch.txt"
+      if (( ! BAD )) && "$CONDA" create -y -n "$LUMO_ENV" --offline --file "$TMPX"; then
+        ok "env $LUMO_ENV built from the bundled packages (nothing downloaded)"
+      else
+        warn "bundled env did not build — trying conda-forge"
+      fi
+      rm -f "$TMPX"
+    fi
+    "$CONDA" env list | awk '{print $1}' | grep -qx "$LUMO_ENV" || \
     "$CONDA" create -y -n "$LUMO_ENV" -c conda-forge --override-channels --strict-channel-priority \
         python=3.12 pymupdf pypdf numpy \
       || warn "conda create failed — falling back to wheels"
