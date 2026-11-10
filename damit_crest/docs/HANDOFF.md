@@ -10,9 +10,9 @@ them without a code change.
 | Role | Default id | Provided by | Status | ND suite analog (never called) |
 |---|---|---|---|---|
 | `classify` | `damit:classify` | `damit_hazard` (QGIS Dev, PR #1) | **published**: hazard classification from a model's rasters and receptors; runs no breach model | (new in DamIT) |
-| `preflight` | `damit_screen:preflight` | `damit_screener` 0.1.0 (SWE, PR #2) | **published** | `nddam:preflight` |
-| `runchain` | `damit_screen:runchain` | `damit_screener` 0.1.0 (SWE, PR #2) | **published** | `nddam:runchain` |
-| `rundam` | `damit_run:rundam` | `damit_runner` 0.1.0 (SWE, PR #2) | **published**; 0.1.0 prepares and records a run, it launches no engine | `ndbreach:rundam` |
+| `preflight` | `damit_screen:preflight` | `damit_screener` 0.2.0 | **published** | `nddam:preflight` |
+| `runchain` | `damit_screen:runchain` | `damit_screener` 0.2.0 | **published**; runs the 2D screening flood (built-in engine) and writes a preliminary class | `nddam:runchain` |
+| `rundam` | `damit_run:rundam` | `damit_runner` 0.2.0 | **published**; 0.2.0 launches the model (LISFLOOD-FP, the built-in engine, or LISFLOOD-FP then ANUGA) with the DamSafety Runner's parameters and copies Depth (Max), hmax and the flood polygons into the dam folder; HEC-RAS is refused | `ndbreach:rundam` |
 | `batch` | `damit_run:batch` | — | **not published**; a name only, **never started by the app** | `ndbreach:batch` |
 
 Both PRs were open (not merged) when this was written; the ids are the ones their providers register. They stay
@@ -95,11 +95,24 @@ Details:
 - **Read-back.** After the chain the app reads `screening` from this dam's `damit_handoff.json` (preliminary label,
   ordinal, flags; logged as a screening suggestion, not an official class), and the dam's row of
   `10_reports/summary.csv`, both by the NID ID.
-- **Flood model.** `damit_run:rundam` takes no DEM parameter, so a missing DEM is logged as a gap instead of
-  stopping; for an algorithm that declares `DEM` (or for the CLI) a missing DEM still stops. DamIT Runner 0.1.0
-  prepares `run_setup.json` in a new folder under `<work>/runs`; the app reports `RUN_FOLDER`. It never sends an
-  engine choice or `DRY_RUN=false`.
-- **Classify** needs the model run's maximum depth raster: type its path under *Depth raster* (velocity, depth ×
+- **Screening.** The record's mapped structures (or the desk's receptor payload, when the screen job carries one)
+  go to the chain as one point layer, `<dam folder>/screen_inputs/receptors.geojson` (`RECEPTORS`), so DamIT
+  Screener 0.2.0's 2D screening flood samples them and the hand-off package carries a preliminary class.
+- **Flood model.** Like the original Crest's `ndbreach:rundam` call: `DRY_RUN=false`, `DAMS_FOLDER=<work>/dams`,
+  `DEM`, `METHOD` (the failure mode's DamSafety label), `TIER` (LISFLOOD-FP only, or then ANUGA), `LISFLOOD_EXE=builtin`
+  only for the built-in engine (else the dam's `lisflood.exe`, `DAMIT_LISFLOOD_EXE` or `LISFLOOD_EXE` when set; empty =
+  the Runner's own search, then the built-in engine with a warning), `HEIGHT_FT`, `STORAGE_ACFT`, `TOP_FT`, `AREA_AC`,
+  and the DamSafety Runner's run settings with its defaults: `CELL` 10, `MAX_RUNS` 6, `DURATION_HR` 0 (automatic),
+  `DURATION_MAX_HR` 96 (the dam's `lisflood.cellSizeM` / `maxRuns` / `durationHr` / `durationMaxHr`, else
+  `DAMIT_RUN_CELL` / `DAMIT_RUN_MAX_RUNS` / `DAMIT_RUN_DURATION_HR` / `DAMIT_RUN_DURATION_MAX_HR`, override them),
+  plus the hand-off package. A missing DEM stops before the runner; HEC-RAS 2D is not asked for. DamIT Runner 0.2.0
+  writes the run under `<work>/runs` and copies `Depth (Max).tif`, `Velocity (Max).tif`, `hmax_ft.tif` and the flood
+  polygons into the dam folder; the app reports `RUN_FOLDER` and those paths.
+- **Rail trains per day.** When the dam has `railTrainsLookup` or `DAMIT_RAIL_TRAINS_LOOKUP` names a CSV (`field,
+  value, trains_per_day, source`), classify gets it as `RAIL_TRAINS_LOOKUP` (DamIT Hazard 0.1.2). No default is sent;
+  values from it are flagged in the report as needing Nick's ruling.
+- **Classify** needs the model run's maximum depth raster: the dam folder's `Depth (Max).tif` (and `Velocity
+  (Max).tif`) from the Runner when *Depth raster* is blank, else type its path under *Depth raster* (velocity, depth ×
   velocity, water-surface elevation, non-breach depth and arrival-time rasters are optional and sent as `VELOCITY`,
   `DV`, `WSE`, `NONBREACH`, `ARRIVAL` when typed). It also needs at least one downstream receptor layer (see
   *Downstream receptors for classify* below). Without a depth raster, without a receptor it can place, when the

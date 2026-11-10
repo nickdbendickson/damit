@@ -18,6 +18,7 @@ dam:  optional dam record: dam_id = the dam's NID ID (USACE National Inventory o
 A method whose inputs are missing flags the gap (result["flags"]) instead of passing silently.
 """
 import datetime
+import re
 
 from . import catalog as C
 from . import catalog_bridge
@@ -557,6 +558,12 @@ def m6(ctx):
     for r in ctx.need("M6", STRUCT_KINDS):
         if not ctx.impacted(r, "M6") or not ctx.occupied(r):
             continue
+        if r.get("sampled") and r.get("depth_ft") is not None and round(r["depth_ft"], 2) <= ctx.wet_min:
+            # 0.1.2: a structure whose sampled depth rounds to 0.00 ft is not wet; M6 counted one
+            # ("inundated (0.00 ft)") on the DWR-2801 run
+            ctx.flag(INFO, "m6_trace_depth", "sampled depth {:.4f} ft rounds to 0.00 ft: not counted as an "
+                     "inundated structure".format(r["depth_ft"]), "M6", r["id"])
+            continue
         if ctx.lethal(r, "M6"):
             continue
         if var == "uninhabitable_inoperable":
@@ -744,10 +751,18 @@ def _rails(ctx, mid):
     return out
 
 
+def _trains_ruling(ctx, mid, r):
+    if r.get("trains_needs_ruling"):
+        ctx.flag(WARNING, "trains_lookup", "trains per day {:g} from the RAIL_TRAINS_LOOKUP input ({}): not in "
+                 "the rail layer, needs Nick's ruling before a class resting on it is used".format(
+                     r["trains_per_day"], r.get("trains_source") or "no source"), mid, r["id"])
+
+
 def m9a(ctx):
     P = ctx.p("M9a")
     for r in _rails(ctx, "M9a"):
         t = r.get("trains_per_day")
+        _trains_ruling(ctx, "M9a", r)
         if r.get("passenger"):
             ctx.hit("M9a", 3, r, "active passenger line")
         elif t is not None and t >= P["high_min_trains_per_day"]:
@@ -755,7 +770,8 @@ def m9a(ctx):
         else:
             if t is None:
                 ctx.flag(WARNING, "trains_unknown", "trains per day unknown: High test (10+ "
-                         "freight trains or passenger) not confirmed", "M9a", r["id"])
+                         "freight trains or passenger) not confirmed; give trains_per_day in the rail "
+                         "layer or a RAIL_TRAINS_LOOKUP CSV (no default is assumed)", "M9a", r["id"])
             ctx.hit("M9a", 2, r, "active rail line impacted")
 
 
@@ -763,6 +779,7 @@ def m9b(ctx):
     P = ctx.p("M9b")
     for r in _rails(ctx, "M9b"):
         t, d = r.get("trains_per_day"), r.get("depth_ft") or 0.0
+        _trains_ruling(ctx, "M9b", r)
         main = (t >= P["main_min_trains_per_day"]) if t is not None else r.get("main_line")
         if main is None:
             ctx.flag(WARNING, "trains_unknown", "trains per day unknown and no main_line flag: "
@@ -1131,6 +1148,25 @@ def _r8(cfg, dam, cls, flags, notes):
     return cls, None
 
 
+def s7_location_count(dam):
+    """How many breach locations the dam record gives (breach_locations: a list, a number, or a
+    comma / semicolon separated text). S7 is expected only for two or more (0.1.2)."""
+    v = (dam or {}).get("breach_locations")
+    if v is None or v == "":
+        return 0
+    if isinstance(v, (list, tuple, set)):
+        return len([x for x in v if x not in (None, "")])
+    if isinstance(v, bool):
+        return 0
+    if isinstance(v, (int, float)):
+        return int(v) if v == v else 0
+    txt = str(v).strip()
+    try:
+        return int(float(txt))
+    except ValueError:
+        return len([x for x in re.split(r"[;,]", txt) if x.strip()])
+
+
 def _validate_runs(cat, cfg, runs, dam, flags):
     have = [r.get("scenario") for r in runs]
     for s in have:
@@ -1144,6 +1180,8 @@ def _validate_runs(cat, cfg, runs, dam, flags):
                   "engineering judgment needed", "M13")
     want = cfg.get("scenarios") or []
     for s in want:
+        if s == "S7" and s not in have and s7_location_count(dam) < 2:
+            continue                                   # 0.1.2: no locations, no S7 (see below)
         if s not in have:
             flags.add(WARNING, "scenario_missing", "scenario {} ({}) is expected and no run was "
                       "supplied for it".format(s, cat["scenarios"][s]["name"]), None, None, s)
@@ -1156,12 +1194,21 @@ def _validate_runs(cat, cfg, runs, dam, flags):
             flags.add(INFO, "scenario_extra", "run {} is not one of this configuration's "
                       "scenarios ({}); it is still scored".format(s, ", ".join(want)), None,
                       None, s)
-    if "S7" in have or "S7" in want:
+    if "S7" in have:
         locs = set(r.get("breach_location") for r in runs if r.get("scenario") == "S7")
         if len(locs - {None}) < 2:
             flags.add(WARNING, "s7_locations", "S7 asks for several breach locations; {} "
                       "distinct location(s) supplied".format(len(locs - {None})), None, None,
                       "S7")
+    elif "S7" in want:
+        n = s7_location_count(dam)
+        if n >= 2:
+            flags.add(WARNING, "s7_locations", "S7: the dam record gives {} breach locations and no S7 "
+                      "run was supplied".format(n), None, None, "S7")
+        else:
+            flags.add(INFO, "s7_not_applicable", "S7 (multiple breach locations) is not expected: the dam "
+                      "record gives {} breach location(s); set breach_locations when the impoundment "
+                      "has several".format(n), None, None, "S7")
     if "S6" in have or "S6" in want:
         cur = "new" if dam.get("is_new") else dam.get("current_class")
         cond = cat["scenarios"]["S6"]["by_current_class"].get(str(cur)) if cur is not None \

@@ -294,6 +294,8 @@ def method_params(src, hz, mid, cp):
         if wording in auto:
             p["auto_map"] = {wording: auto[wording]}
     p.update(extra)
+    if mid == "M1" and cp.get("judgment_class") is not None:
+        p["judgment_hit_class"] = int(cp["judgment_class"])     # ND: the judgment zone is Medium (flagged)
     return p
 
 

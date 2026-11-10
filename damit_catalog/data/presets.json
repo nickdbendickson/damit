@@ -157,7 +157,8 @@
       "houses_on_foundations",
       "mobile_homes"
      ],
-     "require_2d": true
+     "require_2d": true,
+     "judgment_class": 2
     },
     "M2": {
      "only_if_1d": true,

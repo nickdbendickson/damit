@@ -20,7 +20,7 @@ class DamitScreenProvider(QgsProcessingProvider):
         return "DamIT Screener"
 
     def longName(self):  # noqa: N802
-        return "DamIT Screener 0.1.0"
+        return "DamIT Screener 0.3.0"
 
     def icon(self):
         return QIcon(os.path.join(os.path.dirname(__file__), "icon.svg"))

@@ -9,7 +9,7 @@ import shutil
 from . import catalog_bridge as CB
 from . import steps as ST
 
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 PROVIDER_ID = "damit_screen"
 OK, WARN, FAIL = "ok", "warn", "fail"
 MIN_FREE_MB = 200.0
@@ -26,6 +26,15 @@ DEFAULT_SETTINGS = {
     "catalog_dir": "",           # edited catalog copy (optional; else DAMIT_CATALOG_DIR or the plugin's data)
     "summary": {},               # dam-level facts for the suggestion (model_dimension, hydraulics_source, ...)
     "dam_ids": [],               # limit the chain to these dams (empty = all)
+    # 0.2.0 engine2d: the DamSafety Screening tool-7 2D flood (built-in engine) and its window defaults
+    "engine2d": "builtin",       # builtin | lisflood (0.3.0: LISFLOOD-FP ACC) | off
+    "lisflood_exe": "",          # engine2d lisflood: the executable; "" = an installed one, else the built-in engine
+    "grid_m": 20.0,              # model cell (m); 0 = automatic by reservoir size (CELL_TABLE)
+    "simh": 12.0, "simmax": 96.0,   # first clock and the longest clock (h)
+    "larger_clips": 1,           # 0 first clip only, 1 (0.3.0) a fresh USGS 3DEP download, 2 from local_dem
+    "local_dem": "",             # larger_clips 2: the local DEM
+    "timeout_s": 0,              # 0 = 0.8 x DAMIT_SCREENING_TIMEOUT_S, else 3600 s
+    "z_units": "auto",           # DEM elevation units: auto | m | ft | us_ft
 }
 
 STEP_ORDER = ("prepare", "terrain", "storage", "breach_direction", "hydrograph", "triage", "engine2d",
@@ -237,7 +246,7 @@ def build_handoff(cat, config, dam, results, settings, receptors_json=None):
     return pkg
 
 
-def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None, log=print):
+def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None, log=print, cancel=None):
     """All screening steps for one dam. Returns the per-step results dict (+ 'handoff_path')."""
     _, _, HO = CB.modules()
     nid_step = dam.get("nid_step") or ST.step(ST.STATUS_OK, "dam record prepared")
@@ -246,15 +255,23 @@ def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None,
     scen = config["scenarios"]
     res["terrain"] = ST.terrain(dam, settings.get("terrain") or dam.get("terrain"), terrain_info)
     res["storage"] = ST.storage(dam, scen)
-    res["breach_direction"] = ST.breach_direction(dam)
+    folder = dam_folder(work, dam["dam_id"])
+    res["breach_direction"] = ST.breach_direction(dam, res["terrain"].get("path") if res["terrain"]["status"] ==
+                                                  ST.STATUS_OK else None, folder)
     res["hydrograph"] = ST.hydrograph(dam, res["storage"], scen)
     recs = dam_receptors(receptors, dam["dam_id"])
     res["triage"] = ST.triage(cat, dam, recs)
-    res["engine2d"] = ST.engine2d(dam)
+    eng_settings = dict(settings, terrain=(res["terrain"].get("path") if res["terrain"]["status"] == ST.STATUS_OK
+                                           else None))
+    res["engine2d"] = ST.engine2d(dam, eng_settings, folder, res["hydrograph"], recs, log, cancel)
     summ = dict(settings.get("summary") or {})
     summ.setdefault("storage_acft", res["storage"].get("top_of_dam_acft"))
+    if "receptors" in res["engine2d"]:
+        recs = res["engine2d"].pop("receptors")
+        res["engine2d"]["receptors_sampled"] = sum(1 for r in recs if r.get("depth_ground_ft") is not None)
+        summ.setdefault("model_dimension", "2D")
+        summ.setdefault("hydraulics_source", "breach_model")
     res["suggest"] = ST.suggest(cat, config, dam, recs, summ, settings.get("apply_advisories"))
-    folder = dam_folder(work, dam["dam_id"])
     rjson = None
     if recs:
         rjson = _write_json(os.path.join(folder, "receptors.json"), recs)
@@ -274,7 +291,7 @@ def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None,
 
 
 def run_chain(work, settings, dams, dam_problems=None, receptors=None, receptor_fields=None,
-              terrain_info=None, do_preflight=True, log=print):
+              terrain_info=None, do_preflight=True, log=print, cancel=None):
     """Preflight, then every selected dam through the steps. Returns a summary dict."""
     disk = None
     try:
@@ -290,7 +307,7 @@ def run_chain(work, settings, dams, dam_problems=None, receptors=None, receptor_
     sel = [d for d in dams if not settings.get("dam_ids") or d["dam_id"] in settings["dam_ids"]]
     out = {}
     for d in sel:
-        out[d["dam_id"]] = run_dam(cat, config, d, settings, work, receptors, terrain_info, log)
+        out[d["dam_id"]] = run_dam(cat, config, d, settings, work, receptors, terrain_info, log, cancel)
     summary = {"ok": all(r.get("handoff", {}).get("status") == ST.STATUS_OK for r in out.values()),
                "refused": False, "checks": checks, "work": work, "mode": config["mode"],
                "preset_id": config.get("preset_id"), "scenarios": [s["id"] for s in config["scenarios"]],
@@ -321,6 +338,12 @@ def write_report(work, summary, cat, config):
         lines.append("| {} | {} | {} | {} | {} |".format(did, sc.get("suggested_label") or "not computed",
                                                          tri.get("generic_label") or "-", ", ".join(gaps) or "none",
                                                          r.get("handoff_path") or "not written"))
+    lines += ["", "## Screening flood (engine2d)", ""]
+    for did, r in summary["dams"].items():
+        e = r.get("engine2d") or {}
+        lines.append("- {}: {} {}".format(did, (e.get("status") or "-").upper(), e.get("detail") or ""))
+        for n in e.get("notes") or []:
+            lines.append("  - {}".format(n))
     lines += ["", "## Parameters", ""]
     for k, m in config["methods"].items():
         lines.append("- {} {}: {}".format(k, m["name"], json.dumps(m.get("params", {}), sort_keys=True)))

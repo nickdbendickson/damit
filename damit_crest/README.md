@@ -95,10 +95,12 @@ Needs QGIS 3.28–4.x with the DamIT plugins installed. The buttons do nothing i
   choice), the drawn geometries, both hydrographs, the LISFLOOD `.par` / `.bci` / `.bdy` and the flood strip. Starts
   nothing.
 - **Write folder and run screening** — the preflight algorithm, then the screening chain **only if READY**, for this
-  dam only. A missing algorithm or a FAIL stops there. Cancel stops `qgis_process`; `DAMIT_SCREENING_TIMEOUT_S` sets a
-  limit (default none).
+  dam only (DamIT Screener 0.2.0 runs its 2D screening flood on the mapped structures and writes a preliminary
+  class). A missing algorithm or a FAIL stops there. Cancel stops `qgis_process`; `DAMIT_SCREENING_TIMEOUT_S` sets a
+  limit (default none); the screening flood keeps its maxima at 0.8 x that limit.
 - **Run the flood model** — one dam: `damit_run:rundam` (with the screening's `damit_handoff.json` when there is
-  one, always `DRY_RUN=true`; DamIT Runner 0.1.0 prepares and records the run and launches no engine), or a DamIT
+  one, `DRY_RUN=false`: DamIT Runner 0.2.0 launches LISFLOOD-FP, the built-in engine or LISFLOOD-FP then ANUGA with the
+  DamSafety Runner's parameters and copies Depth (Max), hmax and the flood polygons into the dam folder), or a DamIT
   runner CLI when Point X and Point Y (DEM CRS) are filled. It never starts a batch algorithm (none is published; the
   name `damit_run:batch` is reserved). The DEM comes from `dem.tif` in the work folder, the DEM field, the data folder
   DEM, or `DAMIT_DEM`.

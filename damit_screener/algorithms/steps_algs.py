@@ -48,8 +48,8 @@ class RunChain(C.DamitAlgorithm):
     _name, _display = "runchain", "Run the screening chain (headless)"
     _help = ("Runs the preflight, then every dam (or the dam_ids in the settings) through: prepare, terrain, "
              "storage at each selected scenario's pool (S-codes from the preset or your choice), breach "
-             "direction, hydrograph, triage (M13 presence screen), 2D engine hook (contract only, not run in "
-             "0.1.0), preliminary suggestion from the catalog when receptor hydraulics exist, and a "
+             "direction, hydrograph, triage (M13 presence screen), 2D screening flood (built-in "
+             "engine, in this process), preliminary suggestion from the catalog when receptor hydraulics exist, and a "
              "damit_handoff.json per dam for damit_run:rundam. A preflight FAIL refuses the run.")
 
     def initAlgorithm(self, config=None):  # noqa: N802
@@ -69,7 +69,7 @@ class RunChain(C.DamitAlgorithm):
         summ = WF.run_chain(work, s, dams or [], problems, recs, rnames,
                             C.terrain_info(s.get("terrain")),
                             do_preflight=self.parameterAsBool(params, "PREFLIGHT", context),
-                            log=feedback.pushInfo)
+                            log=feedback.pushInfo, cancel=feedback.isCanceled)
         if not summ["ok"] and self.parameterAsBool(params, "FAIL_ON_ERROR", context):
             raise QgsProcessingException("Screening chain {}: see the log".format(
                 "refused by the preflight" if summ.get("refused") else "failed"))
@@ -91,6 +91,7 @@ class _OneStep(C.DamitAlgorithm):
 
     def processAlgorithm(self, params, context, feedback):  # noqa: N802
         work, s, dams, problems, recs, rnames = self.gather(params, context)
+        self._work, self._feedback = work, feedback
         for p in problems:
             feedback.reportError(p)
         checks, cat, config = WF.preflight(work, s, dams, problems, recs, rnames)
@@ -125,7 +126,8 @@ class Prepare(_OneStep):
 
 class Terrain(_OneStep):
     _name, _display, step_key = "terrain", "Terrain (record and check DEM)", "terrain"
-    _help = "Records the DEM for each dam and checks it covers the dam point. DEM download is not in 0.1.0."
+    _help = ("Records the DEM for each dam and checks it covers the dam point, in the DEM's own CRS (the dam point is "
+             "transformed into it). The larger screening clips download fresh 3DEP terrain in engine2d.")
 
     def run_step(self, cat, config, dam, s, recs):
         return ST.terrain(dam, s.get("terrain"), C.terrain_info(s.get("terrain")))
@@ -144,10 +146,15 @@ class Storage(_OneStep):
 
 class BreachDirection(_OneStep):
     _name, _display, step_key = "breachdirection", "Breach direction", "breach_direction"
-    _help = "Breach azimuth from the dam record; a DEM-based estimate is not in 0.1.0 (flagged as a gap)."
+    _help = ("Breach azimuth from the dam record (breach_azimuth_deg); otherwise estimated as DamSafety Screening "
+             "does: the dam axis from <work>/dams/<id>/dam_line.geojson, the downstream side from the reservoir point "
+             "and the terrain along the line, the breach at the lowest downstream toe (else reservoir -> dam point, "
+             "else the steepest DEM drop at the dam point; low confidence). A gap only when there is nothing to go "
+             "on.")
 
     def run_step(self, cat, config, dam, s, recs):
-        return ST.breach_direction(dam)
+        return ST.breach_direction(dam, s.get("terrain") or dam.get("terrain"),
+                                   WF.dam_folder(self._work, dam["dam_id"]))
 
 
 class Hydrograph(_OneStep):
@@ -168,12 +175,25 @@ class Triage(_OneStep):
 
 
 class Engine2D(_OneStep):
-    _name, _display, step_key = "engine2d", "2D screening engine hook (not run in 0.1.0)", "engine2d"
-    _help = ("Writes the 2D engine input/output contract for each dam. No model is launched: LISFLOOD-FP, "
-             "ANUGA, HEC-RAS and Wine are never started by DamIT Screener 0.1.0.")
+    _name, _display, step_key = "engine2d", "2D screening flood", "engine2d"
+    _help = ("Runs the DamSafety Screening tool-7 2D flood for each dam (the built-in finite-volume engine in this "
+             "process, or LISFLOOD-FP): the dam's hydrograph CSV, else a Froehlich (2008) piping breach from the top of dam (sunny "
+             "day, no outlet or spillway flow), injected at the downstream toe (searched 5 m to H x (DS slope + 1), "
+             "3:1 when the slope is missing, capped at 150 m, side check). Settings JSON: engine2d (builtin | lisflood "
+             "| off; lisflood = LISFLOOD-FP ACC, lisflood_exe or an installed one, else the built-in engine with a "
+             "warning), grid_m (20), simh (12), simmax (96), larger_clips (0 first clip only, 1 a fresh USGS 3DEP "
+             "download for each larger clip, into <work>/dams/<id>/screen_inputs/terrain_3dep/, 2 from local_dem), "
+             "timeout_s (0 = 0.8 x DAMIT_SCREENING_TIMEOUT_S, else 3600; the download counts). Writes Screening "
+             "Depth / Velocity / DV (Max) and Screening Arrival Time into <work>/dams/<id>/ and samples peak depth, "
+             "velocity and DV at the receptors. ANUGA, HEC-RAS and Wine are not started.")
 
     def run_step(self, cat, config, dam, s, recs):
-        return ST.engine2d(dam)
+        d_recs = WF.dam_receptors(recs, dam["dam_id"])
+        r = ST.engine2d(dam, s, WF.dam_folder(self._work, dam["dam_id"]), ST.hydrograph(dam, ST.storage(
+            dam, config["scenarios"]), config["scenarios"]), d_recs, self._feedback.pushInfo,
+            lambda: self._feedback.isCanceled())
+        r.pop("receptors", None)
+        return r
 
 
 class Suggest(_OneStep):
@@ -193,7 +213,7 @@ class Handoff(C.DamitAlgorithm):
     _help = ("Writes <work>/handoff/<dam>/damit_handoff.json (schema damit.handoff v1) for damit_run:rundam: dam "
              "ids, elevations, storage, scenario pools, scenarios, preset ID or custom method list, modifiers, "
              "label map, terrain / hydrograph paths, any preliminary suggestion and every gap. Runs the screening "
-             "steps first (they are quick and launch no model).")
+             "steps first, the 2D screening flood included (engine2d: built-in by default, or LISFLOOD-FP).")
 
     def initAlgorithm(self, config=None):  # noqa: N802
         self.add_common()
@@ -207,7 +227,8 @@ class Handoff(C.DamitAlgorithm):
                                          or "no dams")
         paths = []
         for d in dams:
-            r = WF.run_dam(cat, config, d, s, work, recs, C.terrain_info(s.get("terrain")), feedback.pushInfo)
+            r = WF.run_dam(cat, config, d, s, work, recs, C.terrain_info(s.get("terrain")), feedback.pushInfo,
+                           feedback.isCanceled)
             if r.get("handoff_path"):
                 paths.append(r["handoff_path"])
         return {"COUNT": len(paths), "PACKAGES": paths}

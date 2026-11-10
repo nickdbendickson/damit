@@ -60,7 +60,9 @@ class CatalogContent(unittest.TestCase):
         self.assertEqual(nd["label"], "North Dakota (REG_05.2026)")
         self.assertEqual(nd["scenarios"], ["S3", "S7"])
         self.assertEqual(set(nd["methods"]), {"M1", "M2", "M6", "M8a", "M8b", "M9a", "M11a"})
-        self.assertEqual(nd["methods"]["M1"], {"charts": ["houses_on_foundations", "mobile_homes"], "require_2d": True})
+        # judgment_class 2: Nick's ruling (Nov 10, 2026), the TM-11 judgment zone is Medium in ND (still flagged)
+        self.assertEqual(nd["methods"]["M1"], {"charts": ["houses_on_foundations", "mobile_homes"], "require_2d": True,
+                                               "judgment_class": 2})
         self.assertTrue(nd["methods"]["M2"]["only_if_1d"])
         self.assertEqual(nd["methods"]["M6"], {"strength": "advisory"})
         self.assertEqual(nd["modifiers"], ["R2", "R3", "R4", "R5", "R7", "R8", "R9"])

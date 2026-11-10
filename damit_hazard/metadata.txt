@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.1.0
+version=0.1.2
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -16,6 +16,12 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.1.2 - 2026-11-10
+      * M9a / M9b: trains per day can come from a new explicit input, RAIL_TRAINS_LOOKUP (CSV: field, value, trains_per_day, source), for rail layers such as NARN that have no trains-per-day field. No default is assumed; every value taken from the lookup is flagged (trains_lookup) as needing Nick's ruling. DWR-2801: DamSafety scored the BNSF KO line High at 15 trains a day; DamIT stays Medium (trains_unknown) unless the lookup gives the number.
+      * M6: a structure whose sampled depth rounds to 0.00 ft is no longer counted as inundated (flag m6_trace_depth).
+      * S7 (multiple breach locations) is expected only when the dam record gives two or more breach_locations; otherwise it is reported as not applicable (INFO s7_not_applicable) instead of scenario_missing / s7_locations warnings.
+    0.1.1 - 2026-11-10
+      * M1: a preset's judgment_class gives the TM-11 judgment zone a class (still flagged for engineer review). North Dakota (REG_05.2026): judgment zone = Medium (Nick's ruling, Nov 10, 2026); before, it was only flagged. Needs DamIT Catalog 0.1.1.
     0.1.0 - 2026-11-09
       * damit:classify writes nothing beside file-path input rasters: parameters are checked and the run is done with GDAL PAM off (no .tif.aux.xml from processing.run or Toolbox file-path inputs). The Hazard window and already-loaded project layers still get QGIS's own sidecars; a bare qgis_process without GDAL_PAM_ENABLED=NO can still get a sidecar.
       * Presets, methods and thresholds come from DamIT Catalog (plugin dependency); no bundled catalog.json. PRESET_ID accepts preset IDs and aliases (USBR or USBR_TM11).

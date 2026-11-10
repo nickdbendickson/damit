@@ -46,6 +46,7 @@
      "high_danger"
     ],
     "judgment_zone_flag": true,
+    "judgment_class": null,
     "curves_digitized_in_catalog": false
    },
    "returns": {

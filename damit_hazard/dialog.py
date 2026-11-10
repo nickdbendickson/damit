@@ -21,7 +21,7 @@ from .engine import catalog as C
 from .ui.ui_fit import _scroll as scroll_area, fit_window
 from .ui.ui_widgets import CheckPanel, Collapsible, InfoBanner, WrapLabel, ERROR, OK, WARNING
 
-VERSION = "0.1.0"
+VERSION = "0.1.2"
 TITLE = "DamIT Hazard {}".format(VERSION)
 SCENARIOS = ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
 DIMS = ["2D", "1D", "Not known"]

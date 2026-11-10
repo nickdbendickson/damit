@@ -11,8 +11,8 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 | Folder | Display name | Processing provider | Role |
 |---|---|---|---|
 | `damit_catalog/` | DamIT Catalog | none | Appendix A data catalog (JSON) + Python loader, evaluator and hand-off schema |
-| `damit_screener/` | DamIT Screener | `damit_screen` | Preflight, scenario-driven screening chain, preliminary suggestion, hand-off packages |
-| `damit_runner/` | DamIT Runner | `damit_run` | Prepares and records breach runs from a hand-off package (0.1.0 launches no model) |
+| `damit_screener/` | DamIT Screener | `damit_screen` | Preflight, scenario-driven screening chain with a 2D screening flood (built-in engine), preliminary suggestion, hand-off packages |
+| `damit_runner/` | DamIT Runner | `damit_run` | Breach model runs (DamSafety Runner parameters: LISFLOOD-FP, built-in engine, ANUGA tier) from a hand-off package; also ships the flood package the Screener uses |
 | [`damit_hazard/`](damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 19 jurisdiction presets or a custom method set (`damit:classify`) |
 | [`damit_core/`](damit_core/README.md) | DamIT Core | none | Shared library: suite settings, DamIT plugin list and version check, US state table, dam-record field helpers, catalog access, HTTP helper. Menu: About only |
 | [`damit_setup/`](damit_setup/README.md) | DamIT Setup | none | Start here: suite data folder, work folder, state / preset, suite check, settings fill, hand-off to `damit_screen:preflight` |
@@ -141,24 +141,70 @@ only if the user opts in; modifiers (R-codes) are applied; the driving receptors
 | Algorithm | What it does |
 |---|---|
 | `damit_screen:preflight` | Work folder, disk, catalog, preset/custom selection and its flags, dams layer and the fields each chosen scenario needs, terrain, receptor fields the enabled methods read. Missing inputs are WARN/FAIL, never passed. |
-| `damit_screen:runchain` | Preflight (a FAIL refuses the run), then per dam: prepare → terrain → storage at each scenario pool → breach direction → hydrograph → triage (M13) → 2D engine hook (contract only) → preliminary suggestion → hand-off. Writes a Markdown run report. |
+| `damit_screen:runchain` | Preflight (a FAIL refuses the run), then per dam: prepare → terrain → storage at each scenario pool → breach direction → hydrograph → triage (M13) → 2D screening flood (engine2d) → preliminary suggestion → hand-off. Writes a Markdown run report. |
 | `damit_screen:prepare`, `:terrain`, `:storage`, `:breachdirection`, `:hydrograph`, `:triage`, `:engine2d`, `:suggest` | The individual steps. |
 | `damit_screen:handoff` | Writes `<work>/handoff/<dam>/damit_handoff.json` for DamIT Runner. |
 | `damit_screen:report` | Rewrites the run report from the chain summary. |
 
-The 2D screening engine hook only records its input/output contract in 0.1.0; DamIT Screener never launches
-LISFLOOD-FP, ANUGA, HEC-RAS or Wine.
+0.2.0 `engine2d` is the DamSafety Screening tool-7 flood (`damit_runner/flood/screen.py`, the built-in
+finite-volume engine, run in the QGIS process): the dam's hydrograph CSV, else a Froehlich (2008) piping breach,
+sunny day from the top of dam with no outlet or spillway flow; inflow at the downstream toe (lowest ground 5 m to
+H × (DS slope + 1) from the dam line, 3:1 when the slope is missing, never more than 150 m, side check); 20 m cell,
+12 h clock grown × 1.5 to 96 h, 1,500 m clip and 600 m corridor grown to 12,000 m (`larger_clips` 0 / 1 / 2), and a
+wall-clock limit of 0.8 × `DAMIT_SCREENING_TIMEOUT_S` (else 3600 s) after which the maxima so far are kept and
+flagged partial. It writes `Screening Depth (Max).tif`, `Screening Velocity (Max).tif`, `Screening DV (Max).tif`
+and `Screening Arrival Time.tif` into `<work>/dams/<id>/`, samples peak depth / velocity / DV over wet cells at the
+receptors (and the TM-11 M1 chart zone, from DamIT Hazard's digitized charts when installed), and the suggestion
+step gives the preliminary class. Settings JSON: `engine2d` (`builtin` | `off`), `grid_m`, `simh`, `simmax`,
+`larger_clips`, `local_dem`, `timeout_s`, `z_units`. DamIT Screener never launches LISFLOOD-FP, ANUGA, HEC-RAS or
+Wine; it needs DamIT Runner (plugin dependency) for the flood package.
+
+0.3.0 (review-only follow-up to #16): `engine2d` = `lisflood` runs the screening flood on LISFLOOD-FP (ACC, the
+same injection cells, under the same time limit; `lisflood_exe`, else an installed LISFLOOD-FP, else the built-in
+engine with a warning); `builtin` stays the default. `larger_clips` 1 (the default) downloads each larger clip
+fresh from the USGS 3DEP service into `<work>/dams/<id>/screen_inputs/terrain_3dep/r<radius>m/` (a new folder each
+time; a failed download is noted and that clip uses the run's DEM). The step reports OK after a successful flood
+(the terrain-edge case is in the detail) and names the engine used. `breach_direction` estimates the azimuth as
+DamSafety Screening does (dam line + reservoir point + DEM; else reservoir → dam point; else the steepest DEM drop;
+low-confidence cases say so) instead of a gap, and `terrain` checks coverage in the DEM's own CRS.
 
 ## DamIT Runner (`damit_run`)
 
 | Algorithm | What it does |
 |---|---|
-| `damit_run:rundam` | Accepts a hand-off package (or equivalent parameters), validates it against the catalog and creates a **new** run folder with `run_setup.json`, a copy of the package, `README_run.md` and the expected-output contract for DamIT Hazard. |
+| `damit_run:rundam` | Accepts a hand-off package (or equivalent parameters), validates it against the catalog, creates a **new** run folder and runs the breach model there (DRY_RUN off, the default), then copies the final rasters and vectors into `<DAMS_FOLDER>/<dam id>/`. DRY_RUN on: `run_setup.json`, the package, `README_run.md` and the expected-output contract only. |
 | `damit_run:checkhandoff` | Validates a package and lists what a run still needs. |
 
-0.1.0 is prepare / record only. Choosing a model engine (LISFLOOD-FP, ANUGA, HEC-RAS) or turning `DRY_RUN` off
-is refused with a clear message; it never starts `ndbreach:rundam`, `ndbreach:batch` or Wine. Runner attaches
-catalog metadata and citations; classification is DamIT Hazard's job (`damit:classify`).
+0.2.0 runs the model like the DamSafety Runner's `rundam` (`ndbreach:rundam`, DWR_Plugins main), with its parameter
+names and defaults: `METHOD` (Froehlich 2008 piping by default; TR-60, MacDonald, Von Thun & Gillette, Froehlich
+1995, your CSV), `TIER` (LISFLOOD-FP only / then ANUGA; HEC-RAS 2D refused), `FORCE_ANUGA`, `CELL` 10 m,
+`GRID_REFINE` on, `GRID_CHECK_CELL` 0, `MANNING` 0.06, `ARRIVAL_FT` 0.1, `EDGE_TOL_FT` 1, `LENGTH_MI` 4,
+`HALF_WIDTH_MI` 1, `STEP_MI` 3, `MAX_EXTENT_MI` 20, `MAX_RUNS` 6, `LISFLOOD_MAX_WALL_S` 0 (24 h),
+`LISFLOOD_MAX_TOTAL_WALL_S` 0, `DURATION_HR` 0 (automatic), `DURATION_MAX_HR` 96, `ANUGA_FINE` 100 m²,
+`ANUGA_COARSE` 1000 m², `ANUGA_NEAR_MI` 1, `ANUGA_BUFFER` 500 m, `THREADS` 0, `LISFLOOD_EXE` (empty = `lisflood` on
+PATH; `builtin` = the built-in numpy engine, never chosen by itself), `ANUGA_PYTHON`, `KEEP_FILES`, `PRODUCTS`,
+`CONTOURS_HR` "0.25, 0.5, 1, 2, 4, 8", `PIPE_FRACTION` 0.5, `PIPE_DIA_FT` 0.5, `DEM_Z`. Sunny day: no outlet or
+spillway flow, the reservoir starts at the top of dam (`PMF_FT` is recorded only). The inflow is the toe band rule
+above. Outputs (US units) in `<run>/outputs/` and the dam folder: `Depth (Max).tif`, `Velocity (Max).tif`,
+`WSE (Max).tif`, `Arrival Time.tif`, `hmax_ft.tif` (+ `vmax_fps`, `arr_hr`, `wsemax_ft`), `Flood Polygons (Max
+Depth).geojson`, `Flood Extent.geojson`, `Arrival Zones.geojson`, `breach_hydrograph.csv`. It never starts HEC-RAS,
+Wine, `ndbreach:rundam` or `ndbreach:batch`; only `damit_runner/flood/lisflood.py` starts a process (LISFLOOD-FP or
+the ANUGA worker). Runner attaches catalog metadata and citations; classification is DamIT Hazard's job
+(`damit:classify`).
+
+0.3.0 (review-only follow-up to #16): an empty `LISFLOOD_EXE` searches the provider settings
+(`DAMIT_RUN_LISFLOOD_EXE`, `DAMIT_RUN_USE_BUILTIN`, then the ND Breach Runner's `NDBREACH_LISFLOOD_EXE`),
+`NDBREACH_LISFLOOD`, PATH and the usual install places, and runs the built-in engine **with a warning** when none is
+found, as the old ND Breach Runner did; a named path that does not exist is still an error. The engine used is in
+`run_report.json` / `run_setup.json` (`engine_selection`) and the outputs `ENGINE_USED`, `ENGINE_FALLBACK`,
+`ENGINE_NOTE`. `OUTFLOW_EXTEND_PCT` (5) works as in the DamSafety Runner: once that share of the breach volume has
+left through the model edges (LISFLOOD-FP `.mass`), every edge carrying at least 10% of the outflow and wet past the
+arrival depth also moves out, even under `EDGE_TOL_FT`; a clock extension is not counted as a run. The ANUGA tier
+uses the DamSafety Runner's default mesh (flood mask + buffer, refined near field, inlet at least 3 cells, a wider
+second pass when the flood reaches the mesh edge; needs scipy).
+
+North Dakota M1 (catalog plugin 0.1.1): a structure in the TM-11 judgment zone gives **Medium** (still flagged for
+engineer review; R7 can take it higher). Other presets keep `judgment_class` null (flag only).
 
 ## Hand-off schema (`damit.handoff` v1)
 
