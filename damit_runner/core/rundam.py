@@ -1,15 +1,16 @@
-"""DamIT Runner run preparation (pure Python).
+"""DamIT Runner run preparation and launch.
 
 damit_run:rundam accepts a damit.handoff package (from damit_screen:handoff) or equivalent
 parameters, validates it against DamIT Catalog, and prepares a NEW run folder with
 run_setup.json, a copy of the package and the expected-output contract that DamIT Hazard
 (damit:classify) will read after a model run.
 
-NID dams only: the package's dam must carry an NID ID (dam_id or nid_id), or be marked new / proposed
-(is_new) or a desk sample (is_sample); DamIT Catalog's handoff.nid_rule decides, and validate() refuses the rest.
+NID dams only: the package's dam must carry an NID ID (dam_id or nid_id), or be marked
+new / proposed (is_new) or a desk sample (is_sample); DamIT Catalog's handoff.nid_rule
+decides, and validate() refuses the rest.
 
-0.1.0 is prepare / record only: it never starts LISFLOOD-FP, ANUGA, HEC-RAS, Wine,
-ndbreach:rundam or ndbreach:batch. Any request for a model engine is refused.
+0.2.0: LISFLOOD-FP engine (built-in local inertial solver) is available. ANUGA (Phase 4)
+and HEC-RAS 2D (Phase 5) are not yet ported.
 """
 import datetime
 import json
@@ -17,17 +18,15 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
-ENGINE_LABELS = ["None - prepare and record the run only (0.1.0)", "LISFLOOD-FP (not available in 0.1.0)",
-                 "ANUGA (not available in 0.1.0)", "HEC-RAS 2D (not available in 0.1.0)"]
-ENGINE_NONE = 0
-REFUSAL = ("DamIT Runner 0.1.0 prepares and records runs only; it does not launch {} (nor LISFLOOD-FP, ANUGA, "
-           "HEC-RAS, Wine, ndbreach:rundam or ndbreach:batch). Nothing was run. Run the model outside DamIT "
-           "with the prepared run_setup.json, put its rasters in the run folder's outputs/, then classify with "
-           "DamIT Hazard (damit:classify).")
+ENGINE_NONE, ENGINE_LISFLOOD, ENGINE_ANUGA, ENGINE_HECRAS = 0, 1, 2, 3
+ENGINE_LABELS = ["None - prepare and record the run only",
+                 "LISFLOOD-FP (built-in local inertial solver)",
+                 "ANUGA (not available yet — Phase 4)",
+                 "HEC-RAS 2D (not available yet — Phase 5)"]
 EXPECTED_OUTPUTS = {
     "depth_max": "outputs/Depth (Max).tif",
     "velocity_max": "outputs/Velocity (Max).tif",
@@ -44,17 +43,19 @@ class RunError(ValueError):
     pass
 
 
-def refuse_engine(engine, dry_run=True):
-    """Raise RunError for any request that would launch a model."""
+def check_engine(engine):
+    """Validate engine choice; raise RunError for unsupported engines."""
     try:
         e = int(engine or 0)
     except (TypeError, ValueError):
         e = -1
-    if e != ENGINE_NONE:
-        name = ENGINE_LABELS[e].split(" (")[0] if 0 <= e < len(ENGINE_LABELS) else "engine {!r}".format(engine)
-        raise RunError(REFUSAL.format(name))
-    if not dry_run:
-        raise RunError(REFUSAL.format("a model (dry_run=false was requested)"))
+    if e < 0 or e >= len(ENGINE_LABELS):
+        raise RunError("unknown engine {!r}".format(engine))
+    if e == ENGINE_ANUGA:
+        raise RunError("ANUGA 2D refinement is not yet available (Phase 4)")
+    if e == ENGINE_HECRAS:
+        raise RunError("HEC-RAS 2D is not yet available (Phase 5)")
+    return e
 
 
 def package_from_params(cat, dam, mode="preset", preset=None, scenarios=None, methods=None, inputs=None):
@@ -104,8 +105,12 @@ def new_run_folder(out_root, dam_id, now=None):
 
 
 def prepare_run(pkg, out_root, cat=None, engine=ENGINE_NONE, dry_run=True, now=None):
-    """Validate the package and prepare a run folder. Returns (run_folder, run_setup dict)."""
-    refuse_engine(engine, dry_run)
+    """Validate the package and prepare a run folder. Returns (run_folder, run_setup dict).
+
+    When *engine* is ENGINE_LISFLOOD and *dry_run* is False, the LISFLOOD-FP
+    workflow runs immediately after preparation (same process, blocking).
+    """
+    e = check_engine(engine)
     _, _, HO = CB.modules()
     cat = cat or CB.load_catalog()
     errs = HO.validate(pkg, cat, check_paths=True)
@@ -119,11 +124,13 @@ def prepare_run(pkg, out_root, cat=None, engine=ENGINE_NONE, dry_run=True, now=N
     os.makedirs(os.path.join(folder, "outputs"))
     HO.write(pkg, folder)
     gaps = readiness(pkg)
+    engine_name = ENGINE_LABELS[e].split(" (")[0] if e < len(ENGINE_LABELS) else "none"
     setup = {
         "schema": RUN_SCHEMA, "schema_version": 1,
         "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "created_by": {"plugin": "damit_runner", "version": VERSION, "algorithm": "damit_run:rundam"},
-        "status": "prepared", "model_launched": False, "engine": "none", "dry_run": True,
+        "status": "prepared", "model_launched": False,
+        "engine": engine_name, "dry_run": dry_run,
         "dam": dam, "nid_id": nid, "nid_warning": nid_warning,
         "mode": pkg.get("mode"), "preset_id": pkg.get("preset_id"),
         "preset_label": pkg.get("preset_label"),
@@ -160,15 +167,15 @@ def _citations(cat, pkg):
 
 
 def _write_readme(folder, setup):
-    lines = ["# DamIT Runner - prepared run (no model launched)", "",
+    status = "model launched" if setup.get("model_launched") else "prepared (no model launched)"
+    lines = ["# DamIT Runner - {}".format(status), "",
              "Dam: {} {}".format(setup["dam"].get("dam_id"), setup["dam"].get("name") or ""),
              "Mode: {} {}".format(setup["mode"], setup.get("preset_label") or ""),
+             "Engine: {}".format(setup.get("engine", "none")),
              "Scenarios: {}".format(", ".join(s.get("id") for s in setup["scenarios"] or []) or "none (unconfirmed)"),
              "Ready to run: {}{}".format("yes" if setup["ready_to_run"] else "no",
                                          "" if setup["ready_to_run"] else " - missing: " + "; ".join(setup["gaps"])),
-             "", "DamIT Runner 0.1.0 only prepares and records the run. Put the model's rasters in outputs/ "
-             "with the names in run_setup.json 'expected_outputs', then classify with DamIT Hazard "
-             "(damit:classify). Suggested classifications only; the engineer of record and the regulating "
-             "agency make the determination."]
+             "", "DamIT Runner {}. Suggested classifications only; the engineer of record and the "
+             "regulating agency make the determination.".format(VERSION)]
     with open(os.path.join(folder, "README_run.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")

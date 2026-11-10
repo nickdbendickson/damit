@@ -4,7 +4,7 @@ from qgis.core import (QgsProcessingAlgorithm, QgsProcessingException, QgsProces
                        QgsProcessingParameterEnum, QgsProcessingParameterFile, QgsProcessingParameterNumber,
                        QgsProcessingParameterString)
 
-from ..compat import FILE_FILE, FILE_FOLDER
+from ..qgis_compat import FILE_FILE, FILE_FOLDER
 from ..core import catalog_bridge as CB
 from ..core import rundam as RD
 
