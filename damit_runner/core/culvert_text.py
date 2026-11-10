@@ -1,8 +1,7 @@
-"""The NDDOT culvert description parser ("DOUBLE, 10X7X88' RCB" -> barrels, span, rise,
+"""Culvert description text parser for NBI and state DOT records.
 barrel length, shape), copied verbatim from ND Dam Hazard's runnerculverts.py so the Runner
 can read the NDDOT bridge inventory without the Hazard plugin installed.
 
-Do not edit here: edit DamSafety_Hazard/runnerculverts.py and copy the functions across.
 tests/test_culvert_match.py checks that both copies are the same, function by function.
 """
 

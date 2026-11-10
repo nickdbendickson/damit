@@ -1,4 +1,4 @@
-"""North Dakota data conventions: land-cover roughness, dam-inventory field
+"""Data conventions: NLCD land-cover roughness, NID dam-inventory field
 names, the per-dam input folder, and where the models are installed.
 
 Nothing here needs a network; it works on the local files the user has.
@@ -190,7 +190,7 @@ def _home_paths(*parts):
 def lisflood_candidates():
     """Places a LISFLOOD-FP build usually ends up, existing files only."""
     c = []
-    env = os.environ.get("NDBREACH_LISFLOOD")
+    env = os.environ.get("DAMIT_LISFLOOD")
     if env:
         c.append(env)
     w = shutil.which("lisflood")
@@ -236,7 +236,7 @@ def anuga_python_candidates(nt=None, environ=None):
     environ = os.environ if environ is None else environ
     rel = env_python_rel(nt)
     c = []
-    env = environ.get("NDBREACH_ANUGA_PYTHON")
+    env = environ.get("DAMIT_ANUGA_PYTHON")
     if env:
         c.append(env)
     roots = [_home_paths(d) for d in CONDA_ROOT_NAMES]

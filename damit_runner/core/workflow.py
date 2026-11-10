@@ -3184,7 +3184,7 @@ def _toe_kwargs(dam, st):
 def _toe_slope(dam, st):
     """v3.13.0: the downstream slope of the toe band's outer limit H x (slope + 1) and where it
     is from: the setting (inflow_toe_ds_slope_h), the dam's DS_SLOPE / F_DS, the DWR record's
-    downstream_slope (dam.dwr_ds_slope_h, core/dwr_slope.apply_to_dam; Nick: "downstream slope
+    downstream_slope (dam.dwr_ds_slope_h, core/dam_slope.apply_to_dam; Nick: "downstream slope
     data is in dwr data"), else None (3:1 and a warning)."""
     for v, src in ((getattr(st, "inflow_toe_ds_slope_h", None), "the run setting"),
                    (getattr(dam, "ds_slope_h", None), "DS_SLOPE / F_DS"),

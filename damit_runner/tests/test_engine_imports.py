@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 # are expected to fail outside QGIS and are skipped.
 QGIS_ONLY = {
     "damit_runner.algorithms.rundam",       # QgsProcessingAlgorithm
+    "damit_runner.algorithms.engine",       # QgsProcessingAlgorithm
+    "damit_runner.algorithms.qgis_io",      # qgis.core
     "damit_runner.qgis_compat",             # qgis.core
     "damit_runner.provider",                # QgsProcessingProvider
     "damit_runner.plugin",                  # QGIS plugin entry point
