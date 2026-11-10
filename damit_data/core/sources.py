@@ -2,12 +2,15 @@
 
 Every source is national; the state or extent is the user's choice, never a default. Sources:
 
-  nsi             USACE National Structure Inventory API: per county of the chosen state
-                  (?fips=<5-digit county>), or one request for an extent (?bbox=...).
-  microsoft       Microsoft US Building Footprints (legacy usbuildings-v2), one zip per state.
-  osm             OpenStreetMap from Geofabrik: the state's free GeoPackage (zip).
-  usa_structures  FEMA / ORNL USA Structures: a download link the user pastes (no stable public
-                  per-state URL pattern is published), one zip.
+  nsi             USACE National Structure Inventory API: per county or extent.
+  microsoft       Microsoft US Building Footprints (legacy usbuildings-v2), per state zip.
+  osm             OpenStreetMap from Geofabrik: per state GeoPackage.
+  usa_structures  FEMA / ORNL USA Structures: a download link the user pastes.
+  hpms            FHWA HPMS roads (AADT, functional class, lanes, speed limit), per state.
+  fra_rail        FRA National Rail Network (active lines, traffic density), per state.
+  tiger_counties  US Census TIGER county boundaries (ACS 2023), per state.
+  nbi             FHWA National Bridge Inventory (bridges + culverts), per state CSV.
+  hifld           HIFLD critical facilities (hospitals, schools, fire stations, EMS), per state.
 """
 import hashlib
 
@@ -20,6 +23,12 @@ NSI_MAX_EXTENT_DEG2 = 1.0          # one bbox request; larger areas: pick the st
 
 HPMS_FEATURE_SERVER = "https://geo.dot.gov/server/rest/services/Hosted/{state_name}_2018_PR/FeatureServer/0"
 FRA_RAIL = "https://fragis.fra.dot.gov/arcgis/rest/services/FRA/FRA_Rail_Network/FeatureServer/0"
+TIGER_COUNTIES = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_ACS2023/MapServer/86"
+NBI_CSV = "https://www.fhwa.dot.gov/bridge/nbi/2023/delimited/{state_fips}{postal}23.txt"
+HIFLD_HOSPITALS = "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Hospitals_1/FeatureServer/0"
+HIFLD_SCHOOLS = "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Public_Schools/FeatureServer/0"
+HIFLD_FIRE_STATIONS = "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Fire_Stations/FeatureServer/0"
+HIFLD_EMS = "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Emergency_Medical_Service__EMS__Stations/FeatureServer/0"
 
 SOURCES = {
     "nsi": {"name": "National Structure Inventory (USACE NSI API)", "folder": "nsi", "default": True,
@@ -40,8 +49,18 @@ SOURCES = {
     "fra_rail": {"name": "FRA National Rail Network (active lines, traffic density)", "folder": "fra_rail",
                  "default": True, "scopes": ("state",), "layer_globs": ("fra_rail.geojson",),
                  "citation": "FRA / BTS North American Rail Network, https://fragis.fra.dot.gov/"},
+    "tiger_counties": {"name": "US Census TIGER county boundaries", "folder": "tiger_counties",
+                       "default": False, "scopes": ("state",), "layer_globs": ("tiger_counties.geojson",),
+                       "citation": "US Census Bureau TIGER/Line Shapefiles, https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html"},
+    "nbi": {"name": "National Bridge Inventory (FHWA NBI)", "folder": "nbi",
+            "default": False, "scopes": ("state",), "layer_globs": ("nbi.csv",),
+            "citation": "FHWA National Bridge Inventory, https://www.fhwa.dot.gov/bridge/nbi.cfm"},
+    "hifld": {"name": "HIFLD critical facilities (hospitals, schools, fire, EMS)", "folder": "hifld",
+              "default": False, "scopes": ("state",), "layer_globs": ("*.geojson",),
+              "citation": "HIFLD / DHS / HSGAC, https://hifld-geoplatform.opendata.arcgis.com/"},
 }
-ORDER = ("nsi", "microsoft", "osm", "usa_structures", "hpms", "fra_rail")
+ORDER = ("nsi", "microsoft", "osm", "usa_structures", "hpms", "fra_rail",
+         "tiger_counties", "nbi", "hifld")
 
 
 class SourceError(ValueError):
@@ -113,6 +132,29 @@ def plan(source_id, state=None, bbox=None, url=None):
         return _p(source_id, s, st["postal"], "arcgis_feature_service", [FRA_RAIL], "fra_rail.geojson",
                   version_mode="content", extract=False, state=st["postal"],
                   state_filter="STATEAB='{}'".format(st["postal"]))
+    if source_id == "tiger_counties":
+        if st is None:
+            raise SourceError("TIGER Counties: pick a state.")
+        return _p(source_id, s, st["postal"], "arcgis_feature_service", [TIGER_COUNTIES],
+                  "tiger_counties.geojson", version_mode="content", extract=False,
+                  state=st["postal"],
+                  state_filter="STATE='{}'".format(st["fips"]),
+                  fields="NAME,GEOID,ALAND,AWATER,COUNTY,STATE,BASENAME,FUNCSTAT")
+    if source_id == "nbi":
+        if st is None:
+            raise SourceError("NBI: pick a state.")
+        u = NBI_CSV.format(state_fips=st["fips"], postal=st["postal"])
+        return _p(source_id, s, st["postal"], "file", [u], "nbi.csv",
+                  version_mode="headers", extract=False, state=st["postal"])
+    if source_id == "hifld":
+        if st is None:
+            raise SourceError("HIFLD: pick a state.")
+        urls = [HIFLD_HOSPITALS, HIFLD_SCHOOLS, HIFLD_FIRE_STATIONS, HIFLD_EMS]
+        filenames = ["hospitals.geojson", "schools.geojson", "fire_stations.geojson", "ems.geojson"]
+        return _p(source_id, s, st["postal"], "arcgis_feature_service_multi", urls,
+                  filenames[0], version_mode="content", extract=False, state=st["postal"],
+                  state_filter="STATE='{}'".format(st["postal"]),
+                  multi_files=list(zip(urls, filenames)))
     if bbox is not None and st is None:
         raise SourceError("{}: published per state only; pick the state (DamIT Data can list the states an "
                           "extent touches).".format(s["name"]))
