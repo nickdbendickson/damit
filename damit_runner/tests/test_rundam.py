@@ -76,15 +76,22 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(len({f1, f2, f3}), 3)
         self.assertTrue(os.path.exists(marker))
 
-    def test_engines_refused(self):
+    def test_unavailable_engines_refused(self):
         pkg = HO.read(self.pkg_path)
-        for e in (1, 2, 3, "lisflood"):
+        # ANUGA (2) and HEC-RAS (3) are not yet ported
+        for e in (2, 3):
             with self.assertRaises(RD.RunError) as cm:
                 RD.prepare_run(pkg, self.runs, engine=e)
-            self.assertIn("Nothing was run", str(cm.exception))
+            self.assertIn("not yet available", str(cm.exception))
+        # Invalid engine index
         with self.assertRaises(RD.RunError):
-            RD.prepare_run(pkg, self.runs, dry_run=False)
-        self.assertEqual(os.listdir(self.runs), [])
+            RD.prepare_run(pkg, self.runs, engine=-1)
+
+    def test_lisflood_engine_accepted(self):
+        pkg = HO.read(self.pkg_path)
+        # Engine 1 (LISFLOOD-FP) should be accepted for prepare (dry_run=True)
+        folder, setup = RD.prepare_run(pkg, self.runs, engine=1)
+        self.assertEqual(setup["engine"], "LISFLOOD-FP")
 
     def test_bad_packages_rejected(self):
         pkg = HO.read(self.pkg_path)
