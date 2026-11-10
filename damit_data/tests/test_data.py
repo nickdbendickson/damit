@@ -31,6 +31,40 @@ class Sources(unittest.TestCase):
         self.assertEqual(len(nsi["urls"]), 5)                 # five RI counties, one request each
         self.assertIn("fips=44001", nsi["urls"][0])
 
+    def test_tiger_counties(self):
+        for st in ("ND", "CA", "TX"):
+            p = sources.plan("tiger_counties", state=st)
+            self.assertEqual(p["kind"], "arcgis_feature_service")
+            self.assertIn("TIGERweb", p["urls"][0])
+            self.assertIn("STATE=", p["state_filter"])
+        with self.assertRaises(sources.SourceError):
+            sources.plan("tiger_counties")  # no state
+
+    def test_nbi(self):
+        p = sources.plan("nbi", state="ND")
+        self.assertEqual(p["kind"], "file")
+        self.assertIn("38ND23.txt", p["urls"][0])
+        p2 = sources.plan("nbi", state="CA")
+        self.assertIn("06CA23.txt", p2["urls"][0])
+        with self.assertRaises(sources.SourceError):
+            sources.plan("nbi")
+
+    def test_hifld(self):
+        p = sources.plan("hifld", state="ND")
+        self.assertEqual(p["kind"], "arcgis_feature_service_multi")
+        self.assertEqual(len(p["multi_files"]), 4)
+        names = [f[1] for f in p["multi_files"]]
+        self.assertIn("hospitals.geojson", names)
+        self.assertIn("schools.geojson", names)
+        self.assertIn("fire_stations.geojson", names)
+        self.assertIn("ems.geojson", names)
+        with self.assertRaises(sources.SourceError):
+            sources.plan("hifld")
+
+    def test_all_sources_have_plans(self):
+        for sid in sources.ORDER:
+            self.assertIn(sid, sources.SOURCES)
+
     def test_extent_and_refusals(self):
         p = sources.plan("nsi", bbox=(-96.80, 46.87, -96.78, 46.88))
         self.assertIn("bbox=-96.800000,46.870000,", p["urls"][0])
