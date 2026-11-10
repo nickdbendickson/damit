@@ -1,83 +1,53 @@
-"""Safe GDAL raster helpers: read a window, write a GeoTIFF, without leaving files locked.
+"""GDAL calls that behave the same whether GDAL's Python exceptions are switched on or off.
 
-A thin wrapper around osgeo.gdal that closes datasets promptly (Python's GC +
-GDAL's refcounting can leave files locked on Windows otherwise). Not a full
-GDAL abstraction — just the patterns the Runner's terrain and reservoir-carve
-modules need.
+`gdal.UseExceptions()` is process-wide in the GDAL bindings QGIS ships: a plugin that calls it
+at import time changes GDAL for QGIS and every other plugin (code written for the default mode
+checks `if ds is None` and then meets an exception instead). The three suite plugins therefore
+never change the mode (damsuite 1.3.0); they call GDAL through these helpers, which raise
+RuntimeError - the exception type GDAL's exception mode raises - with GDAL's own message when
+GDAL returns nothing, so `except RuntimeError` handlers work in both modes.
+
+osgeo is imported only when a helper is called (damsuite itself stays importable without GDAL).
 """
-import contextlib
-import logging
-import os
-
-import numpy as np
-
-LOG = logging.getLogger(__name__)
 
 
-def _gdal():
-    from osgeo import gdal
-    gdal.UseExceptions()
-    return gdal
-
-
-@contextlib.contextmanager
-def open_raster(path, update=False):
-    """Open a GDAL raster dataset, close it on exit."""
-    gdal = _gdal()
-    ds = gdal.Open(str(path), gdal.GA_Update if update else gdal.GA_ReadOnly)
-    if ds is None:
-        raise FileNotFoundError("GDAL could not open {!r}".format(path))
+def last_error(gdal=None):
+    """GDAL's last error message, '' when there is none (never raises)."""
     try:
-        yield ds
-    finally:
-        ds = None
+        if gdal is None:
+            from osgeo import gdal
+        return (gdal.GetLastErrorMsg() or "").strip()
+    except Exception:                                            # noqa
+        return ""
 
 
-def read_band(path, band=1):
-    """Read one band as a numpy array + its geotransform and projection."""
-    with open_raster(path) as ds:
-        gt = ds.GetGeoTransform()
-        proj = ds.GetProjection()
-        arr = ds.GetRasterBand(band).ReadAsArray()
-        nodata = ds.GetRasterBand(band).GetNoDataValue()
-    return arr, gt, proj, nodata
+def checked(result, what, gdal=None):
+    """`result` of a GDAL call (Open, Warp, Translate, BuildVRT, Create, ...); RuntimeError
+    "<what> failed: <GDAL message>" when it is None."""
+    if result is None:
+        msg = last_error(gdal)
+        raise RuntimeError("{} failed{}".format(what, ": " + msg if msg else ""))
+    return result
 
 
-def write_geotiff(path, arr, gt, proj, nodata=None, dtype=None):
-    """Write a numpy array as a single-band GeoTIFF."""
-    gdal = _gdal()
-    if dtype is None:
-        dtype = {np.float32: gdal.GDT_Float32, np.float64: gdal.GDT_Float64,
-                 np.int16: gdal.GDT_Int16, np.int32: gdal.GDT_Int32,
-                 np.uint8: gdal.GDT_Byte}.get(arr.dtype.type, gdal.GDT_Float32)
-    drv = gdal.GetDriverByName("GTiff")
-    ds = drv.Create(str(path), arr.shape[1], arr.shape[0], 1, dtype,
-                    ["COMPRESS=DEFLATE", "TILED=YES"])
-    ds.SetGeoTransform(gt)
-    ds.SetProjection(proj)
-    b = ds.GetRasterBand(1)
-    if nodata is not None:
-        b.SetNoDataValue(float(nodata))
-    b.WriteArray(arr)
-    b.FlushCache()
-    ds = None
-    LOG.debug("wrote %s (%d×%d)", path, arr.shape[1], arr.shape[0])
+def open_raster(path, update=False):
+    """gdal.Open(path) (read-only, or update), or RuntimeError naming the file."""
+    from osgeo import gdal
+    mode = gdal.GA_Update if update else gdal.GA_ReadOnly
+    try:
+        ds = gdal.Open(path, mode)
+    except RuntimeError as e:                    # exception mode: add the file name
+        raise RuntimeError("GDAL cannot open {}: {}".format(path, e)) from None
+    return checked(ds, "GDAL cannot open {} - opening".format(path), gdal)
 
 
-def raster_bounds(path):
-    """(xmin, ymin, xmax, ymax) in the raster's CRS."""
-    with open_raster(path) as ds:
-        gt = ds.GetGeoTransform()
-        w, h = ds.RasterXSize, ds.RasterYSize
-    x0 = gt[0]
-    y0 = gt[3] + h * gt[5]  # gt[5] is negative
-    x1 = gt[0] + w * gt[1]
-    y1 = gt[3]
-    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
-
-
-def raster_cell_m(path):
-    """Approximate cell size in metres (from the geotransform, not the CRS)."""
-    with open_raster(path) as ds:
-        gt = ds.GetGeoTransform()
-    return abs(gt[1])
+def open_vector(path, update=False):
+    """ogr.Open(path), or RuntimeError naming the file."""
+    from osgeo import ogr
+    try:
+        ds = ogr.Open(path, 1 if update else 0)
+    except RuntimeError as e:
+        raise RuntimeError("OGR cannot open {}: {}".format(path, e)) from None
+    if ds is None:
+        raise RuntimeError("OGR cannot open {}{}".format(path, ": " + last_error() if last_error() else ""))
+    return ds
