@@ -73,7 +73,7 @@ def test_nick_decisions_unchanged():
 
 
 def test_sources_in_the_report():
-    assert CAT["catalog_version"] == "2026.11.09.4"
+    assert CAT["catalog_version"] == "2026.11.10.1"
     assert "Corrected Edition" in CAT["source_document"]
     assert "In-Depth Summaries" in CAT["source_document"]
     res = run(preset("AL"), [home("h", depth=0.5)])

@@ -1,7 +1,7 @@
 {
  "schema": "damit.catalog",
  "schema_version": 1,
- "catalog_version": "2026.11.09.4",
+ "catalog_version": "2026.11.10.1",
  "source": {
   "title": "US Dam Hazard Classification - Corrected Edition",
   "date": "2026-11-09",

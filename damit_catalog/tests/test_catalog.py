@@ -502,7 +502,7 @@ class Nov2026Summaries(unittest.TestCase):
         return {"id": rid, "receptor_type": "feature", "feature_kind": kind}
 
     def test_sources_recorded(self):
-        self.assertEqual(self.cat.version, "2026.11.09.4")
+        self.assertEqual(self.cat.version, "2026.11.10.1")
         self.assertIn("Corrected Edition", self.cat.source["title"])
         sup = self.cat.source["supplements"]
         self.assertEqual(len(sup), 1)

@@ -77,6 +77,12 @@ confirms no scenario, the user must pick one and the run is flagged. M1's depthâ
 digitized in the catalog: M1 reads a per-structure `m1_zone` (from DamIT Hazard or the engineer) and is
 blocked, with a flag, on a 1D run when the preset requires 2D.
 
+#### Catalog 2026.11.10.1
+
+Data version 2026.11.10.1 (DamIT Catalog 0.1.2) is 2026.11.09.4 plus the North Dakota M1 `judgment_class` 2 rule
+(catalog plugin 0.1.1, Nick's ruling Nov 10, 2026). No other method, threshold or preset changed. DamIT Crest 0.1.1's
+jurisdictions index and committed desk bundle mirror it.
+
 #### Catalog 2026.11.09.4: the two Nov 2026 source documents
 
 The catalog follows two documents (both recorded in `catalog.json` `source`):
