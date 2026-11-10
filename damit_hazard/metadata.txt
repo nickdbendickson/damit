@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.1.2
+version=0.1.3
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -16,6 +16,8 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.1.3 - 2026-11-10
+      * Rail trains per day: DamIT Hazard ships a default lookup, data/rail_trains_lookup.csv, with one row: NARN RROWNER1 = BNSF and SUBDIV = KO -> 15 trains a day (DamSafety value, Nick's ruling 2026-11-10). It is used when no RAIL_TRAINS_LOOKUP is given; an explicit RAIL_TRAINS_LOOKUP replaces it. The BNSF KO line then scores M9a High as DamSafety scored DWR-2801 (INFO trains_lookup_ruled). Lookup rows may match several fields ('RROWNER1&SUBDIV', 'BNSF&KO') and carry a ruling column; rows without a ruling are still flagged trains_lookup (needs Nick's ruling), and lines no row matches keep trains_unknown.
     0.1.2 - 2026-11-10
       * M9a / M9b: trains per day can come from a new explicit input, RAIL_TRAINS_LOOKUP (CSV: field, value, trains_per_day, source), for rail layers such as NARN that have no trains-per-day field. No default is assumed; every value taken from the lookup is flagged (trains_lookup) as needing Nick's ruling. DWR-2801: DamSafety scored the BNSF KO line High at 15 trains a day; DamIT stays Medium (trains_unknown) unless the lookup gives the number.
       * M6: a structure whose sampled depth rounds to 0.00 ft is no longer counted as inundated (flag m6_trace_depth).

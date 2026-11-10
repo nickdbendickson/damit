@@ -752,7 +752,10 @@ def _rails(ctx, mid):
 
 
 def _trains_ruling(ctx, mid, r):
-    if r.get("trains_needs_ruling"):
+    if r.get("trains_ruling") and r.get("trains_source"):
+        ctx.flag(INFO, "trains_lookup_ruled", "trains per day {:g} from the rail trains lookup ({}; ruling {})"
+                 .format(r["trains_per_day"], r["trains_source"], r["trains_ruling"]), mid, r["id"])
+    elif r.get("trains_needs_ruling"):
         ctx.flag(WARNING, "trains_lookup", "trains per day {:g} from the RAIL_TRAINS_LOOKUP input ({}): not in "
                  "the rail layer, needs Nick's ruling before a class resting on it is used".format(
                      r["trains_per_day"], r.get("trains_source") or "no source"), mid, r["id"])
@@ -770,8 +773,9 @@ def m9a(ctx):
         else:
             if t is None:
                 ctx.flag(WARNING, "trains_unknown", "trains per day unknown: High test (10+ "
-                         "freight trains or passenger) not confirmed; give trains_per_day in the rail "
-                         "layer or a RAIL_TRAINS_LOOKUP CSV (no default is assumed)", "M9a", r["id"])
+                         "freight trains or passenger) not confirmed; no lookup row matched this line (the "
+                         "shipped lookup covers BNSF KO only; give trains_per_day in the rail layer or a "
+                         "RAIL_TRAINS_LOOKUP CSV)", "M9a", r["id"])
             ctx.hit("M9a", 2, r, "active rail line impacted")
 
 

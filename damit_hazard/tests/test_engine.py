@@ -491,3 +491,56 @@ def test_m9a_trains_lookup_is_explicit_and_flagged(tmp_path=None):
             pass
         else:
             raise AssertionError("accepted " + body)
+
+
+# ------------------------------------------- 0.1.3: shipped BNSF KO row (Nick ruling 2026-11-10) ------
+def _narn(rid, owner, subdiv, depth=3.88):
+    # NARN identifies the line by RROWNER1 + SUBDIV (as DamSafety Hazard Lite reads it); no trains field
+    return R.make(rid, "rail", None, depth_ft=depth, velocity_fps=1.0, RROWNER1=owner, SUBDIV=subdiv, NET="M")
+
+
+def test_default_lookup_bnsf_ko_is_15_and_m9a_high_as_damsafety():
+    from damit_hazard.engine import rail_lookup as RL
+    rows = RL.default_rows()
+    assert rows == [{"field": "RROWNER1&SUBDIV", "value": "BNSF&KO", "trains_per_day": 15.0,
+                     "source": "DamSafety value, Nick ruling 2026-11-10", "ruling": "2026-11-10"}]
+    got, where = RL.rows_for(None)
+    assert got == rows and "default" in where
+    ko, prosper, other = _narn("rail:60", "BNSF", "KO"), _narn("rail:61", "BNSF", "PROSPER"), _narn("rail:62", "RRVW", "KO")
+    assert RL.apply([ko, prosper, other], rows) == 1
+    assert ko["trains_per_day"] == 15.0 and ko["trains_needs_ruling"] is False
+    assert prosper["trains_per_day"] is None and other["trains_per_day"] is None    # both fields must match
+    res = run(preset("ND"), [ko, prosper], scenario="S3")
+    m9 = {h["receptors"][0]: h["class"] for h in res["hits"] if h["method"] == "M9a"}
+    assert m9 == {"rail:60": 3, "rail:61": 2}
+    assert any(h["method"] == "M9a" and "15 trains/day" in h["reason"] for h in res["hits"])
+    assert res["suggested_label"] == "High"
+    assert "trains_lookup_ruled" in codes(res, "info")
+    assert "trains_lookup" not in codes(res)                       # the ruled row is not flagged
+    unknown = [f for f in res["flags"] if f["code"] == "trains_unknown"]
+    assert unknown and all("rail:60" not in str(f) for f in unknown)  # only the unmatched line stays flagged
+
+
+def test_explicit_lookup_overrides_the_default():
+    import os
+    import tempfile
+    from damit_hazard.engine import rail_lookup as RL
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "mine.csv")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("field,value,trains_per_day,source\nRROWNER1&SUBDIV,BNSF&KO,4,local count\n")
+    rows, where = RL.rows_for(path)
+    assert where == path and rows[0]["trains_per_day"] == 4.0 and "ruling" not in rows[0]
+    ko = _narn("rail:60", "BNSF", "KO")
+    RL.apply([ko], rows)
+    res = run(preset("ND"), [ko], scenario="S3")
+    assert {h["receptors"][0]: h["class"] for h in res["hits"] if h["method"] == "M9a"} == {"rail:60": 2}
+    assert "trains_lookup" in codes(res, "warning")                # an explicit row without a ruling is flagged
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("field,value,trains_per_day,source\nRROWNER1&SUBDIV,BNSF,4,x\n")
+    try:
+        RL.load(path)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("mismatched '&' parts accepted")

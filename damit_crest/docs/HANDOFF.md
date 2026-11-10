@@ -109,8 +109,9 @@ Details:
   writes the run under `<work>/runs` and copies `Depth (Max).tif`, `Velocity (Max).tif`, `hmax_ft.tif` and the flood
   polygons into the dam folder; the app reports `RUN_FOLDER` and those paths.
 - **Rail trains per day.** When the dam has `railTrainsLookup` or `DAMIT_RAIL_TRAINS_LOOKUP` names a CSV (`field,
-  value, trains_per_day, source`), classify gets it as `RAIL_TRAINS_LOOKUP` (DamIT Hazard 0.1.2). No default is sent;
-  values from it are flagged in the report as needing Nick's ruling.
+  value, trains_per_day, source[, ruling]`), classify gets it as `RAIL_TRAINS_LOOKUP`, and it replaces DamIT Hazard
+  0.1.3's shipped default (BNSF KO = 15 trains a day, Nick's ruling 2026-11-10). Without one, classify uses that
+  default. Rows without a ruling are flagged in the report as needing Nick's ruling.
 - **Classify** needs the model run's maximum depth raster: the dam folder's `Depth (Max).tif` (and `Velocity
   (Max).tif`) from the Runner when *Depth raster* is blank, else type its path under *Depth raster* (velocity, depth ×
   velocity, water-surface elevation, non-breach depth and arrival-time rasters are optional and sent as `VELOCITY`,
