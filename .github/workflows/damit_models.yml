@@ -6,10 +6,10 @@ name: damit_models
 on:
   push:
     paths: ["damit_screener/**", "damit_runner/**", "damit_catalog/**", "damit_hazard/**", "damit_crest/desktop/**",
-            "tests/**", ".github/workflows/damit_models.yml"]
+            "damit_crest/src/**", "damit_crest/package.json", "tests/**", ".github/workflows/damit_models.yml"]
   pull_request:
     paths: ["damit_screener/**", "damit_runner/**", "damit_catalog/**", "damit_hazard/**", "damit_crest/desktop/**",
-            "tests/**", ".github/workflows/damit_models.yml"]
+            "damit_crest/src/**", "damit_crest/package.json", "tests/**", ".github/workflows/damit_models.yml"]
 
 jobs:
   pure:
@@ -55,8 +55,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # test_smoke (the committed web bundle vs src/) is not run here: on main the bundle is already older than
-      # src/lib/crest/data/jurisdictions.json (catalog 2026.11.09.4) and needs `npm run build:desktop`.
+      # test_smoke checks the committed web bundle against src/ (build-info.json digests) and runs the bundled desk
+      # engine once under Node; the bundle was rebuilt with `npm run build:desktop` for catalog 2026.11.10.1.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: Desktop tests
         working-directory: damit_crest/desktop/tests
-        run: python3 -m unittest -v test_algorithms test_handoff test_local_api test_nid test_nid_rule test_localdem
+        run: python3 -m unittest -v test_algorithms test_handoff test_local_api test_nid test_nid_rule test_localdem test_smoke

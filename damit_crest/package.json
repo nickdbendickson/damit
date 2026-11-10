@@ -1,6 +1,6 @@
 {
   "name": "damit-crest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DamIT Crest: the DamIT desktop desk (pywebview) for dam breach screening, flood views and hand-off to the DamIT QGIS plugins. Adapted from Crest.",
   "private": true,
   "sideEffects": false,
