@@ -12,11 +12,11 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 |---|---|---|---|
 | `damit_catalog/` | DamIT Catalog | none | Appendix A data catalog (JSON) + Python loader, evaluator and hand-off schema |
 | `damit_screener/` | DamIT Screener | `damit_screen` | Preflight, scenario-driven screening chain, preliminary suggestion, hand-off packages |
-| `damit_runner/` | DamIT Runner | `damit_run` | Prepares and records breach runs from a hand-off package (0.1.0 launches no model) |
+| `damit_runner/` | DamIT Runner | `damit_run` | Full breach engine: LISFLOOD-FP (built-in solver), ANUGA 2D, HEC-RAS 2D. 8 Processing algorithms: rundam, batch, sensitivity, cascade, hydrograph, estimate, check, finishanuga |
 | [`damit_hazard/`](damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 19 jurisdiction presets or a custom method set (`damit:classify`) |
 | [`damit_core/`](damit_core/README.md) | DamIT Core | none | Shared library: suite settings, DamIT plugin list and version check, US state table, dam-record field helpers, catalog access, HTTP helper. Menu: About only |
 | [`damit_setup/`](damit_setup/README.md) | DamIT Setup | none | Start here: suite data folder, work folder, state / preset, suite check, settings fill, hand-off to `damit_screen:preflight` |
-| [`damit_data/`](damit_data/README.md) | DamIT Data | `damit_data` | Offline NSI, Microsoft footprints, OpenStreetMap (Geofabrik) and USA Structures layers for any US state (`damit_data:download`, `:status`) |
+| [`damit_data/`](damit_data/README.md) | DamIT Data | `damit_data` | 9 national data sources: NSI, Microsoft footprints, OSM, USA Structures, HPMS roads, FRA rail, Census TIGER counties, NBI bridges, HIFLD facilities (`damit_data:download`, `:status`) |
 | [`damit_hazardlite/`](damit_hazardlite/README.md) | DamIT Hazard Lite | `damit_lite` | One tool, `damit_lite:classify`: suggested class from depth / velocity rasters at structures, roads and rail with DamIT Catalog presets or custom methods |
 | [`damit_pmp/`](damit_pmp/README.md) | DamIT PMP | `damit_pmp` | NOAA Atlas 14 only: point / basin precipitation-frequency tables, alternating-block hyetograph, Atlas 14 grid basin statistics (no PMP values in 0.1.0) |
 | [`damit_crest/`](damit_crest/README.md) | DamIT Crest | none (desktop app) | Local desktop app (pywebview), adapted from Crest: draw a dam, size its breach, view results and flood maps, and hand one dam to the DamIT QGIS plugins through `qgis_process` |
@@ -188,3 +188,63 @@ Data sources and staged updates with a fake HTTP client, Hazard Lite records and
 parsing / cache / hyetograph from recorded PFDS answers) plus real-QGIS integration tests run offscreen with a
 throw-away profile, `nice -n 19`, single-threaded. No test starts a model (subprocess launches are patched to
 fail) and no test touches the network.
+
+## Installation
+
+### From packaged zips
+
+```bash
+python3 scripts/package_plugins.py dist/
+```
+
+This builds installable `.zip` files for all 9 plugins in `dist/`. Install in QGIS:
+Plugins → Manage and Install Plugins → Install from ZIP. Install order: DamIT Core,
+DamIT Catalog, then the rest.
+
+### From the repository (development)
+
+Add the repository root to your `QGIS_PLUGINPATH`:
+
+```bash
+export QGIS_PLUGINPATH=/path/to/damit
+```
+
+## Quick start: dam-to-classification walkthrough
+
+1. **Pick a dam** — use the NID dam picker in DamIT Crest, or pass an NID ID directly.
+   The state code (first two letters of the NID ID) auto-selects the jurisdiction preset.
+
+2. **Screen** — `damit_screen:runchain` runs preflight checks (storage, height, location)
+   and generates a hand-off package with the breach hydrograph and preset configuration.
+
+3. **Run the breach model** — `damit_run:rundam` takes the hand-off package, prepares the
+   run folder, and (with ENGINE=1) runs the LISFLOOD-FP solver to produce depth, velocity,
+   and arrival-time rasters.
+
+4. **Classify** — `damit:classify` reads the rasters and receptor layers (NSI structures,
+   HPMS roads, FRA rail, HIFLD facilities), applies the preset's methods (M1–M13), and
+   produces a suggested hazard class with a run report (Markdown, HTML, JSON) and a
+   GeoPackage of receptors styled by class.
+
+5. **Review** — the report names the driving method and receptors. The engineer of record
+   and the regulating agency make the determination.
+
+## National data sources
+
+DamIT Data (`damit_data:download`) provides 9 per-state sources:
+
+| Source | Data | Default |
+|--------|------|---------|
+| NSI | USACE National Structure Inventory (~120M structures) | Yes |
+| Microsoft | US Building Footprints (outlines) | Yes |
+| OSM | OpenStreetMap (Geofabrik GeoPackage) | Yes |
+| USA Structures | FEMA/ORNL building outlines with occupancy | No |
+| HPMS | FHWA roads (AADT, functional class, speed limit) | Yes |
+| FRA Rail | FRA National Rail Network (active lines, class) | Yes |
+| TIGER Counties | US Census county boundaries | No |
+| NBI | FHWA National Bridge Inventory (bridges + culverts) | No |
+| HIFLD | Critical facilities (hospitals, schools, fire, EMS) | No |
+
+Additional: USGS 3DEP terrain (1m/10m DEM), NLCD land cover (Manning's n),
+VERTCON vertical datum conversion (NGVD29→NAVD88), and USGS StreamStats
+for ungauged basin delineation and flood frequency.
