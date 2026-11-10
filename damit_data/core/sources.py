@@ -18,6 +18,9 @@ MICROSOFT = "https://minedbuildings.z5.web.core.windows.net/legacy/usbuildings-v
 GEOFABRIK = "https://download.geofabrik.de/{path}-latest-free.gpkg.zip"
 NSI_MAX_EXTENT_DEG2 = 1.0          # one bbox request; larger areas: pick the state (per county)
 
+HPMS_FEATURE_SERVER = "https://geo.dot.gov/server/rest/services/Hosted/{state_name}_2018_PR/FeatureServer/0"
+FRA_RAIL = "https://fragis.fra.dot.gov/arcgis/rest/services/FRA/FRA_Rail_Network/FeatureServer/0"
+
 SOURCES = {
     "nsi": {"name": "National Structure Inventory (USACE NSI API)", "folder": "nsi", "default": True,
             "scopes": ("state", "extent"), "layer_globs": ("nsi.geojson",),
@@ -31,8 +34,14 @@ SOURCES = {
     "usa_structures": {"name": "USA Structures (FEMA / ORNL; paste the download link)", "folder": "usa_structures",
                        "default": False, "scopes": ("url",), "layer_globs": ("*.gdb", "*.shp", "*.gpkg"),
                        "citation": "FEMA / ORNL USA Structures, https://gis-fema.hub.arcgis.com/pages/usa-structures"},
+    "hpms": {"name": "FHWA HPMS roads (AADT, functional class, lanes, speed limit)", "folder": "hpms",
+             "default": True, "scopes": ("state",), "layer_globs": ("hpms.geojson",),
+             "citation": "FHWA Highway Performance Monitoring System, https://www.fhwa.dot.gov/policyinformation/hpms/shapefiles.cfm"},
+    "fra_rail": {"name": "FRA National Rail Network (active lines, traffic density)", "folder": "fra_rail",
+                 "default": True, "scopes": ("state",), "layer_globs": ("fra_rail.geojson",),
+                 "citation": "FRA / BTS North American Rail Network, https://fragis.fra.dot.gov/"},
 }
-ORDER = ("nsi", "microsoft", "osm", "usa_structures")
+ORDER = ("nsi", "microsoft", "osm", "usa_structures", "hpms", "fra_rail")
 
 
 class SourceError(ValueError):
@@ -86,6 +95,24 @@ def plan(source_id, state=None, bbox=None, url=None):
         area = st["postal"] if st else "custom"
         return _p(source_id, s, area, "file", [u], name, version_mode="headers",
                   extract=name.lower().endswith(".zip"))
+    if source_id == "hpms":
+        if st is None:
+            raise SourceError("HPMS: pick a state.")
+        # The FHWA FeatureServer uses the state name with no spaces; DC is "District"
+        sname = st["name"].replace(" ", "")
+        if sname == "DistrictofColumbia":
+            sname = "District"
+        u = HPMS_FEATURE_SERVER.format(state_name=sname)
+        return _p(source_id, s, st["postal"], "arcgis_feature_service", [u], "hpms.geojson",
+                  version_mode="content", extract=False, state=st["postal"],
+                  fields="AADT,AADT_COMBINATION,AADT_SINGLE_UNIT,F_SYSTEM,THROUGH_LANES,SPEED_LIMIT,"
+                         "ROUTE_NAME,COUNTY_CODE,URBAN_CODE,NHS,FACILITY_TYPE,OWNERSHIP")
+    if source_id == "fra_rail":
+        if st is None:
+            raise SourceError("FRA Rail: pick a state.")
+        return _p(source_id, s, st["postal"], "arcgis_feature_service", [FRA_RAIL], "fra_rail.geojson",
+                  version_mode="content", extract=False, state=st["postal"],
+                  state_filter="STATEAB='{}'".format(st["postal"]))
     if bbox is not None and st is None:
         raise SourceError("{}: published per state only; pick the state (DamIT Data can list the states an "
                           "extent touches).".format(s["name"]))

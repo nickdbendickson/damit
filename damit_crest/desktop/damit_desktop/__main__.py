@@ -245,6 +245,9 @@ class _Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/dem":
             self._send_dem(parse_qs(parsed.query))
             return
+        if parsed.path == "/api/vertcon":
+            self._send_vertcon(parse_qs(parsed.query))
+            return
         if parsed.path == "/api/nid/state":
             self._send_nid(parse_qs(parsed.query))
             return
@@ -369,6 +372,29 @@ class _Handler(SimpleHTTPRequestHandler):
             self._send(502, json.dumps({"error": str(exc)}).encode(), "application/json")
             return
         self._send(200, body, "application/octet-stream")
+
+    def _send_vertcon(self, query: dict) -> None:
+        """NGVD29 → NAVD88 vertical offset for any CONUS point, via pyproj (ships with QGIS)."""
+        try:
+            lat = float((query.get("lat") or [""])[0])
+            lon = float((query.get("lon") or [""])[0])
+        except (ValueError, IndexError):
+            self._send(400, b'{"error":"lat and lon required"}', "application/json")
+            return
+        try:
+            from pyproj import Transformer
+            # NGVD29 (EPSG:5102) → NAVD88 (EPSG:5103); the shift is NAVD88 - NGVD29
+            t = Transformer.from_crs("EPSG:5102", "EPSG:5103", always_xy=True)
+            _, _, shift_m = t.transform(lon, lat, 0.0)
+            shift_ft = shift_m / 0.3048
+            self._send(200, json.dumps({"shift_ft": round(shift_ft, 5), "shift_m": round(shift_m, 5),
+                                        "source": "pyproj VERTCON (PROJ-data us_noaa_vertconc.tif)"}).encode(),
+                       "application/json")
+        except ImportError:
+            self._send(501, json.dumps({"error": "pyproj not available; install QGIS or pyproj"}).encode(),
+                       "application/json")
+        except Exception as exc:
+            self._send(502, json.dumps({"error": str(exc)}).encode(), "application/json")
 
     def _send(self, code: int, body: bytes, content_type: str) -> None:
         self.send_response(code)
