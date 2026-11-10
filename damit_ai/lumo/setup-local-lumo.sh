@@ -1700,6 +1700,7 @@ class QP:
         self.env.update({"QGIS_CUSTOM_CONFIG_PATH": self.base, "QT_QPA_PLATFORM": "offscreen",
                          "OMP_NUM_THREADS": str(args.threads), "NDBREACH_ANUGA_MESHER": "gmsh"})
         self.envname = args.env
+        self.anuga_py = ""
         if not self.dry:
             self._pick_anuga()
         lis = os.path.expanduser(args.lisflood or "")
@@ -1708,8 +1709,10 @@ class QP:
             self.env["NDBREACH_LISFLOOD"] = lis
 
     def _pick_anuga(self):
-        """v1.5.1: the Runner takes the first conda env named *anuga* in alphabetical order, so an
-        older env "anuga" (no gmsh) wins over the suite's "ndanuga". Point it at ndanuga unless
+        """v1.5.1: the Runner takes its saved provider setting, else the first conda env named
+        *anuga* in alphabetical order, so an older env "anuga" (no gmsh) wins over the suite's
+        "ndanuga" (the env variable alone does not beat the saved setting, so the self-test and
+        runs also get ANUGA_PYTHON as a parameter). Point it at ndanuga unless
         NDBREACH_ANUGA_PYTHON is set, and ask for gmsh only when that Python can import gmsh
         (otherwise gmsh_or_default: the default ANUGA mesh, with a note in the log)."""
         py = self.env.get("NDBREACH_ANUGA_PYTHON", "")
@@ -1717,6 +1720,7 @@ class QP:
             cand = os.path.join(os.path.dirname(self.prefix), "ndanuga", "bin", "python")
             if os.path.isfile(cand):
                 py = self.env["NDBREACH_ANUGA_PYTHON"] = cand
+        self.anuga_py = py
         if py and "NDBREACH_ANUGA_MESHER" not in os.environ:
             try:
                 ok = subprocess.run([py, "-c", "import gmsh"], capture_output=True, timeout=120).returncode == 0
@@ -1991,6 +1995,8 @@ def cmd_plugins(args):
         cell = {"CELL_FT": 100} if args.set == "nd" else {"CELL": 30}
         scr = dict(cell, ENGINE=2, SIMH=2, REPORT=os.path.join(logs, "nddam_selftest.txt"))
         run = {"RUN_MODEL": "true", "THREADS": args.threads}
+        if qp.anuga_py:          # the Runner's saved provider setting beats the environment
+            run["ANUGA_PYTHON"] = qp.anuga_py
         if os.path.isfile(lis):                  # test the real engine too, not only the built-in one
             scr.update(ENGINE=0, EXE=lis)        # both sets take EXE (DamSafety Screening from 0.18.5)
             run["LISFLOOD_EXE"] = lis
@@ -2108,6 +2114,8 @@ def run_nd(args):
     for k, items in (("SCREEN_PARAMETERS", args.screen_param), ("BREACH_PARAMETERS", args.breach_param),
                      ("CLASSIFY_PARAMETERS", args.classify_param)):
         kvv = kv(items, _env[k])
+        if k == "BREACH_PARAMETERS" and qp.anuga_py and "ANUGA_PYTHON" not in (kvv or {}):
+            kvv = dict(kvv or {}, ANUGA_PYTHON=qp.anuga_py)
         if kvv:
             flags[k] = json.dumps(kvv)
     for n, did in enumerate(ids, 1):
@@ -2209,6 +2217,10 @@ def run_dwr(args):
     tool_kv.update({"ndhazard.classify.%s" % k: v for k, v in parse_kv(args.classify_param).items()})
     if args.dem_units:
         tool_kv["ndbreach.batch.DEM_Z"] = DEM_UNITS[args.dem_units]
+    if args.anuga and "ndbreach.batch.ANUGA_PYTHON" not in tool_kv:
+        py = QP(args, "dwr").anuga_py if not args.dry_run else ""
+        if py:
+            tool_kv["ndbreach.batch.ANUGA_PYTHON"] = py
     logs = os.path.join(p["OUT_FOLDER"], "_chain_logs")
     if tool_kv:
         ids = read_ids(args)
