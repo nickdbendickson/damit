@@ -1,0 +1,417 @@
+"""DamIT Runner's breach run: the DamSafety Runner's one-dam workflow on LISFLOOD-FP (or the built-in engine), with
+the ANUGA tier, for DamIT.
+
+  1. the sunny-day breach hydrograph (breach.make_hydrograph: no inflow, no outlet or spillway flow, the reservoir
+     starting at the top of dam; METHOD piping, TR-60 or another of the DamSafety methods, or the user's CSV);
+  2. the breach inflow at the lowest ground of the downstream toe band, 5 m to H x (downstream slope + 1) out
+     (3:1 when the slope is not known), at most 150 m from the dam line, the side check on (geom.place_inflow);
+  3. the first domain: the steepest-descent path from the inflow (LENGTH_MI) on a depression-filled planning DEM
+     (cell max(30 m, CELL)), HALF_WIDTH_MI either side, snapped to the model cell;
+  4. the automatic clock: the hydrograph duration + the domain diagonal / 0.5 m/s, at least 2 h, at most
+     DURATION_MAX_HR (and 336 h);
+  5. LISFLOOD-FP runs; an edge deeper than EDGE_TOL_FT moves out by STEP_MI (up to MAX_EXTENT_MI and MAX_RUNS
+     domain runs); a flood still arriving in the last 10 % of the clock gets 1.5 x the clock (not a domain run);
+     a run is stopped at its wall-clock limit (LISFLOOD_MAX_WALL_S, 0 = 24 h) and the loop at its budget
+     (LISFLOOD_MAX_TOTAL_WALL_S, 0 = MAX_RUNS x the per-run limit);
+  6. GRID_REFINE: a coarse (> 10 m) run that floods >= 1,000 ac with a median wet depth <= 1 ft is run again at
+     10 m on the same domain and clock, and that run is the record;
+  7. TIER 1 (or FORCE_ANUGA): ANUGA on a mesh over that extent; its maxima are the final results;
+  8. the final rasters (ft, ft/s, h) and vectors under DamSafety names.
+"""
+import json
+import math
+import os
+import time
+
+import numpy as np
+
+from . import breach as BR
+from . import geom as G
+from . import lisflood as LF
+from . import rasters as R
+from .units import ACRE, FT, MILE
+
+MAX_SIM_S = 336 * 3600.0
+FRONT_SPEED_MPS = 0.5
+PLANNING_CELL_M = 30.0
+GRID_REFINE_CELL_M = 10.0
+GRID_SPREAD_WARN_CELL_M = 10.0
+GRID_SPREAD_WARN_MIN_AC = 1000.0
+GRID_SPREAD_WARN_MEDIAN_FT = 1.0
+OUTFLOW_EDGE_SHARE = 0.10
+DEPTH_CLASSES_FT = (0.0, 1.0, 3.0, 6.0, 10.0)
+TIERS = ("LISFLOOD-FP only", "LISFLOOD-FP for the extent, then ANUGA (final results from ANUGA)",
+         "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; needs HEC-RAS 6.6, see help)")
+TIER_LISFLOOD, TIER_ANUGA, TIER_HECRAS = 0, 1, 2
+
+FINAL_RASTERS = {"depth": ("Depth (Max).tif", "ft"), "velocity": ("Velocity (Max).tif", "ft/s"),
+                 "arrival": ("Arrival Time.tif", "hours after breach"), "wse": ("WSE (Max).tif", "ft")}
+QA_RASTERS = {"depth": "hmax_ft.tif", "velocity": "vmax_fps.tif", "arrival": "arr_hr.tif", "wse": "wsemax_ft.tif"}
+VECTORS = {"depth_polygons": "Flood Polygons (Max Depth).geojson", "extent": "Flood Extent.geojson",
+           "arrival_zones": "Arrival Zones.geojson"}
+
+DEFAULTS = dict(method=BR.METHOD_PIPING, tier=TIER_LISFLOOD, force_anuga=False, cell_m=10.0, manning=0.06,
+                arrival_ft=0.1, edge_tol_ft=1.0, outflow_extend_pct=5.0, length_mi=4.0, half_width_mi=1.0,
+                step_mi=3.0, max_extent_mi=20.0, max_runs=6, max_wall_s=0.0, max_total_wall_s=0.0, duration_hr=0.0,
+                duration_max_hr=96.0, grid_refine=True, grid_check_cell_m=0.0, lisflood_exe="", anuga_python="",
+                anuga_fine_m2=100.0, anuga_coarse_m2=1000.0, anuga_near_mi=1.0, anuga_buffer_m=500.0, threads=0,
+                keep_files=True, products=True, contours_hr=(0.25, 0.5, 1.0, 2.0, 4.0, 8.0), z_units="auto",
+                pipe_fraction=0.5, pipe_dia_ft=0.5)
+
+
+class RunError(RuntimeError):
+    pass
+
+
+def grid_spread_flagged(cell_m, flooded_acres, median_depth_ft):
+    return (cell_m > GRID_SPREAD_WARN_CELL_M and flooded_acres >= GRID_SPREAD_WARN_MIN_AC
+            and median_depth_ft <= GRID_SPREAD_WARN_MEDIAN_FT)
+
+
+def auto_sim_time(duration_s, bounds, cap_s):
+    w, h = bounds[2] - bounds[0], bounds[3] - bounds[1]
+    t = duration_s + math.hypot(w, h) / FRONT_SPEED_MPS
+    return float(min(cap_s, MAX_SIM_S, max(2 * 3600.0, t)))
+
+
+def snap_bounds(b, cell):
+    return (math.floor(b[0] / cell) * cell, math.floor(b[1] / cell) * cell,
+            math.ceil(b[2] / cell) * cell, math.ceil(b[3] / cell) * cell)
+
+
+def edge_flux_shares(depth, valid=None):
+    d = np.where(np.isfinite(depth), depth, 0.0)
+    if valid is not None:
+        d = np.where(valid, d, 0.0)
+    d = np.clip(d, 0.0, None) ** (5.0 / 3.0)
+    w = {"N": float(d[0, :].sum()), "S": float(d[-1, :].sum()), "W": float(d[:, 0].sum()), "E": float(d[:, -1].sum())}
+    tot = sum(w.values())
+    return {k: (v / tot if tot > 0 else 0.0) for k, v in w.items()}
+
+
+# ------------------------------------------------------------------------------------------------- site --
+def site(p, wkt, log):
+    """Dam point, line, downstream side and inflow point in the model CRS. p holds lon/lat inputs."""
+    ll = p.get("dam_lonlat")
+    line_ll = p.get("dam_line_lonlat")
+    if not ll and line_ll:
+        a = np.asarray(line_ll, float)
+        ll = (float(a[:, 0].mean()), float(a[:, 1].mean()))
+    if not ll:
+        raise RunError("no dam position: give X / Y (or a dam folder with dam.json lon / lat or dam_line.geojson)")
+    dam_xy = R.transform_points([ll], "EPSG:4326", wkt)[0]
+    line = R.transform_points(line_ll, "EPSG:4326", wkt) if line_ll and len(line_ll) >= 2 else None
+    if line is not None and not p.get("dam_point_given"):
+        a = np.asarray(line, float)
+        mids = 0.5 * (a[:-1] + a[1:])
+        k = int(np.argmin(np.hypot(mids[:, 0] - dam_xy[0], mids[:, 1] - dam_xy[1])))
+        dam_xy = (float(mids[k, 0]), float(mids[k, 1])) if len(a) == 2 else dam_xy
+    res_xy = None
+    if p.get("reservoir_lonlat"):
+        res_xy = R.transform_points([p["reservoir_lonlat"]], "EPSG:4326", wkt)[0]
+    downstream, how = G.downstream_from(dam_xy, line, res_xy, p.get("azimuth_deg"))
+    span = 250.0
+    if line is not None:
+        a = np.asarray(line, float)
+        span += 0.5 * float(np.hypot(*(a.max(axis=0) - a.min(axis=0))))
+    fine_cell = max(1.0, min(float(p.get("fine_cell_m") or 2.0), float(p["cell_m"])))
+    fb = (dam_xy[0] - span, dam_xy[1] - span, dam_xy[0] + span, dam_xy[1] + span)
+    fine = R.read_window(p["dem"], snap_bounds(fb, fine_cell), fine_cell, wkt, p.get("z_units"))
+    if downstream is None:
+        downstream, how = G.downstream_from_dem(fine, dam_xy, line)
+    top_m = float(p["top_ft"]) * FT
+    h_m = float(p["height_ft"]) * FT
+    ds_slope = p.get("ds_slope")
+    if p.get("inflow_lonlat"):
+        inflow, note, band = R.transform_points([p["inflow_lonlat"]], "EPSG:4326", wkt)[0], "given (INFLOW_POINT)", None
+    elif p.get("inflow_xy"):
+        inflow, note, band = tuple(p["inflow_xy"]), "given (INFLOW_POINT, model CRS)", None
+    else:
+        inflow, note, band = G.place_inflow(fine, dam_xy, line, downstream, h_m, top_m, ds_slope)
+    if inflow is None:
+        raise RunError("no breach inflow point: " + note)
+    z_near = np.nanmin(fine.data) if np.isfinite(fine.data).any() else float("nan")
+    checks = []
+    if np.isfinite(z_near) and (z_near > top_m or top_m - z_near > 10 * max(h_m, 1.0)):
+        checks.append("the DEM near the dam ({:.1f} ft) does not fit the top of dam {:.2f} ft and height {:.1f} ft; "
+                      "check the DEM's vertical units and datum (Z_UNITS)".format(z_near / FT, top_m / FT, h_m / FT))
+    log("Breach inflow at {:.1f}, {:.1f}: {}".format(inflow[0], inflow[1], note))
+    return {"dam_xy": dam_xy, "line": line, "reservoir_xy": res_xy, "downstream": downstream, "downstream_how": how,
+            "inflow_xy": inflow, "inflow_how": note, "toe_band": band, "fine_cell_m": fine_cell, "checks": checks}
+
+
+def hydrograph_for(p):
+    dam = BR.DamData(dam_id=str(p["dam_id"]), dam_height_ft=float(p["height_ft"]),
+                     storage_top_acft=float(p["storage_acft"]), top_of_dam_ft=float(p["top_ft"]),
+                     surface_area_top_ac=p.get("area_ac") or None,
+                     pmf_max_wse_ft=None,        # sunny day: the reservoir starts at the top of dam
+                     breach_bottom_ft=p.get("bottom_ft") or None, crest_width_ft=p.get("crest_width") or None,
+                     us_slope_h=p.get("us_slope") or None, ds_slope_h=p.get("ds_slope") or None,
+                     crest_length_ft=p.get("crest_length_ft") or None, name=str(p.get("name") or ""))
+    dam.validate()
+    ov = BR.BreachOverrides(pipe_time_fraction=float(p.get("pipe_fraction", 0.5)),
+                            pipe_initial_dia_ft=float(p.get("pipe_dia_ft", 0.5)))
+    hy = BR.make_hydrograph(dam, p["method"], ov, user_csv=p.get("user_csv") or None)
+    return dam, hy
+
+
+# ------------------------------------------------------------------------------------------------- runs --
+def one_run(p, wkt, s, hy, bounds, cell, sim_s, workdir, log, cancel, wall_s):
+    dem = R.read_window(p["dem"], bounds, cell, wkt, p.get("z_units"))
+    if not np.isfinite(dem.data).any():
+        raise RunError("the DEM has no data in the model domain")
+    par = LF.write_inputs(workdir, dem, s["inflow_xy"], hy, sim_s, p["manning"], p["arrival_ft"] * FT)
+    info = LF.run(workdir, par, p["exe"], wall_s, p.get("threads") or 0, cancel, log)
+    out = LF.read_results(workdir, dem, p["arrival_ft"] * FT)
+    return dem, out, info
+
+
+def flood_stats(dem, depth, arrival_m):
+    wet = np.isfinite(depth) & (depth >= arrival_m)
+    ac = float(wet.sum()) * dem.dx ** 2 / ACRE
+    med = float(np.median(depth[wet]) / FT) if wet.any() else 0.0
+    return {"flooded_acres": round(ac, 1), "median_depth_ft": round(med, 2),
+            "max_depth_ft": round(float(np.nanmax(depth)) / FT, 2) if wet.any() else 0.0}
+
+
+def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
+    """The domain-growth loop. fixed = (bounds, sim_s): one run on that domain and clock (grid refine / check)."""
+    tol_m = p["edge_tol_ft"] * FT
+    arr_m = p["arrival_ft"] * FT
+    step = p["step_mi"] * MILE
+    max_extent = p["max_extent_mi"] * MILE
+    per_run = LF.wall_limit_s(p["max_wall_s"])
+    budget = float(p["max_total_wall_s"] or 0) or float(p["max_runs"]) * per_run
+    cap_s = min(MAX_SIM_S, float(p["duration_max_hr"] or 0) * 3600.0 or MAX_SIM_S)
+    duration_s = float(hy.duration_s)
+    if fixed:
+        bounds, sim_s = fixed
+    else:
+        sim_s = float(p["duration_hr"]) * 3600.0 if p["duration_hr"] else auto_sim_time(duration_s, bounds, cap_s)
+    limit = p.get("_dem_extent")
+    if limit and not fixed:
+        bounds = G.clip_bounds(bounds, limit) or bounds
+    t0 = time.time()
+    it, passes, warnings = 1, [], []
+    stop = None
+    while True:
+        if cancel is not None and cancel():
+            raise RunError("cancelled")
+        wd = os.path.join(workdir, "run{:02d}_{:g}m".format(len(passes) + 1, cell))
+        left = budget - (time.time() - t0)
+        dem, out, info = one_run(p, wkt, s, hy, bounds, cell, sim_s, wd, log, cancel, min(per_run, max(left, 60.0)))
+        depth = out["depth"]
+        valid = np.isfinite(dem.data)
+        edges = G.edge_depths(depth, valid)
+        over = [e for e in ("N", "S", "E", "W") if edges[e] > tol_m]
+        arr = out["arrival_hr"]
+        arr_max = float(np.nanmax(arr)) if np.isfinite(arr).any() else 0.0
+        moving = arr_max > 0.9 * sim_s / 3600.0
+        rec = {"run": it, "pass": len(passes) + 1, "bounds": [round(b, 1) for b in bounds], "cell_m": cell,
+               "cells": int(dem.data.size), "sim_time_hr": round(sim_s / 3600.0, 2),
+               "edge_depths_ft": {k: round(v / FT, 2) for k, v in edges.items()}, "over": over,
+               "still_moving": moving, "engine": info["engine"], "wall_s": round(info["wall_s"], 1),
+               "wall_limit_s": info["wall_limit_s"]}
+        rec.update(flood_stats(dem, depth, arr_m))
+        passes.append(rec)
+        log("Pass {} (domain run {}): {:.1f} x {:.1f} mi, {:g} m, {:.1f} h simulated; edges over {:g} ft: {}; "
+            "{}".format(rec["pass"], it, (bounds[2] - bounds[0]) / MILE, (bounds[3] - bounds[1]) / MILE, cell,
+                        sim_s / 3600.0, p["edge_tol_ft"], ", ".join(over) or "none",
+                        "still moving" if moving else "settled"))
+        if fixed:
+            break
+        if not over and moving is False:
+            break
+        if over and it >= int(p["max_runs"]):
+            stop = "domain-run limit"
+            warnings.append("Stopped after {} domain runs with the flood leaving through {} deeper than {:.1f} ft."
+                            .format(it, ", ".join(over), p["edge_tol_ft"]))
+            break
+        new_bounds = G.expand_bounds(bounds, over, step) if over else bounds
+        if over and limit:
+            new_bounds = G.clip_bounds(new_bounds, limit) or bounds
+            stuck = [e for e in over if new_bounds[{"W": 0, "S": 1, "E": 2, "N": 3}[e]] ==
+                     bounds[{"W": 0, "S": 1, "E": 2, "N": 3}[e]]]
+            if stuck:
+                warnings.append("The flood leaves through {} deeper than {:.1f} ft where the DEM ends; the domain "
+                                "cannot grow there (a larger DEM is needed).".format(", ".join(stuck),
+                                                                                    p["edge_tol_ft"]))
+                over = [e for e in over if e not in stuck]
+                if not over and not moving:
+                    stop = "DEM extent"
+                    break
+        if over and max(new_bounds[2] - new_bounds[0], new_bounds[3] - new_bounds[1]) > max_extent:
+            stop = "maximum extent"
+            warnings.append("The next domain would be larger than {:.0f} mi with the flood leaving through {}."
+                            .format(p["max_extent_mi"], ", ".join(over)))
+            break
+        if time.time() - t0 >= budget:
+            stop = "wall-clock budget"
+            warnings.append("Stopped at the wall-clock budget for all runs ({:.1f} h); the results are this pass's."
+                            .format(budget / 3600.0))
+            break
+        new_sim = sim_s
+        if not p["duration_hr"]:
+            new_sim = min(cap_s, max(auto_sim_time(duration_s, new_bounds, cap_s), sim_s * (1.5 if moving else 1.0)))
+        elif moving and sim_s < cap_s - 1.0:
+            new_sim = min(cap_s, sim_s * 1.5)
+        if not over and new_sim <= sim_s * 1.001:
+            stop = "duration cap"
+            warnings.append("The flood is still advancing after {:.0f} h, the duration cap; results stop there."
+                            .format(sim_s / 3600.0))
+            break
+        sim_s = new_sim
+        if over:
+            bounds = new_bounds
+            it += 1
+    return {"dem": dem, "out": out, "bounds": bounds, "sim_s": sim_s, "passes": passes, "warnings": warnings,
+            "stop": stop, "info": info}
+
+
+def run_breach(p, out_dir, log=print, cancel=None):
+    """One dam. p: DEFAULTS plus dem, dam_id, height_ft, storage_acft, top_ft and the site inputs (lon/lat).
+    Writes the run under out_dir (model/ and outputs/). Returns the run record (json-safe)."""
+    q = dict(DEFAULTS)
+    q.update({k: v for k, v in p.items() if v is not None})
+    p = q
+    tier = int(p["tier"])
+    if tier == TIER_HECRAS:
+        raise RunError("HEC-RAS 2D is not run by DamIT Runner (it needs HEC-RAS 6.6 and Wine on Linux); choose "
+                       "LISFLOOD-FP only, or LISFLOOD-FP then ANUGA")
+    p["exe"] = LF.resolve_exe(p.get("lisflood_exe"))
+    os.makedirs(out_dir, exist_ok=True)
+    model_dir = os.path.join(out_dir, "model")
+    outputs = os.path.join(out_dir, "outputs")
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(outputs, exist_ok=True)
+    lonlat = p.get("dam_lonlat") or (tuple(np.asarray(p["dam_line_lonlat"], float).mean(axis=0))
+                                     if p.get("dam_line_lonlat") else None)
+    if not lonlat:
+        raise RunError("no dam position")
+    wkt = R.model_wkt(p["dem"], lonlat)
+    dam, hy = hydrograph_for(p)
+    log("Breach hydrograph: {} (sunny day, from the top of dam {:.2f} ft); peak {:,.0f} cfs, {:.1f} h".format(
+        BR.METHOD_LABELS.get(p["method"], p["method"]), dam.top_of_dam_ft, hy.peak_cfs, hy.duration_s / 3600.0))
+    hy.to_csv(os.path.join(outputs, "breach_hydrograph.csv"))
+    s = site(p, wkt, log)
+    cell = float(p["cell_m"])
+    # first domain from the flow trace on the planning DEM
+    L = p["length_mi"] * MILE
+    W = p["half_width_mi"] * MILE
+    pc = max(PLANNING_CELL_M, cell)
+    ix, iy = s["inflow_xy"]
+    half = L + W + 2 * pc
+    plan = R.read_window(p["dem"], snap_bounds((ix - half, iy - half, ix + half, iy + half), pc), pc, wkt,
+                         p.get("z_units"))
+    path, plen = G.trace_downstream(plan, s["inflow_xy"], L)
+    bounds = G.path_bounds(path + [s["dam_xy"]], W, snap=cell)
+    warnings = list(s["checks"])
+    d_end = math.hypot(path[-1][0] - s["dam_xy"][0], path[-1][1] - s["dam_xy"][1])
+    if plen < 0.25 * L:
+        warnings.append("The steepest-descent path from the breach inflow is only {:.0f} m long and ends {:.0f} m from "
+                        "the dam; check the inflow point.".format(plen, d_end))
+    ext = R.extent_in(p["dem"], wkt)
+    p["_dem_extent"] = (math.ceil(ext[0] / cell) * cell, math.ceil(ext[1] / cell) * cell,
+                        math.floor(ext[2] / cell) * cell, math.floor(ext[3] / cell) * cell)
+    g = growth_loop(p, wkt, s, hy, bounds, cell, model_dir, log, cancel)
+    record_cell = cell
+    refine = None
+    st = flood_stats(g["dem"], g["out"]["depth"], p["arrival_ft"] * FT)
+    if p["grid_refine"] and cell > GRID_REFINE_CELL_M and grid_spread_flagged(cell, st["flooded_acres"],
+                                                                               st["median_depth_ft"]):
+        log("Grid refine: {:g} m flooded {:.0f} ac with a median depth of {:.2f} ft; running again at {:g} m on the "
+            "same domain and clock (the record).".format(cell, st["flooded_acres"], st["median_depth_ft"],
+                                                         GRID_REFINE_CELL_M))
+        g2 = growth_loop(p, wkt, s, hy, snap_bounds(g["bounds"], GRID_REFINE_CELL_M), GRID_REFINE_CELL_M, model_dir,
+                         log, cancel, fixed=(snap_bounds(g["bounds"], GRID_REFINE_CELL_M), g["sim_s"]))
+        refine = {"from_cell_m": cell, "to_cell_m": GRID_REFINE_CELL_M, "coarse": st,
+                  "fine": flood_stats(g2["dem"], g2["out"]["depth"], p["arrival_ft"] * FT)}
+        g2["passes"] = g["passes"] + g2["passes"]
+        g2["warnings"] = g["warnings"] + g2["warnings"]
+        g2["stop"] = g["stop"]
+        g, record_cell = g2, GRID_REFINE_CELL_M
+    check = None
+    if float(p.get("grid_check_cell_m") or 0) > 0:
+        cc = float(p["grid_check_cell_m"])
+        gc = growth_loop(p, wkt, s, hy, snap_bounds(g["bounds"], cc), cc, model_dir, log, cancel,
+                         fixed=(snap_bounds(g["bounds"], cc), g["sim_s"]))
+        a = flood_stats(gc["dem"], gc["out"]["depth"], p["arrival_ft"] * FT)
+        b = flood_stats(g["dem"], g["out"]["depth"], p["arrival_ft"] * FT)
+        diff = 100.0 * abs(a["flooded_acres"] - b["flooded_acres"]) / b["flooded_acres"] if b["flooded_acres"] else 0
+        check = {"cell_m": cc, "stats": a, "area_diff_pct": round(diff, 1)}
+        if diff > 25.0:
+            warnings.append("The {:g} m check floods {:.0f}% more or less area than the record.".format(cc, diff))
+    dem, out = g["dem"], dict(g["out"])
+    final_engine = g["info"]["engine"]
+    anuga = None
+    if tier == TIER_ANUGA or p["force_anuga"]:
+        from . import anuga_run as AR
+        width = float(hy.params.get("avg_breach_width_ft") or 100.0) * FT
+        res = AR.run(os.path.join(model_dir, "anuga"), dem, out["depth"], s["inflow_xy"], s["downstream"], width, hy,
+                     {"manning": p["manning"], "fine_m2": p["anuga_fine_m2"], "coarse_m2": p["anuga_coarse_m2"],
+                      "near_m": p["anuga_near_mi"] * MILE, "buffer_m": p["anuga_buffer_m"], "sim_time_s": g["sim_s"],
+                      "arrival_m": p["arrival_ft"] * FT, "threads": p.get("threads") or 1,
+                      "python": p.get("anuga_python"), "wall_s": p["max_wall_s"]}, cancel, log)
+        anuga = res.get("stats") or {}
+        out = {k: res[k] for k in ("depth", "velocity", "arrival_hr", "wse")}
+        final_engine = "ANUGA"
+    files = write_outputs(outputs, dem, wkt, out, p, s)
+    stats = flood_stats(dem, out["depth"], p["arrival_ft"] * FT)
+    record = {"dam_id": p["dam_id"], "engine": final_engine, "extent_engine": g["info"]["engine"],
+              "tier": TIERS[tier], "force_anuga": bool(p["force_anuga"]), "record_cell_m": record_cell,
+              "sim_time_hr": round(g["sim_s"] / 3600.0, 2), "bounds": [round(b, 1) for b in g["bounds"]],
+              "crs_wkt": wkt, "passes": g["passes"], "stop_reason": g["stop"], "warnings": warnings + g["warnings"],
+              "grid_refine": refine, "grid_check": check, "anuga": anuga, "stats": stats,
+              "hydrograph": {"method": p["method"], "label": BR.METHOD_LABELS.get(p["method"]),
+                             "peak_cfs": round(hy.peak_cfs, 0), "duration_hr": round(hy.duration_s / 3600.0, 2),
+                             "starting_wse_ft": dam.top_of_dam_ft, "rule": "sunny day, no outlet or spillway flow, "
+                             "starting at the top of dam", "notes": list(hy.notes)},
+              "inflow": {"xy": list(s["inflow_xy"]), "how": s["inflow_how"], "toe_band": s["toe_band"],
+                         "downstream": list(s["downstream"]) if s["downstream"] else None,
+                         "downstream_how": s["downstream_how"]},
+              "trace": {"length_mi": round(plen / MILE, 2), "points": len(path)}, "outputs": files}
+    with open(os.path.join(out_dir, "run_report.json"), "w", encoding="utf-8") as fh:
+        json.dump(record, fh, indent=1, default=str)
+    return record
+
+
+def write_outputs(folder, dem, wkt, out, p, s):
+    """The final rasters (US units) and vectors in `folder`, the DamSafety Runner's names."""
+    files = {}
+    d_ft = np.where(np.isfinite(out["depth"]) & (out["depth"] > 0), out["depth"] / FT, np.nan)
+    v_fps = np.where(np.isfinite(d_ft), np.nan_to_num(out["velocity"]) / FT, np.nan)
+    wse_ft = np.where(np.isfinite(d_ft), out["wse"] / FT, np.nan)
+    arr = np.asarray(out["arrival_hr"], float)
+    grids = {"depth": d_ft, "velocity": v_fps, "arrival": arr, "wse": wse_ft}
+    for k, (name, unit) in FINAL_RASTERS.items():
+        files[k] = R.write_tif(os.path.join(folder, name), dem.like(grids[k]), wkt)
+        R.write_tif(os.path.join(folder, QA_RASTERS[k]), dem.like(grids[k]), wkt)
+    files["hmax"] = os.path.join(folder, QA_RASTERS["depth"])
+    if p.get("products", True):
+        cls = np.zeros(d_ft.shape, dtype=np.int16)
+        labels = {}
+        for i, lo in enumerate(DEPTH_CLASSES_FT):
+            hi = DEPTH_CLASSES_FT[i + 1] if i + 1 < len(DEPTH_CLASSES_FT) else None
+            with np.errstate(invalid="ignore"):
+                m = np.isfinite(d_ft) & ((d_ft > 0) if lo == 0 else (d_ft >= lo))
+                if hi is not None:
+                    m &= d_ft < hi
+            cls[m] = i + 1
+            labels[i + 1] = "{:g}-{} ft".format(lo, "{:g}".format(hi) if hi else "+")
+        files["depth_polygons"] = R.polygonize(os.path.join(folder, VECTORS["depth_polygons"]), cls, dem, wkt,
+                                               "max_depth", labels=labels)
+        ext = (np.isfinite(d_ft) & (d_ft >= p["arrival_ft"])).astype(np.int16)
+        files["extent"] = R.polygonize(os.path.join(folder, VECTORS["extent"]), ext, dem, wkt, "flood_extent")
+        hrs = sorted(float(h) for h in (p.get("contours_hr") or ()))
+        if hrs:
+            az = np.zeros(arr.shape, dtype=np.int16)
+            lab = {}
+            for i in range(len(hrs) - 1, -1, -1):
+                with np.errstate(invalid="ignore"):
+                    az[np.isfinite(arr) & (arr <= hrs[i])] = i + 1
+                lab[i + 1] = "<= {:g} h".format(hrs[i])
+            files["arrival_zones"] = R.polygonize(os.path.join(folder, VECTORS["arrival_zones"]), az, dem, wkt,
+                                                  "arrival_zones", labels=lab)
+    with open(os.path.join(folder, "units.json"), "w", encoding="utf-8") as fh:
+        json.dump({k: v[1] for k, v in FINAL_RASTERS.items()}, fh, indent=1)
+    return files

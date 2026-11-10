@@ -313,9 +313,13 @@ def _method_hits(mid, m, recs, summ, datums, sid, flags):
             z = str(z).lower()
             if z in zones:
                 hit(r.get("id"), ret, "chart zone {}".format(z))
-            elif z == "judgment" and params.get("judgment_zone_flag", True):
-                flags.append(_flag("m1_judgment_zone", "M1 judgment-zone hit: engineer review required.",
-                                   method=mid, receptor=r.get("id"), scenario=sid))
+            elif z == "judgment":
+                if params.get("judgment_zone_flag", True):
+                    flags.append(_flag("m1_judgment_zone", "M1 judgment-zone hit: engineer review required.",
+                                       method=mid, receptor=r.get("id"), scenario=sid))
+                jc = _num(params.get("judgment_class"))
+                if jc is not None:                 # ND: the judgment zone is Medium (still flagged)
+                    hit(r.get("id"), int(jc), "chart zone judgment")
     elif special == "lives_in_jeopardy":
         lij = _num(summ.get("lives_in_jeopardy"))
         if lij is None:

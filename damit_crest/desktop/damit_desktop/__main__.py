@@ -118,7 +118,8 @@ def start_job(
             elif kind == "classify":
                 result = run_classify(dam or {}, analysis or {}, work, log, files, cancel=cancel, receptors=receptors)
             else:
-                result = run_screening(dam or {}, analysis or {}, work, log, files, timeout=timeout, cancel=cancel)
+                result = run_screening(dam or {}, analysis or {}, work, log, files, timeout=timeout, cancel=cancel,
+                                       receptors=receptors)
             with _jobs_lock:
                 job["ok"] = bool(result.get("ok"))
                 job["cancelled"] = bool(result.get("cancelled"))
@@ -348,7 +349,9 @@ class _Handler(SimpleHTTPRequestHandler):
             self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
             return
         # Classify: the downstream receptor layers the desk built (classify-receptors.ts); receptors.py validates them.
-        receptors = payload.get("receptors") if kind == "classify" and isinstance(payload.get("receptors"), dict) else None
+        # Screen: the same payload when the desk sends one (else the record's mapped seeds), structures only.
+        receptors = (payload.get("receptors") if kind in ("classify", "screen")
+                     and isinstance(payload.get("receptors"), dict) else None)
         body = json.dumps(start_job(kind, dam, analysis, work, model, files, source, timeout, receptors))
         self._send(200, body.encode(), "application/json")
 

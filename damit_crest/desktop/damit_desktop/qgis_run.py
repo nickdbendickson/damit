@@ -36,9 +36,9 @@ from damit_desktop.handoff import (
 )
 from damit_desktop.layers import data_dem, download_aoi, find_data_folder, use_data_folder, write_settings
 from damit_desktop.receptors import LAYERS as RECEPTOR_LAYERS
-from damit_desktop.receptors import write_receptor_layers
+from damit_desktop.receptors import structure_points, write_receptor_layers
 
-# An ND-style runner port's option text (damit_runner 0.1.0 has no METHOD / TIER; these are used only when a rundam override lists them). qgis_process
+# The runner's METHOD / TIER option text (DamIT Runner 0.2.0 and an ND-style port: the DamSafety Runner's labels). qgis_process
 # (QGIS 3.34) rejects option text for these enums ("Incorrect parameter value for METHOD"), so enum_value() looks the
 # text up in `qgis_process help <rundam id>` and sends its index;
 # a hard-coded index would silently change if the plugin reordered its options.
@@ -390,7 +390,7 @@ def enum_match(exe: str, alg: str, param: str, match) -> str | None:
 def _args(exe: str, alg: str, values: dict, log) -> list[str]:
     """--NAME=value for each non-empty value whose NAME the installed algorithm's help lists.
 
-    The candidates cover DamIT Screener / Runner 0.1.0 (WORK, DAMS, HANDOFF, OUTPUT_FOLDER...) and an ND-style port
+    The candidates cover DamIT Screener / Runner 0.2.0 (WORK, DAMS, HANDOFF, OUTPUT_FOLDER, DAMS_FOLDER, DEM...) and an ND-style port
     (DAM_ID, DAMS_FOLDER, DEM, METHOD...); an algorithm gets only the ones it declares, so a renamed or missing
     parameter is skipped, never guessed. When help lists no parameters at all, every candidate is sent."""
     accepted = help_params(exe, alg)
@@ -654,6 +654,28 @@ def _package_line(dam_id: str, block: dict) -> str:
     return text + " A screening suggestion, not an official hazard classification."
 
 
+def screening_receptors(folder: Path, dam: dict, dam_id: str, receptors=None) -> tuple[Path | None, int]:
+    """<dam folder>/screen_inputs/receptors.geojson: the desk's structures as one point layer (EPSG:4326) for the
+    screening chain's RECEPTORS (dam_id, receptor_type, structure_type, habitable, occupants). (None, 0) when there
+    are none. Roads, rail and the other layers are for damit:classify only."""
+    pts = structure_points(dam, receptors)
+    if not pts:
+        return None, 0
+    feats = []
+    for i, (xy, props) in enumerate(pts):
+        feats.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [xy[0], xy[1]]}, "properties": {
+            "id": str(props.get("crest_id") or props.get("id") or f"s{i + 1}"), "dam_id": dam_id,
+            "receptor_type": "structure", "structure_type": props.get("type") or "home",
+            "habitable": props.get("habitable") if isinstance(props.get("habitable"), bool) else None,
+            "occupants": props.get("occupants"), "name": props.get("name")}})
+    out = Path(folder) / "screen_inputs"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "receptors.geojson"
+    path.write_text(json.dumps({"type": "FeatureCollection", "name": "damit_screen_receptors",
+                                "features": feats}) + "\n", encoding="utf-8")
+    return path, len(feats)
+
+
 def run_screening(
     dam: dict,
     analysis: dict,
@@ -663,8 +685,13 @@ def run_screening(
     timeout: float | None = None,
     cancel: threading.Event | None = None,
     config: HandoffConfig | None = None,
+    receptors=None,
 ) -> dict:
     """The preflight algorithm, then the screening chain for this dam only if the preflight is READY.
+
+    receptors: the desk's classify-receptors payload (or None: the record's mapped seeds). The structures go to the
+    chain as one point layer (RECEPTORS), so DamIT Screener's 2D screening flood can sample them and suggest a
+    preliminary class.
 
     timeout: seconds for the chain (else DAMIT_SCREENING_TIMEOUT_S, else no limit). cancel: an Event;
     setting it stops qgis_process. After the chain the dam's hand-off package (DamIT Screener) or its
@@ -705,6 +732,11 @@ def run_screening(
         log("The dam has no position (breach point, reservoir point or lon/lat), so no DAMS layer was written.")
     choice = _choice(dam)
     dem = dem_path(root, dam, "data")
+    rec_layer, rec_count = screening_receptors(folder, dam, dam_id, receptors)
+    if rec_layer:
+        log(f"Wrote {rec_layer} ({rec_count} structure point(s) for RECEPTORS: the 2D screening flood samples them).")
+    else:
+        log("No structure receptors to send: the screening flood runs, but the preliminary class has no receptors.")
 
     def common(alg: str) -> dict:
         return {
@@ -715,6 +747,7 @@ def run_screening(
             "SCENARIOS": choice["scenarios"],
             "METHODS": choice["methods"],
             "TERRAIN": dem,
+            "RECEPTORS": str(rec_layer) if rec_layer else None,
             "APPLY_ADVISORIES": "true" if choice["advisory"] else None,
             "SETTINGS": str(settings),
         }
@@ -756,7 +789,11 @@ def run_screening(
         "FAIL_ON_ERROR": "true",
         "LOG": str(chain_log),
     }
-    code, text = _run([exe, "run", chain_alg, *_args(exe, chain_alg, chain_values, log)], timeout=limit, cancel=cancel)
+    # DamIT Screener's 2D screening flood keeps its maxima (partial) at 0.8 x DAMIT_SCREENING_TIMEOUT_S, so the
+    # chain finishes inside the limit with a preliminary class instead of being stopped
+    chain_env = {**os.environ, "DAMIT_SCREENING_TIMEOUT_S": f"{limit:g}"} if limit else None
+    code, text = _run([exe, "run", chain_alg, *_args(exe, chain_alg, chain_values, log)], timeout=limit, cancel=cancel,
+                      env=chain_env)
     log(text.rstrip())
     if chain_log.is_file():
         written = chain_log.read_text(encoding="utf-8", errors="replace").rstrip()
@@ -878,8 +915,12 @@ def run_model(
     hydro = folder / "inputs" / "breach_hydrograph.csv"
     choice = _choice(dam)
     lonlat = _lonlat(dam)
+    if model == "hecras":
+        log(f"HEC-RAS 2D is not run by {rundam} (DamIT never starts HEC-RAS or Wine). Choose LISFLOOD-FP, ANUGA or "
+            "the built-in engine. The flood model was not started.")
+        return {"ok": False, "stopped": True, "folder": str(folder), "work": str(root)}
     values = {
-        # DamIT Runner 0.1.0 (damit_run:rundam): the screener's package when there is one, else the dam as parameters.
+        # DamIT Runner 0.2.0 (damit_run:rundam): the screener's package when there is one, else the dam as parameters.
         "HANDOFF": str(package) if package.is_file() else None,
         "DAM_ID": dam_id,
         # Runner with the NID-ID rule: the NID ID, or why there is none (a new / proposed dam, a desk sample).
@@ -896,8 +937,9 @@ def run_model(
         "TERRAIN": dem,
         "HYDROGRAPH": str(hydro) if hydro.is_file() else None,
         "OUTPUT_FOLDER": str(root / "runs"),
-        "DRY_RUN": "true",
-        # An ND-style runner port.
+        # 0.2.0: the Runner launches the model, as ndbreach:rundam did for the original Crest
+        "DRY_RUN": "false",
+        # the DamSafety Runner's parameters (DamIT Runner 0.2.0, or an ND-style port)
         "DAMS_FOLDER": str(dams),
         "DEM": dem,
         "METHOD": enum_value(exe, rundam, "METHOD", METHOD_LABEL[key]) if "METHOD" in accepted else None,
@@ -914,8 +956,10 @@ def run_model(
         log(f"Hand-off package: {package}")
     cmd = [exe, "run", rundam, *_args(exe, rundam, values, log)]
     log(f"This button runs {rundam} for one dam.")
-    if "DRY_RUN" in accepted:
-        log("DRY_RUN=true: the runner prepares and records the run; DamIT Crest never asks it to launch an engine.")
+    if builtin:
+        log("LISFLOOD_EXE=builtin: the built-in numpy engine (a screening approximation, not LISFLOOD-FP).")
+    else:
+        log("LISFLOOD_EXE empty: the runner uses an installed LISFLOOD-FP (lisflood on PATH) and stops if there is none.")
     code, text = _run(cmd, timeout=None, cancel=cancel)
     log(text.rstrip())
     results = _outputs(text)
@@ -923,6 +967,19 @@ def run_model(
     if results.get("RUN_FOLDER"):
         out["runFolder"] = results["RUN_FOLDER"]
         log(f"Run folder: {results['RUN_FOLDER']} (status {results.get('STATUS') or 'unknown'}).")
+    launched = str(results.get("MODEL_LAUNCHED") or "").strip().lower() in ("true", "1")
+    out["modelLaunched"] = launched
+    for key, name in (("depthRaster", "Depth (Max).tif"), ("velocityRaster", "Velocity (Max).tif"),
+                      ("hmaxRaster", "hmax_ft.tif"), ("floodPolygons", "Flood Polygons (Max Depth).geojson")):
+        path = folder / name
+        if code == 0 and path.is_file():
+            out[key] = str(path)
+    if results.get("ENGINE_USED"):
+        out["engine"] = results["ENGINE_USED"]
+    if code == 0 and launched:
+        log(f"Model rasters in the dam folder: {', '.join(Path(out[k]).name for k in ('depthRaster', 'velocityRaster', 'hmaxRaster', 'floodPolygons') if k in out) or 'none'}.")
+    elif code == 0:
+        log(f"{rundam} did not launch a model (it prepared and recorded the run only).")
     log("Runner finished." if code == 0 else "The runner failed.")
     return out
 
@@ -1047,9 +1104,17 @@ def run_classify(
         _missing_alg(log, cfg, "classify", "The classification")
         return {**base, "ok": False, "stopped": True, "missingAlgorithm": alg}
     depth = _raster(dam.get("depthRaster"))
+    from_folder = False
     if not depth:
-        log(f"{alg} needs the maximum depth raster of a flood model run. Type its path under Depth raster; nothing was classified.")
+        # the Runner (damit_run:rundam, DRY_RUN off) copies the model's Depth (Max) / Velocity (Max) into the dam folder
+        depth = _raster(str(folder / "Depth (Max).tif"))
+        from_folder = bool(depth)
+    if not depth:
+        log(f"{alg} needs the maximum depth raster of a flood model run. Run the flood model, or type its path under "
+            "Depth raster; nothing was classified.")
         return {**base, "ok": False, "stopped": True, "noDepth": True}
+    if from_folder:
+        log(f"Depth raster: {depth} (the flood model's Depth (Max) in the dam folder).")
     written = write_receptor_layers(folder, dam, receptors)
     for s in written["skipped"]:
         log(f"Receptor not sent: {s.get('name') or s.get('id') or s.get('kind')} ({s.get('kind')}): {s.get('reason')}.")
@@ -1086,6 +1151,7 @@ def run_classify(
         "APPLY_ADVISORY": "true" if choice["advisory"] else None,
         "DEPTH": depth,
         **{param: _raster(dam.get(key)) for param, key in EXTRA_RASTERS},
+        **({"VELOCITY": _raster(str(folder / "Velocity (Max).tif"))} if from_folder and not _raster(dam.get("velocityRaster")) else {}),
         **{key: written["layers"].get(key) for key in RECEPTOR_LAYERS},
         "DOMAIN": written["domain"],
         "DAM_JSON": str(record),

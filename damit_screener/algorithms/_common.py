@@ -110,8 +110,9 @@ class DamitAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):  # noqa: N802
         return (self._help + "\n\nPresets: " + _preset_help() + "\n\nSuggested classifications only; the "
-                "engineer of record and the regulating agency make the determination. No flood model is "
-                "launched by DamIT Screener 0.1.0.")
+                "engineer of record and the regulating agency make the determination. DamIT Screener 0.2.0 runs a 2D "
+                "screening flood in this process (built-in engine); it never starts LISFLOOD-FP, ANUGA, HEC-RAS or "
+                "Wine.")
 
     def createInstance(self):  # noqa: N802
         return type(self)()

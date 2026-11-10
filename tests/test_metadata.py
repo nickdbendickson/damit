@@ -5,10 +5,14 @@ import re
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None),
-           "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog"),
-           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog")}
+PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None, "0.1.1"),
+           "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog,DamIT Runner", "0.2.0"),
+           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.2.0")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
+# DamIT Runner 0.2.0 launches the flood model: only this module may start a process (LISFLOOD-FP or the ANUGA
+# worker); everything else in the three plugins still may not
+LAUNCH_OK = {os.path.join("damit_runner", "flood", "lisflood.py")}
+FOREIGN_RUN = re.compile(r"['\"](wine|wine64)['\"]|\b(ndbreach|nddam):|HEC-?RAS\.exe|RasUnsteady", re.I)
 
 
 def meta(folder):
@@ -28,10 +32,11 @@ def py_files(folder):
 
 class Metadata(unittest.TestCase):
     def test_metadata(self):
-        for folder, (name, provider, dep) in PLUGINS.items():
+        for folder, (name, provider, dep, version) in PLUGINS.items():
             m = meta(folder)
             self.assertEqual(m["name"], name)
-            self.assertEqual(m["version"], "0.1.0")
+            self.assertEqual(m["version"], version)
+            self.assertTrue(m["changelog"].startswith(version + " - "), folder)
             self.assertEqual(m["qgisMinimumVersion"], "3.28")
             self.assertEqual(m["qgisMaximumVersion"], "4.99")
             self.assertEqual(m["supportsQt6"], "True")
@@ -58,6 +63,11 @@ class Metadata(unittest.TestCase):
                 with open(p, encoding="utf-8") as fh:
                     src = fh.read()
                 code = "\n".join(ln.split("#")[0] for ln in src.splitlines())
+                if os.path.relpath(p, ROOT) in LAUNCH_OK:
+                    # the one launcher: argv lists only (no shell), never a foreign provider or HEC-RAS / Wine
+                    self.assertNotRegex(code, r"shell\s*=\s*True", p)
+                    self.assertIsNone(FOREIGN_RUN.search(code), p)
+                    continue
                 self.assertIsNone(FORBIDDEN_LAUNCH.search(code), p)
                 self.assertNotRegex(code, r"processing\.run\(\s*['\"](ndbreach|nddam):", p)
 

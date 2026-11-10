@@ -46,12 +46,13 @@ def test_nd_m1_high_danger_is_high():
     assert "M1" in methods_hit(res, 3, "rule")
 
 
-def test_nd_judgment_flagged_not_promoted():
+def test_nd_judgment_zone_is_medium_and_flagged():
+    # Nick's ruling (Nov 10, 2026): in ND a structure in the TM-11 judgment zone gives Medium, still flagged
     res = run(preset("ND"), [home("h", depth=4.0, vel=1.0)], scenario="S3")
     assert "judgment_zone" in codes(res, "warning")
     assert "M1" not in methods_hit(res, 3)
-    # M6 (advisory in ND) is the only other result: not applied by default
-    assert res["suggested_class"] == 1 and res["suggested_label"] == "Low"
+    assert "M1" in methods_hit(res, 2, "rule")
+    assert res["suggested_class"] == 2 and res["suggested_label"] == "Medium"
     assert "M6" in methods_hit(res, 2, "advisory")
 
 
@@ -64,7 +65,7 @@ def test_nd_r7_options_promote_judgment():
     assert res["suggested_class"] == 3
     res = run(preset("ND", overrides={"R7": {"near_margin_ft": 0.5}}),
               [home("h", depth=4.0, vel=1.0)], scenario="S3")
-    assert res["suggested_class"] == 1
+    assert res["suggested_class"] == 2                              # the ND judgment zone: Medium
 
 
 def test_nd_m2_only_when_1d_and_m1_blocked_on_1d():

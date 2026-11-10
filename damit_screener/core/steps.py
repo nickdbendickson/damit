@@ -2,8 +2,9 @@
 hydrograph, triage, preliminary suggestion, 2D-engine hook and hand-off. The Processing tools and
 damit_screen:runchain call these same functions.
 
-Nothing here launches LISFLOOD-FP, ANUGA, HEC-RAS or Wine; the 2D engine hook records the
-input/output contract only (not run in 0.1.0)."""
+0.2.0: engine2d runs the DamSafety Screening tool-7 2D flood (DamIT Runner's flood/screen.py, the built-in
+finite-volume engine, in this process) and samples peak depth, velocity and depth x velocity at the receptors, so
+suggest gives a preliminary class. Nothing here launches LISFLOOD-FP, ANUGA, HEC-RAS or Wine."""
 import csv
 import math
 import os
@@ -292,19 +293,156 @@ def triage(cat, dam, receptors):
                 recommend_detailed_run=(o is None or o >= 2))
 
 
-# ---------------------------------------------------------------- 7 2D engine hook --
+# ---------------------------------------------------------------- 7 2D engine --
 ENGINE_CONTRACT = {
-    "inputs": ["terrain (DEM, GeoTIFF)", "hydrograph_csv (time_hr, discharge_cfs)", "dam point and breach azimuth",
-               "scenario pool elevation(s)", "domain cutoff (D-codes) if any"],
-    "outputs": ["Depth (Max).tif (ft)", "Velocity (Max).tif (ft/s)", "DV (Max).tif (ft2/s, max of depth x velocity over the event)",
-                "WSE (Max).tif (ft)", "Arrival.tif (hr, optional)", "model_dimension (1D/2D) in run_setup.json"],
-    "note": "Built-in 2D screening engine is not run in DamIT Screener 0.1.0. Model runs belong to DamIT Runner "
-            "(damit_run:rundam), which in 0.1.0 prepares and records the run only.",
+    "inputs": ["terrain (DEM, GeoTIFF / VRT)", "hydrograph_csv (time_hr, discharge_cfs), else a Froehlich (2008) "
+               "piping breach from the top of dam", "dam point; dam line and reservoir point from the dam folder",
+               "height_ft, top_of_dam_elev_ft, storage_acft"],
+    "outputs": ["<dam folder>/Screening Depth (Max).tif (ft)", "Screening Velocity (Max).tif (ft/s)",
+                "Screening DV (Max).tif (ft2/s, max of depth x velocity over the event)",
+                "Screening Arrival Time.tif (h)", "receptor depth_ground_ft / velocity_fps / dv_ft2s / m1_zone"],
+    "note": "DamSafety Screening tool 7 (built-in 2D engine, hydrograph injection at the downstream toe). A "
+            "screening flood for the preliminary class; DamIT Runner (damit_run:rundam) runs the model of record.",
 }
+ENGINES = ("builtin", "off")
+SCREEN_TIMEOUT_SHARE = 0.8      # of DAMIT_SCREENING_TIMEOUT_S: the rest is for the other steps and the report
 
 
-def engine2d(dam):
-    return step(STATUS_NOT_RUN, ENGINE_CONTRACT["note"], contract=ENGINE_CONTRACT)
+def screening_timeout_s(settings=None, environ=None):
+    """The engine's wall-clock limit (s): settings 'timeout_s', else 0.8 x DAMIT_SCREENING_TIMEOUT_S, else
+    3600 (the DamSafety Screening default)."""
+    v = _num((settings or {}).get("timeout_s"))
+    if v and v > 0:
+        return v
+    env = os.environ if environ is None else environ
+    t = _num(env.get("DAMIT_SCREENING_TIMEOUT_S"))
+    if t and t > 0:
+        return max(60.0, SCREEN_TIMEOUT_SHARE * t)
+    return 3600.0
+
+
+def _chart_for(r):
+    t = str(r.get("structure_type") or r.get("type") or r.get("kind") or "").lower()
+    return "mobile_homes" if "mobile" in t else "houses"
+
+
+ZONE_NAMES = {"high": "high_danger", "judgment": "judgment", "low": "low_danger"}
+
+
+def engine2d(dam, settings=None, folder=None, hydro_step=None, receptors=None, log=print, cancel=None,
+             modules=None):
+    """Run the screening flood for one dam. Returns the step; step['receptors'] are the receptors with peak
+    depth / velocity / dv (and m1_zone when DamIT Hazard's charts are there) at their points."""
+    S = dict(settings or {})
+    eng = str(S.get("engine2d") or "builtin").lower()
+    if eng not in ENGINES:
+        return step(STATUS_FAIL, "unknown engine2d setting {!r} (one of {})".format(eng, ", ".join(ENGINES)))
+    if eng == "off":
+        return step(STATUS_NOT_RUN, "engine2d is off in the settings; no screening flood", contract=ENGINE_CONTRACT)
+    dem = S.get("terrain") or dam.get("terrain")
+    if not dem or not os.path.isfile(str(dem)):
+        return step(STATUS_GAP, "no terrain (DEM): the screening flood needs one", contract=ENGINE_CONTRACT)
+    h, top, vol = _num(dam.get("height_ft")), _num(dam.get("top_of_dam_elev_ft")), _num(dam.get("storage_acft"))
+    miss = [n for n, x in (("height_ft", h), ("top_of_dam_elev_ft", top), ("storage_acft", vol)) if x is None]
+    if miss:
+        return step(STATUS_GAP, "the screening flood needs " + ", ".join(miss), contract=ENGINE_CONTRACT)
+    try:
+        from . import runner_bridge as RB
+        BR, DF, MD, R, SC = modules or RB.modules()
+    except ImportError as e:
+        return step(STATUS_GAP, str(e), contract=ENGINE_CONTRACT)
+    info = DF.read(folder)
+    lonlat = None
+    if dam.get("x") is not None and dam.get("y") is not None:
+        crs = str(dam.get("crs") or "EPSG:4326")
+        lonlat = (float(dam["x"]), float(dam["y"])) if crs.upper() in ("EPSG:4326", "OGC:CRS84") else \
+            R.transform_points([(float(dam["x"]), float(dam["y"]))], crs, "EPSG:4326")[0]
+    if info.get("breach_point"):
+        lonlat = info["breach_point"]
+    if lonlat is None and info.get("dam_line"):
+        lonlat = tuple(sum(c) / len(info["dam_line"]) for c in zip(*info["dam_line"]))
+    if lonlat is None:
+        return step(STATUS_GAP, "no dam position", contract=ENGINE_CONTRACT)
+    cell = float(S.get("grid_m") if S.get("grid_m") not in (None, "") else 20.0)
+    p = {"dem": dem, "z_units": S.get("z_units") or "auto", "dam_lonlat": lonlat,
+         "dam_point_given": bool(info.get("breach_point")), "dam_line_lonlat": info.get("dam_line"),
+         "reservoir_lonlat": info.get("reservoir"), "azimuth_deg": _num(dam.get("breach_azimuth_deg")),
+         "cell_m": cell if cell > 0 else 10.0, "top_ft": top, "height_ft": h,
+         "ds_slope": _num(dam.get("ds_slope_h")) or _num((info.get("fields") or {}).get("ds_slope_h"))}
+    notes = []
+    try:
+        wkt = R.model_wkt(dem, lonlat)
+        csv_path = (hydro_step or {}).get("hydrograph_csv") or dam.get("hydrograph_csv")
+        d = BR.DamData(dam_id=str(dam.get("dam_id")), dam_height_ft=h, storage_top_acft=vol, top_of_dam_ft=top,
+                       surface_area_top_ac=_num(dam.get("surface_area_ac")))
+        piping = BR.make_hydrograph(d, BR.METHOD_PIPING)          # sunny day: the reservoir at the top of dam
+        if csv_path and os.path.isfile(csv_path):
+            hy = BR.read_user_hydrograph(csv_path)
+            hsrc = "the dam's hydrograph CSV ({})".format(os.path.basename(csv_path))
+        else:
+            hy = piping
+            hsrc = "Froehlich (2008) piping, sunny day from the top of dam"
+        site = MD.site(p, wkt, log)
+        width = _num(piping.params.get("avg_breach_width_ft")) or 100.0
+        vw = vol * ACFT_M3
+        sp = {"dem": dem, "z_units": p["z_units"], "grid_m": cell, "simh": S.get("simh", 12.0),
+              "simmax": S.get("simmax", 96.0), "larger_clips": S.get("larger_clips", 1),
+              "local_dem": S.get("local_dem") or "", "timeout_s": screening_timeout_s(S)}
+        log("  engine2d: built-in 2D screening flood, {} m cell, clock {} h (to {} h), larger clips: {}, time limit "
+            "{:.0f} s; hydrograph: {}".format(cell or "automatic", sp["simh"], sp["simmax"],
+                                              SC.LARGER_CLIPS[int(sp["larger_clips"])], sp["timeout_s"], hsrc))
+        res = SC.simulate(sp, hy.t_s, hy.q_cms, {"inflow_xy": site["inflow_xy"], "downstream": site["downstream"],
+                                                  "breach_width_m": width * FT, "vw_m3": vw}, wkt, log, cancel)
+    except Exception as e:                                       # noqa: BLE001 - a step result, not a crash
+        return step(STATUS_FAIL, "screening flood failed: {}".format(e), contract=ENGINE_CONTRACT)
+    if res.get("status") not in ("ok", "partial"):
+        return step(STATUS_FAIL, "screening flood {}: {}".format(res.get("status"), "; ".join(res.get("notes") or [])),
+                    contract=ENGINE_CONTRACT)
+    files = SC.write_rasters(folder, res, wkt) if folder else {}
+    recs = [dict(r) for r in (receptors or [])]
+    charts = RB.tm11_charts()
+    if not charts:
+        notes.append("DamIT Hazard's TM-11 charts are not installed: no M1 chart zones at the receptors")
+    sampled = 0
+    for r in recs:
+        if r.get("_x") is None or r.get("_y") is None:
+            continue
+        xy = (float(r["_x"]), float(r["_y"]))
+        src = r.get("_crs") or "EPSG:4326"
+        try:
+            xy = R.transform_points([xy], src, wkt)[0]
+        except Exception:                                        # noqa: BLE001
+            continue
+        hyd = SC.receptor_hydraulics(res, [xy])[0]
+        if hyd is None:
+            r["in_domain"] = False
+            continue
+        r.update(hyd)
+        r.setdefault("receptor_type", "structure")
+        sampled += 1
+        if charts and r.get("receptor_type") == "structure":
+            _, ch = charts
+            z = ch.zone(_chart_for(r), hyd["depth_ground_ft"], hyd["velocity_fps"])
+            if ZONE_NAMES.get(z):
+                r["m1_zone"] = ZONE_NAMES[z]
+    g = res["grid"]
+    wet = res["depth"] >= 0.1 * FT
+    import numpy as np
+    stats = {"cell_m": res["cell_m"], "sim_time_hr": round(res["sim_s"] / 3600.0, 2),
+             "flooded_acres": round(float(np.nansum(wet)) * g.dx ** 2 / 4046.8564224, 1),
+             "max_depth_ft": round(float(np.nanmax(res["depth"])) / FT, 2) if np.isfinite(res["depth"]).any() else 0,
+             "edge_flag": res["edge_flag"], "timed_out": res["timed_out"], "radius_m": res["radius_m"],
+             "larger_clips": res["larger_clips"], "run_s": res["run_s"]}
+    status = STATUS_OK if res["status"] == "ok" and not res["edge_flag"] else STATUS_GAP
+    detail = "screening flood ({}): {} ac, max {} ft, {} receptor(s) sampled".format(
+        "partial: time limit" if res["timed_out"] else "built-in 2D", stats["flooded_acres"], stats["max_depth_ft"],
+        sampled)
+    return step(status, detail, contract=ENGINE_CONTRACT, engine="DamSafety Screening built-in 2D (fv_engine)",
+                rasters=files, stats=stats, notes=res["notes"] + notes + site.get("checks", []),
+                inflow={"xy": list(site["inflow_xy"]), "how": site["inflow_how"], "toe_band": site["toe_band"],
+                        "downstream_how": site["downstream_how"]},
+                hydrograph={"source": hsrc, "peak_cfs": round(hy.peak_cfs, 0)}, receptors=recs,
+                model_dimension="2D")
 
 
 # ---------------------------------------------------------------- 8 suggestion --

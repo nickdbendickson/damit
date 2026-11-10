@@ -152,6 +152,37 @@ def _from_dam(dam: dict) -> tuple[dict, dict | None, list[dict], dict, str | Non
     return ({"STRUCTURES": structures} if structures else {}), domain, skipped, placement, None
 
 
+def structure_points(dam: dict, payload=None) -> list[tuple[tuple[float, float], dict]]:
+    """The STRUCTURES receptors as (lon, lat) points (a polygon's vertex mean) with their properties: the screening
+    chain's RECEPTORS. Same sources as write_receptor_layers (the desk's payload, else the record's mapped seeds)."""
+    if isinstance(payload, dict) and payload.get("format") == "damit_crest/classify_receptors":
+        layers = _from_payload(payload)[0]
+    else:
+        layers = _from_dam(dam or {})[0]
+    out = []
+    for feat in layers.get("STRUCTURES") or []:
+        g = feat.get("geometry") or {}
+        c = g.get("coordinates")
+        t = g.get("type")
+        if t == "Point":
+            pts = [c]
+        elif t == "MultiPoint":
+            pts = c[:1]
+        elif t == "Polygon":
+            pts = c[0][:-1] if len(c[0]) > 1 else c[0]
+        elif t == "MultiPolygon":
+            pts = c[0][0][:-1] if len(c[0][0]) > 1 else c[0][0]
+        else:
+            continue
+        if not pts:
+            continue
+        x = sum(float(p[0]) for p in pts) / len(pts)
+        y = sum(float(p[1]) for p in pts) / len(pts)
+        if _finite(x) and _finite(y):
+            out.append(((x, y), dict(feat.get("properties") or {})))
+    return out
+
+
 def _collection(features: list) -> dict:
     return {"type": "FeatureCollection", "name": "receptors",
             "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}, "features": features}

@@ -133,9 +133,12 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(sj.call_args.args[8], payload)
         dam = sj.call_args.args[1]
         self.assertEqual((dam["depthRaster"], dam["wseRaster"], dam["arrivalRaster"]), ("/d.tif", "/w.tif", "/a.tif"))
-        # Only the classify job takes receptors.
+        # The classify and screen jobs take receptors (screen: its structures go to the 2D screening flood).
         with mock.patch.object(m, "start_job", return_value={"id": "abc"}) as sj:
             self.req("POST", "/api/screen", {"dam": {"id": "x"}, "receptors": payload})
+        self.assertEqual(sj.call_args.args[8], payload)
+        with mock.patch.object(m, "start_job", return_value={"id": "abc"}) as sj:
+            self.req("POST", "/api/model", {"dam": {"id": "x"}, "receptors": payload})
         self.assertIsNone(sj.call_args.args[8])
 
     def test_classify_job_carries_hazards_class_back_to_the_page(self):

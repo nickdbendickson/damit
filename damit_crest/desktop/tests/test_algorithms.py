@@ -28,8 +28,9 @@ from damit_desktop.algorithms import (  # noqa: E402
 )
 from damit_desktop.handoff import resolved_failure_mode, write_dam_folder  # noqa: E402
 
-# The parameter lists of the published DamIT algorithms: damit_screener / damit_runner 0.1.0 (SWE, PR #2) and
-# damit_hazard's damit:classify (QGIS Dev, PR #1). FAKE_STYLE=nd gives rundam an ND-style port's METHOD / TIER enums.
+# The parameter lists of the published DamIT algorithms: damit_screener / damit_runner 0.2.0 (rundam launches the
+# model with the DamSafety Runner's parameters) and damit_hazard's damit:classify. FAKE_STYLE=nd gives rundam an
+# ND-style port's METHOD / TIER enums only.
 FAKE_QGIS = r"""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -43,10 +44,23 @@ SCREEN = ["WORK", "DAMS", "FIELD_MAP", "MODE", "PRESET", "SCENARIOS", "METHODS",
 LISTS = {
     "preflight": SCREEN + ["REPORT"],
     "runchain": SCREEN + ["PREFLIGHT", "FAIL_ON_ERROR"],
-    "rundam": ["HANDOFF", "DAM_ID", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT", "MODE", "PRESET", "SCENARIOS",
-               "METHODS", "TERRAIN", "HYDROGRAPH", "OUTPUT_FOLDER", "ENGINE", "DRY_RUN"],
+    "rundam": ["HANDOFF", "DAM_ID", "NID_ID", "IS_NEW", "IS_SAMPLE", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT",
+               "MODE", "PRESET", "SCENARIOS", "METHODS", "TERRAIN", "HYDROGRAPH", "OUTPUT_FOLDER", "DRY_RUN",
+               "DAMS_FOLDER", "DEM", "DEM_Z", "TOP_FT", "AREA_AC", "PMF_FT", "METHOD", "TIER", "CELL", "MANNING",
+               "LISFLOOD_EXE", "ANUGA_PYTHON", "ENGINE"],
 }
-ENUMS = {"MODE": ["preset", "custom"], "ENGINE": ["None - prepare and record the run only (0.1.0)", "LISFLOOD-FP"],
+ENUMS = {"MODE": ["preset", "custom"],
+         "ENGINE": ["From Models (TIER)", "LISFLOOD-FP", "ANUGA (LISFLOOD-FP for the extent, then ANUGA)",
+                    "HEC-RAS 2D (not run by DamIT Runner)"],
+         "METHOD": ["Piping failure, Froehlich (2008) parameters, routed",
+                    "Piping failure with a pipe (orifice) phase, Froehlich (2008) size and time",
+                    "Overtopping failure, Froehlich (2008) parameters, routed",
+                    "Froehlich (1995) piping", "Froehlich (1995) overtopping",
+                    "MacDonald & Langridge-Monopolis (1984) earthfill parameters, routed",
+                    "Von Thun & Gillette (1990) parameters, routed",
+                    "NRCS TR-60 peak breach discharge, triangular hydrograph"],
+         "TIER": ["LISFLOOD-FP only", "LISFLOOD-FP for the extent, then ANUGA (final results from ANUGA)",
+                  "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; needs HEC-RAS 6.6, see help)"],
          "PRESET@classify": ["Custom (methods ticked below)", "FEMA P-333 baseline", "Nebraska (unverified)", "North Dakota"]}
 if args[:1] == ["help"]:
     if args[1] in missing:
@@ -91,7 +105,15 @@ if any(a.endswith(":runchain") for a in args) and os.environ.get("FAKE_PACKAGE")
             "flags": ["preliminary"]}}))
 if any(a.endswith(":rundam") for a in args) and "OUTPUT_FOLDER" in vals:
     print("RUN_FOLDER:\t" + vals["OUTPUT_FOLDER"] + "/run_1")
-    print("STATUS:\tprepared")
+    launched = vals.get("DRY_RUN") == "false" and "DAMS_FOLDER" in vals
+    print("STATUS:\t" + ("finished" if launched else "prepared"))
+    print("MODEL_LAUNCHED:\t" + ("true" if launched else "false"))
+    if launched:
+        print("ENGINE_USED:\t" + ("builtin" if vals.get("LISFLOOD_EXE") == "builtin" else "LISFLOOD-FP"))
+        dam_dir = Path(vals["DAMS_FOLDER"]) / vals["DAM_ID"]
+        dam_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("Depth (Max).tif", "Velocity (Max).tif", "hmax_ft.tif", "Flood Polygons (Max Depth).geojson"):
+            (dam_dir / name).write_bytes(b"fake")
 if any(a.endswith(":classify") for a in args):
     # Like damit:classify: it refuses a run without a receptor layer, then writes its report and outputs.
     if not any(k in vals for k in ("STRUCTURES", "ROADS", "RAIL", "FACILITIES", "LIFELINES", "ENVIRONMENT")):
@@ -353,7 +375,7 @@ class HandoffRunTests(Base):
 
 
 class PublishedInterfaceTests(Base):
-    """The arguments damit_screen:preflight / runchain and damit_run:rundam (0.1.0) declare, and nothing else."""
+    """The arguments damit_screen:preflight / runchain and damit_run:rundam (0.2.0) declare, and nothing else."""
 
     def runs(self) -> list[str]:
         return [line for line in self.calls_text().splitlines() if line.startswith("run ")]
@@ -400,7 +422,9 @@ class PublishedInterfaceTests(Base):
         self.assertEqual(result["screening"]["suggested_label"], "Significant")
         self.assertTrue(any("preliminary Significant" in line and "not an official" in line for line in self.lines))
 
-    def test_rundam_uses_the_package_and_a_dry_run(self):
+    def test_rundam_uses_the_package_and_launches_the_model(self):
+        # 0.2.0, like the original Crest's ndbreach:rundam: DRY_RUN off, the DamSafety Runner's METHOD / TIER /
+        # DAMS_FOLDER / DEM, and the model's rasters come back from the dam folder.
         work = self.work_with_dem()
         with mock.patch.dict(os.environ, {"FAKE_PACKAGE": "1"}):
             qr.run_screening(DAM, ANALYSIS, str(work), self.log)
@@ -409,22 +433,75 @@ class PublishedInterfaceTests(Base):
         run = self.runs()[-1]
         self.assertTrue(run.startswith("run damit_run:rundam "))
         self.assertIn("--HANDOFF=" + str(work.resolve() / "handoff" / "XX00001" / "damit_handoff.json"), run)
-        self.assertIn("--DRY_RUN=true", run)
+        self.assertIn("--DRY_RUN=false", run)
         self.assertIn("--OUTPUT_FOLDER=" + str(work.resolve() / "runs"), run)
-        self.assertNotIn("--ENGINE=", run)  # the runner's default: prepare and record only
-        self.assertNotIn("--DAMS_FOLDER=", run)
+        self.assertIn("--DAMS_FOLDER=" + str(work.resolve() / "dams"), run)
+        self.assertIn("--DEM=" + str(work.resolve() / "dem.tif"), run)
+        self.assertIn("--METHOD=0", run)       # Froehlich (2008) piping, the default
+        self.assertIn("--TIER=0", run)         # LISFLOOD-FP only
+        self.assertIn("--TOP_FT=1000.0", run)
+        self.assertNotIn("--LISFLOOD_EXE=", run)   # empty: an installed LISFLOOD-FP
+        self.assertNotIn("--ENGINE=", run)
         self.assertEqual(result["runFolder"], str(work.resolve() / "runs") + "/run_1")
+        self.assertTrue(result["modelLaunched"])
+        dam_dir = work.resolve() / "dams" / "XX00001"
+        self.assertEqual(result["depthRaster"], str(dam_dir / "Depth (Max).tif"))
+        self.assertEqual(result["velocityRaster"], str(dam_dir / "Velocity (Max).tif"))
+        self.assertEqual(result["hmaxRaster"], str(dam_dir / "hmax_ft.tif"))
+        self.assertEqual(result["floodPolygons"], str(dam_dir / "Flood Polygons (Max Depth).geojson"))
+
+    def test_rundam_builtin_and_anuga_choices(self):
+        work = self.work_with_dem()
+        qr.run_model(DAM, ANALYSIS, str(work), self.log, model="builtin")
+        run = self.runs()[-1]
+        self.assertIn("--LISFLOOD_EXE=builtin", run)
+        self.assertIn("--TIER=0", run)
+        qr.run_model(DAM, ANALYSIS, str(work), self.log, model="anuga")
+        self.assertIn("--TIER=1", self.runs()[-1])
+        n = len(self.runs())
+        result = qr.run_model(DAM, ANALYSIS, str(work), self.log, model="hecras")
+        self.assertFalse(result["ok"])
+        self.assertEqual(len(self.runs()), n)               # HEC-RAS is never asked for
+        self.assertTrue(any("HEC-RAS 2D is not run" in line for line in self.lines))
 
     def test_rundam_without_a_package_sends_the_dam(self):
-        result = qr.run_model(DAM, ANALYSIS, str(self.root / "work"), self.log)
-        self.assertTrue(result["ok"], self.lines)  # damit_run:rundam takes no DEM parameter; terrain is a gap
+        work = self.work_with_dem()
+        result = qr.run_model(DAM, ANALYSIS, str(work), self.log)
+        self.assertTrue(result["ok"], self.lines)
         run = self.runs()[-1]
         self.assertNotIn("--HANDOFF=", run)
         for arg in ("--DAM_ID=XX00001", "--X=-100.0", "--Y=46.75", "--CRS=EPSG:4326", "--HEIGHT_FT=20.0",
-                    "--STORAGE_ACFT=300.0", "--MODE=0", "--DRY_RUN=true"):
+                    "--STORAGE_ACFT=300.0", "--MODE=0", "--DRY_RUN=false", "--TERRAIN="):
             self.assertIn(arg, run)
-        self.assertNotIn("--TERRAIN=", run)
-        self.assertTrue(any("records the terrain as a gap" in line for line in self.lines))
+
+    def test_rundam_without_a_dem_is_not_started(self):
+        result = qr.run_model(DAM, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertFalse(result["ok"])
+        self.assertFalse([r for r in self.runs() if ":rundam" in r])
+        self.assertTrue(any("No DEM" in line for line in self.lines))
+
+    def test_screening_sends_the_structures_as_receptors(self):
+        dam = {**DAM, "receptors": SEEDS}
+        result = qr.run_screening(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(result["ok"], self.lines)
+        layer = Path(result["folder"]) / "screen_inputs" / "receptors.geojson"
+        for run in self.runs():
+            self.assertIn("--RECEPTORS=" + str(layer), run)
+        feats = json.loads(layer.read_text(encoding="utf-8"))["features"]
+        self.assertEqual(len(feats), 1)
+        self.assertEqual(feats[0]["properties"]["dam_id"], "XX00001")
+        self.assertEqual(feats[0]["properties"]["receptor_type"], "structure")
+        self.assertEqual(feats[0]["properties"]["structure_type"], "home")
+        self.assertEqual(feats[0]["geometry"]["coordinates"], [-100.0, 46.74])
+        # the desk's payload, when sent with the screen job: its structures (points), not its roads
+        qr.run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log, receptors=PAYLOAD)
+        feats = json.loads(layer.read_text(encoding="utf-8"))["features"]
+        self.assertEqual([f["properties"]["structure_type"] for f in feats], ["home", "mobile_home"])
+
+    def test_screening_without_receptors_sends_none(self):
+        qr.run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log)
+        for run in self.runs():
+            self.assertNotIn("--RECEPTORS=", run)
 
 
 class PipingDefaultTests(Base):
@@ -573,6 +650,19 @@ class ClassificationTests(Base):
         self.assertFalse(result["ok"])
         self.assertNotIn("run ", self.calls_text())
         self.assertTrue(any("depth raster" in line for line in self.lines))
+
+    def test_classify_uses_the_model_rasters_in_the_dam_folder(self):
+        work = self.root / "work"
+        dam = {**DAM, "receptors": SEEDS, "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        qr.run_folder(dam, ANALYSIS, str(work), self.log)
+        dam_dir = work.resolve() / "dams" / "XX00001"
+        for name in ("Depth (Max).tif", "Velocity (Max).tif"):
+            (dam_dir / name).write_bytes(b"fake")
+        result = qr.run_classify(dam, ANALYSIS, str(work), self.log)
+        self.assertTrue(result["ok"], self.lines)
+        run = self.classify_run()
+        self.assertIn("--DEPTH=" + str(dam_dir / "Depth (Max).tif"), run)
+        self.assertIn("--VELOCITY=" + str(dam_dir / "Velocity (Max).tif"), run)
 
     def test_classify_unknown_preset_stops(self):
         dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(), "classification": {"mode": "preset", "preset": "ZZ"}}
