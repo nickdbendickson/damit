@@ -289,8 +289,12 @@ def test_missing_inputs_are_flagged():
     # no road layer for a road method
     res = run(preset("ND"), [home("h", depth=0.0)], scenario="S3")
     assert "no_layer" in codes(res, "warning")
-    # scenario missing / S7 needs several locations
-    assert {"scenario_missing", "s7_locations"} <= codes(res)
+    # 0.1.2: no breach_locations on the dam record -> S7 is not expected (DWR-2801 flagged it anyway)
+    assert "s7_not_applicable" in codes(res, "info")
+    assert not {"scenario_missing", "s7_locations"} & codes(res)
+    # with two breach locations S7 is expected: missing run + locations flagged
+    res = run(preset("ND"), [home("h", depth=0.0)], scenario="S3", dam={"breach_locations": ["left", "right"]})
+    assert {"scenario_missing", "s7_locations"} <= codes(res, "warning")
     # a receptor without hydraulics
     res = run(custom(["M6"]), [R.make("x", "structure", "home")])
     assert "no_hydraulics" in codes(res)
@@ -426,3 +430,64 @@ def test_classify_flags_the_dam_nid_id():
     assert "nid_exception" in codes(res, "warning")
     res = run(cfg, recs, dam={"storage_acft": 300})
     assert "nid_none" in codes(res, "info")
+
+
+# ------------------------------------------------- DWR-2801 real-engine findings (0.1.2) ------
+def test_s7_location_count_forms():
+    n = core.s7_location_count
+    assert n({}) == 0 and n({"breach_locations": None}) == 0 and n({"breach_locations": ""}) == 0
+    assert n({"breach_locations": ["a", "b", ""]}) == 2 and n({"breach_locations": 3}) == 3
+    assert n({"breach_locations": "left; right"}) == 2 and n({"breach_locations": "2"}) == 2
+
+
+def test_s7_supplied_runs_still_checked_without_dam_locations():
+    s7 = {"scenario": "S7", "model_dim": "2D", "label": "b", "breach_location": "right",
+          "receptors": [home("h1", depth=1.0)]}
+    res = run(preset("ND"), [home("h1", depth=1.0)], scenario="S3", extra_runs=[s7])
+    assert "s7_locations" in codes(res, "warning")
+
+
+def test_m6_counts_only_wet_structures():
+    cfg = custom(["M6"])
+    res = run(cfg, [home("trace", depth=0.004, vel=0.1)])
+    assert "M6" not in methods_hit(res) and "m6_trace_depth" in codes(res, "info")
+    res = run(cfg, [home("wet", depth=0.01, vel=0.1)])
+    assert "M6" in methods_hit(res, 2)
+    assert any("(0.01 ft)" in h["reason"] for h in res["hits"] if h["method"] == "M6")
+
+
+def test_m9a_trains_lookup_is_explicit_and_flagged(tmp_path=None):
+    import os
+    import tempfile
+    from damit_hazard.engine import rail_lookup as RL
+    d = tmp_path or tempfile.mkdtemp()
+    path = os.path.join(str(d), "trains.csv")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("field,value,trains_per_day,source\nSUBDIV,KO,15,DamSafety 2801 pass - needs Nick's ruling\n")
+    rows = RL.load(path)
+    assert rows == [{"field": "SUBDIV", "value": "KO", "trains_per_day": 15.0,
+                     "source": "DamSafety 2801 pass - needs Nick's ruling"}]
+    # no lookup: unknown trains stay Medium and say how to give the number; nothing is assumed
+    narn = R.make("rail:60", "rail", None, depth_ft=3.88, velocity_fps=1.0, SUBDIV="KO", RROWNER1="BNSF")
+    res = run(preset("ND"), [narn], scenario="S3")
+    assert {h["receptors"][0]: h["class"] for h in res["hits"] if h["method"] == "M9a"} == {"rail:60": 2}
+    assert "trains_unknown" in codes(res, "warning") and narn["trains_per_day"] is None
+    # with the lookup: High, flagged as needing a ruling; a line with its own value is left alone
+    narn2 = R.make("rail:60", "rail", None, depth_ft=3.88, velocity_fps=1.0, subdiv="ko")
+    own = R.make("rail:61", "rail", None, depth_ft=1.0, velocity_fps=1.0, SUBDIV="KO", trains_per_day=4)
+    assert RL.apply([narn2, own], rows) == 1 and own["trains_per_day"] == 4 and own.get("trains_source") is None
+    res = run(preset("ND"), [narn2], scenario="S3")
+    assert {h["receptors"][0]: h["class"] for h in res["hits"] if h["method"] == "M9a"} == {"rail:60": 3}
+    f = [x for x in res["flags"] if x["code"] == "trains_lookup"]
+    assert f and "needs Nick's ruling" in f[0]["message"]
+    # malformed lookups are refused, not guessed
+    for body in ("field,value,trains_per_day\nSUBDIV,KO,15\n", "field,value,trains_per_day,source\nSUBDIV,KO,many,x\n",
+                 "field,value,trains_per_day,source\nSUBDIV,KO,15,\n"):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        try:
+            RL.load(path)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("accepted " + body)

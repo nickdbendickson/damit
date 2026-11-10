@@ -19,7 +19,7 @@ from qgis.core import (QgsCoordinateTransform, QgsFeature, QgsFeatureRequest, Qg
                        QgsProcessingOutputFile)
 
 from .. import compat, styles
-from ..engine import catalog as C, core, receptors as R, report, tm11
+from ..engine import catalog as C, core, rail_lookup, receptors as R, report, tm11
 from ..sampling import rasters as S
 
 SCENARIO_IDS = ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
@@ -162,6 +162,10 @@ class Classify(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFile(
             "CHARTS_JSON", "Extra digitized TM-11 charts (JSON)", behavior=compat.FILE_FILE,
             extension="json", optional=True))
+        self.addParameter(QgsProcessingParameterFile(
+            "RAIL_TRAINS_LOOKUP", "Rail trains per day lookup (CSV: field, value, trains_per_day, source; "
+            "no default; values used are flagged as needing a ruling)", behavior=compat.FILE_FILE,
+            extension="csv", optional=True))
         self.addParameter(QgsProcessingParameterString("DAM_NAME", "Dam name", optional=True))
         self.addParameter(QgsProcessingParameterFolderDestination("OUTPUT", "Output folder"))
         self.addOutput(QgsProcessingOutputString("CLASS", "Suggested class (local label)"))
@@ -340,6 +344,14 @@ class Classify(QgsProcessingAlgorithm):
                         spec[role] = os.path.join(base, spec[role])
                 run_specs.append(spec)
             layers_info.append(_stat(extra, "extra runs"))
+        trains_rows = []
+        trains_path = self.parameterAsFile(p, "RAIL_TRAINS_LOOKUP", context)
+        if trains_path:
+            try:
+                trains_rows = rail_lookup.load(trains_path)
+            except (OSError, ValueError) as e:
+                raise QgsProcessingException(str(e))
+            layers_info.append(_stat(trains_path, "rail trains lookup", "{} row(s)".format(len(trains_rows))))
         dom_src = self.parameterAsSource(p, "DOMAIN", context)
         runs, geoms, best = [], {}, {}
         for i, spec in enumerate(run_specs):
@@ -364,6 +376,10 @@ class Classify(QgsProcessingAlgorithm):
             feedback.pushInfo("Run {} ({}, {}): sampling".format(
                 i + 1, spec.get("scenario") or "?", spec.get("model_dim") or "?"))
             recs, g = self._receptors(sources, rs, crs, cfg, context, feedback, domain)
+            filled = rail_lookup.apply(recs, trains_rows)
+            if filled:
+                feedback.pushWarning("{} rail receptor(s) took trains per day from RAIL_TRAINS_LOOKUP: {}".format(
+                    filled, rail_lookup.RULING_NOTE))
             geoms.update(g)
             for r in recs:
                 if r.get("depth_ft") is not None and (r["id"] not in best or

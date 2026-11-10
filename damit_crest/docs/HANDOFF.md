@@ -100,10 +100,17 @@ Details:
   Screener 0.2.0's 2D screening flood samples them and the hand-off package carries a preliminary class.
 - **Flood model.** Like the original Crest's `ndbreach:rundam` call: `DRY_RUN=false`, `DAMS_FOLDER=<work>/dams`,
   `DEM`, `METHOD` (the failure mode's DamSafety label), `TIER` (LISFLOOD-FP only, or then ANUGA), `LISFLOOD_EXE=builtin`
-  only for the built-in engine (empty = an installed LISFLOOD-FP), `HEIGHT_FT`, `STORAGE_ACFT`, `TOP_FT`, `AREA_AC`,
+  only for the built-in engine (else the dam's `lisflood.exe`, `DAMIT_LISFLOOD_EXE` or `LISFLOOD_EXE` when set; empty =
+  the Runner's own search, then the built-in engine with a warning), `HEIGHT_FT`, `STORAGE_ACFT`, `TOP_FT`, `AREA_AC`,
+  and the DamSafety Runner's run settings with its defaults: `CELL` 10, `MAX_RUNS` 6, `DURATION_HR` 0 (automatic),
+  `DURATION_MAX_HR` 96 (the dam's `lisflood.cellSizeM` / `maxRuns` / `durationHr` / `durationMaxHr`, else
+  `DAMIT_RUN_CELL` / `DAMIT_RUN_MAX_RUNS` / `DAMIT_RUN_DURATION_HR` / `DAMIT_RUN_DURATION_MAX_HR`, override them),
   plus the hand-off package. A missing DEM stops before the runner; HEC-RAS 2D is not asked for. DamIT Runner 0.2.0
   writes the run under `<work>/runs` and copies `Depth (Max).tif`, `Velocity (Max).tif`, `hmax_ft.tif` and the flood
   polygons into the dam folder; the app reports `RUN_FOLDER` and those paths.
+- **Rail trains per day.** When the dam has `railTrainsLookup` or `DAMIT_RAIL_TRAINS_LOOKUP` names a CSV (`field,
+  value, trains_per_day, source`), classify gets it as `RAIL_TRAINS_LOOKUP` (DamIT Hazard 0.1.2). No default is sent;
+  values from it are flagged in the report as needing Nick's ruling.
 - **Classify** needs the model run's maximum depth raster: the dam folder's `Depth (Max).tif` (and `Velocity
   (Max).tif`) from the Runner when *Depth raster* is blank, else type its path under *Depth raster* (velocity, depth ×
   velocity, water-surface elevation, non-breach depth and arrival-time rasters are optional and sent as `VELOCITY`,

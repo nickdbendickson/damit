@@ -11,7 +11,12 @@ NID dams only: the package's dam must carry an NID ID (dam_id or nid_id), or be 
 0.2.0 runs the model the way the DamSafety Runner's rundam does (run_model; DamSafety parameter names and
 defaults; damit_runner/flood): LISFLOOD-FP (or the built-in numpy engine when LISFLOOD_EXE = "builtin"), then
 ANUGA when TIER asks for it, into a NEW run folder, and copies Depth (Max), hmax and the flood polygons into the
-dam folder. DRY_RUN on keeps the 0.1.0 prepare / record only path. HEC-RAS 2D is refused; DamIT never starts
+dam folder. DRY_RUN on keeps the 0.1.0 prepare / record only path.
+
+0.3.0: an empty LISFLOOD_EXE looks for LISFLOOD-FP in the provider settings, NDBREACH_LISFLOOD, PATH and the usual
+install places, and when there is none runs the built-in engine with a warning (the old ND Breach Runner's fallback);
+run_setup.json 'engine_selection' and the outputs ENGINE_USED / ENGINE_FALLBACK / ENGINE_NOTE say which ran. ANUGA
+runs on the DamSafety Runner's default mesh (flood/mesh.py). HEC-RAS 2D is refused; DamIT never starts
 HEC-RAS, Wine, ndbreach:rundam or ndbreach:batch.
 """
 import datetime
@@ -20,7 +25,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -179,8 +184,12 @@ def _write_readme(folder, setup):
     if setup.get("model_launched"):
         lines += ["Model: {} ({}), status {}. Outputs in outputs/ (run_setup.json 'outputs'); copied into the dam "
                   "folder: {}.".format(setup.get("engine"), setup.get("model_dimension") or "2D", setup.get("status"),
-                                       setup.get("dam_folder") or "no dam folder given"),
-                  "Classify with DamIT Hazard (damit:classify) on Depth (Max).tif and Velocity (Max).tif."]
+                                       setup.get("dam_folder") or "no dam folder given")]
+        sel = setup.get("engine_selection") or {}
+        if sel:
+            lines.append("Engine chosen by: {}{}".format(sel.get("how"), "" if not sel.get("warning") else
+                                                       ". " + sel["warning"]))
+        lines += ["Classify with DamIT Hazard (damit:classify) on Depth (Max).tif and Velocity (Max).tif."]
     else:
         lines += ["Prepared with DRY_RUN on: no model was launched. Run damit_run:rundam with DRY_RUN off to run "
                   "LISFLOOD-FP (or ANUGA) and write the rasters in run_setup.json 'expected_outputs', then classify "
@@ -369,7 +378,10 @@ def run_model(pkg, out_root, values, cat=None, dams_folder=None, log=print, canc
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(dam_dir, name))
                 copied.append(os.path.join(dam_dir, name))
+    sel = rec.get("engine_selection") or {}
     setup.update({"status": "finished", "engine": rec["engine"], "extent_engine": rec["extent_engine"],
+                  "engine_selection": sel, "engine_fallback": bool(sel.get("fallback")),
+                  "engine_note": sel.get("warning") or "",
                   "model_dimension": "2D", "model": rec, "wall_s": round(_time.time() - t0, 1),
                   "outputs": {k: v for k, v in rec["outputs"].items()}, "dam_folder_files": copied,
                   "ready_to_run": True, "gaps": []})

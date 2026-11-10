@@ -24,7 +24,7 @@ jobs:
         run: >-
           python3 -m unittest -v damit_catalog.tests.test_catalog damit_screener.tests.test_workflow
           damit_screener.tests.test_engine2d damit_runner.tests.test_rundam damit_runner.tests.test_flood
-          tests.test_metadata tests.test_hazard_screener_agree
+          damit_runner.tests.test_followups tests.test_metadata tests.test_hazard_screener_agree
 
   qgis:
     name: Flood package, model run and Report chain on QGIS 3.34 (offscreen, engines stubbed)
@@ -32,8 +32,10 @@ jobs:
     container: qgis/qgis:3.34
     steps:
       - uses: actions/checkout@v4
-      - name: QGIS Python, GDAL and numpy are importable (else the flood tests would only skip)
-        run: python3 -c "import qgis.core, osgeo.gdal, numpy"
+      - name: scipy for the DamSafety ANUGA mesh tests (scipy.ndimage, as the DamSafety Runner's mesher needs)
+        run: python3 -c "import scipy.ndimage" || (apt-get update && apt-get install -y --no-install-recommends python3-scipy)
+      - name: QGIS Python, GDAL, numpy and scipy are importable (else the flood tests would only skip)
+        run: python3 -c "import qgis.core, osgeo.gdal, numpy, scipy.ndimage"
       - name: Tests with GDAL and QGIS
         env:
           QT_QPA_PLATFORM: offscreen
@@ -41,7 +43,8 @@ jobs:
           GDAL_NUM_THREADS: "1"
         run: |
           export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)"
-          nice -n 19 python3 -m unittest -v damit_runner.tests.test_flood damit_screener.tests.test_engine2d \
+          nice -n 19 python3 -m unittest -v damit_runner.tests.test_flood damit_runner.tests.test_followups \
+            damit_screener.tests.test_engine2d \
             damit_runner.tests.test_rundam damit_screener.tests.test_workflow tests.test_qgis_integration
 
   crest:

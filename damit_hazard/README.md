@@ -119,6 +119,22 @@ Attribute names are matched case-insensitively; the first of these per field is 
 | `impact`, `units_served`, `outage_days`, `major_population`, `ww_class`, `own_supply` | |
 | `mitigation`, `substantial`, `anadromous`, `agency_identified`, `unique`, `permanent` | |
 
+### Trains per day when the rail layer has none (0.1.2)
+
+NARN and similar rail layers have no trains-per-day field, so M9a's High test (10+ freight trains a day, or a
+passenger line) cannot be confirmed and an impacted active line stays Medium with a `trains_unknown` warning.
+DamIT assumes **no default**. Give the number explicitly with `RAIL_TRAINS_LOOKUP`, a CSV:
+
+```
+field,value,trains_per_day,source
+SUBDIV,KO,15,"DamSafety DWR-2801 pass (BNSF KO subdivision) - needs Nick's ruling"
+```
+
+(the row above is an example of the format, not a shipped value). A rail line whose own `trains_per_day` is empty
+and whose attribute `field` equals `value` (case-insensitive, first matching row wins) takes that number. Every
+value used this way is flagged `trains_lookup` ("needs Nick's ruling"). DamIT Crest passes the file from the dam's
+`railTrainsLookup` or the `DAMIT_RAIL_TRAINS_LOOKUP` environment variable.
+
 ## Outputs
 
 In the output folder: `damit_hazard_report.md`, `.html`, `.json` (suggested class, driving

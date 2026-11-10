@@ -9,7 +9,7 @@ import shutil
 from . import catalog_bridge as CB
 from . import steps as ST
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PROVIDER_ID = "damit_screen"
 OK, WARN, FAIL = "ok", "warn", "fail"
 MIN_FREE_MB = 200.0
@@ -27,10 +27,11 @@ DEFAULT_SETTINGS = {
     "summary": {},               # dam-level facts for the suggestion (model_dimension, hydraulics_source, ...)
     "dam_ids": [],               # limit the chain to these dams (empty = all)
     # 0.2.0 engine2d: the DamSafety Screening tool-7 2D flood (built-in engine) and its window defaults
-    "engine2d": "builtin",       # builtin | off
+    "engine2d": "builtin",       # builtin | lisflood (0.3.0: LISFLOOD-FP ACC) | off
+    "lisflood_exe": "",          # engine2d lisflood: the executable; "" = an installed one, else the built-in engine
     "grid_m": 20.0,              # model cell (m); 0 = automatic by reservoir size (CELL_TABLE)
     "simh": 12.0, "simmax": 96.0,   # first clock and the longest clock (h)
-    "larger_clips": 1,           # 0 first clip only, 1 larger clips from the same terrain, 2 from local_dem
+    "larger_clips": 1,           # 0 first clip only, 1 (0.3.0) a fresh USGS 3DEP download, 2 from local_dem
     "local_dem": "",             # larger_clips 2: the local DEM
     "timeout_s": 0,              # 0 = 0.8 x DAMIT_SCREENING_TIMEOUT_S, else 3600 s
     "z_units": "auto",           # DEM elevation units: auto | m | ft | us_ft
@@ -254,11 +255,12 @@ def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None,
     scen = config["scenarios"]
     res["terrain"] = ST.terrain(dam, settings.get("terrain") or dam.get("terrain"), terrain_info)
     res["storage"] = ST.storage(dam, scen)
-    res["breach_direction"] = ST.breach_direction(dam)
+    folder = dam_folder(work, dam["dam_id"])
+    res["breach_direction"] = ST.breach_direction(dam, res["terrain"].get("path") if res["terrain"]["status"] ==
+                                                  ST.STATUS_OK else None, folder)
     res["hydrograph"] = ST.hydrograph(dam, res["storage"], scen)
     recs = dam_receptors(receptors, dam["dam_id"])
     res["triage"] = ST.triage(cat, dam, recs)
-    folder = dam_folder(work, dam["dam_id"])
     eng_settings = dict(settings, terrain=(res["terrain"].get("path") if res["terrain"]["status"] == ST.STATUS_OK
                                            else None))
     res["engine2d"] = ST.engine2d(dam, eng_settings, folder, res["hydrograph"], recs, log, cancel)

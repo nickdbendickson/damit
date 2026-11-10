@@ -919,6 +919,10 @@ def run_model(
         log(f"HEC-RAS 2D is not run by {rundam} (DamIT never starts HEC-RAS or Wine). Choose LISFLOOD-FP, ANUGA or "
             "the built-in engine. The flood model was not started.")
         return {"ok": False, "stopped": True, "folder": str(folder), "work": str(root)}
+    model_settings = runner_settings(dam)
+    log("Runner settings: CELL {CELL:g} m, MAX_RUNS {MAX_RUNS}, DURATION_HR {DURATION_HR:g} (0 = automatic), "
+        "DURATION_MAX_HR {DURATION_MAX_HR:g} ({how}).".format(how=model_settings["how"], **{
+            k: model_settings[k] for k in ("CELL", "MAX_RUNS", "DURATION_HR", "DURATION_MAX_HR")}))
     values = {
         # DamIT Runner 0.2.0 (damit_run:rundam): the screener's package when there is one, else the dam as parameters.
         "HANDOFF": str(package) if package.is_file() else None,
@@ -944,7 +948,12 @@ def run_model(
         "DEM": dem,
         "METHOD": enum_value(exe, rundam, "METHOD", METHOD_LABEL[key]) if "METHOD" in accepted else None,
         "TIER": enum_value(exe, rundam, "TIER", label) if "TIER" in accepted else None,
-        "LISFLOOD_EXE": "builtin" if builtin else None,
+        "LISFLOOD_EXE": "builtin" if builtin else model_settings["LISFLOOD_EXE"],
+        # the DamSafety Runner's run knobs, with its defaults unless the dam record or the environment sets them
+        "CELL": model_settings["CELL"],
+        "MAX_RUNS": model_settings["MAX_RUNS"],
+        "DURATION_HR": model_settings["DURATION_HR"],
+        "DURATION_MAX_HR": model_settings["DURATION_MAX_HR"],
         "HEIGHT_FT": _finite(dam.get("heightFt")),
         "STORAGE_ACFT": _finite(dam.get("storageAcFt")),
         "TOP_FT": _finite(datum.get("crestNavdFt")),
@@ -958,8 +967,11 @@ def run_model(
     log(f"This button runs {rundam} for one dam.")
     if builtin:
         log("LISFLOOD_EXE=builtin: the built-in numpy engine (a screening approximation, not LISFLOOD-FP).")
+    elif model_settings["LISFLOOD_EXE"]:
+        log(f"LISFLOOD_EXE={model_settings['LISFLOOD_EXE']} ({model_settings['exe_how']}).")
     else:
-        log("LISFLOOD_EXE empty: the runner uses an installed LISFLOOD-FP (lisflood on PATH) and stops if there is none.")
+        log("LISFLOOD_EXE empty: the runner looks for an installed LISFLOOD-FP (its provider setting, PATH, the usual "
+            "install places) and runs the built-in engine with a warning when there is none.")
     code, text = _run(cmd, timeout=None, cancel=cancel)
     log(text.rstrip())
     results = _outputs(text)
@@ -984,6 +996,42 @@ def run_model(
     return out
 
 
+# The DamSafety Runner's defaults (DWR_Plugins main, DamSafety Runner algorithms.py RunDamAlgorithm): CELL 10 m,
+# MAX_RUNS 6, DURATION_HR 0 (automatic), DURATION_MAX_HR 96. A dam record's lisflood box (cellSizeM, maxRuns,
+# durationHr, durationMaxHr, exe) wins, then the environment (DAMIT_RUN_CELL, DAMIT_RUN_MAX_RUNS,
+# DAMIT_RUN_DURATION_HR, DAMIT_RUN_DURATION_MAX_HR, LISFLOOD_EXE / DAMIT_LISFLOOD_EXE).
+RUNNER_DEFAULTS = {"CELL": 10.0, "MAX_RUNS": 6, "DURATION_HR": 0.0, "DURATION_MAX_HR": 96.0}
+RUNNER_KEYS = {"CELL": ("cellSizeM", "DAMIT_RUN_CELL"), "MAX_RUNS": ("maxRuns", "DAMIT_RUN_MAX_RUNS"),
+               "DURATION_HR": ("durationHr", "DAMIT_RUN_DURATION_HR"),
+               "DURATION_MAX_HR": ("durationMaxHr", "DAMIT_RUN_DURATION_MAX_HR")}
+
+
+def runner_settings(dam: dict, environ=None) -> dict:
+    """CELL, MAX_RUNS, DURATION_HR, DURATION_MAX_HR and LISFLOOD_EXE for damit_run:rundam (see RUNNER_DEFAULTS)."""
+    env = os.environ if environ is None else environ
+    box = dam.get("lisflood") if isinstance(dam.get("lisflood"), dict) else {}
+    out, how = {}, []
+    for name, (field, var) in RUNNER_KEYS.items():
+        v, src = _finite(box.get(field)), "dam record"
+        if v is None or v < 0:
+            v, src = _finite(env.get(var)), var
+        if v is None or v < 0 or (name in ("CELL", "MAX_RUNS", "DURATION_MAX_HR") and v <= 0):
+            v, src = RUNNER_DEFAULTS[name], "DamSafety default"
+        out[name] = int(v) if name == "MAX_RUNS" else float(v)
+        if src != "DamSafety default":
+            how.append(f"{name} from {src}")
+    exe, exe_how = None, ""
+    for v, src in ((box.get("exe"), "dam record"), (env.get("DAMIT_LISFLOOD_EXE"), "DAMIT_LISFLOOD_EXE"),
+                   (env.get("LISFLOOD_EXE"), "LISFLOOD_EXE")):
+        if isinstance(v, str) and v.strip():
+            exe, exe_how = v.strip(), f"from {src}"
+            break
+    out["LISFLOOD_EXE"] = exe
+    out["exe_how"] = exe_how
+    out["how"] = "; ".join(how) if how else "DamSafety Runner defaults"
+    return out
+
+
 def _no_dem(log) -> None:
     log("No DEM, so the flood model was not started. The dam folder above was still written.")
     log("Type a DEM path, choose Get layers (download for this area, or the DamIT data folder), or set DAMIT_DEM.")
@@ -1001,6 +1049,11 @@ def _finite(value) -> float | None:
 def _lonlat(dam: dict) -> tuple[float, float] | None:
     lon, lat = _finite(dam.get("lon")), _finite(dam.get("lat"))
     return (lon, lat) if lon is not None and lat is not None else None
+
+
+def _file(value) -> str | None:
+    """An existing file path (any kind), resolved, or None."""
+    return _raster(value)
 
 
 def _raster(value) -> str | None:
@@ -1156,8 +1209,12 @@ def run_classify(
         "DOMAIN": written["domain"],
         "DAM_JSON": str(record),
         "DAM_NAME": dam.get("name") or None,
+        # DamIT Hazard 0.1.2: trains per day for rail layers without the field (NARN); no default, user-given only
+        "RAIL_TRAINS_LOOKUP": _file(dam.get("railTrainsLookup") or os.environ.get("DAMIT_RAIL_TRAINS_LOOKUP")),
         "OUTPUT": str(out_dir),
     }
+    if values["RAIL_TRAINS_LOOKUP"]:
+        log(f"Rail trains per day lookup: {values['RAIL_TRAINS_LOOKUP']} (values from it are flagged as needing a ruling).")
     unsent = [k for k in written["layers"] if accepted and k not in accepted]
     if unsent:
         log(f"{alg} does not list {', '.join(unsent)}; those receptors were not sent.")

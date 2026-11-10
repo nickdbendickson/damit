@@ -192,6 +192,20 @@ def path_bounds(path, buffer_m, snap=1.0):
     return tuple(math.floor(v / snap) * snap if i < 2 else math.ceil(v / snap) * snap for i, v in enumerate(b))
 
 
+def edge_flux_shares(depth, valid=None):
+    """Each edge's share (0-1) of the water leaving the grid, estimated from the max depths on it (the DamSafety
+    Runner's terrain.edge_flux_shares: edges weighed by the sum of depth**(5/3) along them). A screening estimate
+    for which edge to move out, not a flow."""
+    d = np.where(np.isfinite(depth), depth, 0.0)
+    if valid is not None:
+        d = np.where(valid, d, 0.0)
+    d = np.clip(d, 0.0, None) ** (5.0 / 3.0)
+    w = {"N": float(d[0, :].sum()), "S": float(d[-1, :].sum()),
+         "W": float(d[:, 0].sum()), "E": float(d[:, -1].sum())}
+    tot = sum(w.values())
+    return {k: (v / tot if tot > 0 else 0.0) for k, v in w.items()}
+
+
 def edge_depths(depth, valid=None):
     """Largest depth on each edge row / column of the grid (m)."""
     d = np.where(np.isfinite(depth), depth, 0.0)

@@ -55,10 +55,12 @@ def stub_lisflood(LF, calls):
 
 
 class FakeFV:
-    """A stand-in for fv_engine.Engine: floods a strip of the valley below the source cells."""
+    """A stand-in for fv_engine.Engine (screen.simulate's engine_factory(grid, dem_m, cell, manning)): floods a strip
+    of the valley below the source cells."""
     timeout = False
+    rows = 30
 
-    def __init__(self, dem, cell, manning=0.05):
+    def __init__(self, grid, dem, cell, manning=0.05):
         self.dem = dem
         self.cell = cell
         self.t = 0.0
@@ -76,7 +78,7 @@ class FakeFV:
         r0 = min(r for r, _ in self.src)
         c0 = int(np.mean([c for _, c in self.src]))
         ny, nx = self.dem.shape
-        rows = slice(r0, min(r0 + 30, ny))
+        rows = slice(r0, ny if self.rows is None else min(r0 + self.rows, ny))
         cols = slice(max(c0 - 3, 0), min(c0 + 4, nx))
         self.hmax[rows, cols] = 1.0
         self.vmax[rows, cols] = 1.5
@@ -93,3 +95,68 @@ class FakeFV:
 
 class TimeoutFV(FakeFV):
     timeout = True
+
+
+class EdgeFV(FakeFV):
+    """Floods the strip down to the bottom edge of every clip (so the clip always grows)."""
+    rows = None
+
+
+def write_tif(path, z, x0, y0, cell, epsg):
+    from osgeo import gdal, osr
+    gdal.UseExceptions()
+    ny, nx = z.shape
+    ds = gdal.GetDriverByName("GTiff").Create(path, nx, ny, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform((x0, cell, 0, y0, 0, -cell))
+    s = osr.SpatialReference()
+    s.ImportFromEPSG(epsg)
+    ds.SetProjection(s.ExportToWkt())
+    ds.GetRasterBand(1).WriteArray(z.astype(np.float32))
+    ds.GetRasterBand(1).SetNoDataValue(-9999)
+    ds = None
+    return path
+
+
+def tiff_bytes(w, h, bbox, epsg=5070, value=300.0):
+    """The bytes of a float32 GeoTIFF of w x h cells over bbox (a stand-in for a 3DEP exportImage answer)."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix="damit_3dep_fake_")
+    try:
+        xmin, ymin, xmax, ymax = bbox
+        cell = (xmax - xmin) / w
+        yy = np.mgrid[0:h, 0:w][0]
+        p = write_tif(os.path.join(d, "t.tif"), value - 0.001 * yy * cell + np.zeros((h, w)), xmin, ymax, cell, epsg)
+        with open(p, "rb") as fh:
+            return fh.read()
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+class FakeResponse:
+    def __init__(self, data):
+        self.data = data
+
+    def read(self):
+        return self.data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def fake_3dep_opener(calls, value=300.0, body=None):
+    """urlopen stand-in: answers each exportImage request with a GeoTIFF of the requested size and box."""
+    from urllib.parse import urlparse, parse_qs
+
+    def opener(url, timeout=None):
+        q = parse_qs(urlparse(url).query)
+        calls.append({"url": url, "q": {k: v[0] for k, v in q.items()}, "timeout": timeout})
+        if body is not None:
+            return FakeResponse(body)
+        w, h = (int(v) for v in q["size"][0].split(","))
+        bbox = tuple(float(v) for v in q["bbox"][0].split(","))
+        return FakeResponse(tiff_bytes(w, h, bbox, int(q["imageSR"][0]), value))
+    return opener
