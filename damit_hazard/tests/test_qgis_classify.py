@@ -125,6 +125,49 @@ def test_nd_preset_headless():
     assert os.path.isfile(os.path.join(out, "damit_hazard_report.html"))
 
 
+def _rail(d):
+    from qgis.core import QgsVectorLayer, QgsFeature, QgsGeometry
+    lyr = QgsVectorLayer("LineString?crs=EPSG:32614&field=RROWNER1:string&field=SUBDIV:string&field=NET:string",
+                         "rail", "memory")
+    feats = []
+    for y, owner, sub in ((5200030, "BNSF", "KO"), (5200031, "BNSF", "PROSPER")):
+        f = QgsFeature(lyr.fields())
+        f.setGeometry(QgsGeometry.fromWkt("LINESTRING(500000 {0},500100 {0})".format(y)))
+        f.setAttributes([owner, sub, "M"])
+        feats.append(f)
+    lyr.dataProvider().addFeatures(feats)
+    return lyr
+
+
+def test_rail_trains_default_lookup_and_explicit_override():
+    """0.1.3 (Nick ruling 2026-11-10): BNSF KO takes 15 trains/day from the shipped lookup -> M9a High, as
+    DamSafety scored DWR-2801; an explicit RAIL_TRAINS_LOOKUP replaces the default."""
+    _app()
+    d = tempfile.mkdtemp(prefix="damit_rail_")
+    dep, vel = _rasters(d)
+    from damit_hazard.engine import catalog as C
+    pids = [None] + list(C.load()["presets"])
+    base = {"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "VELOCITY": vel,
+            "METRES": True, "RAIL": _rail(d)}
+    out = os.path.join(d, "out")
+    res = _alg_run(dict(base, OUTPUT=out))
+    rep = json.load(open(os.path.join(out, "damit_hazard_report.json"), encoding="utf-8"))
+    m9 = sorted(h["class"] for h in rep["hits"] if h["method"] == "M9a")
+    assert m9 == [2, 3], rep["hits"]
+    assert res["CLASS"] == "High", res
+    codes = {f["code"] for f in rep["flags"]}
+    assert "trains_lookup_ruled" in codes and "trains_unknown" in codes and "trains_lookup" not in codes
+    mine = os.path.join(d, "mine.csv")
+    with open(mine, "w", encoding="utf-8") as fh:
+        fh.write("field,value,trains_per_day,source\nRROWNER1&SUBDIV,BNSF&KO,4,local count\n")
+    out2 = os.path.join(d, "out2")
+    res = _alg_run(dict(base, OUTPUT=out2, RAIL_TRAINS_LOOKUP=mine))
+    rep = json.load(open(os.path.join(out2, "damit_hazard_report.json"), encoding="utf-8"))
+    assert sorted(h["class"] for h in rep["hits"] if h["method"] == "M9a") == [2, 2]
+    assert res["CLASS"] == "Medium", res
+    assert "trains_lookup" in {f["code"] for f in rep["flags"]}
+
+
 def test_classify_writes_nothing_beside_its_input_rasters():
     """GUI chain walk 2026-11-09: classify on read-only model rasters left <raster>.tif.aux.xml
     (QGIS layer statistics through GDAL PAM) in the product-of-record folder. The inputs sit in
@@ -293,7 +336,7 @@ def test_dialog_grammar_and_params():
     src = open(D.__file__, encoding="utf-8").read()
     assert not re.search(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-zA-Z])", src)
     dlg = D.DamitHazardDialog()
-    assert dlg.windowTitle() == "DamIT Hazard 0.1.2"
+    assert dlg.windowTitle() == "DamIT Hazard 0.1.3"
     assert dlg.minimumSizeHint().width() <= 800 and dlg.minimumSizeHint().height() <= 1000
     for b in dlg.findChildren(QAbstractButton):
         assert "..." not in b.text() and not b.text().startswith("\u25b6"), b.text()

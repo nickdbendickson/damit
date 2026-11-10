@@ -119,21 +119,26 @@ Attribute names are matched case-insensitively; the first of these per field is 
 | `impact`, `units_served`, `outage_days`, `major_population`, `ww_class`, `own_supply` | |
 | `mitigation`, `substantial`, `anadromous`, `agency_identified`, `unique`, `permanent` | |
 
-### Trains per day when the rail layer has none (0.1.2)
+### Trains per day when the rail layer has none
 
 NARN and similar rail layers have no trains-per-day field, so M9a's High test (10+ freight trains a day, or a
-passenger line) cannot be confirmed and an impacted active line stays Medium with a `trains_unknown` warning.
-DamIT assumes **no default**. Give the number explicitly with `RAIL_TRAINS_LOOKUP`, a CSV:
+passenger line) cannot be confirmed from the layer alone. DamIT Hazard 0.1.3 ships one default lookup row,
+`damit_hazard/data/rail_trains_lookup.csv`:
 
 ```
-field,value,trains_per_day,source
-SUBDIV,KO,15,"DamSafety DWR-2801 pass (BNSF KO subdivision) - needs Nick's ruling"
+field,value,trains_per_day,source,ruling
+RROWNER1&SUBDIV,BNSF&KO,15,"DamSafety value, Nick ruling 2026-11-10",2026-11-10
 ```
 
-(the row above is an example of the format, not a shipped value). A rail line whose own `trains_per_day` is empty
-and whose attribute `field` equals `value` (case-insensitive, first matching row wins) takes that number. Every
-value used this way is flagged `trains_lookup` ("needs Nick's ruling"). DamIT Crest passes the file from the dam's
-`railTrainsLookup` or the `DAMIT_RAIL_TRAINS_LOOKUP` environment variable.
+NARN names the line by `RROWNER1` (owner) and `SUBDIV` (subdivision), the fields DamSafety Hazard Lite reads; both
+must match. On DWR-2801 this gives the BNSF KO line 15 trains a day and M9a High, as DamSafety scored it. The row
+carries a ruling, so it is reported as INFO `trains_lookup_ruled`, not as needing a ruling.
+
+Give your own CSV with `RAIL_TRAINS_LOOKUP` (columns `field, value, trains_per_day, source`, optional `ruling`;
+`field` / `value` may join several conditions with `&`). An explicit lookup **replaces** the default. A rail line
+whose own `trains_per_day` is empty takes the first matching row. Rows without a ruling are flagged `trains_lookup`
+("needs Nick's ruling"); lines no row matches keep the `trains_unknown` warning and stay Medium. DamIT Crest passes
+the file from the dam's `railTrainsLookup` or the `DAMIT_RAIL_TRAINS_LOOKUP` environment variable.
 
 ## Outputs
 

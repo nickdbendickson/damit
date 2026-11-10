@@ -1209,12 +1209,13 @@ def run_classify(
         "DOMAIN": written["domain"],
         "DAM_JSON": str(record),
         "DAM_NAME": dam.get("name") or None,
-        # DamIT Hazard 0.1.2: trains per day for rail layers without the field (NARN); no default, user-given only
+        # DamIT Hazard: trains per day for rail layers without the field (NARN); an explicit file replaces Hazard 0.1.3's
+        # shipped default (BNSF KO = 15/day, Nick ruling 2026-11-10); nothing is sent when none is given
         "RAIL_TRAINS_LOOKUP": _file(dam.get("railTrainsLookup") or os.environ.get("DAMIT_RAIL_TRAINS_LOOKUP")),
         "OUTPUT": str(out_dir),
     }
     if values["RAIL_TRAINS_LOOKUP"]:
-        log(f"Rail trains per day lookup: {values['RAIL_TRAINS_LOOKUP']} (values from it are flagged as needing a ruling).")
+        log(f"Rail trains per day lookup: {values['RAIL_TRAINS_LOOKUP']} (it replaces DamIT Hazard's default; rows without a ruling are flagged).")
     unsent = [k for k in written["layers"] if accepted and k not in accepted]
     if unsent:
         log(f"{alg} does not list {', '.join(unsent)}; those receptors were not sent.")

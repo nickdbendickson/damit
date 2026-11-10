@@ -110,7 +110,8 @@ def _damit_catalog():
 def test_no_second_catalog_in_hazard():
     """Presets and thresholds come from DamIT Catalog only: no catalog file ships with Hazard."""
     data = os.path.join(ROOT, "damit_hazard", "data")
-    assert sorted(os.listdir(data)) == ["tm11_charts.json"]
+    # rail_trains_lookup.csv (0.1.3) is receptor data (trains per day for NARN lines), not a rule or threshold
+    assert sorted(os.listdir(data)) == ["rail_trains_lookup.csv", "tm11_charts.json"]
     cp = configparser.ConfigParser(interpolation=None)
     cp.read(os.path.join(ROOT, "damit_hazard", "metadata.txt"), encoding="utf-8")
     assert cp["general"]["plugin_dependencies"] == "DamIT Catalog"
