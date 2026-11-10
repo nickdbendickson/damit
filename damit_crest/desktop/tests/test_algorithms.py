@@ -47,7 +47,7 @@ LISTS = {
     "rundam": ["HANDOFF", "DAM_ID", "NID_ID", "IS_NEW", "IS_SAMPLE", "X", "Y", "CRS", "HEIGHT_FT", "STORAGE_ACFT",
                "MODE", "PRESET", "SCENARIOS", "METHODS", "TERRAIN", "HYDROGRAPH", "OUTPUT_FOLDER", "DRY_RUN",
                "DAMS_FOLDER", "DEM", "DEM_Z", "TOP_FT", "AREA_AC", "PMF_FT", "METHOD", "TIER", "CELL", "MANNING",
-               "LISFLOOD_EXE", "ANUGA_PYTHON", "ENGINE"],
+               "MAX_RUNS", "DURATION_HR", "DURATION_MAX_HR", "LISFLOOD_EXE", "ANUGA_PYTHON", "ENGINE"],
 }
 ENUMS = {"MODE": ["preset", "custom"],
          "ENGINE": ["From Models (TIER)", "LISFLOOD-FP", "ANUGA (LISFLOOD-FP for the extent, then ANUGA)",
@@ -71,7 +71,7 @@ if args[:1] == ["help"]:
         params = ["PRESET", "METHODS", "MODIFIERS", "SCENARIOS", "OVERRIDES", "APPLY_ADVISORY", "RUN_SCENARIO",
                   "MODEL_DIM", "DEPTH", "VELOCITY", "DV", "WSE", "NONBREACH", "ARRIVAL", "METRES", "STRUCTURES",
                   "ROADS", "RAIL", "FACILITIES", "LIFELINES", "ENVIRONMENT", "DOMAIN", "EXTRA_RUNS", "DAM_JSON",
-                  "CHARTS_JSON", "DAM_NAME", "OUTPUT"]
+                  "CHARTS_JSON", "RAIL_TRAINS_LOOKUP", "DAM_NAME", "OUTPUT"]
         if os.environ.get("FAKE_CLASSIFY") == "no-receptors":
             params = [p for p in params if p not in ("STRUCTURES", "ROADS", "RAIL", "FACILITIES", "LIFELINES",
                                                      "ENVIRONMENT", "DOMAIN")]
@@ -214,6 +214,13 @@ class Base(unittest.TestCase):
                 "FAKE_PACKAGE": "",
                 "FAKE_CLASSIFY": "",
                 "APPDATA": "",
+                "LISFLOOD_EXE": "",
+                "DAMIT_LISFLOOD_EXE": "",
+                "DAMIT_RUN_CELL": "",
+                "DAMIT_RUN_MAX_RUNS": "",
+                "DAMIT_RUN_DURATION_HR": "",
+                "DAMIT_RUN_DURATION_MAX_HR": "",
+                "DAMIT_RAIL_TRAINS_LOOKUP": "",
             },
         )
         self.env.start()
@@ -440,8 +447,11 @@ class PublishedInterfaceTests(Base):
         self.assertIn("--METHOD=0", run)       # Froehlich (2008) piping, the default
         self.assertIn("--TIER=0", run)         # LISFLOOD-FP only
         self.assertIn("--TOP_FT=1000.0", run)
-        self.assertNotIn("--LISFLOOD_EXE=", run)   # empty: an installed LISFLOOD-FP
+        self.assertNotIn("--LISFLOOD_EXE=", run)   # empty: an installed LISFLOOD-FP, else the built-in engine
         self.assertNotIn("--ENGINE=", run)
+        # DWR-2801: the DamSafety Runner's defaults are sent, not left to whatever the algorithm was given before
+        for arg in ("--CELL=10.0", "--MAX_RUNS=6", "--DURATION_HR=0.0", "--DURATION_MAX_HR=96.0"):
+            self.assertIn(arg, run)
         self.assertEqual(result["runFolder"], str(work.resolve() / "runs") + "/run_1")
         self.assertTrue(result["modelLaunched"])
         dam_dir = work.resolve() / "dams" / "XX00001"
@@ -449,6 +459,33 @@ class PublishedInterfaceTests(Base):
         self.assertEqual(result["velocityRaster"], str(dam_dir / "Velocity (Max).tif"))
         self.assertEqual(result["hmaxRaster"], str(dam_dir / "hmax_ft.tif"))
         self.assertEqual(result["floodPolygons"], str(dam_dir / "Flood Polygons (Max Depth).geojson"))
+
+    def test_rundam_run_settings_from_the_dam_record_and_environment(self):
+        work = self.work_with_dem()
+        exe = self.root / "bin" / "lisflood"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"LISFLOOD_EXE": str(exe), "DAMIT_RUN_MAX_RUNS": "4",
+                                          "DAMIT_RUN_DURATION_MAX_HR": "48"}):
+            qr.run_model({**DAM, "lisflood": {"cellSizeM": 20}}, ANALYSIS, str(work), self.log)
+        run = self.runs()[-1]
+        for arg in ("--CELL=20.0", "--MAX_RUNS=4", "--DURATION_HR=0.0", "--DURATION_MAX_HR=48.0",
+                    f"--LISFLOOD_EXE={exe}"):
+            self.assertIn(arg, run)
+        self.assertTrue(any("CELL from dam record" in line and "MAX_RUNS from DAMIT_RUN_MAX_RUNS" in line
+                            for line in self.lines), self.lines)
+        # builtin still wins over an environment LISFLOOD_EXE
+        with mock.patch.dict(os.environ, {"LISFLOOD_EXE": str(exe)}):
+            qr.run_model(DAM, ANALYSIS, str(work), self.log, model="builtin")
+        self.assertIn("--LISFLOOD_EXE=builtin", self.runs()[-1])
+
+    def test_runner_settings_defaults_are_damsafety_runner_defaults(self):
+        got = qr.runner_settings({}, environ={})
+        self.assertEqual({k: got[k] for k in ("CELL", "MAX_RUNS", "DURATION_HR", "DURATION_MAX_HR")},
+                         {"CELL": 10.0, "MAX_RUNS": 6, "DURATION_HR": 0.0, "DURATION_MAX_HR": 96.0})
+        self.assertIsNone(got["LISFLOOD_EXE"])
+        bad = qr.runner_settings({"lisflood": {"cellSizeM": -5, "maxRuns": 0}}, environ={"DAMIT_RUN_CELL": "x"})
+        self.assertEqual((bad["CELL"], bad["MAX_RUNS"]), (10.0, 6))
 
     def test_rundam_builtin_and_anuga_choices(self):
         work = self.work_with_dem()
@@ -593,6 +630,18 @@ class ClassificationTests(Base):
         self.assertEqual(record["storage_acft"], 300)
         self.assertIn("--DAM_JSON=" + str(Path(result["folder"]) / "damit_dam.json"), run)
         self.assertEqual(result["suggestedClass"], "Significant")
+
+    def test_classify_sends_a_rail_trains_lookup_only_when_given(self):
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(),
+               "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertNotIn("--RAIL_TRAINS_LOOKUP=", self.classify_run())
+        lookup = self.root / "trains.csv"
+        lookup.write_text("field,value,trains_per_day,source\nSUBDIV,KO,15,needs Nick's ruling\n", encoding="utf-8")
+        self.calls.write_text("", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"DAMIT_RAIL_TRAINS_LOOKUP": str(lookup)}):
+            qr.run_classify(dam, ANALYSIS, str(self.root / "work2"), self.log)
+        self.assertIn("--RAIL_TRAINS_LOOKUP=" + str(lookup.resolve()), self.classify_run())
 
     def test_classify_runs_with_gdal_pam_off(self):
         # GUI chain walk 2026-11-09: classify left <raster>.tif.aux.xml in a read-only run folder. The classify

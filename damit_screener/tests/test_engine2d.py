@@ -39,7 +39,8 @@ class Settings(unittest.TestCase):
 
     def test_off_and_gaps(self):
         self.assertEqual(ST.engine2d({"dam_id": "X"}, {"engine2d": "off"})["status"], ST.STATUS_NOT_RUN)
-        self.assertEqual(ST.engine2d({"dam_id": "X"}, {"engine2d": "lisflood"})["status"], ST.STATUS_FAIL)
+        self.assertEqual(ST.engine2d({"dam_id": "X"}, {"engine2d": "nope"})["status"], ST.STATUS_FAIL)
+        self.assertEqual(ST.engine2d({"dam_id": "X"}, {"engine2d": "lisflood"})["status"], ST.STATUS_GAP)
         self.assertEqual(ST.engine2d({"dam_id": "X"}, {})["status"], ST.STATUS_GAP)
 
 
@@ -116,6 +117,105 @@ class Chain2D(unittest.TestCase):
         self.assertIsNotNone(pkg["screening"].get("suggested_label"))
         with open(summ["report"]) as fh:
             self.assertIn("Screening flood (engine2d)", fh.read())
+
+    def test_engine2d_ok_with_a_damit_label_and_breach_direction_estimated(self):
+        """DWR-2801: engine2d said GAP after a successful flood, labelled 'DamSafety Screening built-in 2D', and
+        breach_direction was a GAP with no azimuth estimate."""
+        x, y = self.site["dam_xy"]
+        h_ft = (self.site["top_m"] - self.site["floor_at_dam"]) / 0.3048
+        dams, probs = ST.prepare([{"ID": "ND00001", "HT": h_ft, "STOR": 500, "TOD": self.site["top_m"] / 0.3048,
+                                   "_x": x, "_y": y, "_crs": "EPSG:26914"}],
+                                 {"dam_id": "ID", "height_ft": "HT", "storage_acft": "STOR",
+                                  "top_of_dam_elev_ft": "TOD"})
+        s = dict(WF.DEFAULT_SETTINGS, preset="ND", terrain=self.dem, larger_clips=0)
+        logs = []
+        summ = WF.run_chain(self.work, s, dams, probs, [], log=logs.append)
+        r = summ["dams"]["ND00001"]
+        e = r["engine2d"]
+        self.assertEqual(e["status"], ST.STATUS_OK, e)
+        self.assertIn("DamIT Screener built-in", e["detail"])
+        self.assertNotIn("DamSafety Screening built-in", json.dumps(e))
+        self.assertTrue(e["engine"].startswith("DamIT Screener built-in"), e["engine"])
+        self.assertFalse(e["engine_fallback"])
+        b = r["breach_direction"]
+        self.assertEqual(b["status"], ST.STATUS_OK, b)
+        self.assertTrue(b["estimated"])
+        self.assertEqual(b["method"], "dam line")
+        self.assertLess(abs(b["azimuth_deg"] - 180.0), 20.0, b)      # the valley drains south
+        t = r["terrain"]
+        self.assertTrue(t["covers_dam"], t)
+        self.assertEqual(t["crs"], "EPSG:26914")
+
+
+@unittest.skipUnless(HAVE, "numpy and GDAL needed")
+class BreachDirectionAndTerrainCrs(unittest.TestCase):
+    def setUp(self):
+        from damit_runner.tests import synth
+        self.synth = synth
+        self.tmp = tempfile.mkdtemp(prefix="damit_bdir_")
+        self.dem = os.path.join(self.tmp, "dem.tif")
+        self.site = synth.make_dem(self.dem)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def folder(self, line=True, reservoir=True):
+        d = os.path.join(self.tmp, "dam_{}{}".format(int(line), int(reservoir)))
+        os.makedirs(d, exist_ok=True)
+        if line:
+            with open(os.path.join(d, "dam_line.geojson"), "w") as fh:
+                json.dump({"type": "Feature", "properties": {}, "geometry": {
+                    "type": "LineString", "coordinates": [list(c) for c in self.site["line"]]}}, fh)
+        if reservoir:
+            with open(os.path.join(d, "reservoir_point.geojson"), "w") as fh:
+                json.dump({"type": "Feature", "properties": {}, "geometry": {
+                    "type": "Point", "coordinates": list(self.site["reservoir"])}}, fh)
+        return d
+
+    def dam(self, **kw):
+        lon, lat = self.site["centre"]
+        return dict({"dam_id": "ND00001", "x": lon, "y": lat, "crs": "EPSG:4326", "height_ft": 16.0}, **kw)
+
+    def test_record_azimuth_wins(self):
+        b = ST.breach_direction(self.dam(breach_azimuth_deg=370.0), self.dem, self.folder())
+        self.assertEqual((b["status"], b["azimuth_deg"], b["estimated"]), (ST.STATUS_OK, 10.0, False))
+
+    def test_estimates(self):
+        b = ST.breach_direction(self.dam(), self.dem, self.folder())
+        self.assertEqual(b["status"], ST.STATUS_OK, b)
+        self.assertLess(abs(b["azimuth_deg"] - 180.0), 20.0, b)
+        self.assertIn(b["confidence"], ("high", "medium", "low"))
+        self.assertEqual(len(b["breach_lonlat"]), 2)
+        b = ST.breach_direction(self.dam(), self.dem, self.folder(line=False))
+        self.assertEqual((b["method"], b["confidence"]), ("reservoir to dam point", "low"))
+        self.assertLess(abs(b["azimuth_deg"] - 180.0), 5.0, b)
+        b = ST.breach_direction(self.dam(), self.dem, self.folder(line=False, reservoir=False))
+        self.assertEqual(b["status"], ST.STATUS_OK, b)
+        self.assertEqual(b["method"], "terrain trace")
+        b = ST.breach_direction(self.dam(), None, self.folder(line=False, reservoir=False))
+        self.assertEqual(b["status"], ST.STATUS_GAP)
+
+    def test_terrain_coverage_in_the_dem_crs(self):
+        """DWR-2801: an EPSG:5070 VRT with a lon / lat dam point said 'coverage not checked: CRS differs or
+        unknown'."""
+        from osgeo import gdal
+        from damit_runner.flood import rasters as R
+        lon, lat = self.site["centre"]
+        x, y = R.transform_points([(lon, lat)], "EPSG:4326", "EPSG:5070")[0]
+        import numpy as np
+        tif = self.synth.write_tif(os.path.join(self.tmp, "t5070.tif"), np.full((50, 50), 300.0), x - 500.0,
+                                   y + 500.0, 20.0, 5070)
+        vrt = os.path.join(self.tmp, "3dep.vrt")
+        gdal.BuildVRT(vrt, [tif])
+        t = ST.terrain(self.dam(), vrt, {"crs": "EPSG:5070", "extent": (x - 500, y - 500, x + 500, y + 500)})
+        self.assertEqual(t["status"], ST.STATUS_OK, t)
+        self.assertTrue(t["covers_dam"])
+        self.assertEqual(t["crs"], "EPSG:5070")
+        self.assertNotIn("differs", t["detail"])
+        far = self.dam(x=lon + 1.0)
+        self.assertEqual(ST.terrain(far, vrt)["status"], ST.STATUS_GAP)
+        t = ST.terrain({"dam_id": "X"}, vrt)
+        self.assertIsNone(t["covers_dam"])
 
 
 if __name__ == "__main__":

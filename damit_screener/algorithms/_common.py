@@ -110,9 +110,9 @@ class DamitAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):  # noqa: N802
         return (self._help + "\n\nPresets: " + _preset_help() + "\n\nSuggested classifications only; the "
-                "engineer of record and the regulating agency make the determination. DamIT Screener 0.2.0 runs a 2D "
-                "screening flood in this process (built-in engine); it never starts LISFLOOD-FP, ANUGA, HEC-RAS or "
-                "Wine.")
+                "engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D "
+                "screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and "
+                "downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.")
 
     def createInstance(self):  # noqa: N802
         return type(self)()

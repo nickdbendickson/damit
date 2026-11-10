@@ -1,5 +1,7 @@
 """DamIT Runner's breach run: the DamSafety Runner's one-dam workflow on LISFLOOD-FP (or the built-in engine), with
-the ANUGA tier, for DamIT.
+the ANUGA tier, for DamIT. The engine: LISFLOOD_EXE, else the provider setting, NDBREACH_LISFLOOD, PATH or an install
+place, else the built-in engine with a warning (lisflood.find_exe); the record keeps which one ran and why
+(engine_selection).
 
   1. the sunny-day breach hydrograph (breach.make_hydrograph: no inflow, no outlet or spillway flow, the reservoir
      starting at the top of dam; METHOD piping, TR-60 or another of the DamSafety methods, or the user's CSV);
@@ -9,13 +11,15 @@ the ANUGA tier, for DamIT.
      (cell max(30 m, CELL)), HALF_WIDTH_MI either side, snapped to the model cell;
   4. the automatic clock: the hydrograph duration + the domain diagonal / 0.5 m/s, at least 2 h, at most
      DURATION_MAX_HR (and 336 h);
-  5. LISFLOOD-FP runs; an edge deeper than EDGE_TOL_FT moves out by STEP_MI (up to MAX_EXTENT_MI and MAX_RUNS
+  5. LISFLOOD-FP runs; an edge deeper than EDGE_TOL_FT moves out by STEP_MI, and so does an edge that carries
+     >= 10 % of the outflow once OUTFLOW_EXTEND_PCT (5 %) of the breach volume has left the model (up to MAX_EXTENT_MI and MAX_RUNS
      domain runs); a flood still arriving in the last 10 % of the clock gets 1.5 x the clock (not a domain run);
      a run is stopped at its wall-clock limit (LISFLOOD_MAX_WALL_S, 0 = 24 h) and the loop at its budget
      (LISFLOOD_MAX_TOTAL_WALL_S, 0 = MAX_RUNS x the per-run limit);
   6. GRID_REFINE: a coarse (> 10 m) run that floods >= 1,000 ac with a median wet depth <= 1 ft is run again at
      10 m on the same domain and clock, and that run is the record;
-  7. TIER 1 (or FORCE_ANUGA): ANUGA on a mesh over that extent; its maxima are the final results;
+  7. TIER 1 (or FORCE_ANUGA): ANUGA on the DamSafety Runner's default mesh over that extent (mesh.py; once more
+     with the buffer doubled when it reaches the mesh edge); its maxima are the final results;
   8. the final rasters (ft, ft/s, h) and vectors under DamSafety names.
 """
 import json
@@ -39,6 +43,7 @@ GRID_SPREAD_WARN_CELL_M = 10.0
 GRID_SPREAD_WARN_MIN_AC = 1000.0
 GRID_SPREAD_WARN_MEDIAN_FT = 1.0
 OUTFLOW_EDGE_SHARE = 0.10
+OUTFLOW_WARN_PCT = 5.0       # DamSafety H08: warn when at least this share of the volume left the model
 DEPTH_CLASSES_FT = (0.0, 1.0, 3.0, 6.0, 10.0)
 TIERS = ("LISFLOOD-FP only", "LISFLOOD-FP for the extent, then ANUGA (final results from ANUGA)",
          "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; needs HEC-RAS 6.6, see help)")
@@ -163,6 +168,7 @@ def one_run(p, wkt, s, hy, bounds, cell, sim_s, workdir, log, cancel, wall_s):
     par = LF.write_inputs(workdir, dem, s["inflow_xy"], hy, sim_s, p["manning"], p["arrival_ft"] * FT)
     info = LF.run(workdir, par, p["exe"], wall_s, p.get("threads") or 0, cancel, log)
     out = LF.read_results(workdir, dem, p["arrival_ft"] * FT)
+    info = dict(info, outflow=LF.boundary_outflow(workdir))
     return dem, out, info
 
 
@@ -204,12 +210,30 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
         valid = np.isfinite(dem.data)
         edges = G.edge_depths(depth, valid)
         over = [e for e in ("N", "S", "E", "W") if edges[e] > tol_m]
+        # the DamSafety Runner's OUTFLOW_EXTEND_PCT (Grok audit 3.1, DamSafety 3.16.8): once that share of the breach
+        # volume has left the model, every edge that carries a real share of it (OUTFLOW_EDGE_SHARE of the outflow,
+        # wet past the arrival depth) moves out too, even under the depth tolerance
+        leak = []
+        ofl = info.get("outflow") or {}
+        out_pct = ofl.get("outflow_pct")
+        ext_pct = float(p.get("outflow_extend_pct") or 0.0)
+        if not fixed and ext_pct > 0 and out_pct is not None and out_pct >= ext_pct:
+            shares = G.edge_flux_shares(depth, valid)
+            leak = [e for e in ("N", "S", "E", "W") if e not in over and edges[e] > arr_m
+                    and shares[e] >= OUTFLOW_EDGE_SHARE]
+            if leak:
+                log("{:.0f}% of the breach volume left the model; the water leaves through {} under {:g} ft, so {} "
+                    "moves out too.".format(out_pct, ", ".join(leak), p["edge_tol_ft"],
+                                             "that edge" if len(leak) == 1 else "those edges"))
+                over = over + leak
         arr = out["arrival_hr"]
         arr_max = float(np.nanmax(arr)) if np.isfinite(arr).any() else 0.0
         moving = arr_max > 0.9 * sim_s / 3600.0
         rec = {"run": it, "pass": len(passes) + 1, "bounds": [round(b, 1) for b in bounds], "cell_m": cell,
                "cells": int(dem.data.size), "sim_time_hr": round(sim_s / 3600.0, 2),
                "edge_depths_ft": {k: round(v / FT, 2) for k, v in edges.items()}, "over": over,
+               "over_outflow": leak, "boundary_outflow_pct": out_pct,
+               "clock_extension": bool(passes) and passes[-1]["run"] == it,
                "still_moving": moving, "engine": info["engine"], "wall_s": round(info["wall_s"], 1),
                "wall_limit_s": info["wall_limit_s"]}
         rec.update(flood_stats(dem, depth, arr_m))
@@ -224,7 +248,8 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
             break
         if over and it >= int(p["max_runs"]):
             stop = "domain-run limit"
-            warnings.append("Stopped after {} domain runs with the flood leaving through {} deeper than {:.1f} ft."
+            warnings.append("Stopped after {} domain runs with the flood leaving through {} deeper than {:.1f} ft. A "
+                            "clock extension is not counted as a run. The duration cap did not stop this run."
                             .format(it, ", ".join(over), p["edge_tol_ft"]))
             break
         new_bounds = G.expand_bounds(bounds, over, step) if over else bounds
@@ -233,9 +258,10 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
             stuck = [e for e in over if new_bounds[{"W": 0, "S": 1, "E": 2, "N": 3}[e]] ==
                      bounds[{"W": 0, "S": 1, "E": 2, "N": 3}[e]]]
             if stuck:
-                warnings.append("The flood leaves through {} deeper than {:.1f} ft where the DEM ends; the domain "
-                                "cannot grow there (a larger DEM is needed).".format(", ".join(stuck),
-                                                                                    p["edge_tol_ft"]))
+                warnings.append("The flood leaves through {} {} where the DEM ends; the domain cannot grow there (a "
+                                "larger DEM is needed).".format(", ".join(stuck), "deeper than {:.1f} ft".format(
+                                    p["edge_tol_ft"]) if not set(stuck) & set(leak) else
+                                    "(deeper than {:.1f} ft, or carrying the outflow)".format(p["edge_tol_ft"])))
                 over = [e for e in over if e not in stuck]
                 if not over and not moving:
                     stop = "DEM extent"
@@ -264,6 +290,10 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
         if over:
             bounds = new_bounds
             it += 1
+    last = passes[-1].get("boundary_outflow_pct") if passes else None
+    if not fixed and last is not None and last >= OUTFLOW_WARN_PCT:
+        warnings.append("{:.1f}% of the breach volume left the model through its edges in the last run; the flood "
+                        "area and the downstream consequences are minimums.".format(last))
     return {"dem": dem, "out": out, "bounds": bounds, "sim_s": sim_s, "passes": passes, "warnings": warnings,
             "stop": stop, "info": info}
 
@@ -278,7 +308,11 @@ def run_breach(p, out_dir, log=print, cancel=None):
     if tier == TIER_HECRAS:
         raise RunError("HEC-RAS 2D is not run by DamIT Runner (it needs HEC-RAS 6.6 and Wine on Linux); choose "
                        "LISFLOOD-FP only, or LISFLOOD-FP then ANUGA")
-    p["exe"] = LF.resolve_exe(p.get("lisflood_exe"))
+    sel = LF.find_exe(p.get("lisflood_exe"))
+    p["exe"] = sel["exe"]
+    log("Flood engine: {} ({})".format("the built-in engine" if LF.is_builtin(p["exe"]) else p["exe"], sel["how"]))
+    if sel["warning"]:
+        log(sel["warning"])
     os.makedirs(out_dir, exist_ok=True)
     model_dir = os.path.join(out_dir, "model")
     outputs = os.path.join(out_dir, "outputs")
@@ -305,7 +339,7 @@ def run_breach(p, out_dir, log=print, cancel=None):
                          p.get("z_units"))
     path, plen = G.trace_downstream(plan, s["inflow_xy"], L)
     bounds = G.path_bounds(path + [s["dam_xy"]], W, snap=cell)
-    warnings = list(s["checks"])
+    warnings = list(s["checks"]) + ([sel["warning"]] if sel["warning"] else [])
     d_end = math.hypot(path[-1][0] - s["dam_xy"][0], path[-1][1] - s["dam_xy"][1])
     if plen < 0.25 * L:
         warnings.append("The steepest-descent path from the breach inflow is only {:.0f} m long and ends {:.0f} m from "
@@ -351,13 +385,17 @@ def run_breach(p, out_dir, log=print, cancel=None):
                      {"manning": p["manning"], "fine_m2": p["anuga_fine_m2"], "coarse_m2": p["anuga_coarse_m2"],
                       "near_m": p["anuga_near_mi"] * MILE, "buffer_m": p["anuga_buffer_m"], "sim_time_s": g["sim_s"],
                       "arrival_m": p["arrival_ft"] * FT, "threads": p.get("threads") or 1,
-                      "python": p.get("anuga_python"), "wall_s": p["max_wall_s"]}, cancel, log)
-        anuga = res.get("stats") or {}
+                      "python": p.get("anuga_python"), "wall_s": p["max_wall_s"],
+                      "edge_tol_m": p["edge_tol_ft"] * FT}, cancel, log)
+        anuga = dict(res.get("stats") or {}, mesh=res.get("mesh"))
+        warnings += [n for n in res.get("notes") or [] if n not in warnings]
         out = {k: res[k] for k in ("depth", "velocity", "arrival_hr", "wse")}
         final_engine = "ANUGA"
     files = write_outputs(outputs, dem, wkt, out, p, s)
     stats = flood_stats(dem, out["depth"], p["arrival_ft"] * FT)
     record = {"dam_id": p["dam_id"], "engine": final_engine, "extent_engine": g["info"]["engine"],
+              "engine_selection": {"lisflood_exe": p["exe"], "how": sel["how"], "fallback": bool(sel["warning"]),
+                                   "warning": sel["warning"]},
               "tier": TIERS[tier], "force_anuga": bool(p["force_anuga"]), "record_cell_m": record_cell,
               "sim_time_hr": round(g["sim_s"] / 3600.0, 2), "bounds": [round(b, 1) for b in g["bounds"]],
               "crs_wkt": wkt, "passes": g["passes"], "stop_reason": g["stop"], "warnings": warnings + g["warnings"],

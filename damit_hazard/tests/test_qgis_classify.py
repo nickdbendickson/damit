@@ -293,7 +293,7 @@ def test_dialog_grammar_and_params():
     src = open(D.__file__, encoding="utf-8").read()
     assert not re.search(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-zA-Z])", src)
     dlg = D.DamitHazardDialog()
-    assert dlg.windowTitle() == "DamIT Hazard 0.1.1"
+    assert dlg.windowTitle() == "DamIT Hazard 0.1.2"
     assert dlg.minimumSizeHint().width() <= 800 and dlg.minimumSizeHint().height() <= 1000
     for b in dlg.findChildren(QAbstractButton):
         assert "..." not in b.text() and not b.text().startswith("\u25b6"), b.text()

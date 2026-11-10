@@ -21,9 +21,49 @@ except ImportError:                                       # pragma: no cover - C
 
 from damit_runner.core import rundam as RD                # noqa: E402
 
+try:
+    import scipy.ndimage                                  # noqa: F401
+    HAVE_SCIPY = True
+except ImportError:                                       # pragma: no cover
+    HAVE_SCIPY = False
+try:
+    import numpy                                          # noqa: F401
+    HAVE_NUMPY = True
+except ImportError:                                       # pragma: no cover
+    HAVE_NUMPY = False
+
 
 def _no_process(*a, **k):
     raise AssertionError("a test tried to start a process: {!r}".format(a[:1]))
+
+
+def _no_network(*a, **k):
+    raise AssertionError("a test tried to download: {!r}".format(a[:1]))
+
+
+class nothing_installed:
+    """No LISFLOOD-FP anywhere (no provider setting, NDBREACH_LISFLOOD, PATH or install place), except `which`."""
+
+    def __init__(self, LF, home, settings=None, which=None, environ=None):
+        self.LF, self.home, self.settings, self.which = LF, home, settings or {}, which or {}
+        self.environ = environ or {}
+
+    def __enter__(self):
+        LF = self.LF
+        real = LF.find_exe
+        self.patches = [
+            mock.patch.object(LF, "find_exe", lambda exe, settings=None, environ=None, home=None: real(
+                exe, settings=lambda k: self.settings.get(k, ""), environ=self.environ, home=self.home)),
+            mock.patch.object(LF, "SYSTEM_GLOBS", ()),
+            mock.patch.object(shutil, "which", lambda name, *a, **k: self.which.get(name))]
+        for p in self.patches:
+            p.start()
+        return self
+
+    def __exit__(self, *a):
+        for p in reversed(self.patches):
+            p.stop()
+        return False
 
 
 @unittest.skipUnless(HAVE, "numpy and GDAL needed")
@@ -98,17 +138,45 @@ class ModelRun(unittest.TestCase):
         with open(os.path.join(out, "outputs", "units.json")) as fh:
             self.assertEqual(json.load(fh)["depth"], "ft")
 
-    def test_hecras_refused_and_no_silent_builtin(self):
+    def test_hecras_refused_and_named_exe_must_exist(self):
         from damit_runner.flood import model as M
         from damit_runner.flood import lisflood as LF
         with self.assertRaises(M.RunError):
             M.run_breach(self.params(tier=2), os.path.join(self.tmp, "r2"), log=lambda *_: None)
         with mock.patch.object(shutil, "which", lambda *_: None):
-            with self.assertRaises(LF.ModelError):
-                LF.resolve_exe("")
-            with self.assertRaises(LF.ModelError):
+            with self.assertRaises(LF.ModelError):                 # a named LISFLOOD-FP is never replaced
                 LF.resolve_exe("lisflood-not-here")
         self.assertEqual(LF.resolve_exe("builtin"), "builtin")
+
+    def test_empty_exe_with_nothing_installed_falls_back_to_builtin(self):
+        from damit_runner.flood import model as M
+        from damit_runner.flood import lisflood as LF
+        logs = []
+        with nothing_installed(LF, self.tmp):
+            rec = M.run_breach(self.params(lisflood_exe=""), os.path.join(self.tmp, "fb"), log=logs.append)
+        self.assertEqual(self.calls[0]["exe"], LF.BUILTIN)
+        sel = rec["engine_selection"]
+        self.assertTrue(sel["fallback"])
+        self.assertEqual(sel["lisflood_exe"], LF.BUILTIN)
+        self.assertIn("BUILT-IN engine", sel["warning"])
+        self.assertIn(LF.FALLBACK_WARNING, rec["warnings"])
+        self.assertIn(LF.FALLBACK_WARNING, logs)
+        with open(os.path.join(self.tmp, "fb", "run_report.json")) as fh:
+            self.assertTrue(json.load(fh)["engine_selection"]["fallback"])
+
+    def test_installed_lisflood_is_used(self):
+        from damit_runner.flood import model as M
+        from damit_runner.flood import lisflood as LF
+        exe = os.path.join(self.tmp, "bin", "lisflood")
+        os.makedirs(os.path.dirname(exe))
+        with open(exe, "w") as fh:
+            fh.write("#!/bin/sh\n")
+        os.chmod(exe, 0o755)
+        with nothing_installed(LF, self.tmp, which={"lisflood": exe}):
+            rec = M.run_breach(self.params(lisflood_exe=""), os.path.join(self.tmp, "inst"), log=lambda *_: None)
+        self.assertEqual(self.calls[0]["exe"], exe)                # the stub ran, not the program
+        self.assertFalse(rec["engine_selection"]["fallback"])
+        self.assertEqual(rec["engine_selection"]["how"], "PATH (lisflood)")
 
     def test_run_model_fills_the_dam_folder(self):
         from damit_catalog import catalog as C

@@ -59,8 +59,11 @@ class RunDam(_Base):
                 "leaves it deeper than the edge tolerance (MAX_RUNS, MAX_EXTENT_MI, DURATION_MAX_HR and the "
                 "wall-clock limits stop it); a coarse wide, shallow flood is run again at 10 m (GRID_REFINE); "
                 "Models = ANUGA (or FORCE_ANUGA) re-runs the extent on a mesh and its maxima are the results.\n\n"
-                "LISFLOOD_EXE: empty = an installed LISFLOOD-FP (lisflood on PATH); 'builtin' = the built-in "
-                "numpy engine (a screening approximation, NOT LISFLOOD-FP; never chosen by itself). HEC-RAS 2D is "
+                "LISFLOOD_EXE: empty = an installed LISFLOOD-FP (the provider setting, NDBREACH_LISFLOOD, lisflood "
+                "on PATH or a usual install place); when none is found the built-in numpy engine runs instead, "
+                "with a WARNING in the log, run_report.json and ENGINE_FALLBACK / ENGINE_NOTE (as the old ND Breach "
+                "Runner did); 'builtin' = the built-in engine on request (a screening approximation, NOT "
+                "LISFLOOD-FP). A path that does not exist is an error, not a fallback. HEC-RAS 2D is "
                 "not run by DamIT (choosing it is refused). DamIT never starts HEC-RAS, Wine, ndbreach:rundam or "
                 "ndbreach:batch.\n\n"
                 "The run goes into a NEW folder under OUTPUT_FOLDER (never an existing one): run_setup.json, "
@@ -147,7 +150,8 @@ class RunDam(_Base):
         P(QgsProcessingParameterNumber("EDGE_TOL_FT", "Extend the domain while the flood leaves an edge deeper than "
                                        "(ft)", type=_DOUBLE, defaultValue=1.0, minValue=0.01))
         P(_adv(QgsProcessingParameterNumber("OUTFLOW_EXTEND_PCT", "Also extend the edges the water leaves through "
-                                            "once this % of the volume has left (recorded; not used by DamIT)",
+                                            "(under the edge tolerance too) once this % of the breach volume has "
+                                            "left the model (0 = off)",
                                             type=_DOUBLE, defaultValue=5.0, minValue=0.0, maxValue=100.0)))
         P(QgsProcessingParameterNumber("LENGTH_MI", "First domain: downstream length (mi)", type=_DOUBLE,
                                        defaultValue=4.0, minValue=0.25))
@@ -180,8 +184,8 @@ class RunDam(_Base):
         P(_adv(QgsProcessingParameterNumber("THREADS", "Threads (0 = the solver's own)", defaultValue=0,
                                             minValue=0)))
         P(_adv(QgsProcessingParameterString("LISFLOOD_EXE", "LISFLOOD-FP executable (empty = an installed "
-                                            "LISFLOOD-FP; 'builtin' = the built-in screening engine, a numpy "
-                                            "approximation, NOT LISFLOOD-FP)", defaultValue="", optional=True)))
+                                            "LISFLOOD-FP, else the built-in engine with a warning; 'builtin' = the "
+                                            "built-in screening engine, a numpy approximation, NOT LISFLOOD-FP)", defaultValue="", optional=True)))
         P(_adv(QgsProcessingParameterString("ANUGA_PYTHON", "ANUGA Python interpreter (empty = auto-detected)",
                                             defaultValue="", optional=True)))
         P(_adv(QgsProcessingParameterBoolean("KEEP_FILES", "Keep the model input and output files",
@@ -197,6 +201,9 @@ class RunDam(_Base):
         self.addOutput(QgsProcessingOutputBoolean("READY_TO_RUN", "Ready to run"))
         self.addOutput(QgsProcessingOutputBoolean("MODEL_LAUNCHED", "Model launched"))
         self.addOutput(QgsProcessingOutputString("ENGINE_USED", "Engine"))
+        self.addOutput(QgsProcessingOutputBoolean("ENGINE_FALLBACK", "Built-in engine used because no LISFLOOD-FP "
+                                                                     "was found"))
+        self.addOutput(QgsProcessingOutputString("ENGINE_NOTE", "Engine warning"))
         for name, label in (("DEPTH", "Depth (Max)"), ("VELOCITY", "Velocity (Max)"), ("ARRIVAL", "Arrival Time"),
                             ("WSE", "WSE (Max)"), ("HMAX", "hmax_ft"), ("FLOOD_POLYGONS", "Flood Polygons (Max Depth)"),
                             ("REPORT", "Run report")):
@@ -253,6 +260,9 @@ class RunDam(_Base):
             feedback.pushInfo("Prepared (DRY_RUN, no model launched): {}".format(folder))
         else:
             feedback.pushInfo("Model run finished ({}): {}".format(setup.get("engine"), folder))
+            if setup.get("engine_note"):
+                feedback.pushWarning(setup["engine_note"]) if hasattr(feedback, "pushWarning") \
+                    else feedback.pushInfo(setup["engine_note"])
         if setup.get("nid_warning"):
             feedback.pushInfo("NID ID: " + setup["nid_warning"])
         for g in setup["gaps"]:
@@ -260,7 +270,8 @@ class RunDam(_Base):
                 else feedback.pushInfo("not ready to run: missing {}".format(g))
         out = {"RUN_FOLDER": folder, "STATUS": setup["status"], "READY_TO_RUN": setup["ready_to_run"],
                "MODEL_LAUNCHED": bool(setup.get("model_launched")), "ENGINE_USED": setup.get("engine") or "none",
-               "FOLDER": setup.get("dam_folder")}
+               "FOLDER": setup.get("dam_folder"), "ENGINE_FALLBACK": bool(setup.get("engine_fallback")),
+               "ENGINE_NOTE": setup.get("engine_note") or ""}
         o = setup.get("outputs") or {}
         for name, key in (("DEPTH", "depth"), ("VELOCITY", "velocity"), ("ARRIVAL", "arrival"), ("WSE", "wse"),
                           ("HMAX", "hmax"), ("FLOOD_POLYGONS", "depth_polygons")):

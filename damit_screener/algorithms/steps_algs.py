@@ -126,7 +126,8 @@ class Prepare(_OneStep):
 
 class Terrain(_OneStep):
     _name, _display, step_key = "terrain", "Terrain (record and check DEM)", "terrain"
-    _help = "Records the DEM for each dam and checks it covers the dam point. DEM download is not in 0.1.0."
+    _help = ("Records the DEM for each dam and checks it covers the dam point, in the DEM's own CRS (the dam point is "
+             "transformed into it). The larger screening clips download fresh 3DEP terrain in engine2d.")
 
     def run_step(self, cat, config, dam, s, recs):
         return ST.terrain(dam, s.get("terrain"), C.terrain_info(s.get("terrain")))
@@ -145,10 +146,15 @@ class Storage(_OneStep):
 
 class BreachDirection(_OneStep):
     _name, _display, step_key = "breachdirection", "Breach direction", "breach_direction"
-    _help = "Breach azimuth from the dam record; a DEM-based estimate is not in 0.1.0 (flagged as a gap)."
+    _help = ("Breach azimuth from the dam record (breach_azimuth_deg); otherwise estimated as DamSafety Screening "
+             "does: the dam axis from <work>/dams/<id>/dam_line.geojson, the downstream side from the reservoir point "
+             "and the terrain along the line, the breach at the lowest downstream toe (else reservoir -> dam point, "
+             "else the steepest DEM drop at the dam point; low confidence). A gap only when there is nothing to go "
+             "on.")
 
     def run_step(self, cat, config, dam, s, recs):
-        return ST.breach_direction(dam)
+        return ST.breach_direction(dam, s.get("terrain") or dam.get("terrain"),
+                                   WF.dam_folder(self._work, dam["dam_id"]))
 
 
 class Hydrograph(_OneStep):
@@ -170,14 +176,16 @@ class Triage(_OneStep):
 
 class Engine2D(_OneStep):
     _name, _display, step_key = "engine2d", "2D screening flood", "engine2d"
-    _help = ("Runs the DamSafety Screening tool-7 2D flood for each dam (the built-in finite-volume engine, in this "
-             "process): the dam's hydrograph CSV, else a Froehlich (2008) piping breach from the top of dam (sunny "
+    _help = ("Runs the DamSafety Screening tool-7 2D flood for each dam (the built-in finite-volume engine in this "
+             "process, or LISFLOOD-FP): the dam's hydrograph CSV, else a Froehlich (2008) piping breach from the top of dam (sunny "
              "day, no outlet or spillway flow), injected at the downstream toe (searched 5 m to H x (DS slope + 1), "
-             "3:1 when the slope is missing, capped at 150 m, side check). Settings JSON: engine2d (builtin | off), "
-             "grid_m (20), simh (12), simmax (96), larger_clips (0 first clip only, 1 larger clips from the same "
-             "terrain, 2 from local_dem), timeout_s (0 = 0.8 x DAMIT_SCREENING_TIMEOUT_S, else 3600). Writes "
-             "Screening Depth / Velocity / DV (Max) and Screening Arrival Time into <work>/dams/<id>/ and samples "
-             "peak depth, velocity and DV at the receptors. LISFLOOD-FP, ANUGA, HEC-RAS and Wine are not started.")
+             "3:1 when the slope is missing, capped at 150 m, side check). Settings JSON: engine2d (builtin | lisflood "
+             "| off; lisflood = LISFLOOD-FP ACC, lisflood_exe or an installed one, else the built-in engine with a "
+             "warning), grid_m (20), simh (12), simmax (96), larger_clips (0 first clip only, 1 a fresh USGS 3DEP "
+             "download for each larger clip, into <work>/dams/<id>/screen_inputs/terrain_3dep/, 2 from local_dem), "
+             "timeout_s (0 = 0.8 x DAMIT_SCREENING_TIMEOUT_S, else 3600; the download counts). Writes Screening "
+             "Depth / Velocity / DV (Max) and Screening Arrival Time into <work>/dams/<id>/ and samples peak depth, "
+             "velocity and DV at the receptors. ANUGA, HEC-RAS and Wine are not started.")
 
     def run_step(self, cat, config, dam, s, recs):
         d_recs = WF.dam_receptors(recs, dam["dam_id"])
@@ -205,7 +213,7 @@ class Handoff(C.DamitAlgorithm):
     _help = ("Writes <work>/handoff/<dam>/damit_handoff.json (schema damit.handoff v1) for damit_run:rundam: dam "
              "ids, elevations, storage, scenario pools, scenarios, preset ID or custom method list, modifiers, "
              "label map, terrain / hydrograph paths, any preliminary suggestion and every gap. Runs the screening "
-             "steps first, the 2D screening flood included (built-in engine, in this process).")
+             "steps first, the 2D screening flood included (engine2d: built-in by default, or LISFLOOD-FP).")
 
     def initAlgorithm(self, config=None):  # noqa: N802
         self.add_common()

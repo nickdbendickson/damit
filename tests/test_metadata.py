@@ -6,8 +6,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None, "0.1.1"),
-           "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog,DamIT Runner", "0.2.0"),
-           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.2.0")}
+           "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog,DamIT Runner", "0.3.0"),
+           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.3.0")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
 # DamIT Runner 0.2.0 launches the flood model: only this module may start a process (LISFLOOD-FP or the ANUGA
 # worker); everything else in the three plugins still may not

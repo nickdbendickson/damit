@@ -1,19 +1,21 @@
-"""The ANUGA tier: after LISFLOOD-FP (or the built-in engine) has found the extent, ANUGA runs on a mesh over the
-flooded area plus ANUGA_BUFFER m, refined to ANUGA_FINE m2 triangles within ANUGA_NEAR_MI of the inflow (ANUGA_COARSE
-m2 elsewhere), and its maxima are the final results, as in the DamSafety Runner's middle tier.
+"""The ANUGA tier: after LISFLOOD-FP (or the built-in engine) has found the extent, ANUGA runs on the DamSafety
+Runner's default mesh (mesh.py, ported from DWR_Plugins main: the flooded area plus ANUGA_BUFFER m traced from the
+flood mask, refined to ANUGA_FINE m2 triangles in the flooded area within ANUGA_NEAR_MI of the inflow, ANUGA_COARSE
+m2 elsewhere), and its maxima are the final results, as in the DamSafety Runner's middle tier. As there, the inlet
+line is at least three cells wide, and when the ANUGA flood reaches the mesh edge deeper than EDGE_TOL_FT the mesh is
+traced again once from both floods with the buffer doubled.
 
 The worker (anuga_env/anuga_worker.py, vendored from the DamSafety Runner) runs in the ANUGA Python
-(ANUGA_PYTHON), started through lisflood.launch under the same wall-clock limit. Simplified against the DamSafety
-Runner: the outer mesh polygon is the rectangle around the flood plus the buffer (inside the DEM) and the refined
-polygon an octagon around the inflow; no gmsh mesher, culverts, breaklines or checkpoints."""
+(ANUGA_PYTHON), started through lisflood.launch under the same wall-clock limit. Not ported: the gmsh mesher,
+culverts, embankment breaklines, the fine-terrain bed, checkpoints and worker adoption."""
 import json
-import math
 import os
 import shutil
 
 import numpy as np
 
 from . import lisflood as LF
+from . import mesh as M
 
 WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "anuga_env", "anuga_worker.py")
 
@@ -44,38 +46,17 @@ def find_python(setting=""):
     return None
 
 
-def octagon(center, radius, n=8):
-    a = np.linspace(0.0, 2 * math.pi, n, endpoint=False) + math.pi / n
-    return np.column_stack([center[0] + radius * np.cos(a), center[1] + radius * np.sin(a)])
+def have_scipy():
+    import importlib.util
+    try:
+        return importlib.util.find_spec("scipy.ndimage") is not None
+    except ImportError:
+        return False
 
 
-def mesh_polygons(dem, depth, inflow_xy, arrival_m, buffer_m, near_m):
-    wet = np.isfinite(depth) & (depth >= arrival_m)
-    xs, ys = dem.x_centers(), dem.y_centers()
-    rr, cc = np.nonzero(wet)
-    if not len(rr):
-        x0 = x1 = inflow_xy[0]
-        y0 = y1 = inflow_xy[1]
-    else:
-        x0, x1 = xs[cc].min(), xs[cc].max()
-        y0, y1 = ys[rr].min(), ys[rr].max()
-    bx0, by0, bx1, by1 = dem.bounds
-    pad = 2 * dem.dx
-    x0, y0 = max(x0 - buffer_m, bx0 + pad), max(y0 - buffer_m, by0 + pad)
-    x1, y1 = min(x1 + buffer_m, bx1 - pad), min(y1 + buffer_m, by1 - pad)
-    outer = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-    room = min(inflow_xy[0] - x0, x1 - inflow_xy[0], inflow_xy[1] - y0, y1 - inflow_xy[1]) - 2 * dem.dx
-    r = min(near_m, room)
-    fine = octagon(inflow_xy, r) if r > 5 * dem.dx else np.zeros((0, 2))
-    return outer, fine
-
-
-def inlet_line(inflow_xy, direction, width_m):
-    ux, uy = direction
-    px, py = -uy, ux
-    h = 0.5 * max(width_m, 1.0)
-    x, y = inflow_xy
-    return np.array([[x - px * h, y - py * h], [x + px * h, y + py * h]])
+def mesh_polygons(dem, flooded, inflow_xy, buffer_m, near_m):
+    """The DamSafety Runner's default ANUGA mesh polygons (outer, fine) for a flood mask (mesh.py)."""
+    return M.mesh_polygons(dem, flooded, inflow_xy, M.MeshSettings(buffer_m, near_m))
 
 
 def write_job(path, dem, outer, fine, inlet, hydrograph, p):
@@ -91,32 +72,78 @@ def write_job(path, dem, outer, fine, inlet, hydrograph, p):
     return path
 
 
+def _save_ring(path, ring):
+    if len(ring):
+        np.savetxt(path, ring, delimiter=",", header="x,y", comments="", fmt="%.3f")
+
+
+def edge_depth_m(depth):
+    d = np.where(np.isfinite(depth), depth, 0.0)
+    return float(max(d[0, :].max(), d[-1, :].max(), d[:, 0].max(), d[:, -1].max())) if d.size else 0.0
+
+
 def run(workdir, dem, depth, inflow_xy, direction, breach_width_m, hydrograph, p, cancel=None, log=None):
     """Write the job, run the worker, read result.npz. Returns {'depth', 'velocity', 'arrival_hr', 'wse',
-    'stats'} on the DEM grid. p: manning, fine_m2, coarse_m2, near_m, buffer_m, sim_time_s, arrival_m, threads,
-    python, wall_s."""
+    'stats', 'mesh'} on the DEM grid. p: manning, fine_m2, coarse_m2, near_m, buffer_m, sim_time_s, arrival_m,
+    threads, python, wall_s, edge_tol_m (the DamSafety Runner's second pass: None = no second pass)."""
     py = find_python(p.get("python"))
     if not py:
         raise AnugaError("No ANUGA Python: set ANUGA_PYTHON to the python of an environment with ANUGA installed.")
+    if not have_scipy():
+        raise AnugaError("The ANUGA mesh needs scipy in the QGIS Python (scipy.ndimage), as the DamSafety Runner's "
+                         "does.")
     os.makedirs(workdir, exist_ok=True)
-    outer, fine = mesh_polygons(dem, depth, inflow_xy, p["arrival_m"], p["buffer_m"], p["near_m"])
-    inlet = inlet_line(inflow_xy, direction, breach_width_m)
+    flooded = M.flooded_mask(depth)
+    buffer_m = float(p["buffer_m"])
+    width = max(3.0 * dem.dx, float(breach_width_m or 0.0))
+    inlet = M.inlet_line(inflow_xy, direction, width)
+    runs = []
+    res = None
+    for k in range(2):
+        outer, fine = mesh_polygons(dem, flooded, inflow_xy, buffer_m, p["near_m"])
+        _save_ring(os.path.join(workdir, "mesh_boundary.csv"), outer)
+        _save_ring(os.path.join(workdir, "mesh_fine_area.csv"), fine)
+        res = _run_once(workdir, py, dem, outer, fine, inlet, hydrograph, p, cancel, log, buffer_m)
+        edge = edge_depth_m(res["depth"]) if not res["stats"].get("max_edge_depth_m") else float(
+            res["stats"]["max_edge_depth_m"])
+        runs.append({"buffer_m": buffer_m, "outer_vertices": int(len(outer)), "fine_vertices": int(len(fine)),
+                     "max_edge_depth_ft": round(edge / 0.3048, 2), "triangles": res["stats"].get("triangles")})
+        tol = p.get("edge_tol_m")
+        if tol is None or edge <= float(tol) or k == 1:
+            if tol is not None and edge > float(tol):
+                res.setdefault("notes", []).append(
+                    "ANUGA: the flood reaches the mesh boundary {:.1f} ft deep; its extent is limited by the "
+                    "LISFLOOD-FP domain.".format(edge / 0.3048))
+            break
+        if log:
+            log("ANUGA flood reaches the mesh edge ({:.1f} ft); widening the mesh.".format(edge / 0.3048))
+        flooded = M.flooded_mask(res["depth"]) | flooded
+        buffer_m *= 2.0
+    res["mesh"] = {"mesher": "DamSafety Runner default (ANUGA create_domain_from_regions)", "runs": runs,
+                   "inlet_width_m": round(width, 1)}
+    return res
+
+
+def _run_once(workdir, py, dem, outer, fine, inlet, hydrograph, p, cancel, log, buffer_m):
     job = write_job(os.path.join(workdir, "anuga_job.npz"), dem, outer, fine, inlet, hydrograph, p)
     out = os.path.join(workdir, "anuga_result.npz")
+    if os.path.exists(out):
+        os.remove(out)
     env = dict(os.environ, OMP_NUM_THREADS=str(int(p.get("threads") or 1)))
     if log:
-        log("ANUGA: {} {} (mesh {:.0f} m2 / {:.0f} m2, near {:.0f} m, buffer {:.0f} m)".format(
-            py, os.path.basename(WORKER), p["fine_m2"], p["coarse_m2"], p["near_m"], p["buffer_m"]))
+        log("ANUGA: {} {} (mesh: {} outer / {} refined vertices, {:.0f} m2 / {:.0f} m2, near {:.0f} m, buffer "
+            "{:.0f} m)".format(py, os.path.basename(WORKER), len(outer), len(fine), p["fine_m2"], p["coarse_m2"],
+                               p["near_m"], buffer_m))
     LF.launch([py, WORKER, job, out], workdir, os.path.join(workdir, "anuga.log"), LF.wall_limit_s(p.get("wall_s")),
               env, cancel, "ANUGA")
     if not os.path.isfile(out):
         raise AnugaError("ANUGA wrote no result ({})".format(out))
-    r = np.load(out, allow_pickle=False)
-    try:
-        stats = json.loads(str(r["stats"])) if "stats" in r else {}
-    except ValueError:
-        stats = {}
-    res = {k: np.asarray(r[k], float) for k in ("depth", "velocity", "arrival_hr", "wse")}
+    with np.load(out, allow_pickle=False) as r:
+        try:
+            stats = json.loads(str(r["stats"])) if "stats" in r else {}
+        except ValueError:
+            stats = {}
+        res = {k: np.asarray(r[k], float) for k in ("depth", "velocity", "arrival_hr", "wse")}
     for k, a in res.items():
         if a.shape != dem.data.shape:
             raise AnugaError("ANUGA {} has shape {}, the grid is {}".format(k, a.shape, dem.data.shape))

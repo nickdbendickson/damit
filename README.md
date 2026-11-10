@@ -159,6 +159,15 @@ step gives the preliminary class. Settings JSON: `engine2d` (`builtin` | `off`),
 `larger_clips`, `local_dem`, `timeout_s`, `z_units`. DamIT Screener never launches LISFLOOD-FP, ANUGA, HEC-RAS or
 Wine; it needs DamIT Runner (plugin dependency) for the flood package.
 
+0.3.0 (review-only follow-up to #16): `engine2d` = `lisflood` runs the screening flood on LISFLOOD-FP (ACC, the
+same injection cells, under the same time limit; `lisflood_exe`, else an installed LISFLOOD-FP, else the built-in
+engine with a warning); `builtin` stays the default. `larger_clips` 1 (the default) downloads each larger clip
+fresh from the USGS 3DEP service into `<work>/dams/<id>/screen_inputs/terrain_3dep/r<radius>m/` (a new folder each
+time; a failed download is noted and that clip uses the run's DEM). The step reports OK after a successful flood
+(the terrain-edge case is in the detail) and names the engine used. `breach_direction` estimates the azimuth as
+DamSafety Screening does (dam line + reservoir point + DEM; else reservoir → dam point; else the steepest DEM drop;
+low-confidence cases say so) instead of a gap, and `terrain` checks coverage in the DEM's own CRS.
+
 ## DamIT Runner (`damit_run`)
 
 | Algorithm | What it does |
@@ -182,6 +191,17 @@ Depth).geojson`, `Flood Extent.geojson`, `Arrival Zones.geojson`, `breach_hydrog
 Wine, `ndbreach:rundam` or `ndbreach:batch`; only `damit_runner/flood/lisflood.py` starts a process (LISFLOOD-FP or
 the ANUGA worker). Runner attaches catalog metadata and citations; classification is DamIT Hazard's job
 (`damit:classify`).
+
+0.3.0 (review-only follow-up to #16): an empty `LISFLOOD_EXE` searches the provider settings
+(`DAMIT_RUN_LISFLOOD_EXE`, `DAMIT_RUN_USE_BUILTIN`, then the ND Breach Runner's `NDBREACH_LISFLOOD_EXE`),
+`NDBREACH_LISFLOOD`, PATH and the usual install places, and runs the built-in engine **with a warning** when none is
+found, as the old ND Breach Runner did; a named path that does not exist is still an error. The engine used is in
+`run_report.json` / `run_setup.json` (`engine_selection`) and the outputs `ENGINE_USED`, `ENGINE_FALLBACK`,
+`ENGINE_NOTE`. `OUTFLOW_EXTEND_PCT` (5) works as in the DamSafety Runner: once that share of the breach volume has
+left through the model edges (LISFLOOD-FP `.mass`), every edge carrying at least 10% of the outflow and wet past the
+arrival depth also moves out, even under `EDGE_TOL_FT`; a clock extension is not counted as a run. The ANUGA tier
+uses the DamSafety Runner's default mesh (flood mask + buffer, refined near field, inlet at least 3 cells, a wider
+second pass when the flood reaches the mesh edge; needs scipy).
 
 North Dakota M1 (catalog plugin 0.1.1): a structure in the TM-11 judgment zone gives **Medium** (still flagged for
 engineer review; R7 can take it higher). Other presets keep `judgment_class` null (flag only).
