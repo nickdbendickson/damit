@@ -3,8 +3,8 @@
 DamIT Crest does not run a breach model, a screening chain or the hazard classification itself. From the Report step
 it writes the dam folder and calls the DamIT QGIS plugins through ``qgis_process`` (or a DamIT runner CLI for one
 dam). The defaults below are the ids the DamIT plugins publish: ``damit:classify`` (damit_hazard),
-``damit_screen:preflight`` / ``damit_screen:runchain`` (damit_screener 0.1.0) and ``damit_run:rundam`` (damit_runner
-0.1.0). No batch algorithm is published; the ``batch`` role is a name only and nothing in the app starts it. Every id
+``damit_screen:preflight`` / ``damit_screen:runchain`` (damit_screener 0.2.0: the 2D screening flood) and
+``damit_run:rundam`` (damit_runner 0.2.0: the model run). No batch algorithm is published; the ``batch`` role is a name only and nothing in the app starts it. Every id
 stays overridable. See docs/HANDOFF.md.
 
 Resolution order for every role (first hit wins):

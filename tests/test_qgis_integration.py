@@ -167,19 +167,100 @@ class Integration(unittest.TestCase):
         self.assertEqual(pkg["dam"]["crs"], "EPSG:26914")
         chk = processing.run("damit_run:checkhandoff", {"HANDOFF": pkg_path})
         self.assertTrue(chk["VALID"])
-        out = processing.run("damit_run:rundam", {"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs})
+        out = processing.run("damit_run:rundam", {"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs, "DRY_RUN": True})
         self.assertEqual(out["STATUS"], "prepared")
+        self.assertFalse(out["MODEL_LAUNCHED"])
         with open(os.path.join(out["RUN_FOLDER"], "run_setup.json")) as fh:
             setup = json.load(fh)
         self.assertFalse(setup["model_launched"])
         self.assertEqual(setup["preset_id"], "ND")
         self.assertIn("terrain (DEM)", setup["gaps"])
-        for engine in (1, 2, 3):
-            with self.assertRaises(QgsProcessingException):
-                processing.run("damit_run:rundam", {"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs, "ENGINE": engine})
+        # 0.2.0: DRY_RUN is off by default and the model needs a DEM; HEC-RAS (ENGINE 3, TIER 2) is refused. None
+        # of these makes a run folder.
         with self.assertRaises(QgsProcessingException):
-            processing.run("damit_run:rundam", {"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs, "DRY_RUN": False})
+            processing.run("damit_run:rundam", {"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs})
+        for extra in ({"ENGINE": 3}, {"TIER": 2}):
+            with self.assertRaises(QgsProcessingException):
+                processing.run("damit_run:rundam", dict({"HANDOFF": pkg_path, "OUTPUT_FOLDER": runs}, **extra))
         self.assertEqual(len(os.listdir(os.path.join(runs, "ND00009"))), 1)
+
+    def test_report_chain_screen_model_classify(self):
+        """Crest's Report step on a synthetic valley: runchain (2D screening flood -> preliminary class), rundam
+        (the model launched: Depth (Max), hmax and the flood polygons in the dam folder), damit:classify on those
+        rasters. The engines are stubs (no LISFLOOD-FP, ANUGA or built-in engine runs)."""
+        import processing
+        from damit_runner.tests import synth
+        from damit_runner.flood import lisflood as LF, screen as SC
+        from damit_hazard.provider import Provider
+        reg = QgsApplication.processingRegistry()
+        hz = None
+        if reg.providerById("damit") is None:
+            hz = Provider()
+            reg.addProvider(hz)
+        d = os.path.join(self.tmp, "report")
+        os.makedirs(d)
+        dem = os.path.join(d, "dem.tif")
+        site = synth.make_dem(dem)
+        x, y = site["dam_xy"]
+        top_ft = site["top_m"] / 0.3048
+        h_ft = (site["top_m"] - site["floor_at_dam"]) / 0.3048
+        work, runs = os.path.join(d, "work"), os.path.join(d, "runs")
+        dams_folder = os.path.join(work, "dams")
+        os.makedirs(os.path.join(dams_folder, "ND00199"))
+        os.makedirs(runs)
+        with open(os.path.join(dams_folder, "ND00199", "dam_line.geojson"), "w") as fh:
+            json.dump({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}, "geometry": {
+                "type": "LineString", "coordinates": [list(c) for c in site["line"]]}}]}, fh)
+        dams = point_layer([{"_x": x, "_y": y, "ID": "ND00199", "HT": h_ft, "STOR": 500.0, "TOD": top_ft}],
+                           [("ID", "s"), ("HT", "d"), ("STOR", "d"), ("TOD", "d")])
+        recs = point_layer([{"_x": x, "_y": y - 200.0, "id": "h1", "dam_id": "ND00199", "receptor_type": "structure",
+                             "structure_type": "home", "habitable": True}],
+                           [("id", "s"), ("dam_id", "s"), ("receptor_type", "s"), ("structure_type", "s"),
+                            ("habitable", "b")])
+        real_sim = SC.simulate
+
+        def sim(*a, **k):
+            k["engine_factory"] = synth.FakeFV
+            return real_sim(*a, **k)
+        calls = []
+        try:
+            with mock.patch.object(SC, "simulate", sim), mock.patch.object(LF, "run", synth.stub_lisflood(LF, calls)):
+                r = processing.run("damit_screen:runchain", {
+                    "WORK": work, "MODE": 0, "PRESET": "ND", "DAMS": dams, "TERRAIN": dem, "RECEPTORS": recs,
+                    "FIELD_MAP": "dam_id=ID,height_ft=HT,storage_acft=STOR,top_of_dam_elev_ft=TOD"})
+                self.assertTrue(r["OK"])
+                with open(r["HANDOFFS"][0]) as fh:
+                    pkg = json.load(fh)
+                self.assertEqual(pkg["screening"]["status"], "computed_preliminary")
+                self.assertTrue(os.path.isfile(os.path.join(dams_folder, "ND00199", "Screening Depth (Max).tif")))
+                out = processing.run("damit_run:rundam", {"HANDOFF": r["HANDOFFS"][0], "OUTPUT_FOLDER": runs,
+                                                          "DAMS_FOLDER": dams_folder, "LISFLOOD_EXE": "builtin",
+                                                          "MAX_RUNS": 2})
+            self.assertTrue(out["MODEL_LAUNCHED"])
+            self.assertEqual(out["STATUS"], "finished")
+            self.assertTrue(calls)
+            dam_dir = os.path.join(dams_folder, "ND00199")
+            for name in ("Depth (Max).tif", "Velocity (Max).tif", "hmax_ft.tif", "Flood Polygons (Max Depth).geojson"):
+                self.assertTrue(os.path.isfile(os.path.join(dam_dir, name)), name)
+            before = sorted(os.listdir(dam_dir))
+            from damit_hazard.engine import catalog as HC
+            pids = [None] + list(HC.load()["presets"])
+            st = QgsVectorLayer("Polygon?crs=EPSG:26914&field=type:string&field=occupants:integer", "s", "memory")
+            f = QgsFeature(st.fields())
+            f.setGeometry(QgsGeometry.fromWkt("POLYGON(({0} {1},{2} {1},{2} {3},{0} {3},{0} {1}))".format(
+                x - 5, y - 205, x + 5, y - 195)))
+            f.setAttribute("type", "home")
+            f.setAttribute("occupants", 3)
+            st.dataProvider().addFeatures([f])
+            res = processing.run("damit:classify", {
+                "PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "METRES": False,
+                "DEPTH": os.path.join(dam_dir, "Depth (Max).tif"), "VELOCITY": os.path.join(dam_dir, "Velocity (Max).tif"),
+                "STRUCTURES": st, "OUTPUT": os.path.join(d, "classify"), "DAM_NAME": "synthetic"})
+            self.assertIn(res["CLASS"], ("Low", "Medium", "High"))
+            self.assertEqual(sorted(os.listdir(dam_dir)), before)          # classify writes nothing there
+        finally:
+            if hz is not None:
+                reg.removeProvider(hz)
 
     def test_runchain_refuses_on_preflight_fail(self):
         import processing

@@ -1,0 +1,62 @@
+name: damit_models
+
+# DamIT Screener (2D screening flood), DamIT Runner (model run), the catalog / hazard ND judgment-zone rule and the
+# Crest desktop hand-off. The flood engines are stubbed in every test: no LISFLOOD-FP, ANUGA, HEC-RAS, Wine or
+# built-in engine run, and subprocess.Popen fails if a test tries to start a process.
+on:
+  push:
+    paths: ["damit_screener/**", "damit_runner/**", "damit_catalog/**", "damit_hazard/**", "damit_crest/desktop/**",
+            "tests/**", ".github/workflows/damit_models.yml"]
+  pull_request:
+    paths: ["damit_screener/**", "damit_runner/**", "damit_catalog/**", "damit_hazard/**", "damit_crest/desktop/**",
+            "tests/**", ".github/workflows/damit_models.yml"]
+
+jobs:
+  pure:
+    name: Screener, Runner, Catalog (no QGIS, no GDAL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pure-Python tests (the flood tests skip without numpy / GDAL)
+        run: >-
+          python3 -m unittest -v damit_catalog.tests.test_catalog damit_screener.tests.test_workflow
+          damit_screener.tests.test_engine2d damit_runner.tests.test_rundam damit_runner.tests.test_flood
+          damit_runner.tests.test_followups tests.test_metadata tests.test_hazard_screener_agree
+
+  qgis:
+    name: Flood package, model run and Report chain on QGIS 3.34 (offscreen, engines stubbed)
+    runs-on: ubuntu-latest
+    container: qgis/qgis:3.34
+    steps:
+      - uses: actions/checkout@v4
+      - name: scipy for the DamSafety ANUGA mesh tests (scipy.ndimage, as the DamSafety Runner's mesher needs)
+        run: python3 -c "import scipy.ndimage" || (apt-get update && apt-get install -y --no-install-recommends python3-scipy)
+      - name: QGIS Python, GDAL, numpy and scipy are importable (else the flood tests would only skip)
+        run: python3 -c "import qgis.core, osgeo.gdal, numpy, scipy.ndimage"
+      - name: Tests with GDAL and QGIS
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OMP_NUM_THREADS: "1"
+          GDAL_NUM_THREADS: "1"
+        run: |
+          export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)"
+          nice -n 19 python3 -m unittest -v damit_runner.tests.test_flood damit_runner.tests.test_followups \
+            damit_screener.tests.test_engine2d \
+            damit_runner.tests.test_rundam damit_screener.tests.test_workflow tests.test_qgis_integration
+
+  crest:
+    name: Crest desktop hand-off (fake qgis_process)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # test_smoke (the committed web bundle vs src/) is not run here: on main the bundle is already older than
+      # src/lib/crest/data/jurisdictions.json (catalog 2026.11.09.4) and needs `npm run build:desktop`.
+      - name: Desktop tests
+        working-directory: damit_crest/desktop/tests
+        run: python3 -m unittest -v test_algorithms test_handoff test_local_api test_nid test_nid_rule test_localdem

@@ -120,7 +120,7 @@ class Chain(unittest.TestCase):
                  "habitable": True, "depth_ground_ft": 2.6, "feature_kind": "isolated_home"},
                 {"id": "r1", "dam_id": "ND00002", "receptor_type": "road", "road_class": "private",
                  "feature_kind": "township_or_county_road"}]
-        s = dict(WF.DEFAULT_SETTINGS, preset="ND", terrain=dem,
+        s = dict(WF.DEFAULT_SETTINGS, preset="ND", terrain=dem, engine2d="off",
                  summary={"model_dimension": "1D", "hydraulics_source": "breach_model"})
         logs = []
         summ = WF.run_chain(self.work, s, dams, probs, recs, log=logs.append)
