@@ -41,7 +41,7 @@ STAGES = ("screening", "runner", "hec_build", "hec_run", "hazard_import", "class
 STAGE_LABELS = {"screening": "Screening", "runner": "Runner", "hec_build": "HEC-RAS build",
                 "hec_run": "HEC-RAS run", "hazard_import": "Hazard import",
                 "classify": "Hazard classify"}
-ALGS = {"screening": "nddam:runchain", "runner": "damit_run:batch",
+ALGS = {"screening": "damit_screen:runchain", "runner": "damit_run:batch",
         "hec_build": "damit_run:hecrasexport", "hazard_import": "ndhazard:hecrasplan",
         "classify": "ndhazard:classify", "save_state": "ndhazard:savedamstate"}
 # the settings rows each stage's tool takes

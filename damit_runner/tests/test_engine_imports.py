@@ -137,15 +137,16 @@ class CoreModules(unittest.TestCase):
 
     def test_rundam_version(self):
         from damit_runner.core import rundam as RD
-        self.assertEqual(RD.VERSION, "0.2.0")
+        self.assertEqual(RD.VERSION, "0.3.0")
         self.assertEqual(RD.ENGINE_LISFLOOD, 1)
-        # ANUGA and HEC-RAS should raise (not yet available)
+        # 0.3.0: LISFLOOD-FP and ANUGA run; HEC-RAS 2D is refused
         with self.assertRaises(RD.RunError):
-            RD.check_engine(RD.ENGINE_ANUGA)
-        with self.assertRaises(RD.RunError):
-            RD.check_engine(RD.ENGINE_HECRAS)
-        # LISFLOOD should pass
-        self.assertEqual(RD.check_engine(RD.ENGINE_LISFLOOD), 1)
+            RD.refuse_engine(RD.ENGINE_HECRAS)
+        RD.refuse_engine(RD.ENGINE_LISFLOOD)
+        RD.refuse_engine(RD.ENGINE_ANUGA)
+        # the names the damit_run:rundam algorithm reads
+        for n in ("DEM_Z_LABELS", "method_labels", "refuse_engine", "run_model"):
+            self.assertTrue(hasattr(RD, n), n)
 
     def test_workflow_version_exists(self):
         from damit_runner.core import workflow
