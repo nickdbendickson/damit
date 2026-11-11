@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# fetch_asdso.py v1.1 — download public dam-safety reference documents listed by ASDSO
+# fetch_asdso.py v1.2 — download public dam-safety reference documents listed by ASDSO
 # (damsafety.org), plus a curated catalog of agency and state sources, into the damresearch library,
 # with a citation for each file.
 #
@@ -35,7 +35,7 @@ import os, re, sys, csv, json, time, hashlib, argparse, html
 import urllib.request, urllib.error, urllib.parse, urllib.robotparser
 from datetime import datetime, timezone
 
-VERSION = "1.1"
+VERSION = "1.2"
 SITE = "https://damsafety.org"
 UA = "damit-reference-fetch/%s (+research library; polite crawler)" % VERSION
 DEFAULT_PAGES = [
@@ -54,6 +54,16 @@ MAX_BYTES = 400 * 1024 * 1024
 def say(msg):
     print(msg, flush=True)
 
+
+
+def safe_url(url):
+    """1.2: percent-encode spaces and other unsafe characters an index page links with
+    (USBR best-practices chapters: 'A6-Subjective ProbabilityAndExpertElicitation.pdf');
+    urllib refuses a URL with a raw space. Already-encoded %XX is kept."""
+    p = urllib.parse.urlsplit(url)
+    path = urllib.parse.quote(p.path, safe="/%:@!$&'()*+,;=-._~")
+    query = urllib.parse.quote(p.query, safe="=&%/:+,;@-._~")
+    return urllib.parse.urlunsplit((p.scheme, p.netloc, path, query, p.fragment))
 
 class Fetcher:
     def __init__(self, delay, retries=3):
@@ -84,6 +94,7 @@ class Fetcher:
         self.last = time.time()
 
     def open(self, url):
+        url = safe_url(url)
         last = None
         for attempt in range(self.retries):
             self._wait()

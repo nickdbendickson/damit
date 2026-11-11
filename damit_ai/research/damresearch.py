@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# damresearch.py v1.0.3 — local research assistant for dam-safety, dam-design and
+# damresearch.py v1.0.4 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -41,7 +41,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 HOME = os.path.expanduser(os.environ.get("DAMRESEARCH_HOME", "~/DamResearch"))
 LIBRARY = os.path.join(HOME, "library")
 REPORTS = os.path.join(HOME, "reports")
@@ -154,6 +154,14 @@ def chat(messages, schema=None, think=False, stream_to=None, num_predict=None, t
     p = {"model": CHAT_MODEL, "messages": messages, "options": opts, "stream": stream_to is not None}
     if schema is not None and _format_ok[0]:
         p["format"] = schema
+    elif schema is not None:
+        # 1.0.4: no structured output (older Ollama, or a model whose renderer has none, e.g.
+        # qwen3.6 on Ollama 0.40: HTTP 501 "structured output is unavailable"): ask for the
+        # same JSON in words; parse_json takes it out of the reply.
+        msgs = [dict(m) for m in messages]
+        msgs[-1]["content"] = (msgs[-1]["content"] + "\n\nReply with ONE JSON object only, no "
+                               "other text, matching this JSON schema:\n" + json.dumps(schema))
+        p["messages"] = msgs
     if _think_ok[0]:
         p["think"] = bool(think)
     try:
@@ -166,8 +174,10 @@ def chat(messages, schema=None, think=False, stream_to=None, num_predict=None, t
         if "HTTP 400" in s and "think" in s.lower() and _think_ok[0]:
             _think_ok[0] = False          # older Ollama, or a model without a thinking switch
             return chat(messages, schema, False, stream_to, num_predict, temperature)
-        if "HTTP 400" in s and schema is not None and _format_ok[0] and "format" in s.lower():
-            _format_ok[0] = False         # Ollama too old for JSON-schema output
+        if (schema is not None and _format_ok[0]
+                and (("HTTP 400" in s and "format" in s.lower())
+                     or ("HTTP 501" in s and "structured output" in s.lower()))):
+            _format_ok[0] = False         # no JSON-schema output here: ask for JSON in words
             return chat(messages, schema, think, stream_to, num_predict, temperature)
         raise
 
