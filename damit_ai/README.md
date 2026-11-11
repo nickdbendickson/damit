@@ -92,6 +92,9 @@ Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6
 
 ## Status
 
+- `lumo/knowledge/` is a knowledge pack to index into Lumo's RAG beyond the source code (known behaviours /
+  conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
+  it); see `lumo/knowledge/README.md` and `index-knowledge.zsh`.
 - `lumo/` is setup-local-lumo.sh v3.6 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
   suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (all written by the installer itself; `lumo-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
