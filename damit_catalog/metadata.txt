@@ -17,5 +17,5 @@ icon=icon.svg
 experimental=True
 deprecated=False
 hasProcessingProvider=no
-changelog=0.1.1 - M1 parameter judgment_class (default null: the judgment zone only flags); ND preset M1 judgment_class 2 (Medium, still flagged; Nick's ruling Nov 10, 2026). The evaluator scores it. Data version string kept at 2026.11.09.4 (Crest's committed desk bundle mirrors it).
+changelog=0.2.0 - M1 parameter judgment_class (default null: the judgment zone only flags); ND preset M1 judgment_class 2 (Medium, still flagged; Nick's ruling Nov 10, 2026). The evaluator scores it. Data version string kept at 2026.11.09.4 (Crest's committed desk bundle mirrors it).
     0.1.0 - first release: Appendix A catalog (Nov 9, 2026 corrected edition), loader, evaluator and the damit.handoff v1 schema shared by DamIT Screener and DamIT Runner.

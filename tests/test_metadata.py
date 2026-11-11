@@ -5,7 +5,7 @@ import re
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None, "0.1.1"),
+PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None, "0.2.0"),
            "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog,DamIT Runner", "0.3.0"),
            "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.3.0")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
