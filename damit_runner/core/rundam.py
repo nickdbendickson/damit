@@ -17,7 +17,7 @@ dam folder. DRY_RUN on keeps the 0.1.0 prepare / record only path.
 install places, and when there is none runs the built-in engine with a warning (the old ND Breach Runner's fallback);
 run_setup.json 'engine_selection' and the outputs ENGINE_USED / ENGINE_FALLBACK / ENGINE_NOTE say which ran. ANUGA
 runs on the DamSafety Runner's default mesh (flood/mesh.py). HEC-RAS 2D is refused; DamIT never starts
-HEC-RAS, Wine, ndbreach:rundam or ndbreach:batch.
+HEC-RAS or Wine, and never calls the ND suite's breach runner or batch tools.
 """
 import datetime
 import json
@@ -35,8 +35,8 @@ ENGINE_LABELS = ["From Models (TIER)", "LISFLOOD-FP", "ANUGA (LISFLOOD-FP for th
 ENGINE_NONE = 0          # 0.1.0 name of index 0 (it meant "prepare only"); 0.2.0: "from TIER"
 ENGINE_TIER, ENGINE_LISFLOOD, ENGINE_ANUGA, ENGINE_HECRAS = 0, 1, 2, 3
 REFUSAL = ("DamIT Runner does not run {}: HEC-RAS 2D needs HEC-RAS 6.6 (and Wine on Linux), and DamIT never starts "
-           "HEC-RAS, Wine, ndbreach:rundam or ndbreach:batch. Choose LISFLOOD-FP, or LISFLOOD-FP then ANUGA. "
-           "Nothing was run.")
+           "HEC-RAS or Wine, and never calls the ND suite's breach runner or batch tools. Choose LISFLOOD-FP, or "
+           "LISFLOOD-FP then ANUGA. Nothing was run.")
 EXPECTED_OUTPUTS = {
     "depth_max": "outputs/Depth (Max).tif",
     "velocity_max": "outputs/Velocity (Max).tif",
