@@ -39,7 +39,7 @@ class Metadata(unittest.TestCase):
         for folder, (name, provider, dep, _) in PLUGINS.items():
             m = meta(folder)
             self.assertEqual(m["name"], name)
-            self.assertEqual(m["version"], "0.1.0")
+            self.assertEqual(m["version"], "0.2.0")
             self.assertEqual(m["qgisMinimumVersion"], "3.28")
             self.assertEqual(m["qgisMaximumVersion"], "4.99")
             self.assertEqual(m["supportsQt6"], "True")
