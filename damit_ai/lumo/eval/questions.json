@@ -1,0 +1,69 @@
+{
+  "_comment": "Lumo code-triage eval. Each question targets facts that live in the Lumo knowledge pack (collection lumo_knowledge, indexed by the installer). 'doc' is a regex that must match at least one retrieved source path (grounding). 'facts' are regexes that must all appear in the answer. 'forbid' (optional) must not appear. Mirrors research/eval/questions.json. Nothing leaves the machine.",
+  "collection": "lumo_knowledge",
+  "questions": [
+    {
+      "id": "refine-near-velocity",
+      "q": "Which flag disables the near-dam refine pass, and why would I turn it off?",
+      "doc": "KNOWN-BEHAVIOURS",
+      "facts": ["REFINE_NEAR", "false", "FV1", "velocity|blow up|instab"]
+    },
+    {
+      "id": "solver-choices",
+      "q": "What SOLVER values does the Runner accept for a main run, and which is the default?",
+      "doc": "KNOWN-BEHAVIOURS",
+      "facts": ["ACC", "FV2", "MWDG2", "default"],
+      "forbid": ["FV1 is (the )?default", "DG2 is (the )?default"]
+    },
+    {
+      "id": "cuda-only-solvers",
+      "q": "Can I use FV2 or MWDG2 on a CPU-only LISFLOOD-FP build?",
+      "doc": "KNOWN-BEHAVIOURS",
+      "facts": ["CUDA", "IterateQ|adaptive|ACC"],
+      "forbid": ["yes, (fv2|mwdg2) (run|work)s? (fine )?on cpu"]
+    },
+    {
+      "id": "velocity-solver-sensitive",
+      "q": "Is max velocity solver-sensitive? What about flood depth?",
+      "doc": "KNOWN-BEHAVIOURS",
+      "facts": ["velocity", "solver", "depth", "indicative|agree|not"]
+    },
+    {
+      "id": "mass-balance-rerun",
+      "q": "What triggers the ACC mass-balance auto-rerun, and what does it change?",
+      "doc": "KNOWN-BEHAVIOURS|MODELING-FINDINGS",
+      "facts": ["1\\s*%", "theta|0\\.7", "CFL|0\\.5"]
+    },
+    {
+      "id": "2801-overspread-cause",
+      "q": "Has the DWR-2801 over-spread been attributed to the solver or to the terrain?",
+      "doc": "MODELING-FINDINGS|KNOWN-BEHAVIOURS",
+      "facts": ["terrain|crest-resolution|grid", "not the (numerical )?solver|not a solver"],
+      "forbid": ["caused by the solver"]
+    },
+    {
+      "id": "crest-burn",
+      "q": "What does crest burn do to roads and rail embankments?",
+      "doc": "MODELING-FINDINGS|KNOWN-BEHAVIOURS",
+      "facts": ["crest burn|burn", "road", "rail", "1\\s*m"]
+    },
+    {
+      "id": "lisflood-openmp-threads",
+      "q": "How should I thread LISFLOOD-FP when running several dams?",
+      "doc": "MODELING-FINDINGS|KNOWN-BEHAVIOURS",
+      "facts": ["OpenMP|thread", "side by side|1 thread|one thread", "poor|weak|scales?"]
+    },
+    {
+      "id": "absaraka-screening-peak",
+      "q": "What is wrong with ND Screening's reported peak at Absaraka / normal pool?",
+      "doc": "KNOWN-BEHAVIOURS",
+      "facts": ["normal.?pool", "peak", "bug|reads|area"]
+    },
+    {
+      "id": "orphans-not-freed",
+      "q": "Why does Hazard keep _ORPHANS layers around instead of freeing them?",
+      "doc": "KNOWN-BEHAVIOURS",
+      "facts": ["_ORPHANS|orphan", "thread", "PROJ|QGIS 3.34|crash|on purpose"]
+    }
+  ]
+}
