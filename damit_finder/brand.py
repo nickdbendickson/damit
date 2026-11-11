@@ -20,3 +20,14 @@ POND_HELP = ("The pond engine is the one DamSafety Screening uses for its pond t
              "could release water.")
 CROSS_HELP = ("Known structures for crossings: NBI bridges (DamIT Data), state DOT culvert "
               "inventories, USGS stream crossings, SARP / ABI road crossings.")
+# Image services with a near-infrared band for the water outlines: (label, ImageServer address,
+# green band, near-infrared band). USGS NAIP Plus is red, green, blue, near-infrared (the most
+# recent NAIP of each place, 60 cm or finer). A state's own 4-band or colour-infrared service
+# goes in as an address (colour-infrared is NIR, red, green: green 3, NIR 1).
+IMAGE_SERVICES = [
+    ("USGS NAIP Plus (the most recent NAIP; 4-band)",
+     "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer", 2, 4),
+]
+WATER_HELP = ("Layers: 3DHP / NHD waterbodies or the NWI as the mapped water bodies. The 'water' "
+              "polygons with mapped = no are the ponds no layer has: give them to 'Find ponds and "
+              "dugouts' as its water bodies to ask the LiDAR whether each is held above the ground.")
