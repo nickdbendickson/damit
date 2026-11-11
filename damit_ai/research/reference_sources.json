@@ -1,6 +1,6 @@
 {
   "about": "Catalog of public dam-safety, hazard-classification and dam-design references for fetch_asdso.py --catalog. Group 'hazard' = the sources cited in 'US Dam Hazard Classification - Corrected Edition' and 'Dam Hazard Classification Summaries' (2026-11-09). Group 'design' = dam design, hydrology, breach and consequence references. kind: pdf (download; alt URLs tried in order), html (law/policy web page saved as Markdown text), index (download the PDF links on a page that match 'match'), manual (no stable public link found: listed in sources.csv to get by hand). check: 'tested' = downloaded from the cloud workspace; 'listed' = URL taken from a search-engine listing of the file; 'cited' = host and file named in the attached PDFs; 'pattern' = built from the publisher's usual URL pattern, not seen. Edit freely: add entries, fix URLs, or set 'skip': true.",
-  "version": "2026-11-11c",
+  "version": "2026-11-11d",
   "groups": {
     "hazard": [
       {"id": "fema-333", "kind": "pdf", "title": "Federal Guidelines for Dam Safety: Hazard Potential Classification System for Dams", "org": "FEMA", "number": "FEMA 333", "year": "2004",
@@ -148,8 +148,23 @@
     ],
       "software": [
         {"id": "lisflood-fp-user-guide", "kind": "manual", "title": "LISFLOOD-FP 8.0 user guide and documentation", "org": "SEAMLESS-WAVE / University of Bristol", "number": "LISFLOOD-FP 8.x", "year": "2022",
-         "url": "https://www.seamlesswave.com/LISFLOOD8.0", "check": "listed",
+         "url": "https://www.seamlesswave.com/LISFLOOD8.0.html", "check": "listed",
          "note": "Official home page and user guide for the LISFLOOD-FP 8.0-8.3 solvers (the engine the Runner and Screening use); GPLv3, covers the ACC/FV1/FV2/DG2/MWDG2 keywords. Blocked from the cloud container - get on the Mac."},
+        {"id": "seamlesswave-adaptive", "kind": "html", "title": "SEAMLESS-WAVE adaptive / GPU-MWDG2 documentation", "org": "University of Sheffield", "number": "", "year": "",
+         "url": "https://www.seamlesswave.com/Adaptive.html", "check": "listed",
+         "note": "Dynamic multiwavelet (MWDG2) adaptivity in LISFLOOD-FP 8.2. Blocked from the cloud container."},
+        {"id": "lisflood-fp-8-2-release", "kind": "manual", "title": "LISFLOOD-FP 8.2 source archive", "org": "University of Bristol / Sheffield", "number": "DOI 10.5281/zenodo.13121102", "year": "2024",
+         "url": "https://zenodo.org/records/13121102/files/LISFLOOD-FP-v8.2.zip", "check": "listed",
+         "note": "Official 8.2 source zip (~348 MB) - software, not a readable doc, so it is listed for hand download/build, not auto-ingested."},
+        {"id": "lisflood-fp-8-0-release", "kind": "manual", "title": "LISFLOOD-FP 8.0 source archive", "org": "University of Bristol / Sheffield", "number": "DOI 10.5281/zenodo.4073011", "year": "2020",
+         "url": "https://zenodo.org/records/4073011/files/LISFLOOD-FP-8.zip", "check": "listed",
+         "note": "Original 8.0 release (DG2 + FV1 solvers). Source zip; get by hand."},
+        {"id": "lisflood-fp-8-3-github", "kind": "manual", "title": "LISFLOOD-FP 8.3 (GPU / Apple Metal patches)", "org": "ihaseeburrehman (GitHub)", "number": "", "year": "",
+         "url": "https://github.com/ihaseeburrehman/LISFLOOD-FP-8.3", "check": "listed",
+         "note": "Performance patches on 8.2 (faster CUDA, Apple Metal FV1); numerical methods unchanged. This is the 8.3 source the Runner's Mac build uses. Clone or download zip."},
+        {"id": "fimsim-lisflood-inputs", "kind": "manual", "title": "FIMsim - Flood Inundation Model Simulation tool", "org": "sdmlua (GitHub)", "number": "", "year": "",
+         "url": "https://github.com/sdmlua/FIMsim", "check": "listed",
+         "note": "Generates LISFLOOD-FP 8.2 input files (.par/.bci/.bdy, DEM, Manning) for rapid screening setups. Tool repo, not a doc."},
         {"id": "lisflood-fp-8-1-zenodo", "kind": "manual", "title": "LISFLOOD-FP 8.1 hydrodynamic model (software release)", "org": "University of Bristol", "number": "DOI 10.5281/zenodo.6912932", "year": "2022",
          "url": "https://zenodo.org/record/6912932", "check": "listed",
          "note": "The citable 8.1 source archive (Zenodo landing page, not a direct PDF)."},
@@ -174,6 +189,9 @@
         {"id": "anuga-github", "kind": "manual", "title": "ANUGA source code and user manual (repository)", "org": "anuga-community", "number": "", "year": "",
          "url": "https://github.com/anuga-community/anuga_core", "check": "listed",
          "note": "Current ANUGA repository (moved from geoscienceaustralia); holds the user-manual PDF under doc/ and the CITATION file."},
+        {"id": "anuga-user-manual-3", "kind": "pdf", "title": "ANUGA User Manual (Release 3.0)", "org": "ANUGA Community / Geoscience Australia", "number": "", "year": "2020", "authors": "Roberts, S.; Nielsen, O.; Gray, D.; Sexton, J.; Davies, G.",
+         "url": "https://github.com/anuga-community/anuga_core/raw/main/doc/anuga_user_manual.pdf", "check": "listed",
+         "note": "Step-by-step manual: mesh, quantities, Inlet_operator (breach hydrographs), .sww output. Direct PDF from the repo."},
         {"id": "anuga-nielsen-2005", "kind": "pdf", "title": "Hydrodynamic modelling of coastal inundation (ANUGA)", "org": "MODSIM 2005 (MSSANZ)", "number": "", "year": "2005", "authors": "Nielsen, O.; Roberts, S.; Gray, D.; McPherson, A.; Hitchman, A.",
          "url": "https://www.mssanz.org.au/modsim05/papers/nielsen.pdf", "check": "listed",
          "note": "The ANUGA inundation-application reference."},
@@ -192,6 +210,12 @@
         {"id": "hecras-1d-hydref", "kind": "html", "title": "HEC-RAS 1D Hydraulic Reference Manual (latest)", "org": "USACE Hydrologic Engineering Center", "number": "", "year": "",
          "url": "https://www.hec.usace.army.mil/confluence/rasdocs/ras1dtechref/latest", "check": "tested",
          "note": "Equations and solution techniques (1D)."},
+        {"id": "hecras-2d-dambreach-tutorial", "kind": "html", "title": "HEC-RAS 2D dam-breach tutorial (simple 2D geometry)", "org": "USACE Hydrologic Engineering Center", "number": "", "year": "",
+         "url": "https://www.hec.usace.army.mil/confluence/rasdocs/hgt/latest/tutorials/2d-unsteady-flow/dam-breach-simple-2d-geometry", "check": "tested",
+         "note": "Official step-by-step 2D breach workshop (Bald Eagle / Sayers data): mesh, SA/2D connections, breach setup. The closest match to how the Runner's HEC-RAS export is built."},
+        {"id": "hecras-2d-class-2024", "kind": "html", "title": "HEC-RAS 2D unsteady-flow class materials", "org": "USACE Hydrologic Engineering Center", "number": "", "year": "2024",
+         "url": "https://www.hec.usace.army.mil/confluence/rasdocs/rastraining/latest/hec-ras-classes/2d-unsteady-flow-2024", "check": "tested",
+         "note": "Lectures and workshops on dam/levee breach with 2D areas."},
         {"id": "hecras-td-39-xref", "skip": true, "kind": "pdf", "title": "Using HEC-RAS for Dam Break Studies (see design: hec-td-39)", "org": "USACE HEC", "url": "", "check": "listed"}
       ]
   }
