@@ -70,6 +70,7 @@ To install on a machine with no network (or a locked-down one), pre-download eve
 connected machine first:
 
 ```
+./download-all-mac.sh              # macOS
 ./download-all-linux.sh            # Linux/openSUSE
 .\download-all-windows.ps1         # Windows
 ```

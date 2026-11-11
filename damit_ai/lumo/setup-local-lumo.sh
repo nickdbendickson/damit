@@ -162,6 +162,12 @@ for i in {1..30}; do curl -sf http://127.0.0.1:11434/api/version >/dev/null 2>&1
 curl -sf http://127.0.0.1:11434/api/version >/dev/null 2>&1 || die "server didn't start — see $SERVE_LOG"
 ok "server up on 127.0.0.1:11434"
 
+# seed models from a pre-downloaded offline bundle (download-all-mac.sh), so pulls are skipped
+if [[ -d "${0:A:h}/../offline/models/manifests" && ! -d "$MODELS_DIR/manifests" ]]; then
+  cp -R "${0:A:h}/../offline/models/." "$MODELS_DIR/" 2>/dev/null \
+    && ok "seeded models from offline/models (no download needed)" || warn "could not seed offline models"
+fi
+
 RAM_GB=$(( $(sysctl -n hw.memsize) / 1073741824 ))
 # Processor. Ollama uses the GPU (Metal) only on Apple Silicon; on an Intel Mac it runs on the CPU
 # whatever graphics card is fitted (an AMD Radeon is not used). A shell running under Rosetta on an
