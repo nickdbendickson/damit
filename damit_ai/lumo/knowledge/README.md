@@ -11,6 +11,11 @@ RAG already indexes the repos' code and markdown; this folder adds the knowledge
 | `OPEN-ISSUES.md` | Snapshot of open GitHub issues (regenerate with `refresh-open-issues.zsh`). |
 | `ALGORITHM-HELP.md` | Every Processing tool's parameters/help (generate on a QGIS box with `dump-algorithm-help.zsh`). |
 
+There is also a **code-triage eval** in [`../eval/questions.json`](../eval/questions.json), run with
+[`../tools/eval_lumo.py`](../tools/eval_lumo.py): 10 questions whose answers live in this pack, scored
+against a model so you can measure Lumo's triage quality and catch regressions when you change models
+(`python3 eval_lumo.py --model <tag>`). It mirrors the dam-research eval.
+
 The per-plugin fix log stays where it already is — each plugin's `metadata.txt` `changelog=`
 (and `docs/CHANGELOG.md`) — which Lumo already indexes. This pack does not duplicate it.
 

@@ -16,6 +16,12 @@ off the machine. They are kept apart: separate Ollama models, separate databases
 These are Mac tools (zsh, Ollama.app, conda). They are not QGIS plugins and are not part of any
 plugin zip or CI job.
 
+> **Linux and Windows:** one installer per platform sets up **both** assistants —
+> [`install-local-ai-linux.sh`](install-local-ai-linux.sh) (openSUSE/Linux) and
+> [`install-local-ai-windows.ps1`](install-local-ai-windows.ps1) (Windows 10/11). Same models,
+> paths, personas and no-download-then-run policy as the Mac steps below. See
+> [`INSTALL-cross-platform.md`](INSTALL-cross-platform.md).
+
 ## Install
 
 1. **Lumo (installs Ollama too):**
