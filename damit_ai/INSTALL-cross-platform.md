@@ -64,6 +64,23 @@ damresearch ingest                               # after dropping PDFs in ~/DamR
 On Windows, `cmd.exe` users get `lumo.cmd`, `damchain.cmd` and
 `damresearch.cmd` in `%USERPROFILE%\local-ai` (and `…\local-ai\research`).
 
+## Download everything for an offline install
+
+To install on a machine with no network (or a locked-down one), pre-download everything on a
+connected machine first:
+
+```
+./download-all-linux.sh            # Linux/openSUSE
+.\download-all-windows.ps1         # Windows
+```
+
+Each one fills `damit_ai/offline/` with the Ollama runtime (checked against Ollama's own published
+sha256), the AI models, and the dam-research PDF library. Then carry the whole `damit_ai/` folder to
+the target and run the normal installer — it picks up `offline/` automatically (no Ollama download,
+and it seeds the models from `offline/models` so nothing is pulled). Flags: `--no-models` /
+`-NoModels`, `--models "…"` / `-Models "…"`, `--no-library` / `-NoLibrary`, `--ollama-version` /
+`-OllamaVersion`. The default model set is ~25–30 GB; `offline/` is never committed to git.
+
 ## What the installers now set up for you
 
 - **Knowledge pack indexed on install** — the Lumo knowledge pack (`lumo/knowledge/`) and,

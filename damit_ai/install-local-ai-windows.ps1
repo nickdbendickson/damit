@@ -129,6 +129,12 @@ if (-not (ServerUp)) {
 if (-not (ServerUp)) { Die "ollama server did not come up (see $LocalAI\ollama-serve.log)" }
 Ok "server up on $OllamaUrl"
 
+# seed models from a pre-downloaded offline bundle (download-all-windows.ps1), so pulls are skipped
+if ((Test-Path (Join-Path $Offline 'models\manifests')) -and -not (Test-Path (Join-Path $ModelsDir 'manifests'))) {
+  try { Copy-Item (Join-Path $Offline 'models\*') $ModelsDir -Recurse -Force; Ok 'seeded models from offline\models (no download needed)' }
+  catch { Warn 'could not seed offline models' }
+}
+
 # ---------------------------------------------------------------------------
 Say 'Step 3 - conda (reuse an existing install; venv fallback)'
 $Conda = $null
