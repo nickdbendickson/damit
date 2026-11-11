@@ -24,8 +24,28 @@ owns the one real copy; each plugin's `damsuite/` is a shim).
   profile.
 - **Solver choice (Runner).** `SOLVER` = ACC (default) / FV2 / MWDG2; FV1 and plain DG2 are
   refused for a main run. Set with `--breach-param SOLVER=` or `NDBREACH_LISFLOOD_SOLVER`.
+  FV2 / MWDG2 (with `limitslopes`) are **CUDA-only** in LISFLOOD-FP: a CPU-only binary
+  silently runs IterateQ adaptive instead, so on a machine without a CUDA build only ACC
+  is a real choice (see modeling findings).
 - **DamSafety Core first.** Every DamSafety plugin depends on the DamSafety Core plugin; the
   installer installs and enables it. `metadata.txt plugin_dependencies` names it.
+- **No default HEC-RAS compute timeout.** Decided in Runner 3.10.48 and kept by audit M18;
+  `NDBREACH_HECRAS_TIMEOUT_S` is opt-in. Cancel is the way to stop a long run.
+- **`_ORPHANS` is never freed (Hazard).** Parked worker-thread layers are kept on purpose:
+  freeing one touches the ended thread's PROJ state (the QGIS 3.34 bug the H5 adopt fix
+  works around), a crash risk worse than the memory. From Hazard 2.24.5 a warning is
+  logged every 500 (`ORPHANS_LOG_EVERY`). For long batches use **WORKERS > 1** (each dam
+  in its own `qgis_process` child, so its layers die with it).
+- **Audit M03 declined on purpose.** Nested `parallel_map` in `_arcgis_features_tiled`
+  can exceed the six HTTP slots, but don't remove page parallelism: for a single or warm
+  cache tile it is the only parallelism left. With M18/M04/M02/M16 merged (2026-11-10)
+  the DWR medium/low audit backlog is cleared.
+- **Version discipline.** A shipped change bumps the plugin's `metadata.txt` `version=` and
+  changelog (`%%` for a literal percent), `DamSafety_Core/damsuite/versions.py`
+  `RELEASE[...]`, regenerates the manifest (`tools/damsuite_files.py`), and must pass
+  `tools/ci_checks.py`. `RELEASE` is one line, so two PRs bumping different plugins need
+  a trivial rebase. Two open PRs claiming the same version: whichever merges second bumps
+  (2026-11-10: #321 kept Runner 3.17.7; M18 landed as 3.17.8, M16 as 3.17.9).
 
 ## Known behaviours / bugs (durable)
 
@@ -34,9 +54,10 @@ owns the one real copy; each plugin's `damsuite/` is a shim).
   Run with `REFINE_NEAR=false` until fixed. FV1 and plain DG2 also write no max-velocity
   field in the bundled LISFLOOD-FP 8.1 binary.
 - **Velocity is solver-sensitive; depth is not.** Max velocity depends on the solver (ACC
-  throws a ~27 ft/s wet-dry-front spike; FV2-LL / MWDG2-LL damp below reference). Treat
-  velocity as indicative; study it before using FV2/MWDG2 for a hazard call. Depth extents
-  agree across solvers.
+  throws a ~27 ft/s wet-dry-front spike). The earlier "FV2-LL / MWDG2-LL damp below
+  reference" finding is **suspect**: those runs' labels were invalidated (see modeling
+  findings). Treat velocity as indicative. Depth extents agree across ACC and FV1; DG2-LL
+  ran ~30% wider at 20 m.
 - **Grid artifact at Absaraka (DWR-2801).** Flood area shrinks as the grid refines (a grid
   artifact, not physics); use >= 10 m on flat plains. Over-spread vs DSS-WISE is terrain /
   crest-resolution, not the solver. CSI ~0.34-0.37 is model-grade (three 2-D models agree
@@ -53,6 +74,30 @@ owns the one real copy; each plugin's `damsuite/` is a shim).
   ships none by default (set the path or use the built-in Python engine).
 - **Storage leak (Screening fill past spillway)** fixed in Screening 0.19.0. DWR crests sit
   on the local datum, not NAVD88.
+- **`run.dem.asc` doesn't line up in QGIS** (local 0,0 origin, no projection). From Runner
+  3.17.7 each run copies a georeferenced `Model Terrain (LISFLOOD).tif` (and
+  `ANUGA Mesh.gpkg` when gmsh ran) next to the results; review files only, nothing reads
+  them back. `NDBREACH_EXPORT_TERRAIN=0` turns it off.
+- **HEC-RAS Cancel (Runner 3.17.8+, audit M18).** Cancel is threaded through
+  `run_hecras_stage(..., cancel=)` into preprocess (every Wine step and `Ras.exe -c`) and
+  compute; `wallclock.wait` polls every 0.25 s, then `stop_group` (SIGTERM to the process
+  group, grace `NDBREACH_HECRAS_KILL_GRACE_S`, SIGKILL) and raises `lisflood.Cancelled`.
+  Single-dam tool: `QgsProcessingException("Cancelled")`; batch row: `cancelled`; CLI:
+  first Ctrl-C. Measured on native Linux RasUnsteady 7.0.1: stops in well under 1 s, no
+  orphan. **Not yet verified:** cancel during the Wine preprocess TCU-dialog wait, and an
+  interactive QGIS dialog Cancel on a full HEC-RAS run. The Windows launcher
+  (`hecras_windows.py`) was not changed.
+- **Hazard provider bulk read (2.24.4+, audit M04).** For rasters GDAL can't open (WCS,
+  ArcGIS MapServer, the Population tab's virtual raster), the block is read in one go only
+  for whitelisted numeric types (Byte, Int8, UInt16, Int16, UInt32, Int32, Float32,
+  Float64); image/ARGB, complex, no-data-bitmap, short-buffer or error cases fall back to
+  the per-cell loop, bit-identical. A **NaN or infinite no-data value also takes the
+  loop**, because QGIS 4.x and 3.34 disagree on whether a value equal to an infinite
+  no-data is no-data. Not yet checked on a live WCS / MapServer Population layer.
+- **Runner window scan (3.17.9+, audit M16).** `Model.window` scans only the previous
+  window, falling back to the full grid on the first call, when the wet box touches a
+  non-edge side, and every 50th call (`WINDOW_SELF_CHECK`); a mismatch returns the
+  full-grid answer and logs `window_mismatch`. Golden baseline unchanged.
 
 ## Cross-plugin hand-off contracts (`damsuite/versions.py`)
 
@@ -66,6 +111,20 @@ hand-offs are optional). Keys are the package short names (`ndhazard`, `ndbreach
 - Hazard needs Runner >= 3.1.1 (hard) / 3.7.0 (soft: a proposed embankment in `dam.json` is
   inserted on the grid).
 - Screening needs Runner >= 3.1.0 (hard) / 3.7.0 (soft).
+
+## Crest hand-off
+
+- Crest desktop hands a dam to the installed plugins through `qgis_process`:
+  `nddam:preflight`, then `nddam:runchain` only if preflight is READY, or `ndbreach:rundam`
+  for one flood; or `scripts/ndbreach_cli.py run` when Point X/Y are given in the DEM's
+  CRS. It never starts `ndbreach:batch`.
+- Crest addresses plugins by provider id (Screening `nddam`, Runner `ndbreach`, Hazard
+  `ndhazard`), which both sets share, so the set it hits is whichever profile is active.
+  The intended target is the DamSafety set.
+- New Crest records default to **piping**, not overtopping (decided 2026-11-05); an empty
+  or unknown `failureMode` is also treated as piping.
+- QGIS 3.34 `qgis_process` rejects METHOD/TIER **option text**; Crest reads the option list
+  from `qgis_process help ndbreach:rundam` and sends the index.
 
 ## Processing-provider gotchas
 
