@@ -31,3 +31,5 @@ IMAGE_SERVICES = [
 WATER_HELP = ("Layers: 3DHP / NHD waterbodies or the NWI as the mapped water bodies. The 'water' "
               "polygons with mapped = no are the ponds no layer has: give them to 'Find ponds and "
               "dugouts' as its water bodies to ask the LiDAR whether each is held above the ground.")
+OSM_HELP = ("Use a Geofabrik extract of your state (https://download.geofabrik.de, <state>-latest.osm.pbf). "
+            "Give the output to the other tools as a known-structure layer.")
