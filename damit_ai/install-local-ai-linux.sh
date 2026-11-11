@@ -105,6 +105,11 @@ fi
 curl -sf "$OLLAMA_HOST_URL/api/version" >/dev/null 2>&1 || die "ollama server did not come up (see $LOCAL_AI/ollama-serve.log)"
 ok "server up on $OLLAMA_HOST_URL"
 
+# seed models from a pre-downloaded offline bundle (download-all-linux.sh), so pulls are skipped
+if [[ -d "$OFFLINE/models/manifests" && ! -d "$MODELS_DIR/manifests" ]]; then
+  cp -a "$OFFLINE/models/." "$MODELS_DIR/" 2>/dev/null && ok "seeded models from offline/models (no download needed)" || warn "could not seed offline models"
+fi
+
 # ---------------------------------------------------------------------------
 say "Step 3 — conda (reuse an existing install; venv fallback)"
 CONDA=""
