@@ -93,7 +93,7 @@ Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.
-- `research/` is damresearch 1.0.3, setup-dam-research 1.1 (bundled Ollama and packages), fetch_asdso 1.1, eval_damresearch 1.0 and first-run.zsh 1.0.
+- `research/` is damresearch 1.0.4, setup-dam-research 1.1 (bundled Ollama and packages), fetch_asdso 1.2, eval_damresearch 1.1 and first-run.zsh 1.0.
   fetch_asdso was tested against damsafety.org on 2026-11-09 (48 of 49 files downloaded; the 49th
   is on damtoolbox.org, which the cloud workspace can't reach). The `--catalog` sources were only
   partly tested: the cloud workspace reaches 2 of their 31 sites, so most catalog URLs were checked
