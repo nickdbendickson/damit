@@ -1,0 +1,21 @@
+[general]
+name=DamIT Finder
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Finds dams, dry dams, road fills, ponds, dugouts and road / rail stream crossings in LiDAR and hydrography that are not on the NID, state or bridge / culvert lists you give.
+about=Three Processing tools (Processing Toolbox > DamIT Finder > Find structures). Fills across streams: walks the 3DHP / NHD flowlines over a bare-earth DEM and reports every fill that blocks the valley (spill level, height, head, storage, pool), as a dam, dry embankment or road fill. Ponds and dugouts: classes every polygon of a water-body layer from the LiDAR. Crossings: every road / rail x stream crossing, the places a culvert or bridge must be. Every candidate is checked against the known-structure layers you give (NID, state lists, NBI, DOT culverts, USGS / SARP crossings): listed, unsure or new. Runs no flood model. Candidates for review against an aerial image, not determinations; a new dam has no NID ID, so DamIT Screener does not take it as a dam record until it is listed.
+version=0.2.0
+author=N.D. Bendickson
+email=322661428+nickdbendickson@users.noreply.github.com
+repository=https://github.com/nickdbendickson/damit
+tracker=https://github.com/nickdbendickson/damit/issues
+homepage=https://github.com/nickdbendickson/damit
+category=Analysis
+tags=dam,dam safety,lidar,culvert,pond,processing
+icon=icon.svg
+experimental=True
+deprecated=False
+hasProcessingProvider=yes
+plugin_dependencies=DamIT Core
+changelog=0.2.0 - first release (versioned with the DamIT suite): damit_find:embankments, damit_find:ponds, damit_find:crossings; listed / unsure / new against the known-structure layers; review hillshade.

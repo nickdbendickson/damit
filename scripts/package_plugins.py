@@ -26,6 +26,7 @@ PLUGINS = [
     "damit_hazard",
     "damit_hazardlite",
     "damit_pmp",
+    "damit_finder",
 ]
 
 EXCLUDE_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", "tests"}

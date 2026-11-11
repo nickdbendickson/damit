@@ -1,4 +1,4 @@
-"""Packaging checks for DamIT Core, Setup, Data, Hazard Lite and PMP (no QGIS needed)."""
+"""Packaging checks for DamIT Core, Setup, Data, Hazard Lite, PMP and Finder (no QGIS needed)."""
 import configparser
 import os
 import re
@@ -10,7 +10,8 @@ PLUGINS = {"damit_core": ("DamIT Core", "no", None, None),
            "damit_setup": ("DamIT Setup", "no", "DamIT Core,DamIT Catalog", None),
            "damit_data": ("DamIT Data", "yes", "DamIT Core", "damit_data"),
            "damit_hazardlite": ("DamIT Hazard Lite", "yes", "DamIT Core,DamIT Catalog", "damit_lite"),
-           "damit_pmp": ("DamIT PMP", "yes", "DamIT Core", "damit_pmp")}
+           "damit_pmp": ("DamIT PMP", "yes", "DamIT Core", "damit_pmp"),
+           "damit_finder": ("DamIT Finder", "yes", "DamIT Core", "damit_find")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
 LEGACY_QT_OK = {os.path.join("damit_core", "lib", "qtcompat.py")}      # the one QGIS < 3.38 field-type fallback
 
