@@ -1237,17 +1237,47 @@ def _validate_runs(cat, cfg, runs, dam, flags):
                       r.get("scenario"))
 
 
+def _nodata_cell_and_threshold(ctx):
+    """(cell_m, threshold_m) recorded for this run's NoData-receptor path, with fallbacks."""
+    pol = ctx.run.get("nodata_sampling") or {}
+    recs = ctx.run.get("receptors") or []
+    cell = pol.get("cell_m")
+    min_m = pol.get("nodata_neighbourhood_min_cell_m")
+    if cell is None:
+        cell = next((r.get("cell_m") for r in recs if r.get("cell_m") is not None), None)
+    if min_m is None:
+        min_m = next((r.get("nodata_neighbourhood_min_cell_m") for r in recs
+                      if r.get("nodata_neighbourhood_min_cell_m") is not None), None)
+    if min_m is None:
+        from ..sampling.rasters import NODATA_NEIGHBOURHOOD_MIN_CELL_M
+        min_m = NODATA_NEIGHBOURHOOD_MIN_CELL_M
+    return cell, min_m
+
+
 def _flag_nodata_neighbourhood(ctx):
-    """Structures whose depth was taken from neighbouring wet cells because the cell under the
-    receptor (or every footprint cell) was NoData: score the neighbourhood values, and flag them
-    for review. Not a habitability rule."""
-    ids = [r["id"] for r in ctx.run.get("receptors") or []
-           if (r.get("sampling") == "neighbourhood" or r.get("neighbourhood"))]
-    if ids:
+    """Structures on a NoData cell next to water: neighbourhood fill on a grid coarser than
+    NODATA_NEIGHBOURHOOD_MIN_CELL_M (nodata_neighbourhood); at that size or finer, scored dry
+    and flagged (nodata_dry_review). Not a habitability rule."""
+    recs = ctx.run.get("receptors") or []
+    neigh = [r["id"] for r in recs
+             if r.get("sampling") == "neighbourhood" or r.get("neighbourhood")]
+    dry = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_dry"]
+    if not neigh and not dry:
+        return
+    cell, min_m = _nodata_cell_and_threshold(ctx)
+    cell_s = "{:g} m".format(cell) if cell is not None else "unknown"
+    if neigh:
         ctx.flag(WARNING, "nodata_neighbourhood",
-                 "{} structure(s) sit on a NoData cell next to water: peak depth and velocity "
-                 "were taken from neighbouring wet cells (or the footprint) and need review"
-                 .format(len(ids)), None, ids)
+                 "{} structure(s) sit on a NoData cell next to water on a {} grid "
+                 "(coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m): peak depth and "
+                 "velocity were taken from neighbouring wet cells (or the footprint) and need "
+                 "review".format(len(neigh), cell_s, min_m), None, neigh)
+    if dry:
+        ctx.flag(WARNING, "nodata_dry_review",
+                 "{} structure(s) sit on a NoData cell next to water on a {} grid "
+                 "(at or finer than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m): scored dry "
+                 "from the NoData cell and need review"
+                 .format(len(dry), cell_s, min_m), None, dry)
 
 
 def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
@@ -1322,5 +1352,8 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
         "catalog_version": cat.get("catalog_version"), "disclaimer": cat.get("disclaimer"),
         "damit_catalog": cat.get("damit_catalog"),
         "source_document": cat.get("source_document"),
+        "nodata_sampling": [{"scenario": r.get("scenario"), "label": r.get("label"),
+                             **(r["nodata_sampling"])}
+                            for r in runs if r.get("nodata_sampling")],
     })
     return result

@@ -93,7 +93,7 @@ file, with the Runner's formula (signed sum of the interval errors over the inje
 | `TOE_SOURCE_RUN_REPORT` | INFO | the run report DOES give the toe inflow distance (the Runner measured it) but there is no `dam_line.geojson` to measure it again: the digest uses the Runner's number and says so ("toe from run_report, no dam_line") instead of raising `TOE_UNCHECKED`. The position check (`TOE_INFLOW`) and the band check still run on it |
 | `ENGINE_FALLBACK` | WATCH | the built-in numpy engine ran, not LISFLOOD-FP |
 | `RUN_WARNINGS` | WATCH | the Runner logged warnings |
-| `RECEPTOR_NODATA` | WATCH | structure(s) on a NoData cell next to wet cells. Hazard 0.2.5 takes the peak depth and velocity over neighbouring wet cells (`sampling=neighbourhood`) and flags them for review, rather than scoring them dry |
+| `RECEPTOR_NODATA` | WATCH | structure(s) on a NoData cell next to wet cells. Hazard 0.2.6: on a depth grid coarser than `NODATA_NEIGHBOURHOOD_MIN_CELL_M` = 20 m (larger cell side, converted to metres; strictly greater than) it takes the peak depth and velocity over neighbouring wet cells (`sampling=neighbourhood`, flag `nodata_neighbourhood`); at 20 m or finer it still scores the NoData cell dry (`sampling=centre_nodata_dry`) and flags `nodata_dry_review` |
 | `RECEPTOR_DRY_NEXT_TO_WET` | WATCH | structure(s) on a dry cell beside water at least 1 ft deep |
 | `ROADS_UNSCORED` | WATCH | roads with unknown class/AADT not scored by M8a |
 | `HAZARD_REVIEW` | WATCH | sole-access (M8b) not scored, missing receptor layers, judgment-zone hits, guessed M13 |

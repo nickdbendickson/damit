@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -1252,9 +1252,11 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
     if nd:
         fl.add("RECEPTOR_NODATA", WATCH, "receptors", "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
-               "ids: %s. The results have a hole at the receptor. Hazard takes the peak depth and velocity over "
-               "neighbouring wet cells (sampling=neighbourhood) and flags the structure for review; it is no longer "
-               "scored dry from the NoData cell. Check these by hand.%s" % (
+               "ids: %s. The results have a hole at the receptor. Hazard's path depends on the depth-grid "
+               "cell size (larger side, converted to metres; NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, strictly "
+               "greater than): on a grid coarser than 20 m it takes the peak depth and velocity over neighbouring "
+               "wet cells (sampling=neighbourhood, flag nodata_neighbourhood); at 20 m or finer it still scores "
+               "the NoData cell dry (sampling=centre_nodata_dry) and flags nodata_dry_review. Check these by hand.%s" % (
                    _ids("%s (neighbour %.2f ft)" % t for t in nd), note),
                ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd}, grid_source=grid_source)
     if dn:
@@ -1280,7 +1282,8 @@ REVIEW_CODES = {
     "no_layer": "a receptor layer was not supplied (e.g. lifelines, M11a)",
     "outside_domain": "receptors outside the routed domain were not scored",
     "m13_guessed": "M13 descriptor guessed",
-    "nodata_neighbourhood": "a structure sits on a NoData cell; peak depth and velocity were taken from neighbouring wet cells and need review",
+    "nodata_neighbourhood": "a structure sits on a NoData cell on a grid coarser than 20 m; peak depth and velocity were taken from neighbouring wet cells and need review",
+    "nodata_dry_review": "a structure sits on a NoData cell on a grid at or finer than 20 m; scored dry from the NoData cell and need review",
 }
 
 
