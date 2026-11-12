@@ -1,4 +1,4 @@
-# DamIT PMP 0.4.0 – NOAA Atlas 14 only
+# DamIT PMP 0.4.1 – NOAA Atlas 14 only
 
 Processing provider `damit_pmp`. Depends on DamIT Core. **The only data source is NOAA Atlas 14**,
 read from the NOAA/NWS Precipitation Frequency Data Server (PFDS, https://hdsc.nws.noaa.gov/pfds/), or
@@ -248,3 +248,8 @@ Tests added in 0.4.0: `test_watershed.py` (synthetic valleys, the 3DEP fetch wit
 `test_temporal_storm.py` (NRCS ordinates, the real HDSC file in `fixtures/`, a fake downloader and shapefile, losses),
 `test_lisflood_rain.py` (files, runner parity, launcher with a stand-in executable; set `DAMIT_PMP_LISFLOOD` to run a
 real LISFLOOD-FP for five simulated minutes) and `PMPPatternsLossesWatershedLisflood` in `tests/test_qgis_new_plugins.py`.
+
+**Discharge section sign (0.4.1).** ANUGA's `Cross_section` counts flow as positive to the right of the polyline a -> b
+(a north -> south line reads -Q for an eastward flow). With `FLOW_PATH_START` given, `anugarain` orders `GAUGE_A` /
+`GAUGE_B` so positive is away from that point (downstream), the same sign as the LISFLOOD-FP gauge of `lisfloodrain`;
+without it the ends are used as given. The magnitude was never affected.

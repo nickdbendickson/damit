@@ -233,6 +233,23 @@ class Files(unittest.TestCase):
             self.assertEqual(AR.sha256_file(os.path.join(d, f)), AR.sha256_file(os.path.join(AR.HERE, "runner_shared", f)))
         compile(open(os.path.join(d, "run_anuga_rain.py")).read(), "run_anuga_rain.py", "exec")
 
+    def test_gauge_ends_are_ordered_so_downstream_flow_is_positive(self):
+        # ANUGA's Cross_section is positive to the right of a -> b (a north -> south line reads -Q for an eastward
+        # flow; checked in ANUGA 4.0.1). Flow-path start in the west, so downstream is east: positive = east.
+        start = (0.0, 0.0)
+        ns = [(1000.0, 350.0), (1000.0, -350.0)]                # north -> south: east is on its LEFT -> reverse
+        sn = [(1000.0, -350.0), (1000.0, 350.0)]                # south -> north: east is on its right -> keep
+        self.assertEqual(AR.orient_gauge(ns, start), sn)
+        self.assertEqual(AR.orient_gauge(sn, start), sn)
+        # an oblique line like the DWR-2801 dam section (flow to the east-south-east)
+        a, b = (-106018.26, 2666821.74), (-106219.40, 2666151.26)
+        out = AR.orient_gauge([a, b], (-106318.83, 2666546.50))
+        nx, ny = out[1][1] - out[0][1], -(out[1][0] - out[0][0])
+        self.assertGreater(nx * 0.9578 + ny * -0.2873, 0.0)
+        self.assertEqual(out, [b, a])                           # it had been the wrong way round
+        self.assertEqual(AR.orient_gauge([a, b], None), [a, b])  # no start: as given
+        self.assertIsNone(AR.orient_gauge(None, start))
+
     def test_discharge_gauge_goes_into_the_job_and_the_script(self):
         d = tempfile.mkdtemp()
         dem = os.path.join(d, "dem.tif")
