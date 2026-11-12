@@ -412,6 +412,88 @@ class TestMemory(Base):
         self.assertEqual(len(RD._EDGE_CACHE), 4)
 
 
+# --------------------------------------------------------------------------------------- the Runner's widened toe band
+WIDE_HOW = ("lowest ground at the downstream toe: 5-37 m downstream of the dam line along its full length (2 m DEM), 36 m from the "
+            "line, 24.5 ft below the top of dam (band widened from 27 m: the ground nearer is the dam's face, less than 75 % of the "
+            "dam height below its top)")
+
+
+class TestWidenedToeBand(Base):
+    """DWR-2645 (Pheasant Lake): H 29.6 ft, 2:1, band 5-27.1 m; the Runner widened it to 37 m (the nearer ground was the dam's face)
+    and put the inflow 36 m from the line. 1.3.2 called that TOE_INFLOW PROBLEM."""
+
+    def digest(self, dist=36.0, fields=None, how=None):
+        run, dam = FX.make_run(self.root, height_ft=29.6, streambed_ft=1470.4, ds_slope=2.0, toe_distance=dist, toe_outer=27.0662,
+                               inflow_how=how)
+        if fields is not None:
+            p = os.path.join(run, "run_report.json")
+            r = jload(p)
+            r["inflow"]["toe_band"].update(fields)
+            jdump(r, p)
+        return RD.build_digest(run, dam_folder=dam)
+
+    WIDE = {"effective_inner_m": 5.0, "effective_outer_m": 37.0, "original_outer_m": 27.0662, "widened": True,
+            "widening_reason": "the ground nearer is the dam's face, less than 75 % of the dam height below its top"}
+
+    def test_the_old_report_without_the_fields_is_judged_as_before(self):
+        d = self.digest(36.0)
+        self.assertEqual(len(self.flags(d, "TOE_INFLOW")), 1)
+        self.assertEqual(self.flags(d, "TOE_BAND_WIDENED"), [])
+        self.assertEqual(d["verdict"], "PROBLEM")
+
+    def test_an_inflow_inside_the_widened_band_is_an_info_note_naming_the_reason(self):
+        d = self.digest(36.0, self.WIDE)
+        self.assertEqual(self.flags(d, "TOE_INFLOW"), [])
+        f = self.flags(d, "TOE_BAND_WIDENED")
+        self.assertEqual([x["severity"] for x in f], ["INFO"])
+        self.assertIn("5-37 m", f[0]["title"])
+        self.assertIn("dam's face", f[0]["detail"])
+        self.assertIn("run_report toe_band", f[0]["detail"])
+        self.assertNotEqual(d["verdict"], "PROBLEM")
+
+    def test_an_inflow_outside_the_effective_band_is_still_a_problem(self):
+        d = self.digest(45.0, self.WIDE)
+        f = self.flags(d, "TOE_INFLOW")
+        self.assertEqual([x["severity"] for x in f], ["PROBLEM"])
+        self.assertIn("widened it to 5-37 m", f[0]["title"])
+        self.assertEqual(self.flags(d, "TOE_BAND_WIDENED"), [])
+        self.assertEqual(d["verdict"], "PROBLEM")
+
+    def test_too_close_to_the_line_is_a_problem_in_a_widened_band_too(self):
+        self.assertEqual(len(self.flags(self.digest(2.0, self.WIDE), "TOE_INFLOW")), 1)
+
+    def test_a_widened_flag_that_is_false_does_not_excuse_an_inflow_outside_the_nominal_band(self):
+        d = self.digest(36.0, dict(self.WIDE, widened=False))
+        self.assertEqual(len(self.flags(d, "TOE_INFLOW")), 1)
+
+    def test_an_inflow_inside_the_nominal_band_needs_no_note_even_with_a_widened_band(self):
+        d = self.digest(20.0, self.WIDE)
+        self.assertEqual(self.flags(d, "TOE_INFLOW"), [])
+        self.assertEqual(self.flags(d, "TOE_BAND_WIDENED"), [])
+
+    def test_a_report_with_only_the_runner_text_is_read_from_the_text(self):
+        d = self.digest(36.0, how=WIDE_HOW)                      # the 2645 report of 1edfde5 (no fields, the text says it all)
+        self.assertEqual(self.flags(d, "TOE_INFLOW"), [])
+        f = self.flags(d, "TOE_BAND_WIDENED")
+        self.assertEqual(len(f), 1)
+        self.assertIn("the Runner's inflow text", f[0]["detail"])
+        self.assertIn("dam's face", f[0]["detail"])
+        d = self.digest(45.0, how=WIDE_HOW.replace("36 m from", "45 m from"))
+        self.assertEqual(len(self.flags(d, "TOE_INFLOW")), 1)
+
+    def test_a_toe_band_without_a_widening_still_checks_the_nominal_band(self):
+        plain = {"effective_inner_m": 5.0, "effective_outer_m": 27.0662, "original_outer_m": 27.0662, "widened": False,
+                 "widening_reason": None}
+        self.assertEqual(self.flags(self.digest(20.0, plain), "TOE_INFLOW"), [])
+        self.assertEqual(len(self.flags(self.digest(36.0, plain), "TOE_INFLOW")), 1)
+
+    def test_the_new_flag_is_known_and_documented(self):
+        self.assertIn("TOE_BAND_WIDENED", RD.KNOWN_FLAG_IDS)
+        t = slurp(os.path.join(LUMO, "knowledge", "WATCHER-DIGEST.md"))
+        self.assertIn("TOE_BAND_WIDENED", t)
+        self.assertIn("effective_outer_m", t)
+
+
 class TestKeepAlive(Base):
     def test_the_watcher_reports_its_own_memory(self):
         rss, peak = LW.own_rss_mb()
@@ -429,7 +511,7 @@ class TestKeepAlive(Base):
         self.assertEqual(LW.chat_payload([], LW.settings())["keep_alive"], "10s")
 
     def test_versions_and_docs(self):
-        self.assertEqual((RD.VERSION, LW.VERSION), ("1.3.2", "1.3.2"))
+        self.assertEqual((RD.VERSION, LW.VERSION), ("1.3.3", "1.3.3"))
         t = slurp(os.path.join(LUMO, "knowledge", "WATCHER-DIGEST.md"))
         for needle in ("LUMO_WATCH_RECORD_GRACE_S", "LUMO_WATCH_MIN_FREE_MB", "LUMO_WATCH_KEEP_ALIVE", "receptors_skipped"):
             self.assertIn(needle, t, needle)

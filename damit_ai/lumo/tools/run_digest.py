@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -81,7 +81,7 @@ THRESHOLDS = {
 KNOWN_FLAG_IDS = (
     "MASS_NAN", "MASS_BALANCE", "DOMAIN_VOLUME", "EDGE_INFLOW", "EDGE_OUTFLOW_EARLY", "EDGE_OUTFLOW_FINAL",
     "PASS_UNFINISHED", "STALL", "STOPPED_MOVING", "HEIGHT_MISMATCH", "BREACH_BOTTOM_RAISED", "DATUM",
-    "START_WSE", "TOE_INFLOW", "TOE_BAND", "OUTLET_FLOW", "ENGINE_FALLBACK", "RUN_WARNINGS",
+    "START_WSE", "TOE_INFLOW", "TOE_BAND", "TOE_BAND_WIDENED", "OUTLET_FLOW", "ENGINE_FALLBACK", "RUN_WARNINGS",
     "RECEPTOR_NODATA", "RECEPTOR_DRY_NEXT_TO_WET", "ROADS_UNSCORED", "HAZARD_REVIEW", "RAIL_TRAINS",
     "NO_RUN_FILES", "DAM_RECORD_MISSING", "TOE_UNCHECKED", "TOE_SOURCE_RUN_REPORT", "RECEPTORS_UNCHECKED",
 )
@@ -946,6 +946,26 @@ def _dam_line_found(dam_folder, run_dir=None, setup=None, dam_id=None):
     return find_dam_line(dam_folder, run_dir, setup, dam_id) is not None
 
 
+def toe_widening(inflow, band):
+    """What the Runner says about its toe band: {inner, outer (effective), original_outer, widened, reason, source}. The fields are in
+    run_report.json inflow.toe_band from Runner 0.3.3 (effective_inner_m, effective_outer_m, original_outer_m, widened,
+    widening_reason). A report without them (an older Runner) is read from the inflow text, which has always said "5-37 m downstream
+    of the dam line" and "(band widened from 27 m: <reason>)"; with neither, widened is None (unknown) and the band is the report's."""
+    out = {"inner": None, "outer": None, "original_outer": None, "widened": None, "reason": None, "source": None}
+    if _num(band.get("effective_outer_m")) is not None:
+        out.update(inner=_num(band.get("effective_inner_m")), outer=_num(band.get("effective_outer_m")),
+                   original_outer=_num(band.get("original_outer_m")), widened=bool(band.get("widened")),
+                   reason=band.get("widening_reason") or None, source="run_report toe_band")
+        return out
+    how = str(inflow.get("how") or "")
+    m = re.search(r"([\d.]+)\s*-\s*([\d.]+)\s*m downstream of the dam line", how)
+    w = re.search(r"band widened from ([\d.]+) m:\s*([^)]*)\)", how)
+    if m and w:
+        out.update(inner=_num(m.group(1)), outer=_num(m.group(2)), original_outer=_num(w.group(1)), widened=True,
+                   reason=w.group(2).strip() or None, source="the Runner's inflow text")
+    return out
+
+
 def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None, setup=None):
     inflow = (report or {}).get("inflow")
     if not inflow:
@@ -999,10 +1019,24 @@ def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None, setup=None):
             fl.add("TOE_BAND", WATCH, "run", "the toe band ends at %.1f m; H x (slope+1) gives %.1f m" % (bo, hi),
                    "H %.1f ft = %.1f m, slope %.1f:1%s, cap %d m" % (h, h * FT, s, " (default 3:1)" if defaulted else "",
                                                                       th["toe_cap_m"]), **info)
-        if dist is not None and not (lo - 0.5 <= dist <= max(hi, bo or 0.0) + 0.5):
+        tw = toe_widening(inflow, band)
+        info["toe_widening"] = tw
+        nominal_outer = max(hi, bo or 0.0)
+        outer = nominal_outer
+        if tw["widened"] and tw["outer"] is not None and tw["outer"] > nominal_outer:
+            outer = tw["outer"]                 # the Runner's effective band (1.3.3): the inflow is judged against it
+        if dist is not None and not (lo - 0.5 <= dist <= outer + 0.5):
+            wide = " (the Runner widened it to %.0f-%.0f m)" % (tw["inner"] if tw["inner"] is not None else lo, tw["outer"]) \
+                if (tw["widened"] and tw["outer"] is not None) else ""
             fl.add("TOE_INFLOW", PROBLEM, "run", "the breach inflow is %.0f m from the dam line, outside the toe band "
-                   "%.0f-%.1f m" % (dist, lo, hi), "inflow belongs at the lowest ground in the downstream toe band "
-                   "(5 m to H x (slope+1), 150 m cap)", **info)
+                   "%.0f-%.1f m%s" % (dist, lo, hi if not wide else outer, wide), "inflow belongs at the lowest ground in the "
+                   "downstream toe band (5 m to H x (slope+1), 150 m cap)", **info)
+        elif dist is not None and outer > nominal_outer and dist > nominal_outer + 0.5:
+            fl.add("TOE_BAND_WIDENED", INFO, "run", "the Runner widened the toe band to %.0f-%.0f m and put the inflow %.0f m from "
+                   "the dam line" % (tw["inner"] if tw["inner"] is not None else lo, outer, dist),
+                   "the nominal band is %.0f-%.1f m (H x (slope+1)); widened because %s. The inflow is inside the widened band, so "
+                   "this is a note, not a TOE_INFLOW problem. Source: %s." % (
+                       lo, nominal_outer, tw["reason"] or "the Runner gave no reason", tw["source"]), **info)
     return info
 
 

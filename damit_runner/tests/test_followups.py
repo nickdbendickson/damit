@@ -350,7 +350,25 @@ class OutflowExtend(unittest.TestCase):
         rec, calls = self.run_it(qout=1.0)                        # ~1%: under OUTFLOW_EXTEND_PCT 5
         self.assertEqual(len(calls), 1)
         self.assertIn('"over_outflow": []', json.dumps(rec))
-        self.assertFalse(any("left the model" in w for w in rec["warnings"]))
+        # 0.3.3: no growth, but the wet S edge with ~1 % gone is said at the end of the loop (it used to be silent)
+        w = [x for x in rec["warnings"] if "left the model" in x]
+        self.assertEqual(len(w), 1)
+        self.assertIn("S 0.33 ft", w[0])
+        self.assertIn("The domain was not grown further", w[0])
+
+    def test_the_end_of_run_warnings_are_in_the_log(self):
+        from damit_runner.flood import model as M
+        LF, calls, fake = self.stub(1.0)
+        lines = []
+        p = dict(dem=self.dem, dam_id="ND99999", height_ft=self.h_ft, storage_acft=500.0,
+                 top_ft=self.site["top_m"] / 0.3048, dam_line_lonlat=self.site["line"],
+                 reservoir_lonlat=self.site["reservoir"], lisflood_exe="builtin", max_runs=2, duration_hr=4.0,
+                 length_mi=0.5, half_width_mi=0.25, step_mi=0.25)
+        with mock.patch.object(LF, "run", fake):
+            rec = M.run_breach(p, os.path.join(self.tmp, "runlog"), log=lines.append)
+        for w in rec["warnings"]:
+            self.assertIn("Warning: " + w, lines)
+        self.assertTrue([l for l in lines if l.startswith("Warning: ") and "left the model" in l])
 
     def test_outflow_extend_pct_zero_turns_it_off(self):
         rec, calls = self.run_it(qout=60.0, outflow_extend_pct=0.0)

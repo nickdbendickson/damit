@@ -110,6 +110,8 @@ Lumo can watch a DamIT Runner run, but the review does not depend on the model. 
    `LUMO_WATCH_RECORD_GRACE_S`, 120 s). A mid-run hook does not read a pass grid that would leave under `LUMO_WATCH_MIN_FREE_MB` (1024) of RAM free,
    late-pass grids are read leaner (float32 above 4 M cells, edges streamed, no full-size copies), and Ollama keeps the model
    `LUMO_WATCH_KEEP_ALIVE` (2m; it was 30m) after an explain. The dam line check reads the file: a MultiLineString counts, with its parts.
+   **1.3.3 (DWR-2645).** A toe band the Runner widened (Runner 0.3.3 records the effective band and why) is judged by its effective
+   band: an inflow inside it is the INFO note `TOE_BAND_WIDENED`, not a `TOE_INFLOW` problem. The Runner now warns when a run ends with a wet edge.
    Interactive Q&A (`lumo`, `lumo-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
 
 Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
@@ -168,7 +170,7 @@ Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6
   conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
   it); see `lumo/knowledge/README.md` and `index-knowledge.zsh`.
 - `lumo/` is setup-local-lumo.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
-  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.2 and lumo_watch 1.3.2; `lumo-chat` shows the
+  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.3 and lumo_watch 1.3.3; `lumo-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.

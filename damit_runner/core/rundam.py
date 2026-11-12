@@ -27,6 +27,11 @@ over while it is going. No change to the model or its outputs.
 one, it was skipped without a word, the model had no dam line, the toe fell back to 150 m from the inventory point and the inflow
 landed 192 m on the pool side. The parts are joined end to end where two meet, the longest is used when several remain, and the
 run notes say which and why. The Screener and the QGIS crest reader use the same rule.
+
+0.3.3: run_report.json inflow.toe_band records the band the inflow really came from (effective_inner_m, effective_outer_m,
+original_outer_m, widened, widening_reason: DWR-2645 widened 27 m to 37 m because the nearer ground was the dam's face), and a run that
+ends with a wet edge warns (flood/model.py final_edge_note: edges, depths, outflow %, the limit it stopped at or why the domain did not
+grow). The report's warnings are now in the log ("Warning: ...") and in run_setup.json run_notes. No change to the model or its numbers.
 """
 import datetime
 import json
@@ -34,7 +39,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -393,6 +398,7 @@ def run_model(pkg, out_root, values, cat=None, dams_folder=None, log=print, canc
     setup.update({"status": "finished", "engine": rec["engine"], "extent_engine": rec["extent_engine"],
                   "engine_selection": sel, "engine_fallback": bool(sel.get("fallback")),
                   "engine_note": sel.get("warning") or "",
+                  "run_notes": list(rec.get("warnings") or []),
                   "model_dimension": "2D", "model": rec, "wall_s": round(_time.time() - t0, 1),
                   "outputs": {k: v for k, v in rec["outputs"].items()}, "dam_folder_files": copied,
                   "ready_to_run": True, "gaps": []})
