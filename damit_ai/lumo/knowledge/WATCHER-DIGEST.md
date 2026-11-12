@@ -45,10 +45,15 @@ gets its digest but only the newest is sent to Lumo (one inference at a time).
 
 On a CPU-only box the model and LISFLOOD-FP share the cores: one explanation during a pass made the Runner about 7x
 slower (202 s instead of 28 s). So the digest and the complete flag list are written at once, but **Lumo explains only
-when LISFLOOD is idle** (`LUMO_WATCH_EXPLAIN=idle`, the default): no `lisflood` process, the latest pass finished and,
-mid-run, a quiet gap of `LUMO_WATCH_IDLE_GAP_S` (20 s) with no new pass; a finished run is idle at once. Until then the
-newest event waits in a queue (`lumo.status` = `queued`); a one-shot `event` prints how to ask later. Other modes:
-`end` (only after the run), `always` (the old behaviour), `never`. Ollama is also capped to `LUMO_WATCH_NUM_THREAD`
+after the Runner's whole pipeline has finished** (`LUMO_WATCH_EXPLAIN=idle`, the default, 1.3.0), and no `lisflood` process runs.
+The finish markers, strongest first: `run_progress.json` `complete` (DamIT Runner 0.3.1 writes it after `run_report.json`),
+`run_report.json`, `run_setup.json` status `finished` or `failed`. A quiet gap between passes is **not** idle: the Runner works in
+Python between passes with no `lisflood` process and no log growing (1.2.0's 20 s gap started Lumo 2 s after pass 6 of DWR-2824;
+pass 7 took 71 s instead of 26 s and the Runner 164 s instead of 106 s). A pass hook therefore only queues. A Runner that died
+(nothing written to the run folder for `LUMO_WATCH_STALE_S`, 900 s, and no `lisflood` process) counts as over, so the queue
+cannot wait forever. Until then the newest event waits in a queue (`lumo.status` = `queued`); a one-shot `event` prints how to ask
+later. Other modes: `end` (the same gate), `always` (the old behaviour), `never`. `LUMO_WATCH_IDLE_GAP_S` is still accepted but no
+longer used. Ollama is also capped to `LUMO_WATCH_NUM_THREAD`
 threads (default 2; 0 = Ollama's own) and the explain process is niced (`LUMO_WATCH_NICE`, 10, POSIX).
 
 ### Waiting for a busy Ollama
@@ -104,6 +109,18 @@ digest, the flag list, `latest_verdict.json` and the Lumo prompt: the most sever
 the flag's `data` (`occurrences`, `also`) and its detail ("Also raised at pass 1 ..."). The verdict is unchanged.
 `latest_verdict.json` lists the WATCH / PROBLEM ids in `flags` and the INFO ids in `info_flags`.
 
+**Pass hooks flag receptors too (1.3.0).** A pass's own `run.max` is in local coordinates and `run_report.json` (the bounds and
+CRS) does not exist until the run ends, so the 1.2.0 pass hooks could not place a receptor. DamIT Runner 0.3.1 writes
+`run_progress.json` in the run folder after every pass: the model CRS and each pass's folder and bounds (and `complete`, `growth_loops_done`).
+The digest reads it, so `RECEPTOR_NODATA` / `RECEPTOR_DRY_NEXT_TO_WET` appear at `pass_end` from the structure layer (`--structures`
+or `--points`) on the pass's own grid, with the same ids as `run_end` when the grid is the same. A run from an older Runner has no
+`run_progress.json`: its pass hooks still cannot flag receptors (the run_end hook does).
+
+**Where the dam line is looked for (1.3.0).** `dam_line.geojson` (or `dam_line_linestring.geojson`, `dam_line.gpkg`, `.shp`) in the dam folder
+and its `inputs/`; `<work>/inputs/` and `<work>/handoff/<dam id>/` beside the `dams/` and `runs/` folders; the run folder and its
+`inputs/`; the folder of every input in `run_setup.json inputs` (the terrain's folder: the Screener's `inputs/`); the hand-off's
+folder; and a `dam_line` path the setup names. Without one the digest says `TOE_SOURCE_RUN_REPORT` as before.
+
 **Receptors read the same at every hook (1.2.0).** The Runner's final `Depth (Max).tif` writes depth <= 0 as NoData, so a
 dry cell there is NoData. A pass's own `run.max` has 0.0 on dry cells. The digest now treats depth <= 0 as NoData for every
 source before sampling, so a receptor is `RECEPTOR_NODATA` at a `pass_end` hook and at `run_end` alike (it used to be
@@ -133,8 +150,9 @@ toe inflow position is skipped with `TOE_UNCHECKED` when the report has no dista
 it is used and the digest says "toe from run_report, no dam_line" (`TOE_SOURCE_RUN_REPORT`, INFO). The watcher writes a flat
 `dam_record_hazard.json` beside the digest (a copy, never a change to the dam folder). Since DamIT Hazard 0.2.1 `damit:classify`
 no longer needs it pointed out: `DAM_JSON` may be the nested dam folder `dam.json` as it is, and with `DAM_JSON` empty Hazard finds the
-`dam.json` above the depth raster, else this watcher copy for the run folder the raster sits in (`DAMIT_WATCH_DIR` if the watch folder
-is not `~/local-ai/watch`).
+`dam.json` above the depth raster, else this watcher copy: for the run folder the raster sits in, or (0.2.2) by dam id when the raster is in
+the dam folder (`<Dams>/<dam id>/Depth (Max).tif`, where `rundam` puts it): the newest `<dam id>_run_<timestamp>/dam_record_hazard.json`
+whose own `dam_id` is that folder's name (`DAMIT_WATCH_DIR` if the watch folder is not `~/local-ai/watch`).
 
 ## If the receptor or raster check fails with a PROJ error
 

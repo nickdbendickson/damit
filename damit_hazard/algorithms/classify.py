@@ -311,6 +311,10 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         auto_kind = None
         if not dam_path:
             dam_path, auto_kind = self._find_dam_record(p, context)
+            if not dam_path:
+                layers_info.append({"role": "dam record search", "source": "(nothing found)", "modified": None,
+                                    "size": None, "note": "DAM_JSON was empty; no dam.json above the depth raster and no run "
+                                    "watcher copy for it"})
         if dam_path:
             try:
                 dam, nested = dam_record.load(dam_path)

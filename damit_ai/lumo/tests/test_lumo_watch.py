@@ -123,6 +123,7 @@ def free_port_url():
 
 class Base(StrictCase):
     def setUp(self):
+        super(Base, self).setUp()
         self.root = tempfile.mkdtemp(prefix="lumo_watch_")
         self.addCleanup(shutil.rmtree, self.root, True)
         self.cfg = LW.settings()

@@ -18,6 +18,10 @@ install places, and when there is none runs the built-in engine with a warning (
 run_setup.json 'engine_selection' and the outputs ENGINE_USED / ENGINE_FALLBACK / ENGINE_NOTE say which ran. ANUGA
 runs on the DamSafety Runner's default mesh (flood/mesh.py). HEC-RAS 2D is refused; DamIT never starts
 HEC-RAS or Wine, and never calls the ND suite's breach runner or batch tools.
+
+0.3.1: run_progress.json in the run folder (flood/model.py write_progress): the model CRS and each pass's folder and bounds
+after every pass, and "complete" once run_report.json is written, so a run watcher can georeference a pass and tell the run is
+over while it is going. No change to the model or its outputs.
 """
 import datetime
 import json
@@ -25,7 +29,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

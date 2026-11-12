@@ -47,6 +47,7 @@ def centre(row, col):
     return (col + 0.5) * CELL, BOUNDS[3] - (row + 0.5) * CELL
 
 
+PROGRESS_WKT = 'PROJCS["synthetic test grid"]'
 POCKET = (8, 8)         # the DEM / result hole (NoData) inside the water
 WET_CELL = (6, 6)
 DRY_BESIDE_DEEP = (5, 13)    # a cell with only a trace of water, next to the blob's east side (cols 5..12 wet)
@@ -63,10 +64,19 @@ def make_run(root, report=True, passes=3, final_leak=False, mass_nan=False, verr
              top_ft=1500.0, streambed_ft=1461.0, height_ft=37.0, datum="NAVD88", src="DWR", start_wse=None,
              extra_bci=None, toe_distance=39.0, toe_outer=None, ds_slope=2.5, hazard=False, trains_ko=15.0,
              unscored_roads=0, west_edge_wet_ft=0.0, mass_in_report=None, inflow_scenario="none",
-             dam_record=True, setup_dam_id=True, inflow_how=None, handoff=False):
+             dam_record=True, setup_dam_id=True, inflow_how=None, handoff=False, progress=False, progress_complete=False,
+             layout="flat", dam_line_at=None):
+    """layout="work" is the real DamIT work tree (the DWR-2824 retest): <root>/work/runs/<id>/<id>/run_<ts>/ for the run,
+    <root>/work/dams/<id>/ for the dam folder, <root>/work/inputs/ for the Screener's inputs. progress=True writes the
+    Runner 0.3.1 run_progress.json (progress_complete says whether the run is over). dam_line_at: a folder to put a
+    dam_line.geojson in (absolute, or relative to root)."""
     import numpy as np
-    run = os.path.join(root, "dams", "TST00001", "run_20260101_000000")      # run folder
-    dam_folder = os.path.join(root, "dams_folder", "TST00001")
+    if layout == "work":
+        run = os.path.join(root, "work", "runs", "TST00001", "TST00001", "run_20260101_000000")
+        dam_folder = os.path.join(root, "work", "dams", "TST00001")
+    else:
+        run = os.path.join(root, "dams", "TST00001", "run_20260101_000000")      # run folder
+        dam_folder = os.path.join(root, "dams_folder", "TST00001")
     os.makedirs(run, exist_ok=True)
     bottom = streambed_ft
     setup = {"schema": "damit.run_setup", "status": "finished", "model_launched": True, "engine": "LISFLOOD-FP (/x/lisflood)",
@@ -135,6 +145,14 @@ def make_run(root, report=True, passes=3, final_leak=False, mass_nan=False, verr
         if mass_in_report is not None and n == passes:
             rec["max_volume_error_pct"] = mass_in_report
         rp.append(rec)
+    if progress:
+        write(os.path.join(run, "run_progress.json"), json.dumps({
+            "version": 1, "crs_wkt": PROGRESS_WKT, "growth_loops_done": passes if progress_complete else max(0, passes - 1),
+            "complete": bool(progress_complete),
+            "passes": [{"pass": n, "dir": "run%02d_50m" % n, "bounds": BOUNDS, "cell_m": CELL, "wall_s": 1.0}
+                       for n in range(1, passes + 1)]}))
+    if dam_line_at:
+        write(os.path.join(root, dam_line_at, "dam_line.geojson"), json.dumps({"type": "FeatureCollection", "features": []}))
     if report:
         outer = toe_outer if toe_outer is not None else round(height_ft * M_PER_FT * (ds_slope + 1.0), 4)
         write(os.path.join(run, "run_report.json"), json.dumps({

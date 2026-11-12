@@ -378,6 +378,41 @@ def test_flat_dam_record_contract():
     assert "s6_class" in codes(res)
 
 
+def test_rail_layer_supplied_but_not_in_the_scored_set_is_not_called_unsupplied():
+    """0.2.2 (DWR-2824): 132 rail features were sampled, all outside the routed domain; M9a said 'no rail receptors supplied'."""
+    rail_out = R.make("rail:1", "rail", None, depth_ft=None, in_domain=False)
+    rail_out["in_domain"] = False
+    res = run(preset("ND"), [home("h", depth=0.0), rail_out], scenario="S3")
+    msgs = [f["message"] for f in res["flags"] if f.get("method") == "M9a"]
+    assert not any("no rail receptors supplied" in m for m in msgs), msgs
+    info = [f for f in res["flags"] if f["code"] == "layer_none_scored" and f.get("method") == "M9a"]
+    assert info and info[0]["level"] == "info"
+    assert "1 rail receptor(s) were supplied and sampled" in info[0]["message"]
+    assert "1 outside the routed domain" in info[0]["message"]
+    assert not [f for f in res["flags"] if f["code"] == "no_layer" and f.get("method") == "M9a"]
+    # a layer that really was not given keeps the old warning
+    res = run(preset("ND"), [home("h", depth=0.0)], scenario="S3")
+    assert [f for f in res["flags"] if f["code"] == "no_layer" and f.get("method") == "M9a"]
+    assert not [f for f in res["flags"] if f["code"] == "layer_none_scored"]
+
+
+def test_inputs_line_says_what_the_dam_record_was():
+    base = run(preset("ND"), [home("h", depth=0.2, vel=0.1)], scenario="S3", dam={"name": "Square Butte Creek Dam 2"})
+    md = report.markdown(base, CAT)
+    line = [l for l in md.splitlines() if l.startswith("- Dam record:")][0]
+    assert line == "- Dam record: none given or found; only the name was given: Square Butte Creek Dam 2", line
+    assert '{"name"' not in md
+    res = run(preset("ND"), [home("h", depth=0.2, vel=0.1)], scenario="S3",
+              dam={"name": "Test Dam", "dam_id": "ND00199", "storage_acft": 250})
+    res["layers"] = [{"role": "dam record", "source": "/x/dam.json", "modified": None, "size": 1, "note": "found automatically"}]
+    line = [l for l in report.markdown(res, CAT).splitlines() if l.startswith("- Dam record:")][0]
+    assert line == "- Dam record: Test Dam (dam_id = ND00199, nid_id = ND00199, storage_acft = 250)", line
+    res["layers"] = [{"role": "dam record search", "source": "(nothing found)", "modified": None, "size": None,
+                      "note": "DAM_JSON was empty; nothing found"}]
+    md = report.markdown(res, CAT)
+    assert "dam record search:" not in md and "none given or found (DAM_JSON was empty; nothing found)" in md
+
+
 def test_usbr_alias_classifies_the_same():
     recs = [home("h{}".format(i), depth=6.5, vel=1.0, occupants=1) for i in range(3)]
     a, b = run(preset("USBR"), recs), run(preset("USBR_TM11"), recs)

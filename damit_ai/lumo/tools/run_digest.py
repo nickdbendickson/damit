@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -315,6 +315,45 @@ def read_tif(path):
 
 def _pass_dirs(run_dir):
     return sorted(d for d in glob.glob(os.path.join(run_dir, "model", "run*")) if os.path.isdir(d))
+
+
+PROGRESS_FILE = "run_progress.json"       # written by DamIT Runner 0.3.1+ (flood/model.py write_progress)
+
+
+def load_progress(run_dir):
+    """The Runner's run_progress.json: {crs_wkt, passes: [{pass, dir, bounds, cell_m}], growth_loops_done, complete}.
+    It exists while the run is going, which run_report.json does not (1.3.0). {} for a run from an older Runner."""
+    d = _load_json(os.path.join(run_dir, PROGRESS_FILE))
+    return d if isinstance(d, dict) else {}
+
+
+def progress_pass(progress, pdir):
+    """The progress entry of a pass folder (by its folder name), or {}."""
+    name = os.path.basename(os.path.normpath(pdir))
+    for e in (progress or {}).get("passes") or []:
+        if isinstance(e, dict) and e.get("dir") == name:
+            return e
+    return {}
+
+
+def run_complete(run_dir, setup=None, report=None, progress=None):
+    """(done, how): has the Runner's WHOLE pipeline finished (every pass of every loop, the ANUGA tier, the outputs)? The
+    pass logs cannot say so: the Runner works between passes in Python, with no LISFLOOD process and no pass log growing
+    (DWR-2824: the 2 s gap before pass 7 looked idle). The markers, strongest first: run_progress.json "complete" (written after
+    run_report.json), run_report.json (the last file run_breach writes), run_setup.json status finished (model launched) or
+    failed. How is the marker's name, for the reason line."""
+    progress = load_progress(run_dir) if progress is None else progress
+    if progress.get("complete") is True:
+        return True, "run_progress.json says complete"
+    if report is not None or os.path.exists(os.path.join(run_dir, "run_report.json")):
+        return True, "run_report.json is written"
+    setup = _load_json(os.path.join(run_dir, "run_setup.json")) if setup is None else setup
+    st = (setup or {}).get("status")
+    if st == "finished" and (setup or {}).get("model_launched"):
+        return True, "run_setup.json status is finished"
+    if st == "failed":
+        return True, "run_setup.json status is failed"
+    return False, None
 
 
 def _pass_grid(pdir, ext, bounds, scale=1.0):
@@ -700,15 +739,70 @@ def toe_expected(height_ft, slope, th=THRESHOLDS):
     return th["toe_inner_m"], max(th["toe_inner_m"], min(th["toe_cap_m"], outer)), s, not (slope and slope > 0)
 
 
-def _dam_line_found(dam_folder, run_dir=None):
-    for base in (dam_folder, os.path.join(dam_folder, "inputs") if dam_folder else None, run_dir):
-        if base and (os.path.exists(os.path.join(base, "dam_line.geojson")) or
-                     os.path.exists(os.path.join(base, "inputs", "dam_line.geojson"))):
-            return True
-    return False
+DAM_LINE_NAMES = ("dam_line.geojson", "dam_line_linestring.geojson", "dam_line.gpkg", "dam_line.shp")
 
 
-def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None):
+def dam_line_places(dam_folder, run_dir=None, setup=None, dam_id=None):
+    """Every folder where the DamIT suite keeps (or is told about) the dam line, most specific first (1.3.0). The Runner
+    and the Screener do not agree on one place: the DWR-2824 retest had it in <work>/inputs/ (beside the terrain), with the
+    dam folder <work>/dams/<id>/ and the run folder <work>/runs/<id>/<id>/run_<ts>/ holding none.
+      - the dam folder, its inputs/, and the <work>/inputs/ and <work>/handoff/<dam id>/ beside its dams/ folder;
+      - the run folder, its inputs/, and the same two beside the run folder's runs/ folder;
+      - the folder of every input the run setup names (terrain, receptors, hydrographs: the Screener's inputs/ folder);
+      - the hand-off folder (run_setup.handoff, damit_handoff.json) and a dam_line path the setup or hand-off gives."""
+    out = []
+
+    def add(p):
+        if p and p not in out:
+            out.append(p)
+
+    def around(base, up):
+        """base, base/inputs, and <work>/inputs, <work>/handoff/<id> where <work> is `up` levels above base."""
+        if not base:
+            return
+        base = os.path.abspath(base)
+        add(base)
+        add(os.path.join(base, "inputs"))
+        work = base
+        for _ in range(up):
+            work = os.path.dirname(work)
+        if work and work != base:
+            add(os.path.join(work, "inputs"))
+            if dam_id:
+                add(os.path.join(work, "handoff", str(dam_id)))
+    around(dam_folder, 2)                                       # <work>/dams/<id>
+    around(run_dir, 4)                                          # <work>/runs/<id>/<id>/run_<ts>
+    setup = setup or {}
+    for v in (setup.get("inputs") or {}).values():
+        if isinstance(v, str) and v:
+            add(os.path.dirname(os.path.abspath(v)))
+    ho = setup.get("handoff")
+    if isinstance(ho, str) and ho and run_dir:
+        add(os.path.dirname(os.path.abspath(os.path.join(run_dir, ho))))
+    add(run_dir and os.path.abspath(run_dir))
+    return out
+
+
+def find_dam_line(dam_folder, run_dir=None, setup=None, dam_id=None):
+    """Path of a dam line file (dam_line.geojson and its relatives) in any known place, else None (1.3.0)."""
+    for base in dam_line_places(dam_folder, run_dir, setup, dam_id):
+        for name in DAM_LINE_NAMES:
+            p = os.path.join(base, name)
+            if os.path.exists(p):
+                return p
+    for key in ("dam_line", "dam_line_file"):                     # a path the setup / hand-off names outright
+        for src in ((setup or {}).get("inputs") or {}, (setup or {}).get("parameters") or {}):
+            v = src.get(key)
+            if isinstance(v, str) and v and os.path.exists(v):
+                return v
+    return None
+
+
+def _dam_line_found(dam_folder, run_dir=None, setup=None, dam_id=None):
+    return find_dam_line(dam_folder, run_dir, setup, dam_id) is not None
+
+
+def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None, setup=None):
     inflow = (report or {}).get("inflow")
     if not inflow:
         return None
@@ -717,8 +811,10 @@ def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None):
     m = re.search(r"([\d.]+)\s*m from the (?:dam )?line", str(inflow.get("how") or ""))
     dist = _num(m.group(1)) if m else None
     info["distance_m"] = dist
-    line = _dam_line_found(f.get("dam_folder"), run_dir)
+    line_path = find_dam_line(f.get("dam_folder"), run_dir, setup, f.get("dam_id"))
+    line = line_path is not None
     info["dam_line_found"] = line
+    info["dam_line_path"] = line_path
     if dist is not None:
         # The distance is the Runner's own measurement (it placed the inflow with the dam line it had). It is used as it
         # is, and the digest says where it came from; with no dam line to measure again this is an INFO note, not an
@@ -960,10 +1056,12 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
     now = now if now is not None else time.time()
     setup = _load_json(os.path.join(run_dir, "run_setup.json"))
     report = _load_json(os.path.join(run_dir, "run_report.json"))
+    progress = load_progress(run_dir)
     fl = Flags()
     bounds = (report or {}).get("bounds")
     if not bounds:
         bounds = None
+    crs_wkt = (report or {}).get("crs_wkt") or progress.get("crs_wkt") or None
     pdirs = _pass_dirs(run_dir)
     if upto_pass is not None:
         pdirs = [d for d in pdirs if (_pass_number(d) or 0) <= upto_pass]
@@ -988,7 +1086,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
     datum = check_datum(facts, fl)
     wse = check_start_wse(facts, report, setup, fl)
     check_outlets(run_dir, passes, setup, fl)
-    toe = check_toe(facts, report, fl, run_dir=run_dir)
+    toe = check_toe(facts, report, fl, run_dir=run_dir, setup=setup)
     check_engine(report, fl)
 
     # peak depth / velocity over wet cells, and receptors (needs numpy; GDAL for the GeoTIFF)
@@ -1000,8 +1098,13 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
         dp = depth_path or os.path.join(run_dir, "outputs", "Depth (Max).tif")
         depth_grid = read_tif(dp) if (os.path.exists(dp) and not live) else None
         grid_source = "outputs/Depth (Max).tif" if depth_grid is not None else None
-        if depth_grid is None and final and bounds:
-            depth_grid = _pass_grid(final[0], ".max", bounds, 1.0 / FT)
+        # the pass's own georeference: run_progress.json has it while the run is going (a pass's domain is not the final
+        # one, and run_report.json does not exist yet); the report's bounds are the final domain's (1.3.0)
+        pbounds = progress_pass(progress, final[0]).get("bounds") if final else None
+        if not pbounds and not (live and progress):
+            pbounds = bounds
+        if depth_grid is None and final and pbounds:
+            depth_grid = _pass_grid(final[0], ".max", pbounds, 1.0 / FT)
             grid_source = "the %s pass grid%s" % (os.path.basename(final[0]), (" (the run is in progress; the final Depth (Max).tif "
                                                   "can differ)" if live else ""))
         if depth_grid is not None:
@@ -1010,8 +1113,8 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
             vg = None
             vp = os.path.join(run_dir, "outputs", "Velocity (Max).tif")
             vg = read_tif(vp) if (os.path.exists(vp) and not live) else None
-            if vg is None and final and bounds:
-                vg = _pass_grid(final[0], ".maxVc", bounds, 1.0 / FT)
+            if vg is None and final and pbounds:
+                vg = _pass_grid(final[0], ".maxVc", pbounds, 1.0 / FT)
             peaks = {"peak_depth_ft": round(float(np.nanmax(np.where(wet, depth_grid.data, np.nan))), 2) if wet.any() else 0.0,
                      "peak_velocity_fps": (round(float(np.nanmax(np.where(wet, vg.data, np.nan))), 2)
                                            if (vg is not None and vg.data.shape == wet.shape and wet.any()) else None),
@@ -1031,8 +1134,8 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                 if spath and not os.path.exists(spath):
                     fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: the structure layer was not found",
                            "no file at %s" % spath)
-                if spath and os.path.exists(spath) and (report or {}).get("crs_wkt"):
-                    pts = load_points_ogr(spath, report["crs_wkt"])
+                if spath and os.path.exists(spath) and crs_wkt:
+                    pts = load_points_ogr(spath, crs_wkt)
                     if pts is None:
                         fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: GDAL/OGR is not installed",
                                "the structure layer %s needs the osgeo Python package (QGIS or GDAL); the other checks "
@@ -1054,6 +1157,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
             hazard = check_hazard(_load_json(hp), fl, rail_lookup)
 
     flags = dedupe_flags(fl.items)
+    complete = run_complete(run_dir, setup, report, progress)
     d = {"schema": SCHEMA, "version": VERSION, "run_dir": run_dir, "phase": phase, "dam_id": facts["dam_id"],
          "name": facts["name"], "verdict": verdict_of(flags), "verdict_set_by": "code (flags only; Lumo never changes it)",
          "flags": flags, "thresholds": THRESHOLDS,
@@ -1062,7 +1166,8 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                     "hazard": hazard, "dam": facts,
                     "run": {"engine": (report or {}).get("engine") or (setup or {}).get("engine"),
                             "sim_time_hr": (report or {}).get("sim_time_hr"), "stop_reason": (report or {}).get("stop_reason"),
-                            "finished": bool(report) or (setup or {}).get("status") == "finished"}}}
+                            "finished": bool(report) or (setup or {}).get("status") == "finished",
+                            "complete": complete[0], "complete_by": complete[1]}}}
     d["text"] = render_text(d)
     d["flags_text"] = render_flag_list(d)
     return d

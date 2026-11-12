@@ -263,8 +263,8 @@ class TestDigestText(Base):
         self.assertIn("PROJ_LIB", f["detail"])
 
     def test_versions(self):
-        self.assertEqual(RD.VERSION, "1.2.0")
-        self.assertEqual(LW.VERSION, "1.2.0")
+        self.assertEqual(RD.VERSION, "1.3.0")
+        self.assertEqual(LW.VERSION, "1.3.0")
 
     def test_docs_describe_proj_and_the_no_record_case(self):
         t = slurp(os.path.join(LUMO, "knowledge", "WATCHER-DIGEST.md"))
@@ -493,7 +493,9 @@ class TestNeverSlowsLisflood(Base):
         self.assertIn("lisflood process", st["reason"])
 
     @needs_numpy
-    def test_between_passes_it_waits_for_a_quiet_gap(self):
+    def test_between_passes_it_is_not_idle_however_quiet_it_is(self):
+        """1.3.0: the 1.2.0 gate called a 20 s quiet gap idle and started Lumo 2 s after pass 6 of DWR-2824. The Runner works in
+        Python between passes; only the Runner's own completion markers (or an abandoned run) make the engine idle."""
         run = self.run_dir(report=False)
         s = jload(os.path.join(run, "run_setup.json"))
         s["status"] = "running"
@@ -501,11 +503,11 @@ class TestNeverSlowsLisflood(Base):
         now = time.time()
         for d in RD._pass_dirs(run):
             os.utime(os.path.join(d, "lisflood.log"), (now - 3, now - 3))
-        st = LW.engine_state(run, dict(self.cfg, idle_gap_s=20.0), now=now, proc=False)
-        self.assertFalse(st["idle"])
-        self.assertIn("between passes", st["reason"])
-        self.assertTrue(LW.engine_state(run, dict(self.cfg, idle_gap_s=2.0), now=now, proc=False)["idle"])
-        self.assertTrue(LW.engine_state(run, dict(self.cfg, idle_gap_s=20.0), now=now + 60, proc=False)["idle"])
+        for gap in (2.0, 20.0):
+            st = LW.engine_state(run, dict(self.cfg, idle_gap_s=gap), now=now, proc=False)
+            self.assertFalse(st["idle"], gap)
+            self.assertIn("still working", st["reason"])
+        self.assertFalse(LW.engine_state(run, self.cfg, now=now + 60, proc=False)["idle"])
 
     @needs_numpy
     def test_modes(self):
@@ -516,16 +518,17 @@ class TestNeverSlowsLisflood(Base):
         self.assertFalse(LW.explain_gate(run, dict(self.cfg, explain="idle"), proc=True)[0])
 
     @needs_numpy
-    def test_end_mode_waits_for_the_run_to_finish(self):
+    def test_idle_and_end_modes_both_wait_for_the_run_to_finish(self):
         run = self.run_dir(report=False)
         s = jload(os.path.join(run, "run_setup.json"))
         s["status"] = "running"
         jdump(s, os.path.join(run, "run_setup.json"))
-        now = time.time() + 600                               # long past any gap: idle, but not finished
-        ok, why = LW.explain_gate(run, dict(self.cfg, explain="end"), now=now, proc=False)
-        self.assertFalse(ok)
-        self.assertIn("finish", why)
-        self.assertTrue(LW.explain_gate(run, dict(self.cfg, explain="idle"), now=now, proc=False)[0])
+        now = time.time() + 600                               # long past the old 20 s gap, short of the stale limit
+        for mode in ("end", "idle"):
+            ok, why = LW.explain_gate(run, dict(self.cfg, explain=mode), now=now, proc=False)
+            self.assertFalse(ok, mode)
+            self.assertIn("not finished", why)
+        self.assertTrue(LW.explain_gate(run, dict(self.cfg, explain="always"), now=now, proc=False)[0])
 
     @needs_numpy
     def test_a_busy_engine_queues_the_explanation_and_still_writes_the_digest(self):
@@ -609,7 +612,6 @@ class TestNeverSlowsLisflood(Base):
 
     def test_lisflood_process_scan_can_be_switched_off(self):
         os.environ["LUMO_WATCH_PROC_SCAN"] = "0"
-        self.addCleanup(os.environ.pop, "LUMO_WATCH_PROC_SCAN", None)
         self.assertIsNone(LW._lisflood_process_running())
 
     def test_the_cli_flags_set_the_mode_and_the_threads(self):

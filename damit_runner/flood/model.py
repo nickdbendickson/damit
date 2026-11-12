@@ -172,6 +172,39 @@ def _hydrograph_record(hy, dam):
 
 
 # ------------------------------------------------------------------------------------------------- runs --
+PROGRESS_FILE = "run_progress.json"
+
+
+def write_progress(workdir, **fields):
+    """run_progress.json in the run folder (0.3.1): what a watcher needs while the run is still going - the model CRS, each
+    pass's folder and bounds - and the one completion marker. `complete` is True only after run_report.json is written
+    (every loop, the ANUGA tier and the outputs are done). It is a progress note: a failure to write it never stops the
+    run, and it is only written for a run folder's own model/ directory (growth_loop's tests use throw-away folders)."""
+    if os.path.basename(os.path.normpath(workdir)) != "model":
+        return None
+    path = os.path.join(os.path.dirname(os.path.normpath(workdir)), PROGRESS_FILE)
+    try:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            state = {"version": 1, "passes": [], "growth_loops_done": 0, "complete": False}
+        add = fields.pop("add_pass", None)
+        if add:
+            state["passes"].append(add)
+        if fields.pop("loop_done", False):
+            state["growth_loops_done"] = int(state.get("growth_loops_done") or 0) + 1
+        state.update(fields)
+        state["updated"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, indent=1, default=str)
+        os.replace(tmp, path)
+        return path
+    except OSError:
+        return None
+
+
 def one_run(p, wkt, s, hy, bounds, cell, sim_s, workdir, log, cancel, wall_s):
     dem = R.read_window(p["dem"], bounds, cell, wkt, p.get("z_units"))
     if not np.isfinite(dem.data).any():
@@ -249,6 +282,8 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
                "wall_limit_s": info["wall_limit_s"]}
         rec.update(flood_stats(dem, depth, arr_m))
         passes.append(rec)
+        write_progress(workdir, crs_wkt=wkt, add_pass={"pass": rec["pass"], "dir": os.path.basename(wd),
+                                                       "bounds": rec["bounds"], "cell_m": cell, "wall_s": rec["wall_s"]})
         log("Pass {} (domain run {}): {:.1f} x {:.1f} mi, {:g} m, {:.1f} h simulated; edges over {:g} ft: {}; "
             "{}".format(rec["pass"], it, (bounds[2] - bounds[0]) / MILE, (bounds[3] - bounds[1]) / MILE, cell,
                         sim_s / 3600.0, p["edge_tol_ft"], ", ".join(over) or "none",
@@ -305,6 +340,7 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
     if not fixed and last is not None and last >= OUTFLOW_WARN_PCT:
         warnings.append("{:.1f}% of the breach volume left the model through its edges in the last run; the flood "
                         "area and the downstream consequences are minimums.".format(last))
+    write_progress(workdir, loop_done=True)
     return {"dem": dem, "out": out, "bounds": bounds, "sim_s": sim_s, "passes": passes, "warnings": warnings,
             "stop": stop, "info": info}
 
@@ -430,6 +466,7 @@ def run_breach(p, out_dir, log=print, cancel=None):
                                          "us_feet": "us survey feet"}.get(zu, zu)
     with open(os.path.join(out_dir, "run_report.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=1, default=str)
+    write_progress(model_dir, complete=True)       # after run_report.json: the whole breach pipeline is done
     return record
 
 
