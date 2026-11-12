@@ -84,9 +84,9 @@ class Chain2D(unittest.TestCase):
                                  {"dam_id": "ID", "height_ft": "HT", "storage_acft": "STOR",
                                   "top_of_dam_elev_ft": "TOD"})
         recs = [{"id": "h1", "dam_id": "ND00001", "receptor_type": "structure", "structure_type": "home",
-                 "habitable": True, "_x": x, "_y": y - 200.0, "_crs": "EPSG:26914"},
+                 "habitable": True, "source": "nd911", "_x": x, "_y": y - 200.0, "_crs": "EPSG:26914"},
                 {"id": "h2", "dam_id": "ND00001", "receptor_type": "structure", "structure_type": "home",
-                 "habitable": True, "_x": x + 600.0, "_y": y - 200.0, "_crs": "EPSG:26914"}]
+                 "habitable": True, "source": "nd911", "_x": x + 600.0, "_y": y - 200.0, "_crs": "EPSG:26914"}]
         s = dict(WF.DEFAULT_SETTINGS, preset="ND", terrain=self.dem)
         logs = []
         with mock.patch.dict(os.environ, {"DAMIT_SCREENING_TIMEOUT_S": "500"}):
@@ -117,8 +117,8 @@ class Chain2D(unittest.TestCase):
         self.assertIsNotNone(pkg["screening"].get("suggested_label"))
         with open(summ["report"]) as fh:
             self.assertIn("Screening flood (engine2d)", fh.read())
-        # 0.3.2: the depth-velocity chart of the wet HABITABLE structures (Hazard's rule), a point sample, in the
-        # dam folder; h2 is dry so only h1 is plotted
+        # 0.3.2: the depth-velocity chart of the wet habitable structures (0.3.3: ND 911 points and reviewed ones),
+        # a point sample, in the dam folder; h2 is dry so only h1 is plotted
         dv = r["dv_chart"]
         self.assertIn(dv["status"], (ST.STATUS_OK, ST.STATUS_GAP), dv)
         import csv

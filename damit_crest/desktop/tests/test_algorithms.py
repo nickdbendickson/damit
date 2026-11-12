@@ -529,6 +529,7 @@ class PublishedInterfaceTests(Base):
         self.assertEqual(feats[0]["properties"]["dam_id"], "XX00001")
         self.assertEqual(feats[0]["properties"]["receptor_type"], "structure")
         self.assertEqual(feats[0]["properties"]["structure_type"], "home")
+        self.assertEqual(feats[0]["properties"]["source"], SEEDS[0].get("source") or "crest")   # Hazard's 911 test reads it
         self.assertEqual(feats[0]["geometry"]["coordinates"], [-100.0, 46.74])
         # the desk's payload, when sent with the screen job: its structures (points), not its roads
         qr.run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log, receptors=PAYLOAD)

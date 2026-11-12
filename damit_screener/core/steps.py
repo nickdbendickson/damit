@@ -12,7 +12,12 @@ are downloaded fresh from the USGS 3DEP service into the dam folder (flood/terra
 are never started.
 
 0.3.1: a dam line that is a MultiLineString is read (DamIT Runner 0.3.2 flood/damfolder.py), and the engine2d notes say which part
-was used and why."""
+was used and why.
+
+0.3.3: the depth-velocity chart follows DamIT Hazard 0.4.0: only ND 911 address points (receptors whose source is nd911,
+as DamIT Crest hands them over) and structures an engineer reviewed habitable (habitable_review.json in the dam folder,
+written only by Hazard's damit:reviewhabitable) are plotted; other wet structures are an unverified count and a CSV
+worklist. No change to the screening flood or the preliminary class."""
 import csv
 import math
 import os
@@ -579,8 +584,9 @@ DV_CHART_STEM = "damit_screener_dv_habitable"
 
 def dv_chart(dam, receptors, folder, log=print, now=None):
     """The depth-velocity chart (PNG + CSV) of the wet HABITABLE structures of the screening flood, in the dam
-    folder: DamIT Hazard's habitability rule and TM-11 charts (damit_hazard.engine.dvchart), the Screener's point
-    sample at each structure. A step result; a chart problem never fails the Screener."""
+    folder: DamIT Hazard's rule (ND 911 address points and engineer-reviewed structures only) and TM-11 charts
+    (damit_hazard.engine.dvchart), the Screener's point sample at each structure. A step result; a chart problem never
+    fails the Screener."""
     import datetime
     from . import runner_bridge as RB
     try:
@@ -593,7 +599,8 @@ def dv_chart(dam, receptors, folder, log=print, now=None):
     if not folder:
         return step(STATUS_NOT_RUN, "no dam folder: no depth-velocity chart")
     try:
-        recs = D.from_screener(receptors)
+        reviews, probs = D.habitable_review.load(os.path.join(folder, D.habitable_review.REVIEW_FILE))
+        recs = D.from_screener(receptors, reviews)
         if not any(r.get("sampled") for r in recs):
             return step(STATUS_NOT_RUN, "no structure was sampled by the screening flood: no depth-velocity chart")
         meta = {"dam_id": dam.get("dam_id"), "dam_name": dam.get("name") or dam.get("dam_name"),
@@ -603,8 +610,11 @@ def dv_chart(dam, receptors, folder, log=print, now=None):
     except Exception as e:                                       # noqa: BLE001 - a chart is never a failed screening
         return step(STATUS_GAP, "depth-velocity chart not written: {}: {}".format(type(e).__name__, e))
     detail = "{}{}".format(c["text"], "" if c["status"] == "ok" else "; PNG not drawn: " + c["note"])
+    if probs:
+        detail += "; " + "; ".join(probs)
     return step(STATUS_OK if c["status"] == "ok" else STATUS_GAP, detail, png=c.get("png"), csv=c.get("csv"),
-                counts=c["counts"], left_out=c["left_out"], note=c.get("note") or "")
+                unverified_csv=c.get("unverified_csv"), counts=c["counts"], left_out=c["left_out"],
+                unverified=c.get("unverified"), note=c.get("note") or "")
 
 
 # ---------------------------------------------------------------- 8 suggestion --

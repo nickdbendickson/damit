@@ -656,7 +656,7 @@ def _package_line(dam_id: str, block: dict) -> str:
 
 def screening_receptors(folder: Path, dam: dict, dam_id: str, receptors=None) -> tuple[Path | None, int]:
     """<dam folder>/screen_inputs/receptors.geojson: the desk's structures as one point layer (EPSG:4326) for the
-    screening chain's RECEPTORS (dam_id, receptor_type, structure_type, habitable, occupants). (None, 0) when there
+    screening chain's RECEPTORS (dam_id, receptor_type, structure_type, habitable, occupants, source). (None, 0) when there
     are none. Roads, rail and the other layers are for damit:classify only."""
     pts = structure_points(dam, receptors)
     if not pts:
@@ -667,7 +667,10 @@ def screening_receptors(folder: Path, dam: dict, dam_id: str, receptors=None) ->
             "id": str(props.get("crest_id") or props.get("id") or f"s{i + 1}"), "dam_id": dam_id,
             "receptor_type": "structure", "structure_type": props.get("type") or "home",
             "habitable": props.get("habitable") if isinstance(props.get("habitable"), bool) else None,
-            "occupants": props.get("occupants"), "name": props.get("name")}})
+            "occupants": props.get("occupants"), "name": props.get("name"),
+            # where the structure came from ("nd911" = an ND 911 address point): DamIT Hazard's chart plots only 911
+            # points and structures an engineer reviewed habitable
+            "source": props.get("source"), "source_ref": props.get("source_ref")}})
     out = Path(folder) / "screen_inputs"
     out.mkdir(parents=True, exist_ok=True)
     path = out / "receptors.geojson"
