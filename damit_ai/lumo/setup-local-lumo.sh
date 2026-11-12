@@ -1,6 +1,6 @@
 #!/bin/zsh
 # ============================================================================
-# setup-local-lumo.sh v3.6 — local Ollama auditing for the dam suite (macOS)
+# setup-local-lumo.sh v3.7 — local Ollama auditing for the dam suite (macOS)
 #
 #   NO sudo · NO Homebrew. NO web downloads by the script itself (v3.5): Ollama
 #   comes from damit_ai/offline/ollama (sha256-checked) or a zip/dmg you download
@@ -36,6 +36,9 @@
 #   zsh setup-local-lumo.sh --small          # force qwen3:14b (qwen3:8b on an Intel Mac)
 #   zsh setup-local-lumo.sh --model NAME     # any Ollama model tag
 #   zsh setup-local-lumo.sh --skip-scripts   # don't rewrite the Python tools
+#   zsh setup-local-lumo.sh --watch-model TAG   # the SMALL run-watcher explainer (default qwen3:4b; phi4-mini is the
+#                                               # alternative); --no-watch-model skips pulling it. Interactive
+#                                               # Q&A (lumo-chat) keeps the big model chosen above.
 # ============================================================================
 
 set -u
@@ -51,11 +54,14 @@ MARKER="# ---- Local AI (no-sudo install) ----"
 LUMO_ENV="ndlumo"
 
 SMALL_MODEL=0; REWRITE_SCRIPTS=1; FORCE_MODEL=""
+WATCH_MODEL="${LUMO_WATCH_MODEL:-qwen3:4b}"
 while (( $# )); do
   case "$1" in
     --small) SMALL_MODEL=1 ;;
     --skip-scripts) REWRITE_SCRIPTS=0 ;;
     --model) shift; FORCE_MODEL="${1:-}" ;;
+    --watch-model) shift; WATCH_MODEL="${1:-qwen3:4b}" ;;
+    --no-watch-model) WATCH_MODEL="" ;;
   esac
   shift
 done
@@ -208,6 +214,12 @@ else NUM_CTX=12288; fi
 "$OLLAMA" list 2>/dev/null | grep -q "^$CHAT_MODEL" || "$OLLAMA" pull "$CHAT_MODEL" || die "pull failed: $CHAT_MODEL"
 ok "chat model: $CHAT_MODEL (num_ctx $NUM_CTX)"
 "$OLLAMA" list 2>/dev/null | grep -q "^nomic-embed-text" || "$OLLAMA" pull nomic-embed-text || die "pull failed: nomic-embed-text"
+# the run-watcher's explainer: a SMALL model (a CPU box cannot read a long log with the big one; stock Ollama uses
+# only NVIDIA, Apple or AMD ROCm GPUs, so an Intel Arc / Intel GPU Mac runs on the CPU)
+if [[ -n "$WATCH_MODEL" ]]; then
+  case "$WATCH_MODEL" in phi) WATCH_MODEL="phi4-mini" ;; small) WATCH_MODEL="qwen3:4b" ;; esac
+  "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" || warn "could not pull the watcher model $WATCH_MODEL (lumo-watch still gives the digest and verdict)"
+fi
 ok "nomic-embed-text present"
 
 # ===========================================================================
@@ -3116,6 +3128,15 @@ SCRIPT_EOF_REPOAUDIT
     "$LUMO_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
   done
   ok "rag_index 2.4, rag_query 2.2, audit_plugin 1.3, suite_check 1.0, dam_chain 1.5.1, repo_audit 1.0 written and compiled"
+  # v3.7: the run watcher (deterministic digest + the small explainer) is copied, not generated
+  for f in run_digest lumo_watch; do
+    if [[ -f "${0:A:h}/tools/$f.py" ]]; then
+      cp "${0:A:h}/tools/$f.py" "$LOCAL_AI/$f.py" && "$LUMO_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
+    else
+      warn "tools/$f.py not found next to this script: the run watcher was not installed"
+    fi
+  done
+  ok "run_digest 1.0.0, lumo_watch 1.0.0 copied and compiled"
 else
   ok "script rewrite skipped (--skip-scripts)"
 fi
@@ -3137,6 +3158,7 @@ export CREST_REPO="\$HOME/Documents/DSHazard/crest"
 export STD_PDFS="\$HOME/Documents/Standards_PDFs"
 export OLLAMA_MODELS="\$HOME/local-ai/models"
 export LUMO_NUM_CTX=$NUM_CTX
+export LUMO_WATCH_MODEL="${WATCH_MODEL:-qwen3:4b}"
 alias lumo-start="OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 \$HOME/local-ai/bin/Ollama.app/Contents/Resources/ollama serve"
 unalias lumo-chat 2>/dev/null
 function lumo-chat {
@@ -3149,6 +3171,8 @@ alias lumo-query="$PYRUN \$HOME/local-ai/rag_query.py"
 alias lumo-audit="$PYRUN \$HOME/local-ai/audit_plugin.py"
 alias lumo-test="$PYRUN \$HOME/local-ai/suite_check.py"
 alias damchain="$PYRUN \$HOME/local-ai/dam_chain.py"
+alias lumo-digest="$PYRUN \$HOME/local-ai/run_digest.py"
+alias lumo-watch="$PYRUN \$HOME/local-ai/lumo_watch.py"
 alias lumo-std="$PYRUN \$HOME/local-ai/rag_query.py -c standards"
 alias lumo-hazard="$PYRUN \$HOME/local-ai/rag_query.py -c nd_hazard"
 alias lumo-reindex-all='lumo-index -c nd_hazard "\$ND_REPO" && lumo-index -c dwr_plugins "\$DWR_REPO" && lumo-index -c crest "\$CREST_REPO" && lumo-index -c standards "\$STD_PDFS"'

@@ -47,6 +47,35 @@ owns the one real copy; each plugin's `damsuite/` is a shim).
   a trivial rebase. Two open PRs claiming the same version: whichever merges second bumps
   (2026-11-10: #321 kept Runner 3.17.7; M18 landed as 3.17.8, M16 as 3.17.9).
 
+## Run-watcher rules (pinned; Lumo has got these backwards before)
+
+These are Nick's standing rules, pinned in the watcher's system prompt (`lumo_watch.py`) and checked by the
+digest (`run_digest.py`). A local model once reversed the first one.
+
+- **Sunny day = no inflow, outlets empty, no outlet or spillway flow.** The reservoir starts at the **top of dam,
+  which is the DWR max pool**. The only water is the breach. (Never "inflow equal to the reservoir's capacity" or
+  "outlets operational".) The Runner records `PMF_FT` but does not start there.
+- **DWR elevations are NAVD88 only** (NGVD29 + VERTCON 0.9088 ft in ND). A dam elevation of 0-300 ft is a local
+  datum, not NAVD88 (ND is roughly 800-3,500 ft).
+- **Toe rule.** The breach inflow goes in at the lowest ground in the downstream toe band: 5 m out to
+  H x (downstream slope + 1), 3:1 when the slope is not known, never more than 150 m from the dam line. H is the
+  inventory height (37 ft x 0.3048 x 3.5 = 39.5 m for a 2.5:1 slope).
+- **Height.** Crest minus streambed should equal the inventory height. When they differ (DWR-2658: 39.0 vs 37 ft)
+  the Runner can raise the breach bottom to the reservoir bottom; flag it, do not average it away.
+- **Early passes may leak.** The Runner grows the domain while water leaves an edge, so edge outflow in pass 1-2
+  followed by a clean final pass is normal (WATCH); a leaking final pass is not.
+- **BNSF KO subdivision = 15 trains per day** (the DamSafety value) for the M9a / M9b rail checks, passed as
+  `RAIL_TRAINS_LOOKUP` (`field,value,trains_per_day,source` = `SUBDIV,KO,15,...`). Other lines without a value
+  stay flagged.
+- **Judgment zone = Medium in ND** (the TM-11 judgment zone counts as Medium in the ND preset).
+- **Receptors.** Hazard reads a NoData cell as dry (0 ft). A structure on a NoData cell next to wet cells, or on a
+  dry cell beside deep water, can be missed by a coarse grid: flag it for a person. DamIT Hazard does not score
+  roads with unknown class or AADT (M8a); the older DamSafety plugin scored them Medium by assumption.
+- **Peak depth and peak velocity are maxima over wet cells** (depth of 0.1 ft or more).
+- **Real tool names only:** `damit_screen:handoff`, `damit_run:rundam`, `damit:classify` (and `damit_lite:classify`).
+  The automatic 10 m refine is switched off with `--GRID_REFINE=0`. There is no `damit_runner`, no `--no-refine` and
+  no `damit_screener_handoff`. See `ALGORITHM-HELP-DAMIT.md` (generated from the code) for every id and parameter.
+
 ## Known behaviours / bugs (durable)
 
 - **FV1 near-dam instability.** The near-dam refine pass with FV1 can blow up (a FREE edge

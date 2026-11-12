@@ -31,7 +31,7 @@ plugin zip or CI job.
    source ~/.zshrc
    ```
    Commands: `lumo-start` (Ollama server, in its own tab), `lumo-chat`, `lumo-index`, `lumo-query`,
-   `lumo-audit`, `damchain ...`.
+   `lumo-audit`, `lumo-digest`, `lumo-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
 
    **Repo audit:** `damchain audit --repo ~/path/to/DWR_Plugins` writes one report to
    `~/local-ai/reports/audit_<repo>_<time>.md` (and `.json`). It checks:
@@ -72,6 +72,42 @@ plugin zip or CI job.
    Full guide, model and memory trade-offs: [`research/INSTALL.md`](research/INSTALL.md).
    Starter reading list: [`research/READING-LIST.md`](research/READING-LIST.md).
 
+## Run watcher: Lumo reviews a DamIT run
+
+Lumo can watch a DamIT Runner run, but the review does not depend on the model. Two parts:
+
+1. **`run_digest.py`, deterministic, no AI.** After each Runner pass it reads what the Runner already wrote (the
+   per-pass record in `run_report.json`, the per-pass results, the dam folder, the Hazard report) and checks: `.mass`
+   volume balance and NaNs; per-pass edge outflow % and edge depths; sim-time progress and stalls; crest minus
+   streambed against the inventory height; datum (NAVD88; 0-300 ft is a local datum); the toe inflow against
+   H x (slope + 1) (3:1 default, 5 m minimum, 150 m cap); starting WSE = top of dam (= DWR max pool); no outlet or
+   spillway flow; receptors on NoData or dry cells next to wet cells; unscored roads; Hazard drivers that need a person
+   (e.g. BNSF KO = 15 trains/day). It prints a 20-40 line summary and machine flags (JSON), and **the code sets the
+   verdict, OK / WATCH / PROBLEM, from the flags alone.**
+2. **`lumo_watch.py`, Lumo explains.** A 500-1,000 token prompt (the digest and flag titles, plus a pinned system
+   prompt of Nick's rules and the real tool names) goes to a **small model** (default `qwen3:4b`; `phi4-mini` is the
+   alternative; `LUMO_WATCH_MODEL` or `--model`), through Ollama `/api/chat` with `think:false`, `num_ctx` about 4k and
+   `stream:true`. Every streamed piece is saved at once, so a slow box leaves partial text; there is no hard timeout that
+   throws it away. Lumo never changes or gates the verdict, and if it does not answer in a few seconds the review stands.
+   Interactive Q&A (`lumo`, `lumo-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
+
+Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
+
+```
+lumo-digest RUN_DIR                       # the digest, no AI (add --json for the machine flags)
+lumo-watch watch RUN_DIR                  # follow a run; one digest per hook, Lumo explains the newest
+lumo-watch event run_end RUN_DIR          # one hook now (pass_end | stall | before_hazard | after_hazard | run_end)
+```
+
+Output goes to `~/local-ai/watch/<dam>_<run>/`, never into the run folder. Details, every flag id and the thresholds:
+[`lumo/knowledge/WATCHER-DIGEST.md`](lumo/knowledge/WATCHER-DIGEST.md). The real algorithm ids and parameters Lumo cites come
+from [`lumo/knowledge/ALGORITHM-HELP-DAMIT.md`](lumo/knowledge/ALGORITHM-HELP-DAMIT.md), generated from the plugin code by
+`lumo/tools/dump_damit_algorithm_help.py` in an offscreen QGIS (CI checks it is current).
+
+> **GPUs:** stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs. An Intel Arc or Intel iGPU box runs the model on the CPU
+> (about 2.5-4 tokens/s for an 8B model in testing), which is why the watcher's explainer defaults to a 4B model and gets a
+> short prompt. The digest is the review; the model is commentary.
+
 ## Offline folder (nothing downloaded by the installers)
 
 The `damit_ai-offline` download adds `damit_ai/offline/` next to `lumo/` and `research/`:
@@ -101,8 +137,8 @@ Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6
 - `lumo/knowledge/` is a knowledge pack to index into Lumo's RAG beyond the source code (known behaviours /
   conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
   it); see `lumo/knowledge/README.md` and `index-knowledge.zsh`.
-- `lumo/` is setup-local-lumo.sh v3.6 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
-  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (all written by the installer itself; `lumo-chat` shows the
+- `lumo/` is setup-local-lumo.sh v3.7 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
+  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.7 also copies the run watcher: run_digest 1.0.0 and lumo_watch 1.0.0; `lumo-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.

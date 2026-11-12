@@ -10,6 +10,8 @@ damit_ai/lumo/setup-local-lumo.sh and research/setup-dam-research.zsh.
   .\install-local-ai-windows.ps1 -Ocr             # dam-research with OCR (ocrmypdf + tesseract)
   .\install-local-ai-windows.ps1 -Small           # force the small chat model
   .\install-local-ai-windows.ps1 -NoIndex         # skip indexing the knowledge pack / engine docs
+  .\install-local-ai-windows.ps1 -WatchModel phi4-mini   # the SMALL run-watcher explainer (default qwen3:4b);
+                                                         # -NoWatchModel skips pulling it. lumo (Q&A) keeps the big model.
 
 By default, when Lumo is installed the Lumo knowledge pack (lumo\knowledge) and, if present,
 the dam-research engine docs are indexed into the RAG so Lumo comes up already knowing the
@@ -33,7 +35,9 @@ param(
   [switch]$Ocr,
   [switch]$Small,
   [switch]$IndexKnowledge,   # on by default; kept for compatibility
-  [switch]$NoIndex
+  [switch]$NoIndex,
+  [string]$WatchModel = $(if ($env:LUMO_WATCH_MODEL) { $env:LUMO_WATCH_MODEL } else { 'qwen3:4b' }),
+  [switch]$NoWatchModel
 )
 $ErrorActionPreference = 'Stop'
 
@@ -192,6 +196,16 @@ function Pull ($m) {
 if ($DoLumo) {
   Say 'Lumo - code triage'
   Pull $ChatModel; Pull 'nomic-embed-text'
+  # the run-watcher's explainer: a SMALL model. Stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs, so an
+  # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
+  if ($WatchModel -eq 'phi') { $WatchModel = 'phi4-mini' } elseif ($WatchModel -eq 'small') { $WatchModel = 'qwen3:4b' }
+  if (-not $NoWatchModel) {
+    if (-not ((& $Ollama list) -match [regex]::Escape($WatchModel))) {
+      Ok "pulling $WatchModel (the small watcher model)"
+      & $Ollama pull $WatchModel
+      if ($LASTEXITCODE -ne 0) { Warn "could not pull the watcher model $WatchModel (lumo-watch still gives the digest and verdict)" }
+    }
+  }
   $mf = Join-Path $LocalAI 'Modelfile.lumo'
 @"
 FROM $ChatModel
@@ -210,7 +224,7 @@ Be precise about code, filenames, paths and units (ft vs m, cfs vs m3/s, NAVD88 
   Ok "'lumo' persona created"
   $PyL = Make-Env $LumoEnv 'python=3.12 pymupdf pypdf numpy'
   Ok "lumo python: $PyL"
-  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_lumo.py')) {
+  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_lumo.py','run_digest.py','lumo_watch.py')) {
     $src = Join-Path $Here "lumo\tools\$t"
     if (Test-Path $src) { Copy-Item $src (Join-Path $LocalAI $t) -Force }
   }
@@ -282,6 +296,9 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
     $lines += "`$env:LUMO_NUM_CTX = '$NumCtx'"
     $lines += "function lumo     { & '$PyL' '$LocalAI\rag_query.py' @args }"
     $lines += "function damchain { & '$PyL' '$LocalAI\dam_chain.py' @args }"
+    $lines += "`$env:LUMO_WATCH_MODEL = '$WatchModel'"
+    $lines += "function lumo-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
+    $lines += "function lumo-watch  { & '$PyL' '$LocalAI\lumo_watch.py' @args }"
   }
   if ($DoResearch) {
     $lines += "`$env:DAMRESEARCH_HOME = '$RHome'"

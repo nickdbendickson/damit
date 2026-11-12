@@ -11,6 +11,8 @@
 #   ./install-local-ai-linux.sh --ocr             # dam-research with OCR (ocrmypdf + tesseract)
 #   ./install-local-ai-linux.sh --small           # force the small chat model
 #   ./install-local-ai-linux.sh --no-index        # skip indexing the knowledge pack / engine docs
+#   ./install-local-ai-linux.sh --watch-model=TAG # the SMALL run-watcher explainer (default qwen3:4b; phi4-mini is the
+#                                                 # alternative); --no-watch-model skips pulling it. lumo (Q&A) keeps the big model.
 #
 # By default, when Lumo is installed the Lumo knowledge pack (lumo/knowledge) and, if present,
 # the dam-research engine docs are indexed into the RAG so Lumo comes up already knowing the
@@ -36,6 +38,7 @@ RC="$HOME/.bashrc"; [[ -n "${ZSH_VERSION:-}" || -f "$HOME/.zshrc" ]] && RC="$HOM
 LUMO_ENV="ndlumo"; RESEARCH_ENV="ndresearch"
 OLLAMA_HOST_URL="http://127.0.0.1:11434"
 DO_LUMO=1; DO_RESEARCH=1; OCR=0; SMALL=0; INDEX_KN=1
+WATCH_MODEL="${LUMO_WATCH_MODEL:-qwen3:4b}"
 
 for a in "$@"; do case "$a" in
   --no-lumo) DO_LUMO=0 ;;
@@ -44,6 +47,8 @@ for a in "$@"; do case "$a" in
   --small) SMALL=1 ;;
   --index-knowledge) INDEX_KN=1 ;;      # on by default; kept for compatibility
   --no-index) INDEX_KN=0 ;;
+  --watch-model=*) WATCH_MODEL="${a#*=}" ;;
+  --no-watch-model) WATCH_MODEL="" ;;
   -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "unknown option: $a" >&2; exit 1 ;;
 esac; done
@@ -159,6 +164,13 @@ pull(){ "$OLLAMA" list 2>/dev/null | grep -q "^$1" || { ok "pulling $1 (first ti
 if [[ "$DO_LUMO" == 1 ]]; then
   say "Lumo — code triage"
   pull "$CHAT_MODEL"; pull "nomic-embed-text"
+  # the run-watcher's explainer: a SMALL model. Stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs, so an
+  # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
+  case "$WATCH_MODEL" in phi) WATCH_MODEL="phi4-mini" ;; small) WATCH_MODEL="qwen3:4b" ;; esac
+  if [[ -n "$WATCH_MODEL" ]]; then
+    "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" \
+      || warn "could not pull the watcher model $WATCH_MODEL (lumo-watch still gives the digest and verdict)"
+  fi
   cat > "$LOCAL_AI/Modelfile.lumo" <<EOF
 FROM $CHAT_MODEL
 PARAMETER num_ctx $NUM_CTX
@@ -175,7 +187,7 @@ EOF
   ok "'lumo' persona created"
   PYL="$(make_env "$LUMO_ENV" "python=3.12 pymupdf pypdf numpy")"
   ok "lumo python: $PYL"
-  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_lumo.py; do
+  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_lumo.py run_digest.py lumo_watch.py; do
     [[ -f "$HERE/lumo/tools/$t" ]] && cp "$HERE/lumo/tools/$t" "$LUMO_TOOLS/$t"
   done
   [[ -d "$HERE/lumo/eval" ]] && cp -r "$HERE/lumo/eval" "$LUMO_TOOLS/eval"   # code-triage eval set (eval_lumo.py)
@@ -235,6 +247,9 @@ if ! grep -qF "$MARK" "$RC" 2>/dev/null; then
     [[ "$DO_LUMO" == 1 ]] && echo "export LUMO_NUM_CTX=$NUM_CTX"
     [[ "$DO_LUMO" == 1 ]] && echo "alias lumo='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\"'"
     [[ "$DO_LUMO" == 1 ]] && echo "alias damchain='\"$LOCAL_AI/python\" \"$LOCAL_AI/dam_chain.py\"'"
+    [[ "$DO_LUMO" == 1 ]] && echo "export LUMO_WATCH_MODEL=\"${WATCH_MODEL:-qwen3:4b}\""
+    [[ "$DO_LUMO" == 1 ]] && echo "alias lumo-digest='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_digest.py\"'"
+    [[ "$DO_LUMO" == 1 ]] && echo "alias lumo-watch='\"$LOCAL_AI/python\" \"$LOCAL_AI/lumo_watch.py\"'"
     [[ "$DO_RESEARCH" == 1 ]] && echo "export DAMRESEARCH_HOME=\"$RHOME\""
     [[ "$DO_RESEARCH" == 1 ]] && echo "alias damresearch='\"$RESEARCH_DIR/python\" \"$RESEARCH_DIR/damresearch.py\"'"
     echo "# <<< dam local AI <<<"
