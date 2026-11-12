@@ -103,7 +103,10 @@ EOF
     *) tar -xzf "$TGZ" -C "$LOCAL_AI/ollama" || die "could not extract $TGZ" ;;
   esac
   OLLAMA="$LOCAL_AI/ollama/bin/ollama"
-  [[ -x "$OLLAMA" ]] || OLLAMA="$(find "$LOCAL_AI/ollama" -name ollama -type f -perm -u+x | head -1)"
+  # the assignment is the FINAL element of the `||` list, so it is not exempt from errexit:
+  # a `find` that hits an unreadable subdir exits 1 while still printing, and under pipefail
+  # that would kill the script instead of reaching the clean `die` below
+  [[ -x "$OLLAMA" ]] || OLLAMA="$(find "$LOCAL_AI/ollama" -name ollama -type f -perm -u+x 2>/dev/null | head -1 || true)"
   [[ -x "$OLLAMA" ]] || die "ollama binary not found after extracting"
   ok "Ollama extracted to $LOCAL_AI/ollama"
 else
@@ -137,12 +140,19 @@ done
 make_env(){  # name  "pkgspec"   -> echoes the python path
   local name="$1" spec="$2" envpath=""
   if [[ -n "$CONDA" ]]; then
-    envpath="$("$CONDA" env list | awk -v n="$name" '$1==n{print $NF}')"
+    # `|| true` inside both substitutions. A `conda env list` that exits non-zero (an
+    # uninitialised or half-broken conda, or one that warns and exits 1) would otherwise
+    # fail the assignment under pipefail and kill make_env — and since make_env is called
+    # as PYL="$(make_env ...)", that death propagates out and ends the installer, instead
+    # of taking the venv fallback the next few lines were written for.
+    envpath="$("$CONDA" env list | awk -v n="$name" '$1==n{print $NF}' || true)"
     if [[ -z "$envpath" ]]; then
       "$CONDA" create -y -n "$name" -c conda-forge --override-channels $spec >/dev/null 2>&1 \
         || { warn "conda create $name failed — falling back to a venv"; CONDA=""; }
     fi
-    [[ -n "$CONDA" ]] && envpath="$("$CONDA" env list | awk -v n="$name" '$1==n{print $NF}')"
+    if [[ -n "$CONDA" ]]; then
+      envpath="$("$CONDA" env list | awk -v n="$name" '$1==n{print $NF}' || true)"
+    fi
     [[ -n "$envpath" ]] && { echo "$envpath/bin/python"; return; }
   fi
   command -v python3 >/dev/null || die "no conda and no python3"

@@ -82,7 +82,9 @@ if (( DO_MODELS )); then
   TMPOL="$(mktemp -d)"
   case "$ASSET" in *.zst) TARF=(--zstd -xf) ;; *) TARF=(-xzf) ;; esac
   tar "${TARF[@]}" "$OFFLINE/ollama/$ASSET" -C "$TMPOL" 2>/dev/null || warn "could not extract Ollama to pull models"
-  OL="$TMPOL/bin/ollama"; [[ -x "$OL" ]] || OL="$(find "$TMPOL" -name ollama -type f -perm -u+x 2>/dev/null | head -1)"
+  # final element of the `||` list, so not exempt: `|| true` keeps a non-zero `find` from
+  # ending the download under pipefail (the `-x` test below is what should decide)
+  OL="$TMPOL/bin/ollama"; [[ -x "$OL" ]] || OL="$(find "$TMPOL" -name ollama -type f -perm -u+x 2>/dev/null | head -1 || true)"
   if [[ -x "$OL" ]]; then
     export OLLAMA_HOST=127.0.0.1:11499 OLLAMA_MODELS="$MDIR"
     "$OL" serve >"$MDIR/.serve.log" 2>&1 &

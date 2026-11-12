@@ -216,7 +216,11 @@ install_set() {  # install_set <profile dir> <zip folder> <plugin names in order
   local dest="$1/python/plugins" zdir="$2" p z; shift 2
   mkdir -p "$dest"
   for p in "$@"; do
-    z="$(ls "$zdir/${p}_"[0-9]*.zip 2>/dev/null | head -1)"
+    # Without `|| true` a missing zip exits `ls` non-zero, pipefail carries that to the
+    # assignment, and errexit kills install_set — and, because the function's death
+    # propagates to its caller, the whole installer. The plugin list would just stop
+    # partway through with no error, and the warning below would never print.
+    z="$(ls "$zdir/${p}_"[0-9]*.zip 2>/dev/null | head -1 || true)"
     [ -n "$z" ] || { warn "no zip for $p in $zdir"; continue; }
     rm -rf "${dest:?}/$p"; unzip -q -o "$z" -d "$dest"
     printf '    %-22s %s\n' "$p" "$(ver_of "$dest/$p")"
@@ -273,7 +277,13 @@ RUN="$PREFIX/absaraka-run"
 if [ -d "$HERE/absaraka" ]; then
   mkdir -p "$RUN"
   (cd "$HERE/absaraka" && find . -type d -exec mkdir -p "$RUN/{}" \; )
-  (cd "$HERE/absaraka" && find . -type f | while IFS= read -r f; do [ -e "$RUN/$f" ] || cp -p "$f" "$RUN/$f"; done)
+  # The trailing `|| warn` matters: a failing `cp` is the loop body's last command, so its
+  # status becomes the loop's and then the pipeline's, and errexit would end the install
+  # with nothing on screen. Process substitution is deliberately avoided here — this script
+  # already has to cope with hosts that have no /dev/fd (see the logging setup above).
+  (cd "$HERE/absaraka" && find . -type f | while IFS= read -r f; do
+     [ -e "$RUN/$f" ] || cp -p "$f" "$RUN/$f" || warn "could not copy absaraka/$f"
+   done)
   mkdir -p "$RUN/work"
 fi
 
@@ -337,7 +347,10 @@ if [ "$DO_DI" = 1 ]; then
 # <parents[3]>/damit_catalog/handoff.py and refuses to start without it, so Crest has to keep its
 # damit_crest/desktop/ nesting and get a damit_catalog/handoff.py beside it. That one file is
 # extracted from the Catalog plugin zip we just installed, so the rule always matches the plugin.
-CREST_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1)"
+# `|| true` inside the substitution: with no match the glob stays literal, `ls` exits 2,
+# and pipefail would make this assignment kill the whole install — silently, because the
+# stderr is discarded. The "no DamIT Catalog zip" warning below could never be reached.
+CREST_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1 || true)"
 if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
   if [ -z "$CREST_ZIP" ]; then
     warn "no DamIT Catalog zip: the Crest desk needs its NID-ID rule, so Crest was skipped"
@@ -405,7 +418,10 @@ fi
 # ---------------------------------------------------------------------------
 say "Self-check"
 FAIL=0
-QV="$(qpy -c 'import qgis.core as q, numpy; print(q.Qgis.QGIS_VERSION, "| numpy", numpy.__version__)' 2>/dev/null | tail -n 1)"
+# `|| true`: if that python exits non-zero the discarded stderr plus pipefail would end
+# the install right here, with every plugin in place but no INSTALLED.txt, no "Done" and
+# nothing on screen. The case below is what should report it.
+QV="$(qpy -c 'import qgis.core as q, numpy; print(q.Qgis.QGIS_VERSION, "| numpy", numpy.__version__)' 2>/dev/null | tail -n 1 || true)"
 case "$QV" in 3.34.*) ok "QGIS $QV" ;; *) warn "QGIS 3.34 does not import"; FAIL=1 ;; esac
 [ -n "$ANUGA_PY" ] && ok "ANUGA $("$ANUGA_PY" -c 'import anuga,gmsh;print(anuga.__version__,"| gmsh",gmsh.__version__)' 2>/dev/null | tail -n 1)"
 [ -n "$ANUGA_PY" ] || { warn "no ANUGA tier"; FAIL=1; }
@@ -419,7 +435,7 @@ chk() { local dir="$1" p; shift; for p in "$@"; do
 if [ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs installed" || FAIL=1; fi
 
 { echo "Installed by $STAMP on $(date)"
-  [ -f "$HERE/plugins/VERSIONS.md" ] && grep -E '^Source|^- ' "$HERE/plugins/VERSIONS.md" | head -4
+  if [ -f "$HERE/plugins/VERSIONS.md" ]; then grep -E '^Source|^- ' "$HERE/plugins/VERSIONS.md" | head -4 || true; fi
   echo "  platform $P | QGIS ${QV:-?} | ANUGA python ${ANUGA_PY:-none} | LISFLOOD-FP ${LISFLOOD_EXE:-built-in engine}"
   [ "$DO_DS" = 1 ] && echo "  DamSafety -> profile $DS_PROFILE  (open: $PREFIX/open-damsafety-qgis.sh)"
   [ "$DO_DI" = 1 ] && echo "  DamIT     -> profile $DI_PROFILE  (open: $PREFIX/open-damit-qgis.sh)"

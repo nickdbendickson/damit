@@ -162,7 +162,14 @@ if [ "$PACK" = 1 ]; then
     for f in $(awk -v p="$P" '!/^#/ && $1==p && $2!="ollama-pull" {print $3}' "$LOCKS/extra.lock" | sort -u); do if [ -f "$f" ]; then ITEMS="$ITEMS $f"; fi; done
     if [ -f damit_ai/offline/ollama/SHA256SUMS ]; then ITEMS="$ITEMS damit_ai/offline/ollama/SHA256SUMS"; fi
     # shellcheck disable=SC2086
-    zip -q -r -0 "$Z" $ITEMS && ok "$Z ($(du -h "$Z" | awk '{print $1}')); unzip it in this folder on the target"
+    # `zip && ok` reported success only when zip succeeded, but said NOTHING when it failed
+    # (the first element of an && list is exempt from errexit), so a failed pack looked the
+    # same as no pack at all.
+    if zip -q -r -0 "$Z" $ITEMS; then
+      ok "$Z ($(du -h "$Z" | awk '{print $1}')); unzip it in this folder on the target"
+    else
+      warn "could not pack $Z"; BAD=$((BAD+1))
+    fi
   done
 fi
 
