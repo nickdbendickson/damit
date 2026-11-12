@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_pierre.py v1.0 - score Pierre's code-triage answers against questions with known answers.
+# eval_pierre.py v1.1 - score Pierre's code-triage answers against questions with known answers.
 # The Pierre counterpart of research/eval_damresearch.py.
 #
 #   python3 eval_pierre.py                        # the 'pierre' persona, all questions
@@ -7,12 +7,17 @@
 #   python3 eval_pierre.py --only solver-choices,crest-burn
 #   python3 eval_pierre.py --list                 # questions + whether their source is indexed
 #   python3 eval_pierre.py -c all                 # search every collection, not just pierre_knowledge
+#   python3 eval_pierre.py --no-context           # the persona alone, no retrieval: what `pierre-chat` answers
 #
 # Each question (eval/questions.json) names the source file (regex), and the facts (regexes)
 # that must be in the answer. A question passes when
 #   1. grounded: at least one retrieved context hit comes from a path matching "doc", and
 #   2. facts:    every "facts" regex appears in the answer, and
-#   3. clean:    no "forbid" regex (if any) appears in the answer.
+#   3. clean:    no "forbid" regex (if any) appears in the answer, and no "forbid_unless_negated" regex appears in a
+#                sentence that does not negate it ("there is no --no-refine" is fine, "use --no-refine" is not).
+# With --no-context nothing is retrieved and the question goes to the persona as it is (the `pierre-chat` path), so
+# step 1 is skipped: this is what the 11 Nov 2026 test asked when the 8B model reversed the sunny-day rule and invented
+# tool names. v1.1 adds --no-context and forbid_unless_negated.
 # Questions whose source is not indexed are skipped (reported as SKIP), so the score reflects
 # only what Pierre could actually have grounded. The eval uses the same retrieval + prompt as
 # `pierre` (rag_query.py), so it measures the real pipeline. Nothing is sent off the machine.
@@ -21,6 +26,29 @@
 # question, and every answer, so two models can be compared side by side.
 import os, re, sys, json, time, argparse
 from datetime import datetime
+
+NEGATION = re.compile(r"(?i)\b(no|not|never|none|nor|without|isn't|aren't|doesn't|don't|do not|does not|"
+                      r"is not|are not|cannot|can't|invented|invent|hallucinat\w*|wrong|nonexistent|non-existent)\b")
+SENTENCE = re.compile(r"[^.!?\n]+")
+
+
+def forbidden_hits(ans, q):
+    """The forbid / forbid_unless_negated regexes of question q that the answer breaks."""
+    bad = [f for f in q.get("forbid", []) if re.search(f, ans, re.I)]
+    for f in q.get("forbid_unless_negated", []):
+        for s in SENTENCE.findall(ans or ""):
+            # the forbidden name itself is cut out first: "--no-refine" must not count as its own negation
+            if re.search(f, s, re.I) and not NEGATION.search(re.sub(f, " ", s, flags=re.I)):
+                bad.append(f)
+                break
+    return bad
+
+
+def score(ans, q):
+    """(ok, missing facts, forbidden hits) for one answer."""
+    miss = [f for f in q.get("facts", []) if not re.search(f, ans or "", re.I)]
+    bad = forbidden_hits(ans or "", q)
+    return (not miss and not bad), miss, bad
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # eval/ sits beside the knowledge pack (pierre/eval); tools live in pierre/tools. Look in both layouts.
@@ -37,6 +65,8 @@ def main():
     ap.add_argument("-c", "--collection", help="override the collection to search")
     ap.add_argument("-k", "--top-k", type=int, default=10, help="passages retrieved per question")
     ap.add_argument("--list", action="store_true", help="list questions and whether their source is indexed")
+    ap.add_argument("--no-context", action="store_true",
+                    help="no retrieval: ask the persona the bare question, as `pierre-chat` does")
     a = ap.parse_args()
     if a.model:
         os.environ["PIERRE_MODEL"] = a.model          # read by rag_query at import
@@ -75,32 +105,35 @@ def main():
         return
 
     model = rq.CHAT_MODEL
+    if a.no_context:
+        coll = "(none: --no-context)"
     print("Testing model %s on %d question(s), collection '%s'.\n" % (model, len(qs), coll))
     rows = []
     npass = nfail = nskip = 0
     for q in qs:
         t0 = time.time()
-        try:
-            hits, g = grounded_paths(q)
-        except SystemExit as e:
-            print("  SKIP %-24s (%s)" % (q["id"], e)); nskip += 1
-            rows.append({"id": q["id"], "result": "skip", "why": str(e)}); continue
-        if not g:
-            print("  SKIP %-24s (source not indexed: %s)" % (q["id"], q["doc"])); nskip += 1
-            rows.append({"id": q["id"], "result": "skip", "why": "source not indexed"}); continue
-        ctx = "\n\n".join("--- [%s] %s (chunk %d) ---\n%s" % (c, p, i, t) for _, c, p, i, t in hits)
-        prompt = ("Answer using ONLY the context below. Cite each fact with the collection "
-                  "and file path shown in its bracket header. If insufficient, say so plainly.\n\n"
-                  "=== CONTEXT ===\n" + ctx + "\n=== QUESTION ===\n" + q["q"])
+        if a.no_context:
+            g, prompt = [], q["q"]
+        else:
+            try:
+                hits, g = grounded_paths(q)
+            except SystemExit as e:
+                print("  SKIP %-24s (%s)" % (q["id"], e)); nskip += 1
+                rows.append({"id": q["id"], "result": "skip", "why": str(e)}); continue
+            if not g:
+                print("  SKIP %-24s (source not indexed: %s)" % (q["id"], q["doc"])); nskip += 1
+                rows.append({"id": q["id"], "result": "skip", "why": "source not indexed"}); continue
+            ctx = "\n\n".join("--- [%s] %s (chunk %d) ---\n%s" % (c, p, i, t) for _, c, p, i, t in hits)
+            prompt = ("Answer using ONLY the context below. Cite each fact with the collection "
+                      "and file path shown in its bracket header. If insufficient, say so plainly.\n\n"
+                      "=== CONTEXT ===\n" + ctx + "\n=== QUESTION ===\n" + q["q"])
         try:
             out = rq.post(rq.BASE + "/api/chat", rq.chat_payload(prompt, False, think=False))
             ans = (out.get("message") or {}).get("content") or ""
         except Exception as e:
             ans = "[error: %s]" % e
         dt = time.time() - t0
-        miss = [f for f in q.get("facts", []) if not re.search(f, ans, re.I)]
-        bad = [f for f in q.get("forbid", []) if re.search(f, ans, re.I)]
-        ok = not miss and not bad
+        ok, miss, bad = score(ans, q)
         print("  %-4s %-24s %5.1fs%s%s" % ("PASS" if ok else "FAIL", q["id"], dt,
               ("  missing: " + ", ".join(miss)) if miss else "",
               ("  forbidden: " + ", ".join(bad)) if bad else ""))
@@ -114,7 +147,7 @@ def main():
     print("\n%d/%d passed  (%d skipped, source not indexed)" % (npass, scored, nskip))
     os.makedirs(REPORTS, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d")
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", model)
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", model) + ("_nocontext" if a.no_context else "")
     base = os.path.join(REPORTS, "eval_pierre_%s_%s" % (safe, stamp))
     json.dump({"model": model, "collection": coll, "passed": npass, "scored": scored,
                "skipped": nskip, "rows": rows}, open(base + ".json", "w"), indent=2)

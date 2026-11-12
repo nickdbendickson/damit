@@ -50,7 +50,9 @@ owns the one real copy; each plugin's `damsuite/` is a shim).
 ## Run-watcher rules (pinned; Pierre has got these backwards before)
 
 These are Nick's standing rules, pinned in the watcher's system prompt (`pierre_watch.py`) and checked by the
-digest (`run_digest.py`). A local model once reversed the first one.
+digest (`run_digest.py`). A local model once reversed the first one. The sunny-day, Vw and real-tool-name rules are
+also pinned in the Q&A persona's SYSTEM prompt (`prompts/persona_rules.txt`, copied into every installer), because
+`pierre-chat` asks the model directly and never reads this pack; `eval_pierre.py --no-context` scores that path.
 
 - **Sunny day = no inflow, outlets empty, no outlet or spillway flow.** The reservoir starts at the **top of dam,
   which is the DWR max pool**. The only water is the breach. (Never "inflow equal to the reservoir's capacity" or
