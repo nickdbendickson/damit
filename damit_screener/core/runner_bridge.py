@@ -53,3 +53,16 @@ def tm11_charts():
             return tm11, tm11.Charts(json.load(fh))
     except (OSError, ValueError):
         return None
+
+
+def dvchart():
+    """DamIT Hazard's depth-velocity chart module (damit_hazard.engine.dvchart) with Hazard's TM-11 charts, as
+    (module, charts), or None when DamIT Hazard is not installed (the Screener then writes no chart)."""
+    got = tm11_charts()
+    if not got:
+        return None
+    try:
+        from damit_hazard.engine import dvchart as D
+    except ImportError:
+        return None
+    return D, got[1]

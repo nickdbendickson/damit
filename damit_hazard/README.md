@@ -162,6 +162,32 @@ sizes, citations) and `damit_hazard_receptors.gpkg` (one layer per input layer; 
 `src_fid`, `kind`, `type`, `class`, `label`, `adv_class`, `methods`, `depth_ft`, `vel_fps`,
 `dv_ft2s`, `rise_ft`, `flags`, `sampling`), styled by class.
 
+### Depth-velocity chart of the habitable structures (0.3.0)
+
+Every classify run also writes `damit_hazard_dv_habitable.png` and `damit_hazard_dv_habitable.csv` (the
+plotted points) in the output folder; the Markdown report links the chart and the HTML report embeds it.
+(`EXTRA_RUNS`: one pair per run, `damit_hazard_dv_habitable_run<N>_<scenario>`.)
+
+* **What is plotted:** one point per wet *habitable* structure (structures only, not facilities): its peak depth
+  against its peak velocity over its wet cells (the two peaks are read independently), on the ND REG_05.2026
+  Fig. 5.1 house chart, with a 0-4 ft/s, 0-3.5 ft zoom panel, and on the Fig. 5.2 mobile-home chart only when
+  there is a mobile home. The ID is written beside each point in the high and judgment zones. The title gives the
+  dam ID and name, the source, the run date and the counts in high, MEDIUM (the judgment zone) and low. With no
+  wet habitable structure the chart is still written, with an empty-state note.
+* **Which structures:** Hazard's own habitability rule, the one M6 uses (`engine/core.py habitable_basis`): a
+  `type` in the catalog's `habitable_types`, or an overnight / regular / daytime occupancy; **a structure with no
+  type is presumed habitable (a home)** and is flagged `type_unknown`. Such points are drawn hollow and counted in
+  the note. A layer whose type column Hazard does not read (e.g. NSI `occtype`) therefore charts every wet
+  structure; give it a `type` (home, mobile_home, farm_unoccupied, ...) to filter.
+* **Source in the title:** *Runner* for a model run's `Depth (Max).tif`, *Screener* for a `Screening Depth (Max).tif`,
+  otherwise *Imported raster: <the depth raster's file name>* (a DSS-WISE or other raster given as `DEPTH` and
+  `VELOCITY`, with `METRES` for SI rasters). `SOURCE_LABEL` sets the name (e.g. `DSS-WISE`). The chart needs the
+  velocity raster; without one it is skipped with a warning.
+* matplotlib (Agg backend) draws the PNG. If it is missing, the PNG is skipped with a warning and the CSV is still
+  written; a chart problem never fails the classification.
+* DamIT Screener writes the same chart for its screening flood into the dam folder (`damit_screener_dv_habitable.*`),
+  from its point sample at each structure.
+
 File-path inputs through `processing.run` or the Processing Toolbox leave nothing beside the
 input rasters. Classify checks its parameters and runs with GDAL PAM off
 (`GDAL_PAM_ENABLED=NO`, the previous value restored afterwards), so that path does not write

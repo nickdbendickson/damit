@@ -117,6 +117,33 @@ class Chain2D(unittest.TestCase):
         self.assertIsNotNone(pkg["screening"].get("suggested_label"))
         with open(summ["report"]) as fh:
             self.assertIn("Screening flood (engine2d)", fh.read())
+        # 0.3.2: the depth-velocity chart of the wet HABITABLE structures (Hazard's rule), a point sample, in the
+        # dam folder; h2 is dry so only h1 is plotted
+        dv = r["dv_chart"]
+        self.assertIn(dv["status"], (ST.STATUS_OK, ST.STATUS_GAP), dv)
+        import csv
+        with open(os.path.join(folder, ST.DV_CHART_STEM + ".csv"), encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertEqual([x["label"] for x in rows], ["h1"])
+        self.assertEqual(rows[0]["source"], "Screener")
+        self.assertIn("point sample", rows[0]["sampling"])
+        self.assertEqual(dv["counts"]["total"], 1)
+        try:
+            import matplotlib  # noqa: F401
+            self.assertTrue(os.path.getsize(os.path.join(folder, ST.DV_CHART_STEM + ".png")) > 5000)
+            self.assertEqual(dv["status"], ST.STATUS_OK)
+        except ImportError:
+            pass
+
+    def test_dv_chart_step_without_hazard_is_not_run_and_never_fails(self):
+        from damit_screener.core import runner_bridge as RB
+        with mock.patch.object(RB, "dvchart", return_value=None):
+            st = ST.dv_chart({"dam_id": "ND00001"}, [{"id": "h", "receptor_type": "structure",
+                                                         "structure_type": "home", "depth_ground_ft": 2.0,
+                                                         "velocity_fps": 1.0}], self.tmp)
+        self.assertEqual(st["status"], ST.STATUS_NOT_RUN)
+        with mock.patch.object(RB, "dvchart", side_effect=RuntimeError("boom")):
+            self.assertEqual(ST.dv_chart({"dam_id": "x"}, [], self.tmp)["status"], ST.STATUS_NOT_RUN)
 
     def test_engine2d_ok_with_a_damit_label_and_breach_direction_estimated(self):
         """DWR-2801: engine2d said GAP after a successful flood, labelled 'DamSafety Screening built-in 2D', and

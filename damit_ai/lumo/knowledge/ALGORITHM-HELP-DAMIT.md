@@ -469,6 +469,7 @@ Suggests a dam hazard class from EXISTING depth / velocity rasters and receptor 
 | `CHARTS_JSON` | Extra digitized TM-11 charts (JSON) | file | - | optional |
 | `RAIL_TRAINS_LOOKUP` | Rail trains per day lookup (CSV: field, value, trains_per_day, source; no default; values used are flagged as needing a ruling) | file | - | optional |
 | `DAM_NAME` | Dam name | string | - | optional |
+| `SOURCE_LABEL` | Source of the rasters, for the depth-velocity chart title (e.g. DSS-WISE; empty = Runner for a 'Depth (Max).tif', Screener for a 'Screening Depth (Max).tif', else the depth raster's file name) | string | - | optional |
 | `OUTPUT` | Output folder | folderDestination | - | - |
 
 Outputs: `OUTPUT`, `CLASS`, `ORDINAL`, `REPORT`, `GPKG`

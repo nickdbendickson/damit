@@ -573,6 +573,40 @@ def engine2d(dam, settings=None, folder=None, hydro_step=None, receptors=None, l
                 model_dimension="2D")
 
 
+# ------------------------------------------- depth-velocity chart (habitable) --
+DV_CHART_STEM = "damit_screener_dv_habitable"
+
+
+def dv_chart(dam, receptors, folder, log=print, now=None):
+    """The depth-velocity chart (PNG + CSV) of the wet HABITABLE structures of the screening flood, in the dam
+    folder: DamIT Hazard's habitability rule and TM-11 charts (damit_hazard.engine.dvchart), the Screener's point
+    sample at each structure. A step result; a chart problem never fails the Screener."""
+    import datetime
+    from . import runner_bridge as RB
+    try:
+        got = RB.dvchart()
+    except Exception:                                            # noqa: BLE001
+        got = None
+    if not got:
+        return step(STATUS_NOT_RUN, "DamIT Hazard is not installed: no depth-velocity chart of habitable structures")
+    D, charts = got
+    if not folder:
+        return step(STATUS_NOT_RUN, "no dam folder: no depth-velocity chart")
+    try:
+        recs = D.from_screener(receptors)
+        if not any(r.get("sampled") for r in recs):
+            return step(STATUS_NOT_RUN, "no structure was sampled by the screening flood: no depth-velocity chart")
+        meta = {"dam_id": dam.get("dam_id"), "dam_name": dam.get("name") or dam.get("dam_name"),
+                "source": "Screener", "run_date": (now or datetime.datetime.now()).strftime("%Y-%m-%d"),
+                "sampling": D.SAMPLING_POINT}
+        c = D.build(recs, charts, meta, folder, stem=DV_CHART_STEM, log=log)
+    except Exception as e:                                       # noqa: BLE001 - a chart is never a failed screening
+        return step(STATUS_GAP, "depth-velocity chart not written: {}: {}".format(type(e).__name__, e))
+    detail = "{}{}".format(c["text"], "" if c["status"] == "ok" else "; PNG not drawn: " + c["note"])
+    return step(STATUS_OK if c["status"] == "ok" else STATUS_GAP, detail, png=c.get("png"), csv=c.get("csv"),
+                counts=c["counts"], left_out=c["left_out"], note=c.get("note") or "")
+
+
 # ---------------------------------------------------------------- 8 suggestion --
 HYDRAULIC_FIELDS = ("depth_ground_ft", "depth_foundation_ft", "depth_floor_ft", "dv_ft2s", "velocity_fps", "m1_zone")
 

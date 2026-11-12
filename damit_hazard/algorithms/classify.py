@@ -19,7 +19,7 @@ from qgis.core import (QgsCoordinateTransform, QgsFeature, QgsFeatureRequest, Qg
                        QgsProcessingOutputFile)
 
 from .. import compat, styles
-from ..engine import catalog as C, core, dam_record, rail_lookup, receptors as R, report, tm11
+from ..engine import catalog as C, core, dam_record, dvchart, rail_lookup, receptors as R, report, tm11
 from ..sampling import rasters as S
 
 SCENARIO_IDS = ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
@@ -179,6 +179,10 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
             "no default; values used are flagged as needing a ruling)", behavior=compat.FILE_FILE,
             extension="csv", optional=True))
         self.addParameter(QgsProcessingParameterString("DAM_NAME", "Dam name", optional=True))
+        self.addParameter(QgsProcessingParameterString(
+            "SOURCE_LABEL", "Source of the rasters, for the depth-velocity chart title (e.g. DSS-WISE; empty = "
+            "Runner for a 'Depth (Max).tif', Screener for a 'Screening Depth (Max).tif', else the depth "
+            "raster's file name)", optional=True))
         self.addParameter(QgsProcessingParameterFolderDestination("OUTPUT", "Output folder"))
         self.addOutput(QgsProcessingOutputString("CLASS", "Suggested class (local label)"))
         self.addOutput(QgsProcessingOutputNumber("ORDINAL", "Suggested class (ordinal 0-4)"))
@@ -292,6 +296,39 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         with S.no_pam():
             return self._process(p, context, feedback)
 
+    def _dv_charts(self, chart_runs, charts, cat, cfg, dam, label, out_dir, feedback):
+        """One habitable-structures depth-velocity chart (PNG + CSV) per run, in the output folder. A chart problem
+        is a warning, never a failed classification."""
+        out = []
+        try:
+            habitable_types, chart_for_type = dvchart.rules(cat)
+            wet_min = float(cfg["general"].get("wet_min_depth_ft", 0.0))
+            for i, spec, paths, recs in chart_runs:
+                src, _kind = dvchart.detect_source(paths.get("depth"), label)
+                multi = len(chart_runs) > 1
+                stem = dvchart.CHART_NAME + ("_run{}{}".format(i + 1, "_" + spec["scenario"] if spec.get("scenario") else "")
+                                             if multi else "")
+                if not any(r["kind"] == "structure" for r in recs):
+                    feedback.pushInfo("Depth-velocity chart ({}): no structures layer, no chart.".format(src))
+                    continue
+                if not paths.get("velocity"):
+                    feedback.pushWarning("Depth-velocity chart ({}): no velocity raster given, so no chart "
+                                         "(the chart needs peak velocity).".format(src))
+                    continue
+                meta = {"dam_id": dam.get("nid_id") or dam.get("dam_id"), "dam_name": dam.get("name"),
+                        "source": src, "run_date": dvchart.run_date_of(paths.get("depth"))}
+                c = dvchart.build(recs, charts, meta, out_dir, stem=stem, habitable_types=habitable_types,
+                                  chart_for_type=chart_for_type, wet_min=wet_min, log=feedback.pushWarning)
+                for k in ("png", "csv"):
+                    if c.get(k):
+                        c[k] = os.path.basename(c[k])
+                out.append(c)
+                feedback.pushInfo("Depth-velocity chart ({}): {}{}.".format(
+                    src, c["text"], "" if c["status"] == "ok" else "; PNG not drawn"))
+        except Exception as e:                                     # noqa: BLE001 - never fail the run for a chart
+            feedback.pushWarning("Depth-velocity chart skipped: {}: {}".format(type(e).__name__, e))
+        return out
+
     def _find_dam_record(self, p, context):
         """No DAM_JSON: the dam.json above the depth raster, else the run watcher's flat copy (engine/dam_record.py)."""
         lyr = self.parameterAsRasterLayer(p, "DEPTH", context)
@@ -395,7 +432,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 raise QgsProcessingException(str(e))
             layers_info.append(_stat(trains_path, "rail trains lookup", "{} row(s)".format(len(trains_rows))))
         dom_src = self.parameterAsSource(p, "DOMAIN", context)
-        runs, geoms, best = [], {}, {}
+        runs, geoms, best, chart_runs = [], {}, {}, []
         for i, spec in enumerate(run_specs):
             paths = {role: spec.get(role) for _k, role, _l, _o in RASTERS}
             if not paths.get("depth"):
@@ -428,19 +465,22 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                                                       r["depth_ft"] > best[r["id"]]["depth_ft"]):
                     best[r["id"]] = r
                 best.setdefault(r["id"], r)
+            chart_runs.append((i, spec, paths, recs))
             runs.append({"scenario": spec.get("scenario"), "model_dim": spec.get("model_dim"),
                          "label": spec.get("label") or "run {}".format(i + 1),
                          "breach_location": spec.get("breach_location"),
                          "receptors": recs})
             feedback.setProgress(10 + 60.0 * (i + 1) / len(run_specs))
         res = core.classify(cat, cfg, runs, dam=dam, charts=charts, layers=layers_info)
+        res["dv_charts"] = self._dv_charts(chart_runs, charts, cat, cfg, dam,
+                                           self.parameterAsString(p, "SOURCE_LABEL", context), out_dir, feedback)
         # reports
         title = "DamIT Hazard run report" + (" - " + dam["name"] if dam.get("name") else "")
         md = os.path.join(out_dir, "damit_hazard_report.md")
         with open(md, "w", encoding="utf-8") as f:
             f.write(report.markdown(res, cat, title))
         with open(os.path.join(out_dir, "damit_hazard_report.html"), "w", encoding="utf-8") as f:
-            f.write(report.html_report(res, cat, title))
+            f.write(report.html_report(res, cat, title, base_dir=out_dir))
         with open(os.path.join(out_dir, "damit_hazard_report.json"), "w", encoding="utf-8") as f:
             f.write(report.as_json(res))
         gpkg = os.path.join(out_dir, "damit_hazard_receptors.gpkg")

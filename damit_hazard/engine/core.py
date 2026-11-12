@@ -81,6 +81,33 @@ def _nid(dam, flags):
     return nid
 
 
+# Habitability, one rule for the methods (M6 ...) and the depth-velocity chart (engine/dvchart.py).
+BASIS_UNKNOWN, BASIS_TYPE, BASIS_OCCUPANCY = "type_unknown", "type", "occupancy"
+OCCUPANCY_HABITABLE = ("overnight", "regular", "daytime", "regular_daytime")
+OCCUPANCY_NOT_OCCUPIED = ("occasional", "unoccupied", "vacant")
+
+
+def habitable_basis(r, habitable_types):
+    """(habitable?, basis): the receptor's habitability as Hazard decides it. No type: habitable, a home
+    (basis "type_unknown"; the engine flags it); a type in the catalog's habitable_types; else only a
+    habitable occupancy (overnight, regular, daytime, regular_daytime). basis None when not habitable."""
+    t = r.get("type")
+    if t is None:
+        return True, BASIS_UNKNOWN
+    if t in habitable_types:
+        return True, BASIS_TYPE
+    if r.get("occupancy") in OCCUPANCY_HABITABLE:
+        return True, BASIS_OCCUPANCY
+    return False, None
+
+
+def is_occupied(r, habitable_types):
+    """R2 without the flag: habitable and not occasional / unoccupied / vacant."""
+    if r.get("occupancy") in OCCUPANCY_NOT_OCCUPIED:
+        return False
+    return habitable_basis(r, habitable_types)[0]
+
+
 def _list(x):
     if x is None:
         return []
@@ -154,18 +181,15 @@ class Ctx(object):
         return None
 
     def habitable(self, r):
-        t = r.get("type")
-        if t is None:
+        ok, basis = habitable_basis(r, self.cat["habitable_types"])
+        if basis == BASIS_UNKNOWN:
             self.flag(WARNING, "type_unknown", "structure type unknown: treated as habitable "
                       "(a home)", None, r["id"])
-            return True
-        if t in self.cat["habitable_types"]:
-            return True
-        return r.get("occupancy") in ("overnight", "regular", "daytime", "regular_daytime")
+        return ok
 
     def occupied(self, r):
         """R2: habitable structures are presumed occupied; occasionally used ones are not."""
-        if r.get("occupancy") in ("occasional", "unoccupied", "vacant"):
+        if r.get("occupancy") in OCCUPANCY_NOT_OCCUPIED:
             return False
         return self.habitable(r)
 
