@@ -64,6 +64,30 @@
       "q": "Why does Hazard keep _ORPHANS layers around instead of freeing them?",
       "doc": "KNOWN-BEHAVIOURS",
       "facts": ["_ORPHANS|orphan", "thread", "PROJ|QGIS 3.34|crash|on purpose"]
-    }
+    },
+    {"id": "sunny-day-rule",
+     "q": "What is the sunny-day rule for the starting water surface and for outlet or spillway flow in a DamIT run?",
+     "doc": "KNOWN-BEHAVIOURS",
+     "facts": ["top of dam|max pool", "no outlet|outlets empty|no inflow", "spillway"]},
+    {"id": "toe-rule",
+     "q": "Where does the breach inflow go, and what is the toe band rule?",
+     "doc": "KNOWN-BEHAVIOURS",
+     "facts": ["lowest ground", "slope \\+ 1|slope\\+1", "150 m", "3:1"]},
+    {"id": "real-tool-names",
+     "q": "What are the real qgis_process algorithm ids for the DamIT hand-off, run and hazard classification, and how do I turn the 10 m refine off?",
+     "doc": "KNOWN-BEHAVIOURS",
+     "facts": ["damit_screen:handoff", "damit_run:rundam", "damit:classify", "GRID_REFINE"]},
+    {"id": "watcher-verdict",
+     "q": "Who sets the OK / WATCH / PROBLEM verdict of the run watcher, and what does Lumo do?",
+     "doc": "WATCHER-DIGEST",
+     "facts": ["code", "flags", "explain|commentary", "never|does not"]},
+    {"id": "domain-edge-outflow",
+     "q": "A watcher flag says EDGE_OUTFLOW_EARLY in pass 1 and 2. Is that dam leakage or a weak dam?",
+     "doc": "WATCHER-DIGEST",
+     "facts": ["model domain edge", "not dam leakage|not the breach|border of the computation grid", "domain grows|final pass"]},
+    {"id": "lumo-slows-lisflood",
+     "q": "Why does the run watcher not ask Lumo to explain while LISFLOOD is running, and how is that set?",
+     "doc": "WATCHER-DIGEST",
+     "facts": ["LUMO_WATCH_EXPLAIN", "idle", "slower|share the cores|CPU"]}
   ]
 }
