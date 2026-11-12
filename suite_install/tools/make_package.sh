@@ -53,7 +53,9 @@ mkdir -p "$OUT/lisflood/linux-x64" "$OUT/lisflood/windows-x64" "$OUT/lisflood/bu
 if [ -z "$LFBIN" ]; then
   LFBIN="$T/lfbin"; mkdir -p "$LFBIN"
   curl -fsSL --retry 3 -o "$T/lf.zip" "https://zenodo.org/records/13121119/files/LISFLOOD-FP-8.3.zip?download=1"
-  echo "f9ea2753482da1e730ba34645a2b9b773d05d0a401a3524f79825b76ec7a4e8d  $T/lf.zip" | sha -c - >/dev/null
+  # this is a gate, so let its message through: `-c` prints "FAILED" on stdout, which
+  # >/dev/null was swallowing, leaving only a terse stderr warning for a checksum mismatch
+  echo "f9ea2753482da1e730ba34645a2b9b773d05d0a401a3524f79825b76ec7a4e8d  $T/lf.zip" | sha -c -
   for plat in linux windows; do mkdir -p "$T/src-$plat"; unzip -q "$T/lf.zip" -d "$T/src-$plat"; done
   LISFLOOD_STATIC=1 bash "$DWR/DamSafety_Runner/scripts/build_lisflood_linux.sh" "$T/src-linux/LISFLOOD-FP-8.3/source" "$LFBIN/linux-x64" >/dev/null
   bash "$DWR/DamSafety_Runner/scripts/build_lisflood_windows_cross.sh" "$T/src-windows/LISFLOOD-FP-8.3/source" "$LFBIN/windows-x64" >/dev/null \
@@ -79,14 +81,23 @@ EOF
 
 echo "== damit_ai + damit_crest + Absaraka"
 mkdir -p "$OUT/damit_ai"
+# The trailing `|| die` matters: as the last stage of a pipeline the loop hands a failing
+# `cp` (a tracked-but-deleted worktree file) straight to errexit, which aborted the build
+# with only cp's own message and no indication that the package is now incomplete.
 (cd "$DAMIT/damit_ai" && git ls-files) | while IFS= read -r f; do
-  mkdir -p "$OUT/damit_ai/$(dirname "$f")"; cp -p "$DAMIT/damit_ai/$f" "$OUT/damit_ai/$f"; done
+  mkdir -p "$OUT/damit_ai/$(dirname "$f")"
+  cp -p "$DAMIT/damit_ai/$f" "$OUT/damit_ai/$f" \
+    || { echo "damit_ai/$f is tracked but missing from the worktree" >&2; exit 1; }
+done
 # the Crest desk: install-all runs it on the ndqgis env (pyproj + qgis_process are already there).
 # Only desktop/ is shipped: it holds the committed web bundle. The JS sources, lockfile and the
 # vite/eslint config are build-time only and would add a couple of MB to every package.
 mkdir -p "$OUT/damit_crest"
 (cd "$DAMIT/damit_crest" && git ls-files desktop README.md) | while IFS= read -r f; do
-  mkdir -p "$OUT/damit_crest/$(dirname "$f")"; cp -p "$DAMIT/damit_crest/$f" "$OUT/damit_crest/$f"; done
+  mkdir -p "$OUT/damit_crest/$(dirname "$f")"
+  cp -p "$DAMIT/damit_crest/$f" "$OUT/damit_crest/$f" \
+    || { echo "damit_crest/$f is tracked but missing from the worktree" >&2; exit 1; }
+done
 cp -R "$DWR/tools/mac/absaraka" "$OUT/absaraka"
 rm -rf "$T"
 
