@@ -1674,22 +1674,25 @@ class RunDamAlgorithm(_Base):
                 continue
             g.transform(tf)
             parts = g.asMultiPolyline() if g.isMultipart() else [g.asPolyline()]
-            part = max(parts, key=lambda pl: len(pl))
-            if len(part) < 2:
+            # (0.3.2) joined end to end, then the longest by length (it was the one with most vertices, unjoined)
+            from ..flood import damfolder
+            part, part_note = damfolder.pick_dam_line([[(p.x(), p.y()) for p in pl] for pl in parts])
+            if not part:
                 continue
+            part = [QgsPointXY(x, y) for x, y in part]
             mid = _line_midpoint(part)
             d = ((mid.x() - dam_xy[0]) ** 2 + (mid.y() - dam_xy[1]) ** 2) ** 0.5
             line = [(p.x(), p.y()) for p in part]
             if best is None or d < best[0]:
-                best = (d, (mid.x(), mid.y()), line)
+                best = (d, (mid.x(), mid.y()), line, part_note)
             if sid:
                 break
         if best is None:
             return None, "", None
         if not sid and best[0] > 500:
             return None, "", None
-        return best[1], ("Crest taken from the dam line ({:.0f} m from the inventory point)."
-                         .format(best[0])), best[2]
+        return best[1], ("Crest taken from the dam line ({:.0f} m from the inventory point).{}"
+                         .format(best[0], (" " + best[3] + ".") if best[3] else "")), best[2]
 
     def dam_point(self, parameters, context, crs):
         """The dam point in `crs`: the parameter, else dam.json's point (v3.2.0)."""

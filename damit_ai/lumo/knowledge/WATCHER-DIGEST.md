@@ -124,6 +124,31 @@ order are the per-point version's); a `pass_end` hook samples only every `LUMO_W
 run is already over, and always at `run_end`; the digest says `receptors_skipped` when it did not; `watch` lowers its own priority to
 nice `LUMO_WATCH_PASS_NICE` (19). The one-off read of the layer (about 1.1 s per 88k points) lands on the first sampled pass.
 
+**Every pass hook says what it sampled (1.3.2).** DWR-2801 (Absaraka, 9 passes, `LUMO_WATCH_PASS_RECEPTOR_EVERY` 2): passes 4, 6 and 8 had neither
+`receptors` nor `receptors_skipped`, and no peaks. Cause: LISFLOOD-FP writes the `Finish` line, the watcher fires `pass_end`, and the Runner
+is still reading the pass's results (`G.edge_depths`, `flood_stats`); it writes the pass into `run_progress.json` (the georeference) only after
+that. A hook that fires in the gap finds no bounds for the pass, so there is no grid and nothing to sample; the 1.3.1 code recorded a skip
+reason only when it had chosen not to sample. Now: (1) `pass_end` waits until `run_progress.json` has the pass (`LUMO_WATCH_RECORD_GRACE_S`,
+default 120 s after the pass log finished, then it fires anyway); (2) whatever happens, `checks.receptors` or `checks.receptors_skipped`
+is set (not sampled at this hook, no georeference yet, no run.max, no receptor points, not enough free RAM, unreadable grid, a missing
+package), and the `watch` log line for the pass says it. Not changed: a pass folder name reused by a later grid-check / refine loop still
+resolves to the LAST progress entry of that name.
+
+**Memory (1.3.2).** A late pass's grid is the biggest thing the watcher holds. The digest read every earlier pass's `run.max` again at
+every hook just for the four edge depths (`read_asc_edges` now streams them: first / last row, first / last value of each row, cached by
+file mtime and size); a grid above 4 million cells is read as float32; the pass grid, the wet mask and the receptor grid are made in place
+(no `np.where` full-size copies) and dropped as soon as the hook is done; a mid-run hook does not read a grid that would leave less than
+`LUMO_WATCH_MIN_FREE_MB` (default 1024) of RAM free (it says so in `receptors_skipped`; `run_end` reads the final outputs unguarded).
+Ollama keeps the model `LUMO_WATCH_KEEP_ALIVE` (default 2m, was a fixed 30m) after an explain, so a model loaded for one run does not sit in
+RAM beside the next run's LISFLOOD-FP.
+
+**The dam line file is read (1.3.2).** `dam_line_found` used to mean the file existed. The digest now opens a GeoJSON dam line: a
+LineString or a MultiLineString with at least one line of two vertices counts (`dam_line_geometry`, `dam_line_parts` say which and how many
+parts); an empty or line-less file is not a dam line (`dam_line_unusable`). The Runner (0.3.2) joins a MultiLineString's parts end to end
+and uses the longest, and says so in the run notes. When the dam line exists but the report's inflow is a fallback, `TOE_UNCHECKED` says the
+Runner placed it without the line (a Runner before 0.3.2 read a MultiLineString as nothing: DWR-2645, the inflow landed 192 m on the pool
+side).
+
 **Where the dam line is looked for (1.3.0).** `dam_line.geojson` (or `dam_line_linestring.geojson`, `dam_line.gpkg`, `.shp`) in the dam folder
 and its `inputs/`; `<work>/inputs/` and `<work>/handoff/<dam id>/` beside the `dams/` and `runs/` folders; the run folder and its
 `inputs/`; the folder of every input in `run_setup.json inputs` (the terrain's folder: the Screener's `inputs/`); the hand-off's

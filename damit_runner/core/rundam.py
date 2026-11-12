@@ -22,6 +22,11 @@ HEC-RAS or Wine, and never calls the ND suite's breach runner or batch tools.
 0.3.1: run_progress.json in the run folder (flood/model.py write_progress): the model CRS and each pass's folder and bounds
 after every pass, and "complete" once run_report.json is written, so a run watcher can georeference a pass and tell the run is
 over while it is going. No change to the model or its outputs.
+
+0.3.2: a dam line that is a MultiLineString is read (flood/damfolder.py pick_dam_line): DWR-2645 Pheasant Lake's dam_line.geojson is
+one, it was skipped without a word, the model had no dam line, the toe fell back to 150 m from the inventory point and the inflow
+landed 192 m on the pool side. The parts are joined end to end where two meet, the longest is used when several remain, and the
+run notes say which and why. The Screener and the QGIS crest reader use the same rule.
 """
 import datetime
 import json
@@ -29,7 +34,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -334,6 +339,8 @@ def model_params(values, pkg, dam_dir_info=None):
         lonlat = (float(rec["lon"]), float(rec["lat"]))
     p["dam_lonlat"] = lonlat
     p["dam_line_lonlat"] = info.get("dam_line")
+    if info.get("dam_line_note"):
+        notes.append(info["dam_line_note"])
     p["reservoir_lonlat"] = info.get("reservoir")
     p["azimuth_deg"] = _f(dam.get("breach_azimuth_deg"))
     if v.get("INFLOW_LONLAT"):

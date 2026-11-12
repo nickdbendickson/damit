@@ -11,7 +11,7 @@
 #   sha256-checked and loaded with `ollama create`. LUMO_NO_HF_FALLBACK=1 turns that off.
 #
 # v3.8: Hugging Face GGUF fallback for a failed `ollama pull`; the run watcher is
-#   run_digest 1.3.1 + lumo_watch 1.3.1 (Lumo explains only after the Runner has finished the whole run).
+#   run_digest 1.3.2 + lumo_watch 1.3.2 (Lumo explains only after the Runner has finished the whole run).
 #
 # Fixes vs v3:
 #   - DMG install: the mount point was searched with `grep -B30 ... ^/Volumes/`,
@@ -3187,7 +3187,7 @@ SCRIPT_EOF_REPOAUDIT
       warn "tools/$f.py not found next to this script: the run watcher was not installed"
     fi
   done
-  ok "run_digest 1.3.1, lumo_watch 1.3.1 copied and compiled"
+  ok "run_digest 1.3.2, lumo_watch 1.3.2 copied and compiled"
 else
   ok "script rewrite skipped (--skip-scripts)"
 fi

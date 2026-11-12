@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -284,10 +284,101 @@ def read_asc(path):
         for _ in range(6):
             k, v = f.readline().split()[:2]
             hdr[k.lower()] = float(v)
-        arr = np.loadtxt(f, dtype=float, ndmin=2)
+        cells = int(hdr.get("nrows", 0)) * int(hdr.get("ncols", 0))
+        # (1.3.2) a late pass's grid can be tens of millions of cells: float32 (depth in metres to 1e-7 relative) halves it
+        arr = np.loadtxt(f, dtype=(np.float32 if cells > BIG_GRID_CELLS else float), ndmin=2)
     nd = hdr.get("nodata_value", -9999.0)
-    arr = np.where(arr == nd, np.nan, arr)
+    arr[arr == nd] = np.nan                  # in place: no second full-size array
     return arr.reshape(int(hdr["nrows"]), int(hdr["ncols"])), hdr
+
+
+BIG_GRID_CELLS = 4_000_000                   # above this a pass grid is read as float32
+_EDGE_CACHE = {}
+
+
+def read_asc_edges(path):
+    """The deepest value on each outer edge of an ESRI ASCII grid, {'N','S','W','E'} in the file's unit, read as a stream: the
+    first and last rows and the first and last value of every row, never the whole grid (1.3.2: edge_depths_ft(read_asc())
+    held 2 to 3 full-size copies, and the digest read every earlier pass's run.max again at every hook). Same numbers as
+    edge_depths_ft: NoData and non-finite values are skipped, an empty edge is 0.0. Cached by file mtime and size."""
+    st = os.stat(path)
+    key = (os.path.abspath(path), st.st_mtime_ns, st.st_size)
+    if key in _EDGE_CACHE:
+        return dict(_EDGE_CACHE[key])
+    import math
+    nd, nrows = -9999.0, None
+
+    def num(t):
+        try:
+            v = float(t)
+        except ValueError:
+            return None
+        return None if (not math.isfinite(v) or v == nd) else v
+
+    def mx(vals):
+        vals = [v for v in (num(t) for t in vals) if v is not None]
+        return max(vals) if vals else 0.0
+    w, e, first, last = [], [], None, None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for _ in range(6):
+            k, v = f.readline().split()[:2]
+            if k.lower() == "nodata_value":
+                nd = float(v)
+            elif k.lower() == "nrows":
+                nrows = int(float(v))
+        for line in f:
+            if not line.strip():
+                continue
+            if first is None:
+                first = line.split()
+            last = line
+            w.append(line.split(None, 1)[0])
+            e.append(line.rsplit(None, 1)[-1])
+    out = {"N": mx(first or []), "S": mx(last.split() if last else []), "W": mx(w), "E": mx(e)}
+    if len(_EDGE_CACHE) >= 64:
+        _EDGE_CACHE.clear()
+    _EDGE_CACHE[key] = dict(out)
+    return out
+
+
+def mem_available_mb():
+    """MemAvailable from /proc/meminfo in MB, or None where there is no /proc (the guard then does nothing)."""
+    try:
+        with open("/proc/meminfo", encoding="ascii", errors="replace") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def memory_shortfall(grid_path):
+    """None when a pass grid can be read now, else the reason it is not. A mid-run hook reads one result grid, its DEM and
+    masks (about 12 bytes a cell above BIG_GRID_CELLS, about 26 below) beside a LISFLOOD-FP run that needs the same RAM; the
+    hook is skipped, with that reason on the digest, when it would leave less than LUMO_WATCH_MIN_FREE_MB (default 1024) free."""
+    try:
+        with open(grid_path, encoding="utf-8", errors="replace") as f:
+            hdr = {}
+            for _ in range(6):
+                k, v = f.readline().split()[:2]
+                hdr[k.lower()] = float(v)
+        cells = int(hdr["nrows"]) * int(hdr["ncols"])
+    except (OSError, ValueError, KeyError):
+        return None
+    avail = mem_available_mb()
+    if avail is None:
+        return None
+    try:
+        keep = float(os.environ.get("LUMO_WATCH_MIN_FREE_MB", "1024"))
+    except ValueError:
+        keep = 1024.0
+    need = cells * (12 if cells > BIG_GRID_CELLS else 26) / 1e6
+    if avail - need < keep:
+        return ("pass grid not read at this hook: %.0f MB of RAM free, a %s-cell grid needs about %.0f MB and %.0f MB are kept "
+                "free for the model run (LUMO_WATCH_MIN_FREE_MB); run_end reads the final outputs" % (
+                    avail, format(cells, ","), need, keep))
+    return None
 
 
 def read_tif(path):
@@ -370,8 +461,13 @@ def _pass_grid(pdir, ext, bounds, scale=1.0):
         import numpy as np
         d, _ = read_asc(dem)
         if d.shape == a.shape:
-            a = np.where(np.isnan(d), np.nan, np.where(np.isnan(a), 0.0, a))
-    a = a * scale
+            nan_dem = np.isnan(d)
+            del d
+            a[np.isnan(a)] = 0.0             # in place (1.3.2): a wet-grid NoData is a dry cell, a DEM NoData stays NoData
+            a[nan_dem] = np.nan
+            del nan_dem
+    if scale != 1.0:
+        a *= scale
     cell = hdr["cellsize"]
     return Grid(a, bounds[0], bounds[1] + a.shape[0] * cell, cell)
 
@@ -412,6 +508,13 @@ def _log_finished(pdir):
     except OSError:
         return None
     return ("Finish Date" in txt) or ("Total computation time" in txt)
+
+
+def _log_mtime(pdir):
+    try:
+        return os.path.getmtime(os.path.join(pdir, "lisflood.log"))
+    except OSError:
+        return None
 
 
 def pass_record(run_dir, pdir, report_pass=None, bounds=None, now=None, progress_entry=None):
@@ -462,8 +565,7 @@ def pass_record(run_dir, pdir, report_pass=None, bounds=None, now=None, progress
         try:
             pm = os.path.join(pdir, "results", "run.max")
             if os.path.exists(pm):                       # edges need no georeference
-                arr, _h = read_asc(pm)
-                ed = {k: round(v / FT, 2) for k, v in edge_depths_ft(arr).items()}
+                ed = {k: round(v / FT, 2) for k, v in read_asc_edges(pm).items()}
             else:
                 ed = None
             rec["edge_source"] = "pass raster run.max" if ed is not None else None
@@ -803,6 +905,28 @@ def dam_line_places(dam_folder, run_dir=None, setup=None, dam_id=None):
     return out
 
 
+def dam_line_info(path):
+    """What a dam line GeoJSON holds: {geometry, parts, usable}. The Runner and Screener read one line from it: a LineString, or a
+    MultiLineString (a pack's dam line, often one part; parts joined end to end, the longest used: Runner 0.3.2). usable is False
+    when the file has no line of two or more vertices. A GeoPackage / shapefile is not opened here: usable None (unknown)."""
+    if not str(path).lower().endswith((".geojson", ".json")):
+        return {"geometry": None, "parts": None, "usable": None}
+    gj = _load_json(path)
+    gj = gj if isinstance(gj, dict) else {}
+    feats = gj.get("features") if gj.get("type") == "FeatureCollection" else [gj]
+    for f in feats or []:
+        f = f if isinstance(f, dict) else {}
+        g = f if f.get("type") in ("LineString", "MultiLineString") else (f.get("geometry") or {})
+        c = g.get("coordinates")
+        if g.get("type") == "LineString" and c and len(c) >= 2:
+            return {"geometry": "LineString", "parts": 1, "usable": True}
+        if g.get("type") == "MultiLineString" and c:
+            parts = [p for p in c if p and len(p) >= 2]
+            if parts:
+                return {"geometry": "MultiLineString", "parts": len(parts), "usable": True}
+    return {"geometry": None, "parts": 0, "usable": False}
+
+
 def find_dam_line(dam_folder, run_dir=None, setup=None, dam_id=None):
     """Path of a dam line file (dam_line.geojson and its relatives) in any known place, else None (1.3.0)."""
     for base in dam_line_places(dam_folder, run_dir, setup, dam_id):
@@ -833,8 +957,15 @@ def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None, setup=None):
     info["distance_m"] = dist
     line_path = find_dam_line(f.get("dam_folder"), run_dir, setup, f.get("dam_id"))
     line = line_path is not None
-    info["dam_line_found"] = line
     info["dam_line_path"] = line_path
+    li = dam_line_info(line_path) if line_path else {}
+    if line and li.get("usable") is False:
+        # a file with no line in it is not a dam line (1.3.2)
+        info["dam_line_unusable"] = li.get("geometry") or "no geometry"
+        line = False
+    info["dam_line_found"] = line
+    info["dam_line_geometry"] = li.get("geometry")
+    info["dam_line_parts"] = li.get("parts")
     if dist is not None:
         # The distance is the Runner's own measurement (it placed the inflow with the dam line it had). It is used as it
         # is, and the digest says where it came from; with no dam line to measure again this is an INFO note, not an
@@ -850,9 +981,14 @@ def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None, setup=None):
         fallback = "fallback" in how.lower()
         fl.add("TOE_UNCHECKED", WATCH if fallback else INFO, "run",
                "toe inflow position not checked: the report gives no distance from the dam line",
-               "%s%s. The band (5 m to H x (slope+1), 150 m cap) can still be checked; the inflow point cannot." % (
+               "%s%s. The band (5 m to H x (slope+1), 150 m cap) can still be checked; the inflow point cannot.%s%s" % (
                    "the Runner's own words: '%s'" % how if how else "no inflow description in the run report",
-                   "; no dam_line.geojson was found" if not line else ""), **info)
+                   "; no dam_line.geojson was found" if not line else "",
+                   (" The file %s holds no line (%s), so the Runner has no dam line either." % (
+                       line_path, info["dam_line_unusable"])) if info.get("dam_line_unusable") else "",
+                   (" A dam line file exists (%s, %s) but the Runner placed the inflow without it: before Runner 0.3.2 a "
+                    "MultiLineString dam line was read as nothing (DWR-2645: the inflow landed 192 m on the pool side)." % (
+                        li.get("geometry"), line_path)) if (line and fallback) else ""), **info)
     h = f["height_ft"]
     if h:
         lo, hi, s, defaulted = toe_expected(h, f["ds_slope"])
@@ -1041,14 +1177,18 @@ def load_points_ogr(path, grid_wkt, id_fields=("fd_id", "bid", "usastrucid"), la
     return pts
 
 
-def runner_nodata(grid):
+def runner_nodata(grid, inplace=False):
     """The depth grid with the Runner's NoData convention, so a receptor reads the same at every hook (1.2.0). The Runner's
     final Depth (Max).tif writes depth <= 0 as NoData (flood/model.py write_outputs), so a dry cell there IS NoData. A pass's
     own run.max has 0.0 on dry cells; sampled as it is, the same receptor was "dry next to wet" at a pass hook and
     "NoData next to wet" at run_end. This maps <= 0 and non-finite to NaN for every source (GeoTIFF or pass grid)."""
     import numpy as np
     with np.errstate(invalid="ignore"):
-        data = np.where(np.isfinite(grid.data) & (grid.data > 0), grid.data, np.nan)
+        if inplace:                          # (1.3.2) the digest's own pass grid, dropped right after: no second full-size copy
+            data = grid.data
+            data[~(np.isfinite(data) & (data > 0))] = np.nan
+        else:
+            data = np.where(np.isfinite(grid.data) & (grid.data > 0), grid.data, np.nan)
     return Grid(data, grid.x0, grid.y0, grid.cell)
 
 
@@ -1198,6 +1338,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
     # peak depth / velocity over wet cells, and receptors (needs numpy; GDAL for the GeoTIFF)
     peaks, rec = None, None
     skipped_receptors = None
+    why_none = None                          # (1.3.2) why no receptor result, when there is none: never left blank
     final = _pass_dirs(run_dir)[-1:] if upto_pass is None else (pdirs[-1:])
     depth_grid = None
     try:
@@ -1210,10 +1351,21 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
         pbounds = progress_pass(progress, final[0]).get("bounds") if final else None
         if not pbounds and not (live and progress):
             pbounds = bounds
+        if depth_grid is None and live and final and not pbounds:
+            why_none = ("no depth grid for %s: run_progress.json has no georeference for this pass yet (the Runner records a pass "
+                        "after LISFLOOD finishes and its results are read)" % os.path.basename(final[0]))
+        elif depth_grid is None and not final:
+            why_none = "no pass directory with results was found"
         if depth_grid is None and final and pbounds:
-            depth_grid = _pass_grid(final[0], ".max", pbounds, 1.0 / FT)
-            grid_source = "the %s pass grid%s" % (os.path.basename(final[0]), (" (the run is in progress; the final Depth (Max).tif "
-                                                  "can differ)" if live else ""))
+            low = memory_shortfall(os.path.join(final[0], "results", "run.max")) if live else None
+            if low:
+                why_none = low
+            else:
+                depth_grid = _pass_grid(final[0], ".max", pbounds, 1.0 / FT)
+                grid_source = "the %s pass grid%s" % (os.path.basename(final[0]), (" (the run is in progress; the final Depth "
+                                                      "(Max).tif can differ)" if live else ""))
+                if depth_grid is None:
+                    why_none = "no results/run.max in %s yet" % os.path.basename(final[0])
         if depth_grid is not None:
             import numpy as np
             wet = np.isfinite(depth_grid.data) & (depth_grid.data >= THRESHOLDS["wet_ft"])
@@ -1222,12 +1374,15 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
             vg = read_tif(vp) if (os.path.exists(vp) and not live) else None
             if vg is None and final and pbounds:
                 vg = _pass_grid(final[0], ".maxVc", pbounds, 1.0 / FT)
-            peaks = {"peak_depth_ft": round(float(np.nanmax(np.where(wet, depth_grid.data, np.nan))), 2) if wet.any() else 0.0,
-                     "peak_velocity_fps": (round(float(np.nanmax(np.where(wet, vg.data, np.nan))), 2)
-                                           if (vg is not None and vg.data.shape == wet.shape and wet.any()) else None),
-                     "wet_cells": int(wet.sum()), "wet_ft": THRESHOLDS["wet_ft"],
-                     "flooded_acres": round(float(wet.sum()) * depth_grid.cell ** 2 / 4046.8564224, 1),
+            n_wet = int(wet.sum())
+            # boolean-index maxima (1.3.2): np.where(wet, a, nan) made a full-size float copy of each grid
+            peaks = {"peak_depth_ft": round(float(depth_grid.data[wet].max()), 2) if n_wet else 0.0,
+                     "peak_velocity_fps": (round(float(np.nanmax(vg.data[wet])), 2)
+                                           if (vg is not None and vg.data.shape == wet.shape and n_wet) else None),
+                     "wet_cells": n_wet, "wet_ft": THRESHOLDS["wet_ft"],
+                     "flooded_acres": round(float(n_wet) * depth_grid.cell ** 2 / 4046.8564224, 1),
                      "definition": "maxima over wet cells (depth >= %.1f ft)" % THRESHOLDS["wet_ft"]}
+            del wet, vg
             pts = points
             if not sample_receptors:
                 # (1.3.1) a pass hook the watcher chose not to sample (LUMO_WATCH_PASS_RECEPTOR_EVERY): nothing is loaded or read
@@ -1252,14 +1407,23 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                                "the structure layer %s needs the osgeo Python package (QGIS or GDAL); the other checks "
                                "are unaffected" % os.path.basename(spath))
             if pts:
-                rec = check_receptors(runner_nodata(depth_grid), pts, fl, grid_source=grid_source)
+                rec = check_receptors(runner_nodata(depth_grid, inplace=True), pts, fl, grid_source=grid_source)
+            elif sample_receptors and not why_none:
+                why_none = ("no receptor points: no structure layer was given or found%s"
+                            % ("" if crs_wkt else " (and no CRS is recorded to georeference one)"))
+            depth_grid = None                # free the pass grid now: a late pass's grid is the biggest thing the watcher holds
     except ImportError as e:
+        why_none = why_none or "a Python package is missing: %s" % e
         fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: a Python package is missing",
                "%s. The structure layer needs GDAL/OGR (osgeo) and the grids need numpy; the other checks are "
                "unaffected." % e)
     except Exception as e:                  # noqa: BLE001 - a raster problem must not stop the digest
+        why_none = why_none or "the result rasters could not be read: %s" % describe_error(e)
         fl.add("NO_RUN_FILES", WATCH, "run", "could not read the result rasters: %s" % describe_error(e),
                error_detail(e), error_type=type(e).__name__)
+    if rec is None and skipped_receptors is None:
+        skipped_receptors = why_none or "receptors not sampled: no receptor result was produced (no reason was recorded)"
+    depth_grid = None
 
     hazard = None
     if use_hazard and upto_pass is None:

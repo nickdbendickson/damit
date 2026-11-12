@@ -226,7 +226,7 @@ class TestDamLineSearch(Base):
         run, dam = FX.make_run(self.root)                                   # flat layout
         os.makedirs(os.path.join(dam, "inputs"))
         with open(os.path.join(dam, "inputs", "dam_line.geojson"), "w") as f:
-            f.write("{}")
+            json.dump(FX.DAM_LINE_GEOJSON, f)
         self.assertTrue(RD._dam_line_found(dam, run))
         self.assertFalse(RD._dam_line_found(None, None))
 

@@ -105,6 +105,11 @@ Lumo can watch a DamIT Runner run, but the review does not depend on the model. 
    final raster. `PASS_UNFINISHED` tolerates one `.mass` output interval (`massint`) when the log or the Runner agrees the pass ended. Ollama gets
    `num_thread` 2 (`LUMO_WATCH_NUM_THREAD`, 0 = Ollama's default) and the explain process is niced. A busy shared Ollama is
    waited for (`LUMO_WATCH_FIRST_TOKEN_S`, default 600; 0 = no limit): it ends as status `timeout`, not a partial reply.
+   **1.3.2 (DWR-2645, DWR-2801).** Every `pass_end` digest carries receptors or `checks.receptors_skipped` with the reason (never a blank),
+   and the hook waits for the Runner to write the finished pass into `run_progress.json` (its georeference; at most
+   `LUMO_WATCH_RECORD_GRACE_S`, 120 s). A mid-run hook does not read a pass grid that would leave under `LUMO_WATCH_MIN_FREE_MB` (1024) of RAM free,
+   late-pass grids are read leaner (float32 above 4 M cells, edges streamed, no full-size copies), and Ollama keeps the model
+   `LUMO_WATCH_KEEP_ALIVE` (2m; it was 30m) after an explain. The dam line check reads the file: a MultiLineString counts, with its parts.
    Interactive Q&A (`lumo`, `lumo-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
 
 Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
@@ -163,7 +168,7 @@ Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6
   conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
   it); see `lumo/knowledge/README.md` and `index-knowledge.zsh`.
 - `lumo/` is setup-local-lumo.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
-  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.1 and lumo_watch 1.3.1; `lumo-chat` shows the
+  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.2 and lumo_watch 1.3.2; `lumo-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lumo_watch.py 1.3.1 - Lumo as a DamIT run watcher.
+"""lumo_watch.py 1.3.2 - Lumo as a DamIT run watcher.
 
 How it fits together (the point of this tool):
 
@@ -47,6 +47,11 @@ Models (env or flags):  LUMO_WATCH_MODEL (default qwen3:4b; 'small' = qwen3:4b, 
       always at run_end (final raster) and when the run is already over; 1 = every pass, 0 = never mid-run. The layer is read and
       reprojected once per `watch` process and sampled with numpy (no per-feature GDAL call), but a pass hook still shares the CPU
       with the next LISFLOOD pass (DWR-2801, 88,734 structures: the 1.3.0 hooks made the Runner 493 s instead of 348 s).
+  LUMO_WATCH_RECORD_GRACE_S (120): a pass_end hook waits for the Runner to write the finished pass into run_progress.json (its
+      georeference), up to this many seconds after LISFLOOD-FP's log finishes. Every digest then carries receptors or an explicit
+      checks.receptors_skipped reason (1.3.2).
+  LUMO_WATCH_MIN_FREE_MB (1024): a mid-run pass hook does not read a pass grid that would leave less than this much RAM free.
+  LUMO_WATCH_KEEP_ALIVE (2m): how long Ollama keeps the model in memory after an explain (was a fixed 30m, 1.3.2).
   LUMO_WATCH_PASS_NICE (19): `watch` lowers its own priority to this nice level (POSIX) so the pass hooks yield to the Runner.
   LUMO_WATCH_IDLE_GAP_S (20): no longer decides anything (1.3.0); still accepted so an old setting does not break
   LUMO_WATCH_QUEUE_WAIT_S (300): after the run ends, how long `watch` keeps waiting for a busy engine before it leaves the
@@ -73,7 +78,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import run_digest as RD  # noqa: E402
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 MODEL_ALIASES = {"small": "qwen3:4b", "phi": "phi4-mini", "qwen4b": "qwen3:4b", "default": "qwen3:4b"}
 DEFAULT_MODEL = "qwen3:4b"
@@ -144,7 +149,9 @@ def settings(model=None, num_ctx=None, num_predict=None):
         "idle_gap_s": max(0.0, _float(env("LUMO_WATCH_IDLE_GAP_S"), 20.0)),     # 1.3.0: accepted, no longer used
         "stale_s": max(0.0, _float(env("LUMO_WATCH_STALE_S"), RD.THRESHOLDS["stall_s"])),
         "pass_receptor_every": max(0, _int(env("LUMO_WATCH_PASS_RECEPTOR_EVERY"), 2)),
+        "keep_alive": (env("LUMO_WATCH_KEEP_ALIVE") or "2m").strip(),
         "pass_nice": max(0, _int(env("LUMO_WATCH_PASS_NICE"), 19)),
+        "record_grace_s": max(0.0, _float(env("LUMO_WATCH_RECORD_GRACE_S"), RECORD_GRACE_S)),
         "queue_wait_s": max(0.0, _float(env("LUMO_WATCH_QUEUE_WAIT_S"), 300.0)),
         "nice": max(0, _int(env("LUMO_WATCH_NICE"), 10)),
         "url": env("LUMO_WATCH_URL", "http://127.0.0.1:11434"),
@@ -218,7 +225,7 @@ def chat_payload(messages, cfg, think=False):
     on /api/generate does not stop it), stream:true, a 4-6k context, a short reply, a capped thread count."""
     p = {"model": cfg["model"], "messages": messages, "stream": True,
          "options": {"num_ctx": cfg["num_ctx"], "num_predict": cfg["num_predict"], "temperature": 0.2, "top_p": 0.9},
-         "keep_alive": "30m"}
+         "keep_alive": cfg.get("keep_alive") or "2m"}
     if cfg.get("num_thread"):                   # cap the CPU threads so the model cannot take every core from LISFLOOD
         p["options"]["num_thread"] = int(cfg["num_thread"])
     if think is not None:
@@ -785,8 +792,10 @@ class EventDetector(object):
 
     state (a dict, kept by the caller / saved as JSON): passes_done, stall_fired, run_end, before_hazard, after_hazard."""
 
-    def __init__(self, stall_s=None):
+    def __init__(self, stall_s=None, record_grace_s=None):
         self.stall_s = stall_s if stall_s is not None else RD.THRESHOLDS["stall_s"]
+        # (1.3.2) how long a finished pass waits for the Runner to record it in run_progress.json before the hook fires anyway
+        self.record_grace_s = RECORD_GRACE_S if record_grace_s is None else float(record_grace_s)
 
     def scan(self, run_dir, state, now=None):
         now = now if now is not None else time.time()
@@ -797,9 +806,19 @@ class EventDetector(object):
         finished = os.path.exists(os.path.join(run_dir, "run_report.json")) or (
             setup.get("status") == "finished" and setup.get("model_launched"))
         pdirs = RD._pass_dirs(run_dir)
+        progress = RD.load_progress(run_dir)
+        running = bool(progress) and not finished and not RD.run_complete(run_dir, setup, None, progress)[0]
         for i, pd in enumerate(pdirs):
             n = RD._pass_number(pd)
             if RD._log_finished(pd) and n not in done:
+                if running and not RD.progress_pass(progress, pd).get("bounds"):
+                    # LISFLOOD-FP has finished the pass but the Runner is still reading its results and has not written the
+                    # pass into run_progress.json, which holds the georeference the hook needs. DWR-2801 (1.3.1): the hook
+                    # fired in that gap on passes 4 to 6 and 8, found no grid, and sampled nothing. Wait for the entry (the
+                    # grace is a cap for a Runner that never writes it); the next scan fires the hook.
+                    lm = RD._log_mtime(pd)
+                    if lm is None or now - lm < self.record_grace_s:
+                        continue
                 done.append(n)
                 ev.append({"event": "pass_end", "pass": n})
             elif RD._log_finished(pd) is False and not finished and i == len(pdirs) - 1 and n not in fired:
@@ -823,6 +842,23 @@ class EventDetector(object):
         return ev
 
 
+RECORD_GRACE_S = 120.0
+
+
+def own_rss_mb():
+    """This process's resident and peak memory in MB from /proc/self/status, or (None, None) (1.3.2: the 2801 test could not say what
+    the watcher held, `ps` named it `python`); every hook's log line carries it."""
+    out = {}
+    try:
+        with open("/proc/self/status", encoding="ascii", errors="replace") as f:
+            for line in f:
+                if line.startswith(("VmRSS:", "VmHWM:")):
+                    out[line.split(":")[0]] = int(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return out.get("VmRSS"), out.get("VmHWM")
+
+
 def _log_line(msg):
     print(msg, flush=True)                       # a pipe or a file gets each line now, not when the process exits
 
@@ -835,7 +871,7 @@ def watch(run_dir, out_dir=None, poll_s=2.0, until="before_hazard", lumo=True, c
     idle | end | always | never), so the model never competes with the engine for the CPU. A 45 s run therefore
     finishes at full speed and is explained as soon as it is done."""
     cfg = cfg or settings()
-    det, state, results = EventDetector(stall_s), {}, []
+    det, state, results = EventDetector(stall_s, cfg.get("record_grace_s")), {}, []
     pending = None                              # (result, event) waiting for an idle engine
     t0 = time.time()
 
@@ -862,7 +898,10 @@ def watch(run_dir, out_dir=None, poll_s=2.0, until="before_hazard", lumo=True, c
             log("[%s] %s%s -> %s%s" % (time.strftime("%H:%M:%S"), e["event"], " (pass %s)" % e["pass"] if e["pass"] else "",
                                        r["verdict"], "; flags: " + ", ".join(
                                            sorted({f["id"] for f in r["digest"]["flags"] if f["severity"] != RD.INFO}))
-                                       if r["digest"]["flags"] else ""))
+                                       if r["digest"]["flags"] else "") + (
+                "; receptors skipped: %s" % r["digest"]["checks"]["receptors_skipped"]
+                if r["digest"].get("checks", {}).get("receptors_skipped") else "") + (
+                " [watch RSS %.0f MB, peak %.0f MB]" % own_rss_mb() if own_rss_mb()[0] is not None else ""))
             if lumo and cfg.get("explain") != "never":
                 if pending is not None:
                     pending[0]["lumo"] = {"status": "skipped", "error": "a newer event replaced it in the queue"}
