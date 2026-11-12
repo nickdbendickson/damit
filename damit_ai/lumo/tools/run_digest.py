@@ -330,7 +330,9 @@ def load_progress(run_dir):
 def progress_pass(progress, pdir):
     """The progress entry of a pass folder (by its folder name), or {}."""
     name = os.path.basename(os.path.normpath(pdir))
-    for e in (progress or {}).get("passes") or []:
+    # the LAST entry with the name: a later loop at the same cell size (grid check / refine) reuses run01_<cell>m, and the
+    # folder on disk holds that later pass
+    for e in reversed((progress or {}).get("passes") or []):
         if isinstance(e, dict) and e.get("dir") == name:
             return e
     return {}
@@ -969,6 +971,8 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
 
 
 # ----------------------------------------------------------------------------- hazard drivers
+# layer_none_scored (Hazard 0.2.2, INFO) is deliberately NOT here: a layer that was supplied and sampled but has no receptor in the
+# scored set needs no review; only no_layer (nothing of that kind was supplied) does.
 REVIEW_CODES = {
     "trains_lookup": "trains/day came from a lookup CSV that is not in the shipped rules",
     "trains_unknown": "a rail line has no trains/day: the M9a High test is not confirmed",

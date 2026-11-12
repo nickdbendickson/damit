@@ -312,6 +312,28 @@ class TestPassHooksFlagReceptors(Base):
         self.assertIsNone(d["checks"]["receptors"])
 
 
+@needs_numpy
+class TestHazardNoteAboutAnEmptyLayer(Base):
+    """Item 4 on the watcher side: Hazard 0.2.2's INFO layer_none_scored is not a thing to review; no_layer still is."""
+
+    def hazard_digest(self, code, level):
+        run, dam = FX.make_run(self.root, hazard=True)
+        path = os.path.join(dam, "classify", "damit_hazard_report.json")
+        rep = jload(path)
+        rep["flags"] = [{"level": level, "code": code, "message": "m", "method": "M9a", "receptors": []}]
+        jdump(rep, path)
+        return RD.build_digest(run, "run_end", dam_folder=dam)
+
+    def test_layer_none_scored_does_not_raise_hazard_review(self):
+        d = self.hazard_digest("layer_none_scored", "info")
+        self.assertFalse([f for f in d["flags"] if f["id"] == "HAZARD_REVIEW"])
+        self.assertEqual(d["checks"]["hazard"]["review_counts"], {})
+
+    def test_no_layer_still_does(self):
+        d = self.hazard_digest("no_layer", "warning")
+        self.assertEqual(len([f for f in d["flags"] if f["id"] == "HAZARD_REVIEW"]), 1)
+
+
 class TestProgressHelpers(Base):
     def test_load_and_match(self):
         os.makedirs(os.path.join(self.root, "r"))
@@ -321,6 +343,12 @@ class TestProgressHelpers(Base):
         self.assertEqual(RD.progress_pass(prog, "/x/model/run02_50m")["bounds"], [1, 2, 3, 4])
         self.assertEqual(RD.progress_pass(prog, "/x/model/run03_50m"), {})
         self.assertEqual(RD.run_complete(os.path.join(self.root, "r")), (False, None))
+
+    def test_a_later_loop_reusing_a_pass_folder_name_wins(self):
+        prog = {"passes": [{"dir": "run01_10m", "bounds": [0, 0, 1, 1]}, {"dir": "run02_10m", "bounds": [5, 5, 6, 6]},
+                           {"dir": "run01_10m", "bounds": [9, 9, 10, 10]}]}
+        self.assertEqual(RD.progress_pass(prog, "/m/run01_10m")["bounds"], [9, 9, 10, 10])
+        self.assertEqual(RD.progress_pass(prog, "/m/run02_10m")["bounds"], [5, 5, 6, 6])
 
     def test_a_broken_progress_file_is_ignored(self):
         os.makedirs(os.path.join(self.root, "r"))
