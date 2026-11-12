@@ -129,11 +129,12 @@ class Chain2D(unittest.TestCase):
         self.assertIn("point sample", rows[0]["sampling"])
         self.assertEqual(dv["counts"]["total"], 1)
         try:
-            import matplotlib  # noqa: F401
+            import matplotlib.pyplot  # noqa: F401
             self.assertTrue(os.path.getsize(os.path.join(folder, ST.DV_CHART_STEM + ".png")) > 5000)
             self.assertEqual(dv["status"], ST.STATUS_OK)
-        except ImportError:
-            pass
+        except Exception:                                           # no usable matplotlib: the CSV only, said in the step
+            self.assertEqual(dv["status"], ST.STATUS_GAP)
+            self.assertIn("matplotlib", dv["note"])
 
     def test_dv_chart_step_without_hazard_is_not_run_and_never_fails(self):
         from damit_screener.core import runner_bridge as RB

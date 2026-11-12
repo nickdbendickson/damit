@@ -132,7 +132,7 @@ def test_nd_preset_headless():
     assert rep["dv_charts"][0]["counts"]["total"] == 2 and rep["dv_charts"][0]["source"] == "Imported raster: depth.tif"
     assert "damit_hazard_dv_habitable.png" in md
     try:
-        import matplotlib  # noqa: F401
+        import matplotlib.pyplot  # noqa: F401
         have_mpl = True
     except Exception:
         have_mpl = False

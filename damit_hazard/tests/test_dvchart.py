@@ -106,7 +106,7 @@ def _build(recs, tmp, **meta):
 
 def _have_mpl():
     try:
-        import matplotlib  # noqa: F401
+        import matplotlib.pyplot  # noqa: F401
         return True
     except Exception:
         return False
