@@ -11,6 +11,7 @@ author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
 tracker=https://github.com/nickdbendickson/damit/issues
 homepage=https://github.com/nickdbendickson/damit
+license=GPL-3.0-or-later
 experimental=True
 hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
