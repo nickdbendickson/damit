@@ -263,8 +263,8 @@ class TestDigestText(Base):
         self.assertIn("PROJ_LIB", f["detail"])
 
     def test_versions(self):
-        self.assertEqual(RD.VERSION, "1.3.3")
-        self.assertEqual(LW.VERSION, "1.3.3")
+        self.assertEqual(RD.VERSION, "1.3.4")
+        self.assertEqual(LW.VERSION, "1.3.4")
 
     def test_docs_describe_proj_and_the_no_record_case(self):
         t = slurp(os.path.join(PIERRE, "knowledge", "WATCHER-DIGEST.md"))

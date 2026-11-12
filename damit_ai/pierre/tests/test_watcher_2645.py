@@ -511,7 +511,7 @@ class TestKeepAlive(Base):
         self.assertEqual(LW.chat_payload([], LW.settings())["keep_alive"], "10s")
 
     def test_versions_and_docs(self):
-        self.assertEqual((RD.VERSION, LW.VERSION), ("1.3.3", "1.3.3"))
+        self.assertEqual((RD.VERSION, LW.VERSION), ("1.3.4", "1.3.4"))
         t = slurp(os.path.join(PIERRE, "knowledge", "WATCHER-DIGEST.md"))
         for needle in ("PIERRE_WATCH_RECORD_GRACE_S", "PIERRE_WATCH_MIN_FREE_MB", "PIERRE_WATCH_KEEP_ALIVE", "receptors_skipped"):
             self.assertIn(needle, t, needle)

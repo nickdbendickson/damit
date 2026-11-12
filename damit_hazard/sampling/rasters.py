@@ -9,10 +9,13 @@ The depth cells come from the depth raster's grid; velocity, DV, WSE, non-breach
 arrival are read at those cell centres (their own grids may differ). Roads / rail: the cell
 under every point of the line densified at the line step (default 10 ft).
 
-Per receptor: depth_ft (max), velocity_fps (max over wet cells), dv_ft2s (DV raster max, else
-the largest d x v of one cell: dv_source "cells"), cells [(d, v)] of the wet cells, wse_ft (max),
-rise_ft (max of depth - non-breach depth), arrival_h (min), in_domain (False when the receptor
-lies outside the depth raster).
+Per receptor: depth_ft (max), velocity_fps (max over wet cells, possibly a different cell
+than the peak depth), dv_ft2s (DV raster max, else the largest d x v of one cell: dv_source
+"cells"), cells [(d, v)] of the wet cells, wse_ft (max), rise_ft (max of depth - non-breach
+depth), arrival_h (min), in_domain (False when the receptor lies outside the depth raster).
+When the cell under a point (or every cell in a footprint) is NoData, the peak over wet cells in
+the 3x3 neighbourhood (and the footprint, if there is one) is used, sampling is "neighbourhood",
+and the structure is flagged for review; a dry (finite 0) cell is left dry.
 
 The input rasters are someone else's run (often a product-of-record folder) and are opened read
 only with GDAL PAM off (no_pam): nothing, not even a .aux.xml statistics sidecar, is written
@@ -157,6 +160,50 @@ def _hyd(rs, xs, ys, d):
     return out
 
 
+def _cell_index(dep, x, y):
+    g = dep.gt
+    return int(math.floor((x - g[0]) / g[1])), int(math.floor((y - g[3]) / g[5]))
+
+
+def _cell_centre(dep, col, row):
+    g = dep.gt
+    return g[0] + (col + 0.5) * g[1], g[3] + (row + 0.5) * g[5]
+
+
+def _neighbourhood_centres(dep, points):
+    """Unique cell centres of the 3x3 around each point, clipped to the raster."""
+    seen, xs, ys = set(), [], []
+    for x, y in points:
+        c0, r0 = _cell_index(dep, x, y)
+        for dc in (-1, 0, 1):
+            for dr in (-1, 0, 1):
+                c, r = c0 + dc, r0 + dr
+                if (c, r) in seen or not (0 <= c < dep.xsize and 0 <= r < dep.ysize):
+                    continue
+                seen.add((c, r))
+                px, py = _cell_centre(dep, c, r)
+                xs.append(px)
+                ys.append(py)
+    if not xs:
+        return None, None
+    return np.asarray(xs, float), np.asarray(ys, float)
+
+
+def _from_neighbourhood(rs, dep, points):
+    """Peak hydraulics over wet cells in the 3x3 (and footprint) around points, or None."""
+    xs, ys = _neighbourhood_centres(dep, points)
+    if xs is None:
+        return None
+    d = dep.values_at(xs, ys)
+    wet = np.isfinite(d) & (d > 0)
+    if not wet.any():
+        return None
+    hyd = _hyd(rs, xs[wet], ys[wet], d[wet])
+    hyd["sampling"] = "neighbourhood"
+    hyd["neighbourhood"] = True
+    return hyd
+
+
 def sample_structures(items, rs, edge, point_radius):
     """{id: hydraulics} of structures. items: {id: (wkb bytes, centroid (x, y), radius or None)}
     in the depth raster's CRS; edge / point_radius / radius in its map units (radius: a
@@ -175,6 +222,14 @@ def sample_structures(items, rs, edge, point_radius):
     for sid, (wkb, cxy, rad) in items.items():
         if sid in cells:
             xs, ys, d = cells[sid]
+            if np.isfinite(d).any():
+                out[sid] = _hyd(rs, xs, ys, d)
+                out[sid]["sampling"] = "cells in the footprint + edge ring"
+                continue
+            hyd = _from_neighbourhood(rs, dep, list(zip(xs, ys)) + [cxy])
+            if hyd is not None:
+                out[sid] = hyd
+                continue
             out[sid] = _hyd(rs, xs, ys, d)
             out[sid]["sampling"] = "cells in the footprint + edge ring"
             continue
@@ -183,7 +238,13 @@ def sample_structures(items, rs, edge, point_radius):
             out[sid] = {"sampled": False, "in_domain": False, "sampling": "outside the raster"}
             continue
         xs, ys = np.array([x]), np.array([y])
-        out[sid] = _hyd(rs, xs, ys, dep.values_at(xs, ys))
+        d0 = dep.values_at(xs, ys)
+        if not np.isfinite(d0[0]):
+            hyd = _from_neighbourhood(rs, dep, [(x, y)])
+            if hyd is not None:
+                out[sid] = hyd
+                continue
+        out[sid] = _hyd(rs, xs, ys, d0)
         out[sid]["sampling"] = "cell under the centre (no cell centre in the area)"
     return out
 

@@ -1237,6 +1237,19 @@ def _validate_runs(cat, cfg, runs, dam, flags):
                       r.get("scenario"))
 
 
+def _flag_nodata_neighbourhood(ctx):
+    """Structures whose depth was taken from neighbouring wet cells because the cell under the
+    receptor (or every footprint cell) was NoData: score the neighbourhood values, and flag them
+    for review. Not a habitability rule."""
+    ids = [r["id"] for r in ctx.run.get("receptors") or []
+           if (r.get("sampling") == "neighbourhood" or r.get("neighbourhood"))]
+    if ids:
+        ctx.flag(WARNING, "nodata_neighbourhood",
+                 "{} structure(s) sit on a NoData cell next to water: peak depth and velocity "
+                 "were taken from neighbouring wet cells (or the footprint) and need review"
+                 .format(len(ids)), None, ids)
+
+
 def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
     dam = dict(dam or {})
     charts = charts or tm11.load()
@@ -1253,6 +1266,7 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
         flags.add(ERROR, "no_methods", "no consequence method is enabled")
     for run in runs:
         ctx = Ctx(cat, cfg, charts, run, dam, flags)
+        _flag_nodata_neighbourhood(ctx)
         ctx.receptors = _prefilter(ctx, notes)
         for mid in order:
             EVALUATORS[mid](ctx)

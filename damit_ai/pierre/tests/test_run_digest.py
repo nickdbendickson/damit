@@ -425,3 +425,40 @@ class TestEngineAndMisc(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDamPoint(Base):
+
+    def test_dam_point_off_the_line_is_watch(self):
+        run, dam = FX.make_run(self.root)
+        path = os.path.join(run, "run_report.json")
+        with open(path, encoding="utf-8") as fh:
+            rep = json.loads(fh.read())
+        how = ("the inventory / official point is 7190 m from the dam line (threshold 68 m: "
+               "100 m, or half the 136 m line when that is shorter). The model uses the dam line.")
+        rep["dam_point"] = {"lonlat": [-97.42144, 46.00633], "line_distance_m": 7190.0,
+                            "threshold_m": 68.0, "dam_line_length_m": 136.0, "off_line": True,
+                            "how": how}
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(rep, fh)
+        d = RD.build_digest(run, dam_folder=dam)
+        self.assertIn("DAM_POINT_OFF_LINE", ids(d, "WATCH"))
+        self.assertTrue(d["checks"]["dam_point"]["off_line"])
+        f = [x for x in d["flags"] if x["id"] == "DAM_POINT_OFF_LINE"][0]
+        self.assertIn("7190", f["title"])
+
+    def test_dam_point_on_the_line_is_quiet(self):
+        run, dam = FX.make_run(self.root)
+        path = os.path.join(run, "run_report.json")
+        with open(path, encoding="utf-8") as fh:
+            rep = json.loads(fh.read())
+        rep["dam_point"] = {"lonlat": [-97.5011, 45.9727], "line_distance_m": 4.0,
+                            "threshold_m": 68.0, "dam_line_length_m": 136.0, "off_line": False}
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(rep, fh)
+        d = RD.build_digest(run, dam_folder=dam)
+        self.assertNotIn("DAM_POINT_OFF_LINE", ids(d))
+
+
+if __name__ == "__main__":
+    unittest.main()

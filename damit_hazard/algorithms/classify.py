@@ -112,7 +112,9 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "report names it.<br><br>"
                 "Receptor attributes are read by name (type, occupants, floor_elev / "
                 "floor_height_ft, aadt, road_class, func_class, sole_access, trains_per_day, "
-                "passenger, ...): see the plugin README.<br><br>"
+                "passenger, ...): see the plugin README. A structure on a NoData cell next to "
+                "water is scored from the peak depth and velocity of neighbouring wet cells "
+                "(sampling=neighbourhood) and flagged for review, not treated as dry.<br><br>"
                 "Informational screening aid, not a regulatory determination: the engineer of "
                 "record and the regulating agency make the determination.")
 

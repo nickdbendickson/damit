@@ -39,7 +39,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

@@ -123,3 +123,50 @@ def test_reader_and_no_pam_write_no_sidecar():
         ds.GetRasterBand(1).ComputeStatistics(False)
         ds = None
         assert os.path.isfile(path + ".aux.xml")
+
+
+def test_nodata_centre_uses_neighbourhood_peak():
+    """A point on a NoData cell next to wet cells takes the neighbourhood peak, not 0."""
+    d = tempfile.mkdtemp()
+    dep = np.zeros((5, 5), np.float32)
+    vel = np.full((5, 5), 0.5, np.float32)
+    dep[2, 2] = -9999.0                      # centre: NoData
+    dep[2, 3] = 3.0                          # east neighbour
+    vel[2, 3] = 1.0
+    dep[1, 2] = 2.0                          # north neighbour (shallower, faster)
+    vel[1, 2] = 4.0
+    rs = S.open_rasters({"depth": _tif(os.path.join(d, "d.tif"), dep, x0=0.0, y0=5.0, cell=1.0),
+                         "velocity": _tif(os.path.join(d, "v.tif"), vel, x0=0.0, y0=5.0, cell=1.0)})
+    # cell (2,2) centre is (2.5, 2.5)
+    items = {"hole": (_point_wkb(2.5, 2.5), (2.5, 2.5), 0.1)}
+    out = S.sample_structures(items, rs, edge=0.0, point_radius=0.1)
+    h = out["hole"]
+    assert h["sampling"] == "neighbourhood" and h.get("neighbourhood") is True
+    assert h["depth_ft"] == 3.0
+    assert h["velocity_fps"] == 4.0          # peak velocity over wet cells, possibly another cell
+    assert h["in_domain"] is True and h["sampled"] is True
+
+
+def test_finite_dry_centre_is_not_filled_from_neighbours():
+    """A dry (0) cell beside water stays dry: that is RECEPTOR_DRY_NEXT_TO_WET, not neighbourhood."""
+    d = tempfile.mkdtemp()
+    dep = np.zeros((5, 5), np.float32)
+    dep[2, 3] = 3.0
+    rs = S.open_rasters({"depth": _tif(os.path.join(d, "d.tif"), dep, x0=0.0, y0=5.0, cell=1.0)})
+    items = {"dry": (_point_wkb(2.5, 2.5), (2.5, 2.5), 0.1)}
+    out = S.sample_structures(items, rs, edge=0.0, point_radius=0.1)
+    h = out["dry"]
+    assert h.get("neighbourhood") is not True
+    assert h["sampling"] != "neighbourhood"
+    assert h["depth_ft"] == 0.0
+
+
+def test_nodata_with_no_wet_neighbour_stays_dry():
+    d = tempfile.mkdtemp()
+    dep = np.full((5, 5), -9999.0, np.float32)
+    rs = S.open_rasters({"depth": _tif(os.path.join(d, "d.tif"), dep, x0=0.0, y0=5.0, cell=1.0)})
+    items = {"empty": (_point_wkb(2.5, 2.5), (2.5, 2.5), 0.1)}
+    out = S.sample_structures(items, rs, edge=0.0, point_radius=0.1)
+    h = out["empty"]
+    assert h.get("neighbourhood") is not True
+    assert h["depth_ft"] == 0.0
