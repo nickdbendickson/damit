@@ -328,17 +328,58 @@ _ENUM_ROW = re.compile(r"^\s*-\s*(\d+):\s*(.*?)\s*$")
 _PARAM_ROW = re.compile(r"^([A-Z][A-Z0-9_]*):")
 
 
+_HELP_FAIL: dict[tuple[str, str], str] = {}
+
+
+def _help_fail_reason(exe: str, alg: str, out: subprocess.CompletedProcess | None, exc: BaseException | None) -> str:
+    """Why `qgis_process help alg` did not succeed: a crash or exit code, or the algorithm is missing."""
+    if exc is not None:
+        if isinstance(exc, FileNotFoundError):
+            return f"{exe} was not found, so {alg} could not be checked."
+        if isinstance(exc, subprocess.TimeoutExpired):
+            return f"qgis_process help {alg} timed out after {exc.timeout:g} s (the process may have hung or crashed)."
+        return f"could not start qgis_process help {alg} ({type(exc).__name__}: {exc})."
+    assert out is not None
+    code = out.returncode
+    err = (out.stderr or "").strip() or (out.stdout or "").strip()
+    combined = f"{out.stdout or ''}\n{out.stderr or ''}"
+    missing = re.search(r"not found|unknown algorithm|Algorithm .* not found", combined, re.I)
+    if missing and code not in (None, 0) and (code is not None and 0 < code < 128):
+        return f"{alg} is not installed in this QGIS (qgis_process help exited {code})."
+    # A negative or large exit is usually a crash (SIGSEGV is -11, or 139 = 128+11).
+    if code is None or (isinstance(code, int) and (code < 0 or code >= 128)):
+        detail = f" {err[:400]}" if err else ""
+        return f"qgis_process help {alg} crashed (exit {code}).{detail}"
+    detail = f" {err[:400]}" if err else ""
+    return f"qgis_process help {alg} failed (exit {code}).{detail}"
+
+
 def help_text(exe: str, alg: str) -> str | None:
-    """`qgis_process help alg` (cached per exe/alg), or None when the algorithm is not installed or help failed."""
+    """`qgis_process help alg` (cached per exe/alg), or None when help did not succeed.
+
+    help_failure(exe, alg) is the reason (crash, exit code, or not installed) when this is None.
+    """
     key = (exe, alg)
     if key not in _ENUM_HELP:
         try:
             out = subprocess.run([exe, "help", alg], capture_output=True, text=True, timeout=180,
                                  stdin=subprocess.DEVNULL)
-            _ENUM_HELP[key] = out.stdout if out.returncode == 0 and out.stdout.strip() else None
-        except (OSError, subprocess.SubprocessError):
+            if out.returncode == 0 and out.stdout.strip():
+                _ENUM_HELP[key] = out.stdout
+                _HELP_FAIL.pop(key, None)
+            else:
+                _ENUM_HELP[key] = None
+                _HELP_FAIL[key] = _help_fail_reason(exe, alg, out, None)
+        except (OSError, subprocess.SubprocessError) as exc:
             _ENUM_HELP[key] = None
+            _HELP_FAIL[key] = _help_fail_reason(exe, alg, None, exc)
     return _ENUM_HELP[key]
+
+
+def help_failure(exe: str, alg: str) -> str | None:
+    """The reason help_text is None, else None. Populates the same cache as help_text."""
+    help_text(exe, alg)
+    return _HELP_FAIL.get((exe, alg))
 
 
 def algorithm_available(exe: str, alg: str) -> bool:
@@ -435,9 +476,10 @@ def _mode_index(exe: str, alg: str, mode: str) -> str:
     return found if found is not None else mode
 
 
-def _missing_alg(log, cfg: HandoffConfig, role: str, what: str) -> None:
+def _missing_alg(log, exe: str, cfg: HandoffConfig, role: str, what: str) -> None:
     alg = cfg.alg(role)
-    log(f"{alg} is not installed in this QGIS (qgis_process help {alg} failed). {what} was not started.")
+    reason = help_failure(exe, alg) or f"qgis_process help {alg} failed"
+    log(f"{reason} {what} was not started.")
     log(
         f"Install the DamIT plugin that provides it, or point DamIT Crest at the published id with "
         f"{'DAMIT_ALG_' + role.upper()} or damit-handoff.json (docs/HANDOFF.md). ND suite ids are not used as a fallback."
@@ -718,10 +760,10 @@ def run_screening(
         log("Install QGIS (3.28 or newer), or set QGIS_PROCESS to the qgis_process program.")
         return {"ok": False, "stopped": True, "folder": str(folder), "work": str(root)}
     if not algorithm_available(exe, preflight_alg):
-        _missing_alg(log, cfg, "preflight", "The screening")
+        _missing_alg(log, exe, cfg, "preflight", "The screening")
         return {"ok": False, "stopped": True, "missingAlgorithm": preflight_alg, "folder": str(folder), "work": str(root)}
     if not algorithm_available(exe, chain_alg):
-        _missing_alg(log, cfg, "runchain", "The screening")
+        _missing_alg(log, exe, cfg, "runchain", "The screening")
         return {"ok": False, "stopped": True, "missingAlgorithm": chain_alg, "folder": str(folder), "work": str(root)}
     report = root / "preflight.txt"
     has_id = bool(dam.get("nid") or dam.get("nidId") or dam.get("id"))
@@ -756,7 +798,8 @@ def run_screening(
         }
 
     limit = screening_timeout(timeout)
-    log(f"Jurisdiction: {choice['mode']}" + (f" preset {choice['preset']}" if choice["preset"] else "")
+    jur = f"preset {choice['preset']}" if choice["preset"] else choice["mode"]
+    log(f"Jurisdiction: {jur}"
         + (f", methods {choice['methods']}" if choice["methods"] else "") + ".")
     log(f"Preflight: {exe} run {preflight_alg}")
     code, text = _run(
@@ -906,7 +949,7 @@ def run_model(
             log("Enter both Point X and Point Y (DEM CRS) on the export panel to use the DamIT runner CLI instead.")
         return {"ok": False, "stopped": True, "folder": str(folder), "work": str(root)}
     if not algorithm_available(exe, rundam):
-        _missing_alg(log, cfg, "rundam", "The flood model")
+        _missing_alg(log, exe, cfg, "rundam", "The flood model")
         return {"ok": False, "stopped": True, "missingAlgorithm": rundam, "folder": str(folder), "work": str(root)}
     accepted = help_params(exe, rundam)
     if not dem and (not accepted or "DEM" in accepted):
@@ -1157,7 +1200,7 @@ def run_classify(
         log("qgis_process was not found. The classification was not started.")
         return {**base, "ok": False, "stopped": True}
     if not algorithm_available(exe, alg):
-        _missing_alg(log, cfg, "classify", "The classification")
+        _missing_alg(log, exe, cfg, "classify", "The classification")
         return {**base, "ok": False, "stopped": True, "missingAlgorithm": alg}
     depth = _raster(dam.get("depthRaster"))
     from_folder = False

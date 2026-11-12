@@ -149,6 +149,11 @@ def main(argv):
                   "area_weighted_mean": float((fac * areas).sum() / areas.sum())}
     rate = RainRate(job["rain_t"], job["rain_rate"], fac)
     rain_op = anuga.Rate_operator(domain, rate=rate)
+    xsec = None
+    if "gauge" in job:                    # optional discharge section (two points, DEM CRS): flow through it every yield step
+        from anuga.shallow_water.shallow_water_domain import Cross_section
+        gl = np.asarray(job["gauge"], float).reshape(2, 2)
+        xsec = Cross_section(domain, [[gl[0, 0] - x_ref, gl[0, 1] - y_ref], [gl[1, 0] - x_ref, gl[1, 1] - y_ref]])
     # mass check for the wiring: the storm volume the operator will add (m3), without evolving
     depth_m = float(np.trapz(job["rain_rate"], job["rain_t"])) if hasattr(np, "trapz") \
         else float(np.trapezoid(job["rain_rate"], job["rain_t"]))
@@ -195,7 +200,8 @@ def main(argv):
                 frac = float(domain.get_fractional_step_volume_integral())
             except Exception:                    # noqa: BLE001
                 frac = float("nan")
-            series.append((float(t), rain, vol, bflux, frac, float(d.max()), float(areas[d > 0.05].sum())))
+            gq = float(xsec.get_flow_through_cross_section()) if xsec is not None else float("nan")
+            series.append((float(t), rain, vol, bflux, frac, float(d.max()), float(areas[d > 0.05].sum()), gq))
             print("t = {:.0f} s  max depth {:.4f} m  stored {:.1f} m3  rain in {:.1f} m3".format(
                 t, float(d.max()), vol, rain), flush=True)
             if not mode_run and k >= steps + 1:      # the first yield is the initial state (t = 0)
@@ -217,8 +223,19 @@ def main(argv):
                 "wet_area_km2_depth_over_5cm_at_max": float(areas[hmax > 0.05].sum() / 1e6),
                 "wet_area_km2_depth_over_30cm_at_max": float(areas[hmax > 0.30].sum() / 1e6),
                 "wet_triangles_over_5cm": int((hmax > 0.05).sum())}
+            if xsec is not None:
+                ss = np.array(series)
+                q = ss[:, 7]
+                ia = int(np.argmax(np.abs(q)))
+                vol = float(np.trapz(np.abs(q), ss[:, 0])) if hasattr(np, "trapz") else float(np.trapezoid(np.abs(q), ss[:, 0]))
+                rec["gauge"] = {"line_xy": gl.tolist(), "segments": len(xsec.segments),
+                                "peak_abs_m3_s": float(abs(q[ia])), "t_peak_s": float(ss[ia, 0]),
+                                "signed_q_at_peak_m3_s": float(q[ia]), "volume_abs_m3": vol,
+                                "note": "flow through the section from the centroid momentum of the cut triangles, sampled "
+                                        "once per yield step; positive = to the right of the line a -> b (damit_pmp orders the ends so that is "
+                                        "away from FLOW_PATH_START, i.e. downstream, when it is given)"}
             np.savetxt(os.path.join(HERE, "anuga_rain_timeseries.csv" if mode_run else "anuga_rain_steps_timeseries.csv"), np.array(series), delimiter=",",
-                       header="t_s,rain_in_m3,stored_m3,boundary_flux_integral_m3,rate_operator_m3,max_depth_m,wet_area_m2",
+                       header="t_s,rain_in_m3,stored_m3,boundary_flux_integral_m3,rate_operator_m3,max_depth_m,wet_area_m2,gauge_q_m3_s",
                        comments="")
         if mode_run:
             np.savez(os.path.join(HERE, "anuga_rain_result.npz"), hmax_m=hmax,

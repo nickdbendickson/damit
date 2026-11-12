@@ -1,4 +1,4 @@
-# DamIT PMP 0.3.0 – NOAA Atlas 14 only
+# DamIT PMP 0.4.1 – NOAA Atlas 14 only
 
 Processing provider `damit_pmp`. Depends on DamIT Core. **The only data source is NOAA Atlas 14**,
 read from the NOAA/NWS Precipitation Frequency Data Server (PFDS, https://hdsc.nws.noaa.gov/pfds/), or
@@ -13,11 +13,13 @@ estimates up to the 1000-year ARI; **this plugin computes no probable maximum pr
 |---|---|
 | `damit_pmp:pointpf` | PFDS point query: 19 durations (5 min – 60 days) × PDS 1 – 1000-year ARI (or AMS 1/2 – 1/1000 AEP), depth or intensity, English or metric, with 90% bounds. Writes a CSV table and a JSON file with the Atlas 14 volume, version, region, query URL, fetch time and citation. |
 | `damit_pmp:basinpf` | The same at a point on the basin plus evenly spread points inside it (MAX_POINTS, default 9), combined cell by cell (mean or max); a sample-point layer. No areal reduction (Atlas 14 values are point values). |
-| `damit_pmp:hyetograph` | Alternating-block design hyetograph from a pointpf / basinpf JSON: storm total = the Atlas 14 depth for the storm duration (1 h – 10 days) at the chosen frequency; sub-durations log-log interpolated between published durations. Not an Atlas 14 temporal distribution. |
+| `damit_pmp:hyetograph` | Design hyetograph from a pointpf / basinpf JSON: storm total = the Atlas 14 depth for the storm duration (1 h – 10 days) at the chosen frequency. **Temporal pattern (0.4.0):** alternating block (default; sub-durations log-log interpolated between published durations; not an Atlas 14 temporal distribution), the **NOAA Atlas 14 temporal distributions** (Volume 8, HDSC quartile curves) or the **NRCS 24-hour Type I / IA / II / III** curves. **Losses (0.4.0):** optional initial + constant loss, in inches or mm (default 0), giving an excess-rain column. |
 | `damit_pmp:gridbasin` | Basin mean / min / max of an Atlas 14 GIS grid: a file you have (NOAA's, thousandths of an inch, SCALE 0.001; frequency and duration read from the standard file name, e.g. `mw100yr24ha.asc`, also the 2-day `48h` and `al` / `au` bound names) or a `fetchgrid` GeoTIFF (already inches, read with scale 1), **or** leave GRID empty and give the same frequency / duration / series / bound / region choices as `fetchgrid`: it fetches the NOAA grid itself. |
 | `damit_pmp:fetchgrid` | **New in 0.3.0.** Downloads the Atlas 14 "PF in GIS format" grid for one frequency and duration, clips it to a point buffer, an extent or a basin (optionally blanking cells outside the polygons) and writes a Float32 GeoTIFF in **inches** (NOAA's thousandths x 0.001; NAD83 geographic, nodata -9999) plus `<tif>.json` (source URL, fetch time, SHA-256, Atlas 14 volume / version, citation, stats, value at the point). |
-| `damit_pmp:raingrid` | **New in 0.3.0.** Rain-on-grid files from a hyetograph CSV (or a pointpf / basinpf JSON + FREQUENCY + STORM + STEP_MIN): a LISFLOOD-FP `.rain` file (mm/hr), an ANUGA rate series CSV (m/s) with a README, and a JSON record (units, totals, mass check). Optionally rescaled to an Atlas 14 grid at a point or as a basin mean, with a spatial factor raster. Launches nothing. |
-| `damit_pmp:anugarain` | **New in 0.3.0.** An ANUGA rain-on-grid job on the damit_runner gmsh mesh: DEM + basin polygon / extent + the `raingrid` rate CSV (+ factor raster) -> the runner's gmsh mesh, a self-contained `run_anuga_rain.py`, a run manifest. Builds the mesh only when an ANUGA Python is given; runs ANUGA only with `RUN_ANUGA` (off by default). |
+| `damit_pmp:raingrid` | **New in 0.3.0.** Rain-on-grid files from a hyetograph CSV (or a pointpf / basinpf JSON + FREQUENCY + STORM + STEP_MIN): a LISFLOOD-FP `.rain` file (mm/hr), an ANUGA rate series CSV (m/s) with a README, and a JSON record (units, totals, mass check). Optionally rescaled to an Atlas 14 grid at a point or as a basin mean, with a spatial factor raster. Launches nothing. 0.4.0: the same temporal patterns and losses as `hyetograph` (the files then hold the excess rain; the gross storm is in the record). |
+| `damit_pmp:anugarain` | **New in 0.3.0.** An ANUGA rain-on-grid job on the damit_runner gmsh mesh: DEM + basin polygon / extent + the `raingrid` rate CSV (+ factor raster) -> the runner's gmsh mesh, a self-contained `run_anuga_rain.py`, a run manifest. Builds the mesh only when an ANUGA Python is given; runs ANUGA only with `RUN_ANUGA` (off by default). 0.4.0: optional discharge section (`GAUGE_A` / `GAUGE_B`: flow through a line, recorded every yield step) and `SIMPLIFY_M` for a jagged basin outline. |
+| `damit_pmp:watershed` | **New in 0.4.0.** The watershed of a dam point from a DEM (a file you give, or USGS 3DEP fetched for you): D8 flow on the runner's depression-filled DEM, the pour point snapped to the nearest stream cell, the upstream area as a polygon, a JSON record and the ratio to the NID drainage area you give. |
+| `damit_pmp:lisfloodrain` | **New in 0.4.0.** A LISFLOOD-FP rain-on-grid job built the way `damit_runner` sets up its LISFLOOD-FP run, on the same domain as `anugarain`: `Model Terrain (LISFLOOD).tif`, `.dem.asc`, `.bci` (FREE edges), the `.rain` file, `.par` (ACC by default), an optional discharge gauge and a manifest. Runs LISFLOOD-FP only with `RUN_LISFLOOD` (off by default). |
 
 A location outside Atlas 14 coverage (for example Portland, Oregon, checked 2026-11-09) fails with
 "NOAA Atlas 14 does not cover this location (PFDS: …)". PFDS answers are cached (CACHE_DIR, else the
@@ -161,3 +163,93 @@ frequency / duration / series / bound, cache, offline, 404, clip and 0.001 scali
 format, mm/hr and m/s conversions, mass checks) and `PMPGrids` in `tests/test_qgis_new_plugins.py` (the algorithms in real
 QGIS with a fake PFDS and a fake download); `test_anuga_rain.py` and `test_runner_shared_sync.py` for `anugarain`
 (set `DAMIT_PMP_ANUGA_PYTHON` to run the real gmsh mesher and the script's `--dry` check). No test calls NOAA unless `DAMIT_NETWORK_TESTS=1` (one real download).
+
+
+## Watershed of a dam (`watershed`) – new in 0.4.0
+
+`damit_pmp:watershed` takes a dam point (the NID location or a crest point), a DEM and a snap radius and returns the
+upstream basin: `OUTPUT_BASIN` (polygon), optional `OUTPUT_POUR` (the snapped point) and `OUTPUT_MASK` (raster) and
+`OUTPUT_JSON` (`damit.pmp.watershed`: method, snap distance, area in sq mi and km2, DEM source and citation, the
+comparison with `NID_AREA_SQMI`, a flag when the basin reaches the DEM edge). Method, in numpy / scipy (QGIS 3.34's
+Processing has no GRASS provider on every install, and pysheds / whitebox are not assumed): the runner's
+`terrain.priority_flood` fills depressions (a lidar DEM's flat reservoir surface is crossed), D8 steepest descent,
+flow accumulation by headwater peeling, the pour point moves to the *nearest* cell whose accumulation is at least 95 % of
+the largest in the snap window (the plain maximum would always be the far edge of the window and pick up side area
+below the dam), and the upstream cells are traced. Cross-checked against GRASS `r.watershed` + `r.water.outlet` on
+DWR-2801 (same area to three digits, overlap 0.999).
+
+Leave `DEM` empty and the tool fetches USGS 3DEP (the National Map ImageServer, `elevation.nationalmap.gov`, the
+runner's `terrain3dep.py`, tiled, EPSG:5070) for a square of `FETCH_RADIUS_KM` around the point at `FETCH_CELL_M`
+into `WORK_DIR`; if the basin reaches the edge it widens the square (x 1.5, twice) and says so. The two hosts of
+this fetch (and nothing else outside `hdsc.nws.noaa.gov`) are allowed by `test_only_pfds_host`: USGS 3DEP is a terrain
+source, not a precipitation source. D8 follows the DEM surface: culverts, ditches and storm sewers are not in it, and
+NID areas can include non-contributing area, so the two numbers differ.
+
+## Temporal patterns and losses (`hyetograph`, `raingrid`) – new in 0.4.0
+
+**NOAA Atlas 14 stays the only depth source.** `PATTERN` chooses only the *shape* of the storm; the total is always the
+Atlas 14 depth for the storm duration and frequency.
+
+| PATTERN | Curve | Storm durations |
+|---|---|---|
+| Alternating block (default) | built from the Atlas 14 depth-duration curve (unchanged) | any |
+| NOAA Atlas 14 temporal distribution | HDSC "Temporal distributions of precipitation" for Volume 8 (Midwestern States), files `https://hdsc.nws.noaa.gov/pub/hdsc/data/mw/mw_<area>_<hours>h_temporal.csv`; cumulative % of the storm total every 0.5 h for the quartile case (`QUARTILE`, default second) at the percent of occurrence (`PERCENT`, default 50 = median curve); the area 1 – 4 is found from the HDSC shapefile (`Vol8_Temporals_Shapefiles.zip`) by point-in-polygon, or set with `TDA`; the file URL, fetch time, SHA-256, title and a citation go into the JSON | 6, 12, 24, 96 h |
+| NRCS Type I / IA / II / III | the 24-hour rainfall distributions of USDA SCS TR-55 (hourly ordinates, half-hour points for Type II), linear interpolation | 24 h |
+
+A pattern that does not exist for the storm duration (for example Atlas 14 temporal for a 3-hour storm, NRCS for 12 h)
+stops with a message naming the durations; nothing falls back silently. The Atlas 14 curves describe storms that exceed
+the 2-year ARI and are published for Volume 8 only; other regions stop with a message. The median (50 %) curve is a
+smooth, mild storm (for the 2nd-quartile 24 h case the steepest hour is 8.7 % of the total); the NRCS Type II curve
+puts 42.8 % of the depth into hour 11 – 12, so the two patterns give very different peaks for the same Atlas 14 depth.
+The NRCS ordinates are typed from TR-55 tables; check them against WinTR-55's 0.1-hour tables for regulatory work.
+The HDSC files are downloaded once and cached (`CACHE_DIR`, `OFFLINE`).
+
+**Losses.** `INITIAL_LOSS` (a depth) and `CONSTANT_LOSS` (a depth per hour) in `LOSS_UNITS` (in or mm; default 0 = no
+loss). The initial loss is taken from the first rain, then a constant rate per step, never more than the rain in the
+step. `hyetograph` adds `loss_<u>` and `excess_<u>` columns (only when a loss is set; with losses at 0 the CSV is
+byte-for-byte the 0.3.0 format) and `# temporal:` / `# losses:` comment lines; `raingrid` writes the excess rain to the
+`.rain` and ANUGA files (`TOTAL_MM`; the gross storm is `GROSS_MM`) and records both. Losses are not applied twice: a
+CSV that already has an excess column is refused together with losses.
+
+## LISFLOOD-FP rain-on-grid (`lisfloodrain`) – new in 0.4.0
+
+Chain: `fetchgrid` -> `hyetograph` -> `raingrid` (`*_anuga_rate.csv`) -> `lisfloodrain` (and `anugarain`, same domain).
+Reuse of damit_runner's LISFLOOD-FP setup, as sha-pinned verbatim copies in `runner_shared/` (`lisflood.py`, `units.py`,
+`data_conventions.py`, `grid.py`, `wallclock.py`):
+
+| Part | Runner code used |
+|---|---|
+| Settings and solver choice | `LisfloodSettings`, `solver_from_text`: **ACC** (the local-inertial CPU solver) by default; FV2 / MWDG2 only by name; FV1 / DG2 refused with the runner's message |
+| Model DEM | the runner's `Grid` at `CELL_M`, masked to the same outer ring as `anugarain` (written as `Model Terrain (LISFLOOD).tif` and as `rain.dem.asc` in local coordinates, `local_grid`: the LISFLOOD-FP build is single precision) |
+| `.par` | the runner's keywords and order (`DEMfile`, `resroot`, `dirroot`, `sim_time`, `initial_tstep`, `massint`, `saveint`, `bcifile`, solver, `elevoff`, `depthoff`, optional `theta` / `cfl`, `fpfric`, `gaugefile`); the test `runner_inputs_match` pins every shared line to `lisflood.write_inputs`. Rain run differences: `rainfall rain.rain` instead of the breach `bdyfile`, no `hazard` / `inittm_depth` (the arrival-time patch is not needed) |
+| `.bci` | `FREE` (outflow, bed slope) on all four grid edges (`CLOSED_EDGES` closes some); cells outside the domain polygon are NODATA, which LISFLOOD-FP treats as walls. The grid is cropped to the domain's valid cells, so FREE acts where the domain reaches an edge (the manifest's `edge_valid_cells`; all zero = a closed model, warned) |
+| `.rain` | mm/hr from the ANUGA rate series' own breakpoints (both solvers interpolate linearly, so the volume is the same) |
+| Gauge | `GAUGE_A` / `GAUGE_B`: the runner's `gauge_section` / `_gauge_line` clip; LISFLOOD-FP sections run along a grid axis, so an oblique line becomes the nearest E / W / N / S section of the same width, centred on the line |
+| Executable | `LISFLOOD_EXE`, else `data_conventions.detect_lisflood` (`DAMIT_LISFLOOD`, `PATH`, the usual build folders); the runner's numpy "built-in" engine is never offered |
+| Launcher | `damit_pmp/launch.py::run_lisflood`: `lisflood -v rain.par` in the job folder, `OMP_NUM_THREADS`, the runner's wall-clock timeout and process-group stop. The runner's keep-awake wrapper is not used |
+
+**Solvers.** `ACC` runs on any CPU build. **FV2 and MWDG2 are CUDA solvers of LISFLOOD-FP 8: a CPU build does not stop,
+it silently runs another solver**, so check the log and do not read such a result as FV2 / MWDG2. The tool writes the
+keyword and warns; it cannot tell which solver ran.
+
+**Launching.** Nothing is launched by default. `RUN_LISFLOOD` (**off by default**) runs the executable and reads
+`results/rain.max` (maximum depth, also written as `lisflood_max_depth.tif`), `rain.mass` (the water balance: the last,
+cumulative, rain column; stored volume; outflow by difference and from Qout) and the gauge `rain.discharge` into
+`lisflood_rain_results.json`. CI launch ban: `tests/test_metadata_suite.py` still bans process launching everywhere in
+damit_pmp except `damit_pmp/launch.py`, which now holds the gmsh, ANUGA and LISFLOOD-FP launchers; the minimal
+allowlist change is `lisfloodrain.py` and `algorithms/lisflood_algs.py` in `SOLVER_NAMES_OK` (they may name the solvers,
+not import them), `lisflood_algs.py` as a second importer of `launch`, and a check that `RUN_LISFLOOD` defaults to off.
+
+Limits: uniform rain only (one `.rain` series); no infiltration unless the series is already excess rain; the domain
+rim is a wall in LISFLOOD-FP (only domain cells on the grid edge drain) but an outflow boundary all round in ANUGA; the gauge follows a grid axis; 10 m ACC on a 40 km2
+domain is a long single-core run (hours for 36 h of simulated time).
+
+Tests added in 0.4.0: `test_watershed.py` (synthetic valleys, the 3DEP fetch with a fake service),
+`test_temporal_storm.py` (NRCS ordinates, the real HDSC file in `fixtures/`, a fake downloader and shapefile, losses),
+`test_lisflood_rain.py` (files, runner parity, launcher with a stand-in executable; set `DAMIT_PMP_LISFLOOD` to run a
+real LISFLOOD-FP for five simulated minutes) and `PMPPatternsLossesWatershedLisflood` in `tests/test_qgis_new_plugins.py`.
+
+**Discharge section sign (0.4.1).** ANUGA's `Cross_section` counts flow as positive to the right of the polyline a -> b
+(a north -> south line reads -Q for an eastward flow). With `FLOW_PATH_START` given, `anugarain` orders `GAUGE_A` /
+`GAUGE_B` so positive is away from that point (downstream), the same sign as the LISFLOOD-FP gauge of `lisfloodrain`;
+without it the ends are used as given. The magnitude was never affected.

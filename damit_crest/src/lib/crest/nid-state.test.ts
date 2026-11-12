@@ -51,7 +51,8 @@ describe("NID by state", () => {
 
   it("errors are messages: a bad code, the server's error, no server", async () => {
     await assert.rejects(loadNidState("ZZ"), /not an NID state/);
-    await assert.rejects(loadNidState("CT", { fetchImpl: fakeFetch([], { error: "the NID download failed (offline)" }, 502) }), /offline/);
+    await assert.rejects(loadNidState("CT", { fetchImpl: fakeFetch([], { error: "the NID returned HTTP 502 Bad Gateway for this state's extract." }, 502) }), /HTTP 502.*502 Bad Gateway/);
+    await assert.rejects(loadNidState("ME", { fetchImpl: fakeFetch([], null, 502) }), /HTTP 502/);
     const down = (async () => {
       throw new TypeError("fetch failed");
     }) as unknown as typeof fetch;
