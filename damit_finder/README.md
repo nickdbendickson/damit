@@ -15,7 +15,7 @@ Install: needs DamIT Core. Processing Toolbox → DamIT Finder → Find structur
 
 | Tool | Input | Finds |
 |---|---|---|
-| `damit_find:embankments` Find fills across streams and draws | bare-earth DEM; stream lines (3DHP / NHD flowlines, optional); roads and railroads (optional) | Every fill that blocks a valley a stream line **or a draw traced from the DEM** crosses: **dam** (holds water), **dry embankment** (a dry / detention dam, a levee, an unmapped crossing), **road fill (ponding)** (a road that holds water: the culvert is missing in the DEM, small or blocked), **road fill**; where each pool gets out (**spillways**); **dug pits** anywhere; **raised ridges** (levees, dikes) on request; a **score** with a model from the sixth tool |
+| `damit_find:embankments` Find fills across streams and draws | bare-earth DEM; stream lines (3DHP / NHD flowlines, optional); roads and railroads (optional) | Every fill that blocks a valley a stream line **or a draw traced from the DEM** crosses: **dam** (holds water), **dry embankment** (a dry / detention dam, a levee, an unmapped crossing), **road fill (ponding)** (a road that holds water: the culvert is missing in the DEM, small or blocked), **road fill**, **long fill (road, rail, canal or levee)** (no road / rail in the layers, but the raised fill runs on 600 m or more: a highway, rail grade, canal bank or levee the layers miss); where each pool gets out (**spillways**); **dug pits** anywhere; **raised ridges** (levees, dikes) on request; a **score** with a model from the sixth tool |
 | `damit_find:ponds` Find ponds and dugouts | water-body polygons (3DHP / NHD waterbodies, NWI, your own), DEM | **embankment pond**, **dugout** (natural depressions on request) - the suite's screening pond engine (`core/ponds.py`) |
 | `damit_find:crossings` Find road and rail crossings of streams | roads, railroads, stream lines; the first tool's fills, a DEM (optional) | Every crossing - the places a culvert or a bridge must be - with the fill there and, with a DEM, the drainage area and the round pipe the rational method asks for |
 | `damit_find:water` Find open water in aerial imagery | 4-band or colour-infrared imagery: USGS NAIP Plus, your own GeoTIFF / VRT, or any ArcGIS ImageServer address (a state's 4-band or colour-infrared service); mapped water bodies (optional) | Open-water outlines (one year, or the water of most of several years), each marked **mapped** or not: the pond outlines for the second tool when no layer has them |
@@ -43,6 +43,9 @@ optional extent. A known point anywhere inside a pond's outline makes that pond 
    counts as ground, so storage is above the water surface only). A pool reaching the analysis
    window is marked `open_pool` (storage is a minimum).
 5. A road / rail mask (the centrelines, 6 m either side) tells a road fill from a dam.
+   A fill on no road layer whose raised ground runs on (`ridge_len_ft`, measured along the fill
+   within 600 m of the crest) for `long_fill_m` (600 m) or more is a **long fill**: a farm dam
+   ends on the valley sides.
 6. **Spillway**: where the pool first gets out when the water rises a few centimetres above the
    spill level (the middle of the shortest way out through the cells it floods). On the fill at
    the line = it overtops there or has a notch / pipe there; beside it = an auxiliary spillway, a
