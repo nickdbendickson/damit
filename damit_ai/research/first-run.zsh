@@ -119,7 +119,13 @@ else
       printf '  The progress bar may not redraw here. To watch it: du -sh ~/.ollama/models\n'
       "$OLLAMA" pull "$m" || { warn "could not pull $m, skipped"; continue; }
     fi
-    "$PY" "$HERE/eval_damresearch.py" --model "$m" || warn "test run for $m stopped early"
+    # PYTHONUNBUFFERED: line 42 sends this whole script's stdout through `tee`, so the
+    # eval's stdout is a PIPE and Python block-buffers it. The eval prints a banner plus
+    # one "[n/16] <id> PASS 42 s" line per question -- about 1.5 KB, which never fills a
+    # 4 KB buffer -- so on a long model run the screen shows NOTHING for the best part of
+    # an hour and then the whole block at once. (`--list` above escapes this only because
+    # that process exits straight away, which flushes it.) Verified both ways.
+    PYTHONUNBUFFERED=1 "$PY" "$HERE/eval_damresearch.py" --model "$m" || warn "test run for $m stopped early"
     # Unload before the next model. Every multi-model tier above pairs two models that
     # do not fit in RAM together (32 GB: qwen3.6:27b ~17 GB + qwen3:30b-a3b ~18 GB), and
     # eval_damresearch.py sets no keep_alive, so Ollama holds the one just scored for its
