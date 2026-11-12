@@ -193,10 +193,12 @@ make_env ndanuga ndanuga || warn "the ANUGA env could not be built: the ANUGA ti
 QP="$(env_prefix ndqgis)"
 qpy() { env PYTHONPATH="$QP/share/qgis/python:$QP/share/qgis/python/plugins" QT_PLUGIN_PATH="$QP/plugins" \
             QGIS_PREFIX_PATH="$QP" PROJ_DATA="$QP/share/proj" GDAL_DATA="$QP/share/gdal" QT_QPA_PLATFORM=offscreen \
-            "$QP/bin/python" "$@"; }
+            "$MAMBA" run -n ndqgis python "$@"; }
+# `mamba run` activates the env. Calling $QP/bin/python directly works on Linux (RPATH $ORIGIN)
+# but fails on macOS, where dyld only resolves the QGIS dylibs with the env activated.
 qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis (see $LOG)"
 ANUGA_PY="$(env_prefix ndanuga)/bin/python"
-"$ANUGA_PY" -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
+"$MAMBA" run -n ndanuga python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
 
 # ---------------------------------------------------------------------------
 # 3. plugins (zips in plugins/; Core first so every dependency is in place)
