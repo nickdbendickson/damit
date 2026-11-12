@@ -1,0 +1,19 @@
+DamIT is multi-licensed. There is no single license for this repository.
+
+- The QGIS plugins (damit_catalog, damit_core, damit_data, damit_finder,
+  damit_hazard, damit_hazardlite, damit_pmp, damit_runner, damit_screener,
+  damit_setup) are licensed under the GNU GPL v3.0 or later
+  (SPDX: GPL-3.0-or-later) — see LICENSES/GPL-3.0-or-later.txt.
+
+- The standalone apps damit_crest and damit_ai are licensed under the
+  PolyForm Noncommercial License 1.0.0 — see
+  LICENSES/PolyForm-Noncommercial-1.0.0.md. (Exception: the single file
+  damit_ai/lumo/tools/dump_damit_algorithm_help.py is GPL-3.0-or-later.)
+
+- Bundled or downloaded third-party software, models and data keep their own
+  licenses (see docs/THIRD-PARTY.md).
+
+- The "DaMiT" name and the DaMiT logo are not covered by any code license;
+  all rights, including trademark rights, are reserved.
+
+See LICENSING.md for the authoritative map and what it means in practice.

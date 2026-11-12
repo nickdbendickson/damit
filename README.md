@@ -74,5 +74,9 @@ every run. Credits for everything else DamIT builds on: [docs/THIRD-PARTY.md](do
 
 ## License
 
-No license has been chosen yet, so for now all rights are reserved. The DaMiT name and logo are not covered
-by any code license.
+DamIT is **multi-licensed** — see **[LICENSING.md](LICENSING.md)** for the authoritative map:
+
+- The **QGIS plugins** are **GPL-3.0-or-later** (they load inside QGIS, which is GPL).
+- The standalone **Crest app** and **AI tools** are **PolyForm Noncommercial 1.0.0** (free for non-commercial use; commercial use needs permission).
+- Every bundled/downloaded third-party component keeps its own license ([docs/THIRD-PARTY.md](docs/THIRD-PARTY.md)).
+- The **DaMiT** name and logo are not covered by any code license; all rights, including trademark, reserved.
