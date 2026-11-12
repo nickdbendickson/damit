@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.2.0"
+VERSION = "1.3.1"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -317,6 +317,47 @@ def _pass_dirs(run_dir):
     return sorted(d for d in glob.glob(os.path.join(run_dir, "model", "run*")) if os.path.isdir(d))
 
 
+PROGRESS_FILE = "run_progress.json"       # written by DamIT Runner 0.3.1+ (flood/model.py write_progress)
+
+
+def load_progress(run_dir):
+    """The Runner's run_progress.json: {crs_wkt, passes: [{pass, dir, bounds, cell_m}], growth_loops_done, complete}.
+    It exists while the run is going, which run_report.json does not (1.3.0). {} for a run from an older Runner."""
+    d = _load_json(os.path.join(run_dir, PROGRESS_FILE))
+    return d if isinstance(d, dict) else {}
+
+
+def progress_pass(progress, pdir):
+    """The progress entry of a pass folder (by its folder name), or {}."""
+    name = os.path.basename(os.path.normpath(pdir))
+    # the LAST entry with the name: a later loop at the same cell size (grid check / refine) reuses run01_<cell>m, and the
+    # folder on disk holds that later pass
+    for e in reversed((progress or {}).get("passes") or []):
+        if isinstance(e, dict) and e.get("dir") == name:
+            return e
+    return {}
+
+
+def run_complete(run_dir, setup=None, report=None, progress=None):
+    """(done, how): has the Runner's WHOLE pipeline finished (every pass of every loop, the ANUGA tier, the outputs)? The
+    pass logs cannot say so: the Runner works between passes in Python, with no LISFLOOD process and no pass log growing
+    (DWR-2824: the 2 s gap before pass 7 looked idle). The markers, strongest first: run_progress.json "complete" (written after
+    run_report.json), run_report.json (the last file run_breach writes), run_setup.json status finished (model launched) or
+    failed. How is the marker's name, for the reason line."""
+    progress = load_progress(run_dir) if progress is None else progress
+    if progress.get("complete") is True:
+        return True, "run_progress.json says complete"
+    if report is not None or os.path.exists(os.path.join(run_dir, "run_report.json")):
+        return True, "run_report.json is written"
+    setup = _load_json(os.path.join(run_dir, "run_setup.json")) if setup is None else setup
+    st = (setup or {}).get("status")
+    if st == "finished" and (setup or {}).get("model_launched"):
+        return True, "run_setup.json status is finished"
+    if st == "failed":
+        return True, "run_setup.json status is failed"
+    return False, None
+
+
 def _pass_grid(pdir, ext, bounds, scale=1.0):
     """A pass's LISFLOOD-FP result raster (results/run<ext>) as a Grid, georeferenced from the Runner's bounds
     [xmin, ymin, xmax, ymax] (the ASCII files are in local coordinates). NoData where the DEM is NoData."""
@@ -373,7 +414,7 @@ def _log_finished(pdir):
     return ("Finish Date" in txt) or ("Total computation time" in txt)
 
 
-def pass_record(run_dir, pdir, report_pass=None, bounds=None, now=None):
+def pass_record(run_dir, pdir, report_pass=None, bounds=None, now=None, progress_entry=None):
     """Everything the digest knows about one pass. The Runner's own per-pass record (run_report.json passes[n])
     wins where it has the number; the .mass file and the pass rasters are the fallback."""
     n = _pass_number(pdir)
@@ -392,6 +433,18 @@ def pass_record(run_dir, pdir, report_pass=None, bounds=None, now=None):
     st = _num(rp.get("sim_time_hr"))
     rec["sim_time_hr"] = st if st is not None else (round(last_t / 3600.0, 2) if last_t is not None else None)
     rec["progress"] = round(last_t / planned_s, 4) if (last_t is not None and planned_s) else None
+    # (1.3.1) LISFLOOD-FP writes .mass every `massint` s, so the last sample can fall up to one interval short of sim_time
+    # (DWR-2801 pass 1: last sample 24,309 s of 24,561 s planned, massint 300, a clean finish). The interval: the pass's own
+    # massint, else the gap between its last two samples.
+    interval = _num(par.get("massint"))
+    if not interval and len(mass["rows"]) >= 2:
+        interval = mass["rows"][-1][0] - mass["rows"][-2][0]
+    rec["mass_interval_s"] = interval if interval and interval > 0 else None
+    rec["short_s"] = round(planned_s - last_t, 1) if (last_t is not None and planned_s) else None
+    rec["within_mass_interval"] = bool(rec["short_s"] is not None and rec["mass_interval_s"] is not None
+                                       and rec["short_s"] <= rec["mass_interval_s"] + 1.0)
+    # the Runner moved on from this pass: it read the results and recorded the pass (run_progress.json / run_report.json)
+    rec["runner_recorded"] = bool(report_pass or progress_entry)
     # mass balance: the Runner's number when it recorded one
     mbp = _num(rp.get("max_volume_error_pct"))
     rec["mass_error_pct"], rec["mass_error_source"] = (mbp, "run_report") if mbp is not None else (
@@ -489,6 +542,12 @@ def check_progress(passes, report, fl, now=None, th=THRESHOLDS, stall_s=None):
         w = "pass %s" % p["pass"]
         prog, fin = p["progress"], p["finished"]
         is_last = i == len(passes) - 1
+        # (1.3.1) a pass whose last .mass sample is within one output interval of its sim_time is complete when something else
+        # agrees: its log has a Finish line, or the Runner recorded the pass (run_progress.json / run_report.json), or the pass
+        # is not the last one (a later pass started). A pass still running (last pass, no report, no Finish line, nothing
+        # recorded) is judged as before.
+        if p.get("within_mass_interval") and (fin or p.get("runner_recorded") or not is_last):
+            continue
         if fin is False or (fin is None and prog is not None and prog < th["progress_min"]):
             running = report is None and is_last
             age = (now - p["mass_mtime"]) if p["mass_mtime"] else None
@@ -700,15 +759,70 @@ def toe_expected(height_ft, slope, th=THRESHOLDS):
     return th["toe_inner_m"], max(th["toe_inner_m"], min(th["toe_cap_m"], outer)), s, not (slope and slope > 0)
 
 
-def _dam_line_found(dam_folder, run_dir=None):
-    for base in (dam_folder, os.path.join(dam_folder, "inputs") if dam_folder else None, run_dir):
-        if base and (os.path.exists(os.path.join(base, "dam_line.geojson")) or
-                     os.path.exists(os.path.join(base, "inputs", "dam_line.geojson"))):
-            return True
-    return False
+DAM_LINE_NAMES = ("dam_line.geojson", "dam_line_linestring.geojson", "dam_line.gpkg", "dam_line.shp")
 
 
-def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None):
+def dam_line_places(dam_folder, run_dir=None, setup=None, dam_id=None):
+    """Every folder where the DamIT suite keeps (or is told about) the dam line, most specific first (1.3.0). The Runner
+    and the Screener do not agree on one place: the DWR-2824 retest had it in <work>/inputs/ (beside the terrain), with the
+    dam folder <work>/dams/<id>/ and the run folder <work>/runs/<id>/<id>/run_<ts>/ holding none.
+      - the dam folder, its inputs/, and the <work>/inputs/ and <work>/handoff/<dam id>/ beside its dams/ folder;
+      - the run folder, its inputs/, and the same two beside the run folder's runs/ folder;
+      - the folder of every input the run setup names (terrain, receptors, hydrographs: the Screener's inputs/ folder);
+      - the hand-off folder (run_setup.handoff, damit_handoff.json) and a dam_line path the setup or hand-off gives."""
+    out = []
+
+    def add(p):
+        if p and p not in out:
+            out.append(p)
+
+    def around(base, up):
+        """base, base/inputs, and <work>/inputs, <work>/handoff/<id> where <work> is `up` levels above base."""
+        if not base:
+            return
+        base = os.path.abspath(base)
+        add(base)
+        add(os.path.join(base, "inputs"))
+        work = base
+        for _ in range(up):
+            work = os.path.dirname(work)
+        if work and work != base:
+            add(os.path.join(work, "inputs"))
+            if dam_id:
+                add(os.path.join(work, "handoff", str(dam_id)))
+    around(dam_folder, 2)                                       # <work>/dams/<id>
+    around(run_dir, 4)                                          # <work>/runs/<id>/<id>/run_<ts>
+    setup = setup or {}
+    for v in (setup.get("inputs") or {}).values():
+        if isinstance(v, str) and v:
+            add(os.path.dirname(os.path.abspath(v)))
+    ho = setup.get("handoff")
+    if isinstance(ho, str) and ho and run_dir:
+        add(os.path.dirname(os.path.abspath(os.path.join(run_dir, ho))))
+    add(run_dir and os.path.abspath(run_dir))
+    return out
+
+
+def find_dam_line(dam_folder, run_dir=None, setup=None, dam_id=None):
+    """Path of a dam line file (dam_line.geojson and its relatives) in any known place, else None (1.3.0)."""
+    for base in dam_line_places(dam_folder, run_dir, setup, dam_id):
+        for name in DAM_LINE_NAMES:
+            p = os.path.join(base, name)
+            if os.path.exists(p):
+                return p
+    for key in ("dam_line", "dam_line_file"):                     # a path the setup / hand-off names outright
+        for src in ((setup or {}).get("inputs") or {}, (setup or {}).get("parameters") or {}):
+            v = src.get(key)
+            if isinstance(v, str) and v and os.path.exists(v):
+                return v
+    return None
+
+
+def _dam_line_found(dam_folder, run_dir=None, setup=None, dam_id=None):
+    return find_dam_line(dam_folder, run_dir, setup, dam_id) is not None
+
+
+def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None, setup=None):
     inflow = (report or {}).get("inflow")
     if not inflow:
         return None
@@ -717,8 +831,10 @@ def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None):
     m = re.search(r"([\d.]+)\s*m from the (?:dam )?line", str(inflow.get("how") or ""))
     dist = _num(m.group(1)) if m else None
     info["distance_m"] = dist
-    line = _dam_line_found(f.get("dam_folder"), run_dir)
+    line_path = find_dam_line(f.get("dam_folder"), run_dir, setup, f.get("dam_id"))
+    line = line_path is not None
     info["dam_line_found"] = line
+    info["dam_line_path"] = line_path
     if dist is not None:
         # The distance is the Runner's own measurement (it placed the inflow with the dam line it had). It is used as it
         # is, and the digest says where it came from; with no dam line to measure again this is an INFO note, not an
@@ -774,28 +890,111 @@ def neighbours_max(arr, r, c):
     return float(win.max()) if win.size else 0.0
 
 
+class PointSet(object):
+    """Receptor points as numpy arrays (1.3.1): ids (a list of str) and x, y float arrays in the raster's CRS. Built once per
+    run from the structure layer and reused at every hook; nothing here calls GDAL."""
+
+    def __init__(self, ids, x, y):
+        import numpy as np
+        self.ids = list(ids)
+        self.x = np.asarray(x, dtype=float)
+        self.y = np.asarray(y, dtype=float)
+
+    @classmethod
+    def from_tuples(cls, points):
+        points = list(points)
+        return cls([p[0] for p in points], [p[1] for p in points], [p[2] for p in points])
+
+    def __len__(self):
+        return len(self.ids)
+
+    def __bool__(self):
+        return len(self.ids) > 0
+
+
+def as_pointset(points):
+    return points if isinstance(points, PointSet) else PointSet.from_tuples(points)
+
+
+_POINTS_CACHE = {}          # (path, mtime_ns, size, crs, layer) -> PointSet; the last few layers of this process
+_POINTS_CACHE_MAX = 4
+
+
+def _cache_key(path, wkt, extra=None):
+    try:
+        st = os.stat(path)
+        return (os.path.abspath(path), st.st_mtime_ns, st.st_size, hash(wkt), extra)
+    except OSError:
+        return None
+
+
+def cached_points(path, wkt=None):
+    """The PointSet of a structure layer (wkt = the model CRS) or a CSV (wkt None), loaded and reprojected ONCE per process and
+    layer (1.3.1). The 1.3.0 pass hooks re-read all 88,734 structures of DWR-2801 through GDAL at every pass; `watch` is one
+    process, so the second and later hooks cost nothing. None when the layer cannot be read (no GDAL). The cache key holds the
+    file's mtime and size, so an edited layer is read again."""
+    key = _cache_key(path, wkt)
+    if key is not None and key in _POINTS_CACHE:
+        return _POINTS_CACHE[key]
+    pts = load_points_ogr(path, wkt) if wkt is not None else load_points_csv(path)
+    if pts is None:
+        return None
+    ps = as_pointset(pts)
+    if key is not None:
+        while len(_POINTS_CACHE) >= _POINTS_CACHE_MAX:
+            _POINTS_CACHE.pop(next(iter(_POINTS_CACHE)))
+        _POINTS_CACHE[key] = ps
+    return ps
+
+
 def receptor_check(grid, points, th=THRESHOLDS):
-    """points: [(id, x, y)] in the raster's CRS; grid.data in ft with NaN = NoData.
+    """points: [(id, x, y)] or a PointSet, in the raster's CRS; grid.data in ft with NaN = NoData.
 
     nodata: the cell under the receptor is NoData and a neighbour is wet (the receptor sits in a hole in the
-    results, next to water); dry_next_to_wet: the cell is dry and a neighbour is at least near_wet_ft deep."""
+    results, next to water); dry_next_to_wet: the cell is dry and a neighbour is at least near_wet_ft deep.
+
+    Vectorised (1.3.1): one pass of numpy index arithmetic over all points, no per-point Python or GDAL call. A receptor can only
+    be flagged within one cell of a wet cell, so only the points inside the wet extent's bounding box (grown by a cell) are
+    looked up; the rest are counted as sampled. The result and its order are those of the per-point version."""
     import numpy as np
-    nodata, dry_next, outside, n = [], [], 0, 0
+    ps = as_pointset(points)
     a = grid.data
-    for pid, x, y in points:
-        r, c = grid.rowcol(x, y)
-        if not (0 <= r < a.shape[0] and 0 <= c < a.shape[1]):
-            outside += 1
-            continue
-        n += 1
-        v = a[r, c]
-        nb = neighbours_max(a, r, c)
-        if not np.isfinite(v):
-            if nb >= th["wet_ft"]:
-                nodata.append((pid, round(nb, 2)))
-        elif v < th["wet_ft"] and nb >= th["near_wet_ft"]:
-            dry_next.append((pid, round(nb, 2)))
-    return {"sampled": n, "outside": outside, "nodata_next_to_wet": nodata, "dry_next_to_wet": dry_next}
+    nr, nc = a.shape
+    n_all = len(ps)
+    if n_all == 0:
+        return {"sampled": 0, "outside": 0, "nodata_next_to_wet": [], "dry_next_to_wet": []}
+    rr = np.floor((grid.y0 - ps.y) / grid.cell).astype(np.int64)
+    cc = np.floor((ps.x - grid.x0) / grid.cell).astype(np.int64)
+    inside = (rr >= 0) & (rr < nr) & (cc >= 0) & (cc < nc)
+    n = int(inside.sum())
+    out = {"sampled": n, "outside": n_all - n, "nodata_next_to_wet": [], "dry_next_to_wet": []}
+    with np.errstate(invalid="ignore"):
+        wet = np.isfinite(a) & (a >= th["wet_ft"])
+    rows = np.flatnonzero(wet.any(axis=1))
+    if n == 0 or rows.size == 0:
+        return out
+    cols = np.flatnonzero(wet.any(axis=0))
+    near = inside & (rr >= rows[0] - 1) & (rr <= rows[-1] + 1) & (cc >= cols[0] - 1) & (cc <= cols[-1] + 1)
+    sel = np.flatnonzero(near)
+    if sel.size == 0:
+        return out
+    r, c = rr[sel], cc[sel]
+    pad = np.full((nr + 2, nc + 2), -np.inf)
+    pad[1:-1, 1:-1] = np.where(np.isfinite(a), a, -np.inf)          # NoData never counts as a neighbour
+    nb = pad[r + 1, c + 1]
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr or dc:
+                nb = np.maximum(nb, pad[r + 1 + dr, c + 1 + dc])
+    nb = np.where(np.isfinite(nb), nb, 0.0)
+    v = a[r, c]
+    fin = np.isfinite(v)
+    with np.errstate(invalid="ignore"):
+        nod = ~fin & (nb >= th["wet_ft"])
+        dry = fin & (v < th["wet_ft"]) & (nb >= th["near_wet_ft"])
+    out["nodata_next_to_wet"] = [(ps.ids[sel[i]], round(float(nb[i]), 2)) for i in np.flatnonzero(nod)]
+    out["dry_next_to_wet"] = [(ps.ids[sel[i]], round(float(nb[i]), 2)) for i in np.flatnonzero(dry)]
+    return out
 
 
 def load_points_csv(path):
@@ -854,7 +1053,7 @@ def runner_nodata(grid):
 
 
 def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
-    if depth_grid is None or not points:
+    if depth_grid is None or not len(points):
         return None
     res = receptor_check(depth_grid, points)
     note = (" Sampled on %s." % grid_source) if grid_source else ""
@@ -873,6 +1072,8 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
 
 
 # ----------------------------------------------------------------------------- hazard drivers
+# layer_none_scored (Hazard 0.2.2, INFO) is deliberately NOT here: a layer that was supplied and sampled but has no receptor in the
+# scored set needs no review; only no_layer (nothing of that kind was supplied) does.
 REVIEW_CODES = {
     "trains_lookup": "trains/day came from a lookup CSV that is not in the shipped rules",
     "trains_unknown": "a rail line has no trains/day: the M9a High test is not confirmed",
@@ -954,16 +1155,19 @@ def find_hazard_report(run_dir, setup, dam_folder):
 
 
 def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_path=None, structures_path=None,
-                 upto_pass=None, now=None, stall_s=None, rail_lookup=None, depth_path=None, use_hazard=True):
+                 upto_pass=None, now=None, stall_s=None, rail_lookup=None, depth_path=None, use_hazard=True,
+                 sample_receptors=True):
     """The digest of one run folder (read-only). Returns a dict: verdict, flags, checks, text."""
     run_dir = os.path.abspath(run_dir)
     now = now if now is not None else time.time()
     setup = _load_json(os.path.join(run_dir, "run_setup.json"))
     report = _load_json(os.path.join(run_dir, "run_report.json"))
+    progress = load_progress(run_dir)
     fl = Flags()
     bounds = (report or {}).get("bounds")
     if not bounds:
         bounds = None
+    crs_wkt = (report or {}).get("crs_wkt") or progress.get("crs_wkt") or None
     pdirs = _pass_dirs(run_dir)
     if upto_pass is not None:
         pdirs = [d for d in pdirs if (_pass_number(d) or 0) <= upto_pass]
@@ -971,7 +1175,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
     passes = []
     for i, pd in enumerate(pdirs):
         rp = rpasses[i] if i < len(rpasses) else None
-        passes.append(pass_record(run_dir, pd, rp, bounds, now))
+        passes.append(pass_record(run_dir, pd, rp, bounds, now, progress_pass(progress, pd) or None))
     if not passes and not setup and not report:
         fl.add("NO_RUN_FILES", PROBLEM, "run", "no run files found", "expected run_setup.json, run_report.json and "
                "model/run*/ in " + run_dir)
@@ -988,11 +1192,12 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
     datum = check_datum(facts, fl)
     wse = check_start_wse(facts, report, setup, fl)
     check_outlets(run_dir, passes, setup, fl)
-    toe = check_toe(facts, report, fl, run_dir=run_dir)
+    toe = check_toe(facts, report, fl, run_dir=run_dir, setup=setup)
     check_engine(report, fl)
 
     # peak depth / velocity over wet cells, and receptors (needs numpy; GDAL for the GeoTIFF)
     peaks, rec = None, None
+    skipped_receptors = None
     final = _pass_dirs(run_dir)[-1:] if upto_pass is None else (pdirs[-1:])
     depth_grid = None
     try:
@@ -1000,8 +1205,13 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
         dp = depth_path or os.path.join(run_dir, "outputs", "Depth (Max).tif")
         depth_grid = read_tif(dp) if (os.path.exists(dp) and not live) else None
         grid_source = "outputs/Depth (Max).tif" if depth_grid is not None else None
-        if depth_grid is None and final and bounds:
-            depth_grid = _pass_grid(final[0], ".max", bounds, 1.0 / FT)
+        # the pass's own georeference: run_progress.json has it while the run is going (a pass's domain is not the final
+        # one, and run_report.json does not exist yet); the report's bounds are the final domain's (1.3.0)
+        pbounds = progress_pass(progress, final[0]).get("bounds") if final else None
+        if not pbounds and not (live and progress):
+            pbounds = bounds
+        if depth_grid is None and final and pbounds:
+            depth_grid = _pass_grid(final[0], ".max", pbounds, 1.0 / FT)
             grid_source = "the %s pass grid%s" % (os.path.basename(final[0]), (" (the run is in progress; the final Depth (Max).tif "
                                                   "can differ)" if live else ""))
         if depth_grid is not None:
@@ -1010,8 +1220,8 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
             vg = None
             vp = os.path.join(run_dir, "outputs", "Velocity (Max).tif")
             vg = read_tif(vp) if (os.path.exists(vp) and not live) else None
-            if vg is None and final and bounds:
-                vg = _pass_grid(final[0], ".maxVc", bounds, 1.0 / FT)
+            if vg is None and final and pbounds:
+                vg = _pass_grid(final[0], ".maxVc", pbounds, 1.0 / FT)
             peaks = {"peak_depth_ft": round(float(np.nanmax(np.where(wet, depth_grid.data, np.nan))), 2) if wet.any() else 0.0,
                      "peak_velocity_fps": (round(float(np.nanmax(np.where(wet, vg.data, np.nan))), 2)
                                            if (vg is not None and vg.data.shape == wet.shape and wet.any()) else None),
@@ -1019,8 +1229,12 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                      "flooded_acres": round(float(wet.sum()) * depth_grid.cell ** 2 / 4046.8564224, 1),
                      "definition": "maxima over wet cells (depth >= %.1f ft)" % THRESHOLDS["wet_ft"]}
             pts = points
-            if pts is None and points_path:
-                pts = load_points_csv(points_path)
+            if not sample_receptors:
+                # (1.3.1) a pass hook the watcher chose not to sample (LUMO_WATCH_PASS_RECEPTOR_EVERY): nothing is loaded or read
+                pts = []
+                skipped_receptors = "receptors not sampled at this pass hook (the watcher samples every Nth pass and at run_end)"
+            elif pts is None and points_path:
+                pts = cached_points(points_path)
             if pts is None:
                 spath = structures_path
                 hr = find_hazard_report(run_dir, setup, dam_folder) if (use_hazard and upto_pass is None) else None
@@ -1031,8 +1245,8 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                 if spath and not os.path.exists(spath):
                     fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: the structure layer was not found",
                            "no file at %s" % spath)
-                if spath and os.path.exists(spath) and (report or {}).get("crs_wkt"):
-                    pts = load_points_ogr(spath, report["crs_wkt"])
+                if spath and os.path.exists(spath) and crs_wkt:
+                    pts = cached_points(spath, crs_wkt)
                     if pts is None:
                         fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: GDAL/OGR is not installed",
                                "the structure layer %s needs the osgeo Python package (QGIS or GDAL); the other checks "
@@ -1054,15 +1268,17 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
             hazard = check_hazard(_load_json(hp), fl, rail_lookup)
 
     flags = dedupe_flags(fl.items)
+    complete = run_complete(run_dir, setup, report, progress)
     d = {"schema": SCHEMA, "version": VERSION, "run_dir": run_dir, "phase": phase, "dam_id": facts["dam_id"],
          "name": facts["name"], "verdict": verdict_of(flags), "verdict_set_by": "code (flags only; Lumo never changes it)",
          "flags": flags, "thresholds": THRESHOLDS,
          "checks": {"passes": [{k: v for k, v in p.items() if k != "mass_mtime"} for p in passes], "height": height,
                     "datum": datum, "start_wse": wse, "toe_inflow": toe, "peaks": peaks, "receptors": rec,
-                    "hazard": hazard, "dam": facts,
+                    "hazard": hazard, "dam": facts, "receptors_skipped": skipped_receptors,
                     "run": {"engine": (report or {}).get("engine") or (setup or {}).get("engine"),
                             "sim_time_hr": (report or {}).get("sim_time_hr"), "stop_reason": (report or {}).get("stop_reason"),
-                            "finished": bool(report) or (setup or {}).get("status") == "finished"}}}
+                            "finished": bool(report) or (setup or {}).get("status") == "finished",
+                            "complete": complete[0], "complete_by": complete[1]}}}
     d["text"] = render_text(d)
     d["flags_text"] = render_flag_list(d)
     return d

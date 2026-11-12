@@ -141,3 +141,76 @@ def test_nothing_found_is_none():
         os.makedirs(os.path.dirname(tif))
         assert DR.discover([tif], base=os.path.join(d, "none")) == (None, None)
         assert DR.discover([], base=d) == (None, None)
+
+
+# ---------------------------------------------------------------- 0.2.2: the real path shapes (DWR-2824 retest) ----
+def test_the_dam_folder_raster_finds_the_watchers_run_folder_copy_by_dam_id():
+    """classify on <Dams>/ND00223/Depth (Max).tif; the watcher wrote <watch>/ND00223_run_20261111_221952/. The 0.2.1 search
+    looked for *_ND00223 and found nothing."""
+    with _Tmp() as d:
+        tif = os.path.join(d, "work", "dams", "ND00223", "Depth (Max).tif")
+        os.makedirs(os.path.dirname(tif))
+        watch = os.path.join(d, "home", "local-ai", "watch")
+        good = _w(os.path.join(watch, "ND00223_run_20261111_221952", "dam_record_hazard.json"),
+                  {"dam_id": "ND00223", "nid_id": "ND00223", "name": "Square Butte Creek Dam 2", "height_ft": 33.8})
+        path, kind = DR.discover([tif], base=watch)
+        assert path == good, (path, kind)
+        assert "dam ND00223" in kind
+
+
+def test_the_newest_copy_for_that_dam_id_wins_and_other_dams_are_ignored():
+    with _Tmp() as d:
+        tif = os.path.join(d, "dams", "ND00223", "Depth (Max).tif")
+        os.makedirs(os.path.dirname(tif))
+        watch = os.path.join(d, "watch")
+        old = _w(os.path.join(watch, "ND00223_run_20261111_100000", "dam_record_hazard.json"), {"dam_id": "ND00223"})
+        new = _w(os.path.join(watch, "ND00223_run_20261111_221952", "dam_record_hazard.json"), {"dam_id": "ND00223"})
+        other = _w(os.path.join(watch, "ND00224_run_20261111_230000", "dam_record_hazard.json"), {"dam_id": "ND00224"})
+        liar = _w(os.path.join(watch, "ND00223_run_20261112_000000", "dam_record_hazard.json"), {"dam_id": "ND00999"})
+        os.utime(old, (1000, 1000))
+        os.utime(new, (2000, 2000))
+        os.utime(other, (3000, 3000))
+        os.utime(liar, (4000, 4000))
+        assert DR.discover([tif], base=watch)[0] == new
+
+
+def test_dam_id_matching_is_case_insensitive_and_needs_the_run_folder_shape():
+    with _Tmp() as d:
+        tif = os.path.join(d, "dams", "nd00223", "Depth (Max).tif")
+        os.makedirs(os.path.dirname(tif))
+        watch = os.path.join(d, "watch")
+        _w(os.path.join(watch, "ND00223_other_20261111", "dam_record_hazard.json"), {"dam_id": "ND00223"})
+        assert DR.discover([tif], base=watch) == (None, None)
+        good = _w(os.path.join(watch, "ND00223_run_20261111_221952", "dam_record_hazard.json"), {"dam_id": "ND00223"})
+        assert DR.discover([tif], base=watch)[0] == good
+
+
+def test_the_default_watch_dir_is_home_local_ai_watch_and_the_env_overrides_it():
+    with _Tmp() as d:
+        tif = os.path.join(d, "work", "dams", "ND00223", "Depth (Max).tif")
+        os.makedirs(os.path.dirname(tif))
+        good = _w(os.path.join(d, "home", "local-ai", "watch", "ND00223_run_20261111_221952", "dam_record_hazard.json"),
+                  {"dam_id": "ND00223"})
+        saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", DR.WATCH_DIR_ENV)}
+        try:
+            os.environ.pop(DR.WATCH_DIR_ENV, None)
+            os.environ["HOME"] = os.environ["USERPROFILE"] = os.path.join(d, "home")
+            assert DR.discover([tif])[0] == good
+            os.environ[DR.WATCH_DIR_ENV] = os.path.join(d, "elsewhere")
+            assert DR.discover([tif]) == (None, None)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+def test_dam_json_still_beats_the_watcher_copy():
+    with _Tmp() as d:
+        dam = os.path.join(d, "dams", "ND00223")
+        tif = os.path.join(dam, "Depth (Max).tif")
+        _w(os.path.join(dam, "dam.json"), NESTED)
+        watch = os.path.join(d, "watch")
+        _w(os.path.join(watch, "ND00223_run_20261111_221952", "dam_record_hazard.json"), {"dam_id": "ND00223"})
+        assert DR.discover([tif], base=watch)[0] == os.path.join(dam, "dam.json")
