@@ -39,7 +39,7 @@ $MiniforgeDir = if ($env:DAMSUITE_MINIFORGE) { $env:DAMSUITE_MINIFORGE } else { 
 $Profiles = Join-Path $env:APPDATA 'QGIS\QGIS3\profiles'
 $DsProfile = 'damsafety'; $DiProfile = 'damit'
 $DsDir = Join-Path $Profiles $DsProfile; $DiDir = Join-Path $Profiles $DiProfile
-$DsPlugins = @('DamSafety_Core','DamSafety_Setup','DamSafety_Data','DamSafety_Screening','DamSafety_Runner','DamSafety_Hazard','DamSafety_HazardLite','DamSafety_PMP')
+$DsPlugins = @('DamSafety_Core','DamSafety_Setup','DamSafety_Data','DamSafety_Screening','DamSafety_Runner','DamSafety_Hazard','DamSafety_HazardLite','DamSafety_PMP','DamSafety_Finder')
 $DiPlugins = @('damit_core','damit_catalog','damit_setup','damit_data','damit_screener','damit_runner','damit_hazard','damit_hazardlite','damit_pmp','damit_finder')
 $DoDs = -not $NoDamSafety; $DoDi = -not $NoDamIT
 $DoLumo = -not ($NoAI -or $NoLumo); $DoResearch = -not ($NoAI -or $NoResearch)

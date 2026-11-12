@@ -5,7 +5,7 @@
 #
 # Installs, under your home folder (no sudo, no pip, no system packages):
 #   * DamSafety plugins (DWR_Plugins: Core FIRST, then Setup, Data, Screening, Runner,
-#     Hazard, Hazard Lite, PMP)                         -> QGIS profile "damsafety"
+#     Hazard, Hazard Lite, PMP, Finder)                 -> QGIS profile "damsafety"
 #   * DamIT plugins (damit: Core, Catalog, Setup, Data, Screener, Runner, Hazard,
 #     Hazard Lite, PMP)                                 -> QGIS profile "damit"
 #     (each set has its own profile, so their settings never mix)
@@ -37,7 +37,7 @@ PREFIX="${DAMSUITE_PREFIX:-$HOME/dam-suite}"
 MINIFORGE_DIR="${DAMSUITE_MINIFORGE:-$HOME/miniforge3}"
 DS_PROFILE="${DAMSAFETY_PROFILE:-damsafety}"
 DI_PROFILE="${DAMIT_PROFILE:-damit}"
-DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP"
+DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
 DO_DS=1; DO_DI=1; DO_LUMO=1; DO_RESEARCH=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
