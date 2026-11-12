@@ -181,6 +181,7 @@ def test_missing_matplotlib_skips_the_png_with_a_note():
                 sys.modules[k] = v
     assert res["status"] == "csv_only" and res["png"] is None
     assert "matplotlib is not available" in res["note"] and logs and "skipped" in logs[0]
+    assert "csv" in res["note"].lower()
     assert os.path.isfile(res["csv"]) and not os.path.exists(os.path.join(tmp, D.CHART_NAME + ".png"))
 
 

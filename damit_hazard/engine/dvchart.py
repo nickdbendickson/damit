@@ -320,13 +320,14 @@ def build(receptors, charts, meta, out_dir, stem=CHART_NAME, habitable_types=Non
         res["png"] = draw(pts, meta, charts, os.path.join(out_dir, stem + ".png"))
     except ChartSkipped as e:
         res["status"] = "csv_only"
-        res["note"] = "depth-velocity chart PNG skipped: {}; the CSV of the points was still written".format(e)
-        log(res["note"])
+        res["note"] = "; ".join(x for x in (res["note"], "depth-velocity chart PNG skipped: {}; the CSV of the points "
+                                           "was still written".format(e)) if x)
+        log("depth-velocity chart PNG skipped: {}".format(e))
     except Exception as e:                                       # noqa: BLE001 - a chart must never fail a run
         res["status"] = "csv_only"
-        res["note"] = "depth-velocity chart PNG failed ({}: {}); the CSV of the points was still written".format(
-            type(e).__name__, e)
-        log(res["note"])
+        res["note"] = "; ".join(x for x in (res["note"], "depth-velocity chart PNG failed ({}: {}); the CSV of the "
+                                           "points was still written".format(type(e).__name__, e)) if x)
+        log("depth-velocity chart PNG failed ({}: {})".format(type(e).__name__, e))
     return res
 
 
