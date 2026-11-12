@@ -3,7 +3,7 @@
 # download-all-linux.sh — pre-download EVERYTHING the Linux installer needs into
 # damit_ai/offline/, so install-local-ai-linux.sh can then run with no network:
 #
-#   offline/ollama/ollama-linux-amd64.tgz (+ SHA256SUMS)   the Ollama runtime
+#   offline/ollama/ollama-linux-amd64.tar.zst (+ SHA256SUMS)   the Ollama runtime
 #   offline/models/                                        the AI models (Lumo + dam-research)
 #   offline/DamResearch/library/                           the dam-research PDF library + url list
 #
@@ -56,7 +56,8 @@ command -v curl >/dev/null || die "curl is required"
 
 # ---------------------------------------------------------------------------
 say "Ollama runtime -> offline/ollama (version: $OLLAMA_VERSION)"
-ASSET="ollama-linux-amd64.tgz"
+ASSET="ollama-linux-amd64.tar.zst"   # Ollama's current Linux asset (older releases: .tgz); OLLAMA_ASSET overrides
+ASSET="${OLLAMA_ASSET:-$ASSET}"
 BASE="https://github.com/ollama/ollama/releases"
 if [[ "$OLLAMA_VERSION" == "latest" ]]; then
   # resolve the tag the 'latest' release redirects to
@@ -78,7 +79,9 @@ if (( DO_MODELS )); then
   say "AI models -> offline/models: $MODELS"
   MDIR="$OFFLINE/models"; mkdir -p "$MDIR"
   # we need the Ollama binary we just downloaded to pull the models
-  TMPOL="$(mktemp -d)"; tar -xzf "$OFFLINE/ollama/$ASSET" -C "$TMPOL" 2>/dev/null || warn "could not extract Ollama to pull models"
+  TMPOL="$(mktemp -d)"
+  case "$ASSET" in *.zst) TARF=(--zstd -xf) ;; *) TARF=(-xzf) ;; esac
+  tar "${TARF[@]}" "$OFFLINE/ollama/$ASSET" -C "$TMPOL" 2>/dev/null || warn "could not extract Ollama to pull models"
   OL="$TMPOL/bin/ollama"; [[ -x "$OL" ]] || OL="$(find "$TMPOL" -name ollama -type f -perm -u+x 2>/dev/null | head -1)"
   if [[ -x "$OL" ]]; then
     export OLLAMA_HOST=127.0.0.1:11499 OLLAMA_MODELS="$MDIR"
