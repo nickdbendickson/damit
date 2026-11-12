@@ -63,7 +63,12 @@ ENUMS = {"MODE": ["preset", "custom"],
                   "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; needs HEC-RAS 6.6, see help)"],
          "PRESET@classify": ["Custom (methods ticked below)", "FEMA P-333 baseline", "Nebraska (unverified)", "North Dakota"]}
 if args[:1] == ["help"]:
+    crash = [x for x in os.environ.get("QGIS_CRASH", "").split(",") if x]
+    if args[1] in crash:
+        sys.stderr.write("Segmentation fault\n")
+        sys.exit(139)
     if args[1] in missing:
+        sys.stderr.write("Algorithm %s not found\n" % args[1])
         sys.exit(1)
     name = args[1].split(":", 1)[1]
     if name == "classify":
@@ -362,6 +367,15 @@ class HandoffRunTests(Base):
         self.assertNotIn("run ", self.calls_text())
         self.assertTrue(any("not installed" in line and "DAMIT_ALG_RUNCHAIN" in line + " ".join(self.lines) for line in self.lines))
         self.assertTrue(any("ND suite ids are not used as a fallback" in line for line in self.lines))
+
+    def test_a_crashed_qgis_process_is_not_reported_as_not_installed(self):
+        with mock.patch.dict(os.environ, {"QGIS_CRASH": "damit_screen:preflight"}):
+            result = qr.run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertFalse(result["ok"])
+        text = " ".join(self.lines)
+        self.assertIn("crashed (exit 139)", text)
+        self.assertNotIn("is not installed in this QGIS", text)
+        self.assertNotIn("run ", self.calls_text())
 
     def test_missing_rundam_does_not_fall_back(self):
         work = self.work_with_dem()

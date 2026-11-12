@@ -11,7 +11,7 @@ PLUGINS = {"damit_core": ("DamIT Core", "no", None, None),
            "damit_data": ("DamIT Data", "yes", "DamIT Core", "damit_data"),
            "damit_hazardlite": ("DamIT Hazard Lite", "yes", "DamIT Core,DamIT Catalog", "damit_lite"),
            "damit_pmp": ("DamIT PMP", "yes", "DamIT Core", "damit_pmp"),
-           "damit_finder": ("DamIT Finder", "yes", "DamIT Core", "damit_find")}
+           "damit_finder": ("DamIT Finder", "yes", None, "damit_find")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
 # DamIT PMP 0.3.0 writes rain-on-grid FILES for LISFLOOD-FP and ANUGA (damit_pmp:raingrid) and sets up an ANUGA
 # rain-on-grid job (damit_pmp:anugarain), so these files name the solvers in help text and file-format notes. They
