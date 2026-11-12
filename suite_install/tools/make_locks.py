@@ -36,7 +36,7 @@ ROLES = {
     # ANUGA 4.1 + gmsh (the DamSafety / DamIT Runners mesh with gmsh) + NetCDF I/O
     "ndanuga": ["python=3.12", "anuga=4.1", "gmsh=4.15", "python-gmsh", "numpy", "scipy", "gdal",
                 "netcdf4", "matplotlib-base"],
-    # the local AIs (Lumo + dam-research), OCR included
+    # the local AIs (Pierre + dam-research), OCR included
     "ndresearch": ["python=3.12", "numpy", "pymupdf", "pypdf", "ocrmypdf", "tesseract"],
     # macOS / Linux: conda compilers + OpenMP to build the patched LISFLOOD-FP 8.3 at install time
     "ndbuild": ["cmake", "make", "llvm-openmp", "c-compiler", "cxx-compiler"],
