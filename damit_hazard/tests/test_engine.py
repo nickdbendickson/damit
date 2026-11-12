@@ -101,6 +101,9 @@ def test_nd_m8a_aadt_bands():
     assert cls(cls="interstate", aadt=100) == 3
     assert cls(cls="us_state") == 2
     assert cls(cls="private", aadt=100) == 1
+    assert cls(cls="private", aadt=500) == 2      # 500-2,000 is Significant, private included
+    assert cls(cls="private", aadt=2000) == 2
+    assert cls(cls="private", aadt=2500) == 3     # over 2,000 is High, private included
     res = run(preset("ND"), [road("r")], scenario="S3")
     assert "m8a_unknown" in codes(res, "warning")
 
