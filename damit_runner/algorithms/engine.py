@@ -340,7 +340,14 @@ def _srs_text(crs):
     return a if a.upper().startswith(("EPSG:", "ESRI:", "IGNF:")) else crs.toWkt()
 
 
-class _Base(QgsProcessingAlgorithm):
+try:            # DamIT Core 0.3.0: number inputs in the chosen display unit system (SI or US)
+    from damit_core.lib.unit_widgets import UnitParamsMixin as _UnitParams
+except Exception:                                                 # noqa - no / older DamIT Core
+    class _UnitParams(object):
+        pass
+
+
+class _Base(_UnitParams, QgsProcessingAlgorithm):
     def group(self):
         return "Dam breach modelling"
 
