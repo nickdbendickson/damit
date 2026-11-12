@@ -13,6 +13,11 @@ PLUGINS = {"damit_core": ("DamIT Core", "no", None, None),
            "damit_pmp": ("DamIT PMP", "yes", "DamIT Core", "damit_pmp"),
            "damit_finder": ("DamIT Finder", "yes", "DamIT Core", "damit_find")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
+# DamIT PMP 0.3.0 writes rain-on-grid FILES for LISFLOOD-FP and ANUGA (damit_pmp:raingrid), so these two files name
+# the solvers in help text and file-format notes. They still may not launch anything (FORBIDDEN_LAUNCH below) or
+# import a solver (SOLVER_IMPORT): the plugin writes input files and never runs a model.
+SOLVER_NAMES_OK = {os.path.join("damit_pmp", "rainexport.py"), os.path.join("damit_pmp", "algorithms", "pf_algs.py")}
+SOLVER_IMPORT = re.compile(r"^\s*(import|from)\s+(anuga|lisflood)\b", re.M | re.I)
 LEGACY_QT_OK = {os.path.join("damit_core", "lib", "qtcompat.py")}      # the one QGIS < 3.38 field-type fallback
 
 
@@ -43,6 +48,7 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
+PMP_VERSION = "0.3.0"           # DamIT PMP 0.3.0: fetchgrid, raingrid (the other suite plugins are 0.2.0)
 
 
 class Metadata(unittest.TestCase):
@@ -52,7 +58,7 @@ class Metadata(unittest.TestCase):
             self.assertEqual(m["name"], name)
             # the Finder engine is shared with DamSafety Finder and versioned with it (its
             # run_info records finder.VERSION); the rest are versioned with the DamIT suite
-            self.assertEqual(m["version"], FINDER_VERSION if folder == "damit_finder" else "0.2.0")
+            self.assertEqual(m["version"], {"damit_finder": FINDER_VERSION, "damit_pmp": PMP_VERSION}.get(folder, "0.2.0"))
             self.assertEqual(m["qgisMinimumVersion"], "3.28")
             self.assertEqual(m["qgisMaximumVersion"], "4.99")
             self.assertEqual(m["supportsQt6"], "True")
@@ -92,7 +98,11 @@ class Metadata(unittest.TestCase):
                 code = code_of(p)
                 self.assertIsNone(FORBIDDEN_LAUNCH.search(code), p)
                 self.assertNotRegex(code, r"['\"](ndbreach|nddam):\w", p)
-                self.assertNotRegex(code.lower(), r"lisflood|anuga|hec-?ras|\bwine\b", p)
+                if os.path.relpath(p, ROOT) in SOLVER_NAMES_OK:
+                    self.assertIsNone(SOLVER_IMPORT.search(code), p)
+                    self.assertNotRegex(code.lower(), r"hec-?ras|\bwine\b", p)
+                else:
+                    self.assertNotRegex(code.lower(), r"lisflood|anuga|hec-?ras|\bwine\b", p)
 
 
 if __name__ == "__main__":

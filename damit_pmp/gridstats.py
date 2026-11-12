@@ -4,6 +4,7 @@ The PFDS GIS data page publishes Atlas 14 grids (ASCII grid / GeoTIFF) per volum
 duration, with values in thousandths of an inch (scale 0.001). The user downloads the grid once;
 this module reads it, masks it with the basin, and returns mean / min / max in inches.
 """
+import json
 import os
 import re
 
@@ -13,17 +14,71 @@ from osgeo import gdal, ogr, osr
 gdal.UseExceptions()
 ogr.UseExceptions()
 
-# e.g. mw100yr24ha.asc, orb_100yr24ha.tif, sw1000yr60da_ams.asc
-_NAME = re.compile(r"^(?P<region>[a-z]+)_?(?P<freq>\d+)yr(?P<dur>\d+)(?P<unit>[mhd])a(?P<ams>_ams)?", re.I)
+# e.g. mw100yr24ha.asc, orb_100yr24ha.tif, sw1000yr60da_ams.asc, mw100yr48hau.asc (upper 90% bound)
+_NAME = re.compile(r"^(?P<region>[a-z]+)_?(?P<freq>\d+)yr(?P<dur>\d+)(?P<unit>[mhd])a(?P<ulm>[lu])?(?P<ams>_ams)?", re.I)
+_UNIT = {"m": "min", "h": "hr", "d": "day"}
+
+
+def duration_label(n, unit):
+    """Atlas 14 duration label of a file-name duration (60m -> 60-min, 48h -> 2-day, 24h -> 24-hr)."""
+    unit = unit.lower()
+    n = int(n)
+    if unit == "h" and n == 48:
+        return "2-day"
+    return "{}-{}".format(n, _UNIT[unit])
 
 
 def parse_name(path):
     m = _NAME.match(os.path.basename(path))
     if not m:
         return {}
-    unit = {"m": "min", "h": "hr", "d": "day"}[m.group("unit").lower()]
-    return {"region_code": m.group("region").lower(), "frequency_years": int(m.group("freq")),
-            "duration": "{}-{}".format(int(m.group("dur")), unit), "series": "ams" if m.group("ams") else "pds"}
+    out = {"region_code": m.group("region").lower(), "frequency_years": int(m.group("freq")),
+           "duration": duration_label(m.group("dur"), m.group("unit")),
+           "series": "ams" if m.group("ams") else "pds"}
+    if m.group("ulm"):
+        out["bound"] = "lower90" if m.group("ulm").lower() == "l" else "upper90"
+    return out
+
+
+def grid_scale(path, default=0.001):
+    """Inches per grid unit: 1.0 for a grid written by damit_pmp:fetchgrid (its JSON sidecar says units in),
+    else ``default`` (NOAA's own grids are thousandths of an inch)."""
+    side = path + ".json"
+    if os.path.exists(side):
+        try:
+            with open(side, encoding="utf-8") as fh:
+                doc = json.load(fh)
+            if doc.get("schema") == "damit.pmp.atlas14_gis" and doc.get("units") == "in":
+                return 1.0
+        except (OSError, ValueError):
+            pass
+    return default
+
+
+def point_value(raster_path, x, y, crs_wkt, scale=0.001):
+    """Value (in inches) of the grid cell containing x, y (a point in the CRS ``crs_wkt``); None if outside / empty."""
+    ds = gdal.Open(raster_path)
+    band = ds.GetRasterBand(1)
+    srs = osr.SpatialReference()
+    srs.ImportFromWkt(ds.GetProjection()) if ds.GetProjection() else srs.ImportFromEPSG(4326)
+    psrs = osr.SpatialReference()
+    psrs.ImportFromWkt(crs_wkt)
+    for s in (srs, psrs):
+        try:
+            s.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        except AttributeError:                                   # pragma: no cover
+            pass
+    if not srs.IsSame(psrs):
+        x, y, _ = osr.CoordinateTransformation(psrs, srs).TransformPoint(x, y)
+    gt = ds.GetGeoTransform()
+    c, r = int((x - gt[0]) // gt[1]), int((y - gt[3]) // gt[5])
+    if not (0 <= c < ds.RasterXSize and 0 <= r < ds.RasterYSize):
+        return None
+    v = float(band.ReadAsArray(c, r, 1, 1)[0, 0])
+    nd = band.GetNoDataValue()
+    if (nd is not None and v == nd) or v < 0 or v != v:
+        return None
+    return round(v * scale, 4)
 
 
 def basin_stats(raster_path, basin_wkt, basin_epsg_wkt, scale=0.001):

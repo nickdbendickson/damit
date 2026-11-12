@@ -22,7 +22,7 @@ jobs:
           DAMIT_SETTINGS: ${{ runner.temp }}/damit_settings.json
         run: >-
           python3 -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup
-          damit_data.tests.test_data damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14
+          damit_data.tests.test_data damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 damit_pmp.tests.test_gis_rain
           tests.test_metadata_suite tests.test_hazard_screener_agree tests.test_suite_install
 
   qgis:
@@ -38,7 +38,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)" DAMIT_SETTINGS="$(mktemp -d)/s.json"
-          python3 -m unittest -v tests.test_qgis_new_plugins
+          python3 -m unittest -v tests.test_qgis_new_plugins damit_pmp.tests.test_gis_rain
       - name: DamIT Finder (synthetic terrain, GDAL runs, the three tools in real QGIS)
         env:
           QT_QPA_PLATFORM: offscreen

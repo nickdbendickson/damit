@@ -1,7 +1,7 @@
 """NOAA Atlas 14 precipitation-frequency estimates from the NOAA/NWS Precipitation Frequency Data
 Server (PFDS, https://hdsc.nws.noaa.gov/pfds/). Pure Python.
 
-This is the only data source of DamIT PMP 0.1.0. It reads the PFDS point query
+This is (with the GIS grids of gisgrid.py) the only data source of DamIT PMP. It reads the PFDS point query
 (cgi_readH5.py), which returns, for a latitude / longitude, the Atlas 14 estimates for 19
 durations (5 min - 60 days) and 10 average recurrence intervals (partial-duration series,
 1 - 1000 years) or 9 annual exceedance probabilities (annual-maximum series, 1/2 - 1/1000), with
@@ -64,7 +64,7 @@ def parse(text):
         m = re.search(r"ErrorMsg\s*=\s*'([^']*)'", text)
         msg = m.group(1).strip() if m else "no Atlas 14 values in the answer"
         if sc.get("result") == "none":
-            raise CoverageError("NOAA Atlas 14 does not cover this location (PFDS: {}). DamIT PMP 0.1.0 uses "
+            raise CoverageError("NOAA Atlas 14 does not cover this location (PFDS: {}). DamIT PMP uses "
                                 "NOAA Atlas 14 only and has no other source.".format(msg))
         raise Atlas14Error("unexpected PFDS answer: {}".format(msg if m else text[:200]))
     arrays = {}

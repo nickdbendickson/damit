@@ -293,6 +293,11 @@ class HazardLite(unittest.TestCase):
             self.run_lite("bad2", PRESET="ZZ")
 
 
+def _slurp(path):
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
 class FakePFDS(object):
     def __init__(self, name):
         with open(os.path.join(FIX_PMP, name), "rb") as fh:
@@ -395,6 +400,182 @@ class PMP(unittest.TestCase):
             doc = json.load(fh)
         self.assertEqual(doc["grid_name"], {"region_code": "mw", "frequency_years": 100, "duration": "24-hr",
                                             "series": "pds"})
+
+
+@unittest.skipUnless(QH.HAVE_QGIS, "qgis not importable")
+@mock.patch.object(subprocess, "Popen", _no_process)
+class PMPGrids(unittest.TestCase):
+    """damit_pmp 0.3.0: fetchgrid, gridbasin (fetch route) and raingrid with a fake PFDS and a fake NOAA download."""
+
+    @classmethod
+    def setUpClass(cls):
+        from damit_pmp.provider import DamitPmpProvider
+        from damit_pmp.algorithms import pf_algs
+        QH.add_provider(DamitPmpProvider())
+        pf_algs._Base.pause_s = 0
+        cls.tmp = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        from damit_pmp.algorithms import pf_algs
+        pf_algs._Base.http_client = None
+        pf_algs._GridChoice.grid_downloader = None
+        shutil.rmtree(cls.tmp)
+
+    def setUp(self):
+        from damit_pmp.algorithms import pf_algs
+        from damit_pmp.tests.test_gis_rain import fake_noaa_zip
+        self.pfds = FakePFDS("pfds_pds_english_fargo_nd.txt")
+        pf_algs._Base.http_client = self.pfds
+        self.urls = []
+        self.cache = tempfile.mkdtemp(dir=self.tmp)
+
+        def dl(url, dest):
+            self.urls.append(url)
+            # 3 x 3 cells of 0.01 deg over lon -97.0..-96.97, lat 46.9..46.93 (thousandths of an inch)
+            fake_noaa_zip(dest, [[6300, 6310, 6320], [6342, 6350, 6360], [6400, 6410, -9]], x0=-97.0, y0=46.9, cell=0.01)
+        pf_algs._GridChoice.grid_downloader = dl
+
+    def fetch(self, name, **kw):
+        import processing
+        out = os.path.join(self.tmp, name)
+        args = {"POINT": "-96.985,46.915 [EPSG:4326]", "BUFFER_KM": 0.5, "FREQUENCY": 100, "DURATION": 9,
+                "CACHE_DIR": self.cache, "OUTPUT": out + ".tif"}
+        args.update(kw)
+        return processing.run("damit_pmp:fetchgrid", args), out
+
+    def test_fetchgrid_inches_sidecar_and_cache(self):
+        r, out = self.fetch("g1")
+        self.assertEqual(self.urls, ["https://hdsc.nws.noaa.gov/pub/hdsc/data/mw/mw100yr24ha.zip"])   # region mw from PFDS
+        self.assertIn("lat=46.9150&lon=-96.9850", self.pfds.urls[0])
+        self.assertAlmostEqual(r["POINT_VALUE"], 6.35, places=3)                                       # cell holding the point
+        with open(out + ".tif.json") as fh:
+            doc = json.load(fh)
+        self.assertEqual((doc["units"], doc["value_scale"], doc["frequency_years"], doc["duration"], doc["bound"]),
+                         ("in", 1.0, 100, "24-hr", "estimate"))
+        self.assertEqual(doc["url"], self.urls[0])
+        self.assertIn("NOAA Atlas 14 Volume 8", doc["citation"])
+        self.assertEqual(doc["grid_metadata"]["pubdate"], "20130415")
+        self.assertEqual(len(doc["sha256"]), 64)
+        r2, _ = self.fetch("g2")                                       # second call: cached zip and PFDS answer
+        self.assertEqual(len(self.urls), 1)
+        self.assertEqual(len(self.pfds.urls), 1)
+        r3, _ = self.fetch("g3", OFFLINE=True)
+        self.assertAlmostEqual(r3["MEAN"], r["MEAN"])
+
+    def test_fetchgrid_choices_change_the_file(self):
+        self.fetch("c1", FREQUENCY=500, DURATION=7, BOUND=2, REGION=2)
+        self.fetch("c2", SERIES=1, FREQUENCY=10, DURATION=10, REGION=2)
+        self.assertEqual([u.rsplit("/", 1)[1] for u in self.urls], ["mw500yr06hau.zip", "mw10yr48ha_ams.zip"])
+
+    def test_fetchgrid_extent_and_basin_mask(self):
+        r, _ = self.fetch("e1", POINT=None, EXTENT="-97.0,-96.99,46.9,46.91 [EPSG:4326]")
+        self.assertGreater(r["MEAN"], 6.29)
+        self.assertLess(r["MEAN"], 6.42)
+        basin = mem_layer("Polygon", "EPSG:4326", [("id", "integer")],
+                          [("POLYGON((-97.0 46.92,-96.99 46.92,-96.99 46.93,-97.0 46.93,-97.0 46.92))", [1])])
+        r2, _ = self.fetch("e2", POINT=None, BASIN=basin, MASK_TO_BASIN=True, REGION=2)
+        self.assertAlmostEqual(r2["MEAN"], 6.3, places=3)               # the top-left cell only
+
+    def test_fetchgrid_errors(self):
+        import processing
+        from damit_pmp.algorithms import pf_algs
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.fetch("x1", FREQUENCY=3)
+        self.assertIn("not an Atlas 14 PDS frequency", str(cm.exception))
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.fetch("x2", SERIES=1, FREQUENCY=1)
+        self.assertIn("AMS", str(cm.exception))
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.fetch("x3", POINT=None)                                # nothing to find the region from
+        self.assertIn("so the Atlas 14 region can be found", str(cm.exception))
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.fetch("x4", CACHE_DIR=os.path.join(self.tmp, "empty"), OFFLINE=True, REGION=2, FREQUENCY=25)
+        self.assertIn("offline", str(cm.exception))
+        from damit_core.lib.http import HttpError
+
+        def nf(url, dest):
+            raise HttpError(url, 404, "Not Found")
+        pf_algs._GridChoice.grid_downloader = nf
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.fetch("x5", REGION=2, FREQUENCY=2, DURATION=0)
+        self.assertIn("has not published mw2yr05ma.zip", str(cm.exception))
+
+        def down(url, dest):
+            raise HttpError(url, None, "network is unreachable")
+        pf_algs._GridChoice.grid_downloader = down
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.fetch("x6", REGION=2, FREQUENCY=5, DURATION=0)
+        self.assertIn("download failed", str(cm.exception))
+        pf_algs._Base.http_client = FakePFDS("pfds_no_coverage_portland_or.txt")
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.fetch("x7", POINT="-122.68,45.52 [EPSG:4326]")
+        self.assertIn("does not cover", str(cm.exception))
+
+    def test_gridbasin_fetch_route_and_fetchgrid_tif(self):
+        import processing
+        basin = mem_layer("Polygon", "EPSG:4326", [("id", "integer")],
+                          [("POLYGON((-97.0 46.9,-96.97 46.9,-96.97 46.93,-97.0 46.93,-97.0 46.9))", [1])])
+        r = processing.run("damit_pmp:gridbasin", {"BASIN": basin, "FREQUENCY": 100, "DURATION": 9,
+                                                   "CACHE_DIR": self.cache,
+                                                   "OUTPUT_JSON": os.path.join(self.tmp, "gb.json")})
+        self.assertAlmostEqual(r["MEAN"], sum([6.3, 6.31, 6.32, 6.342, 6.35, 6.36, 6.4, 6.41]) / 8, places=3)
+        with open(r["OUTPUT_JSON"]) as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["grid_name"]["duration"], "24-hr")
+        self.assertEqual(doc["fetch"]["url"], "https://hdsc.nws.noaa.gov/pub/hdsc/data/mw/mw100yr24ha.zip")
+        # the fetchgrid GeoTIFF is in inches: gridbasin must not apply 0.001 again
+        g, out = self.fetch("gb_in", POINT=None, EXTENT="-97.0,-96.97,46.9,46.93 [EPSG:4326]", REGION=2)
+        r2 = processing.run("damit_pmp:gridbasin", {"GRID": g["OUTPUT"], "BASIN": basin,
+                                                    "OUTPUT_JSON": os.path.join(self.tmp, "gb2.json")})
+        self.assertAlmostEqual(r2["MEAN"], r["MEAN"], places=3)
+
+    def test_raingrid_files_units_and_scaling(self):
+        import processing
+        out = os.path.join(self.tmp, "rain")
+        os.makedirs(out, exist_ok=True)
+        # build a hyetograph with the real tool from the Fargo answer
+        pt = processing.run("damit_pmp:pointpf", {"POINT": "-96.8,46.9 [EPSG:4326]", "CACHE_DIR": os.path.join(out, "c"),
+                                                  "OUTPUT_CSV": os.path.join(out, "a.csv"),
+                                                  "OUTPUT_JSON": os.path.join(out, "a.json")})
+        h = processing.run("damit_pmp:hyetograph", {"INPUT_JSON": pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": 5,
+                                                    "STEP_MIN": 60, "OUTPUT_CSV": os.path.join(out, "h.csv")})
+        self.assertAlmostEqual(h["TOTAL"], 6.47, places=3)
+        args = {"INPUT_CSV": os.path.join(out, "h.csv"), "OUTPUT_RAIN": os.path.join(out, "s.rain"),
+                "OUTPUT_ANUGA": os.path.join(out, "s_anuga.csv"), "OUTPUT_JSON": os.path.join(out, "s.json")}
+        r = processing.run("damit_pmp:raingrid", args)
+        self.assertAlmostEqual(r["TOTAL_MM"], 6.47 * 25.4, places=2)
+        lines = _slurp(args["OUTPUT_RAIN"]).splitlines()
+        self.assertTrue(lines[0].startswith("#"))
+        self.assertEqual(lines[1], "49 seconds")                # 24 blocks x 2 points + the 0 mm/hr end
+        self.assertEqual(len(lines), 51)
+        rec = json.loads(_slurp(args["OUTPUT_JSON"]))
+        self.assertLess(abs(rec["series_depth_error_pct"]), 0.01)
+        self.assertEqual(rec["hyetograph"]["frequency_years"], "100")
+        self.assertIn("anuga.Rate_operator", _slurp(os.path.join(out, "s_anuga_README.txt")))
+        # the JSON route gives the same storm
+        r_js = processing.run("damit_pmp:raingrid", dict(args, INPUT_CSV="", INPUT_JSON=pt["OUTPUT_JSON"], FREQUENCY=100,
+                                                         STORM=5, STEP_MIN=60, OUTPUT_RAIN=os.path.join(out, "j.rain")))
+        self.assertAlmostEqual(r_js["TOTAL_MM"], r["TOTAL_MM"], places=3)
+        self.assertEqual(_slurp(os.path.join(out, "j.rain")).splitlines()[1:], lines[1:])
+        # rescale to an Atlas 14 grid at a point, hours, SIM_TIME and a factor raster
+        g, _ = self.fetch("rg", POINT="-96.985,46.915 [EPSG:4326]", BUFFER_KM=1.0)
+        r3 = processing.run("damit_pmp:raingrid", dict(
+            args, SCALE_GRID=g["OUTPUT"], SCALE_POINT="-96.985,46.915 [EPSG:4326]", TIME_UNIT=1, SIM_TIME_H=30,
+            OUTPUT_RAIN=os.path.join(out, "g.rain"), FACTOR_RASTER=os.path.join(out, "f.tif")))
+        self.assertAlmostEqual(r3["TOTAL_MM"], 6.35 * 25.4, places=2)
+        txt = _slurp(os.path.join(out, "g.rain")).splitlines()
+        self.assertTrue(txt[1].endswith(" hours"))
+        self.assertTrue(txt[-1].startswith("0.00000 30"))
+        from osgeo import gdal
+        fds = gdal.Open(os.path.join(out, "f.tif"))
+        fa = fds.GetRasterBand(1).ReadAsArray()
+        self.assertAlmostEqual(float(fa.max()), 6.41 / 6.35, places=3)
+        # a grid for another duration is refused
+        g2, _ = self.fetch("rg2", DURATION=7)
+        with self.assertRaises(QgsProcessingException) as cm:
+            processing.run("damit_pmp:raingrid", dict(args, SCALE_GRID=g2["OUTPUT"], SCALE_POINT="-96.985,46.915 [EPSG:4326]"))
+        self.assertIn("scale grid is for the 6-hr duration", str(cm.exception))
 
 
 if __name__ == "__main__":
