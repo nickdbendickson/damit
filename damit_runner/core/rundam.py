@@ -179,3 +179,93 @@ def _write_readme(folder, setup):
              "regulating agency make the determination.".format(VERSION)]
     with open(os.path.join(folder, "README_run.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
+
+
+def method_labels():
+    """Breach method labels for the Processing enum (order matches breach.METHODS)."""
+    from . import breach as BR
+    return list(BR.METHOD_LABELS.values())
+
+
+def refuse_engine(engine, dry=False):
+    """Raise RunError if the engine is not allowed. Dry-run allows any engine (prepare only)."""
+    if dry:
+        return check_engine(engine) if False else None  # dry-run: no refusal
+    return check_engine(engine)
+
+
+def run_model(pkg, out_root, values, cat=None, dams_folder=None, log=None, cancel=None):
+    """Live model run. Prepares the folder then launches the flood model when available.
+
+    Returns (run_folder, run_setup). Raises RunError if the engine cannot run.
+    """
+    log = log or (lambda *a: None)
+    folder, setup = prepare_run(pkg, out_root, cat, values.get("ENGINE", ENGINE_NONE), dry_run=False)
+    engine = values.get("ENGINE", ENGINE_NONE)
+    if engine == ENGINE_NONE:
+        setup["status"] = "prepared"
+        setup["model_launched"] = False
+        return folder, setup
+    if engine != ENGINE_LISFLOOD:
+        raise RunError("engine {!r} is not available for live runs".format(engine))
+    try:
+        from ..flood import model as FM
+    except ImportError:
+        setup["status"] = "prepared"
+        setup["engine_note"] = "flood model module not importable; run prepared only"
+        return folder, setup
+    # Map the Processing values onto the flood-model parameter dict
+    p = {
+        "dem": values.get("DEM") or (pkg.get("inputs") or {}).get("terrain"),
+        "dam_id": (pkg.get("dam") or {}).get("dam_id"),
+        "height_ft": values.get("HEIGHT_FT") or (pkg.get("dam") or {}).get("height_ft"),
+        "storage_acft": values.get("STORAGE_ACFT") or (pkg.get("dam") or {}).get("storage_acft"),
+        "top_ft": values.get("TOP_FT"),
+        "tier": values.get("TIER", 0),
+        "method": values.get("METHOD", 0),
+        "cell": values.get("CELL"),
+        "manning": values.get("MANNING"),
+        "lisflood_exe": values.get("LISFLOOD_EXE"),
+        "duration_hr": values.get("DURATION_HR"),
+        "lon": values.get("X"),
+        "lat": values.get("Y"),
+        "dam_lonlat": (values.get("X"), values.get("Y")) if values.get("X") and values.get("Y") else None,
+    }
+    # Warn if the DEM may not cover the contributing basin (PMF/spillway use)
+    dem_path = p.get("dem")
+    lon, lat = values.get("X"), values.get("Y")
+    if dem_path and lon and lat:
+        try:
+            from . import streamstats as SS
+            basin = SS.delineate(lon, lat, state="ND")
+            area = SS.basin_area_sqmi(basin)
+            if area and area > 0:
+                # Approximate basin extent from the delineation
+                feats = basin.get("featurecollection") or []
+                for fc in feats:
+                    for item in fc if isinstance(fc, list) else [fc]:
+                        if item.get("name") == "globalwatershed":
+                            geom = item.get("feature", {}).get("features", [{}])[0].get("geometry", {})
+                            coords = (geom.get("coordinates") or [[]])[0]
+                            if coords:
+                                lons = [c[0] for c in coords]
+                                lats = [c[1] for c in coords]
+                                basin_ext = (min(lons), min(lats), max(lons), max(lats))
+                                # DEM extent is unknown here; log the basin for the user
+                                log("Basin area ~{:.1f} sq mi; extent {:.4f},{:.4f},{:.4f},{:.4f}".format(
+                                    area, *basin_ext))
+                            break
+        except Exception:
+            pass  # delineation is optional; do not block the run
+    try:
+        rec = FM.run_breach(p, folder, log=log, cancel=cancel)
+        setup["status"] = "finished"
+        setup["model_launched"] = True
+        setup["outputs"] = rec.get("outputs") or {}
+        if rec.get("warnings"):
+            setup["engine_note"] = "; ".join(rec["warnings"])
+    except Exception as e:
+        setup["status"] = "failed"
+        setup["engine_note"] = str(e)
+        raise RunError("model run failed: {}".format(e))
+    return folder, setup

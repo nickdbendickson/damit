@@ -1,0 +1,20 @@
+[general]
+name=DamIT Discovery
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Optional discovery of non-NID ponds, reservoirs, and candidate dams from NHD waterbodies and OpenStreetMap. Review candidates and hand selected features to the DamIT suite as new dams (is_new).
+about=damit_discover:waterbodies downloads NHD waterbodies (FType 390 Lake/Pond, 436 Reservoir) for an extent. damit_discover:osm_ponds optionally queries OSM for pond/reservoir/dam features in the same area. damit_discover:candidates merges the layers, drops features within a tolerance of an existing NID point, and writes a candidate GeoPackage with is_new=true and a generated id (DISC-XXXX). The user reviews the candidates in QGIS and hands selected features to Crest or the Runner. No dependency on Catalog, Screener, or Runner.
+version=0.1.0
+author=N.D. Bendickson
+email=322661428+nickdbendickson@users.noreply.github.com
+repository=https://github.com/nickdbendickson/damit
+tracker=https://github.com/nickdbendickson/damit/issues
+homepage=https://github.com/nickdbendickson/damit
+category=Plugins
+tags=dam,pond,reservoir,discovery,nhd,osm
+icon=icon.svg
+experimental=True
+deprecated=False
+hasProcessingProvider=yes
+plugin_dependencies=DamIT Core
