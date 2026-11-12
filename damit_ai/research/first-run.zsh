@@ -109,12 +109,26 @@ else
     ok "${RAM_GB} GB: comparing $MODELS"
   fi
   "$PY" "$HERE/eval_damresearch.py" --list | tee "$OUT/eval-coverage.txt"
-  for m in ${=MODELS}; do
+  MODEL_LIST=( ${=MODELS} )
+  for m in $MODEL_LIST; do
     if ! "$OLLAMA" list 2>/dev/null | awk '{print $1}' | grep -qx "$m"; then
-      printf '  pulling %s ...\n' "$m"
+      # Say what is about to happen. `ollama pull` draws its progress with carriage
+      # returns, which the tee into first-run.log swallows, so a 17-24 GB download can
+      # look exactly like a hung script for twenty minutes.
+      printf '  pulling %s (this model is not installed yet: expect 17-24 GB).\n' "$m"
+      printf '  The progress bar may not redraw here. To watch it: du -sh ~/.ollama/models\n'
       "$OLLAMA" pull "$m" || { warn "could not pull $m, skipped"; continue; }
     fi
     "$PY" "$HERE/eval_damresearch.py" --model "$m" || warn "test run for $m stopped early"
+    # Unload before the next model. Every multi-model tier above pairs two models that
+    # do not fit in RAM together (32 GB: qwen3.6:27b ~17 GB + qwen3:30b-a3b ~18 GB), and
+    # eval_damresearch.py sets no keep_alive, so Ollama holds the one just scored for its
+    # default 5 minutes while the next one loads. The machine then swaps and the second
+    # half of the comparison is timed under memory pressure, which makes the two reports
+    # not comparable. `stop` is advisory: never let it fail the run.
+    if (( ${#MODEL_LIST} > 1 )); then
+      "$OLLAMA" stop "$m" >/dev/null 2>&1 || true
+    fi
   done
   cp "$DR_HOME"/reports/eval_*.md "$DR_HOME"/reports/eval_*.json "$OUT"/ 2>/dev/null
   echo
