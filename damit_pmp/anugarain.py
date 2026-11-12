@@ -320,6 +320,20 @@ def rain_depth_m(t, r):
 
 
 # ------------------------------------------------------------------ files
+def orient_gauge(gauge, start_xy):
+    """The discharge section's two ends ordered so the flow through it is POSITIVE when it runs away from `start_xy`
+    (the flow-path start, i.e. downstream). ANUGA's Cross_section counts flow as positive to the RIGHT of the
+    polyline direction a -> b (checked with a uniform eastward flow: a north -> south line reads -Q, south -> north +Q),
+    i.e. along the normal (dy, -dx). LISFLOOD-FP's gauge in damit_pmp:lisfloodrain is positive away from the same
+    point, so the two series then have the same sign. Without a start the ends are left as given."""
+    if gauge is None or start_xy is None:
+        return gauge
+    (ax, ay), (bx, by) = gauge
+    nx, ny = by - ay, -(bx - ax)                                  # the positive normal of a -> b
+    away = nx * ((ax + bx) / 2.0 - start_xy[0]) + ny * ((ay + by) / 2.0 - start_xy[1])
+    return [(bx, by), (ax, ay)] if away < 0 else [(ax, ay), (bx, by)]
+
+
 def write_job(folder, grid, t, r, settings, sim_time_s, factor=None, fine=None, gauge=None):
     """anuga_rain_job.npz (model DEM, rain, run settings; the keys the runner's worker reads where
     it has them: dem, dem_x0, dem_y0, dem_dx, algorithm, threads, manning_n, edge_bc, sim_time,

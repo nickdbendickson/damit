@@ -63,7 +63,7 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.4.0"           # DamIT PMP 0.4.0: watershed, temporal patterns, losses, lisfloodrain (the others are 0.2.0)
+PMP_VERSION = "0.4.1"           # DamIT PMP 0.4.0: watershed, temporal patterns, losses, lisfloodrain (the others are 0.2.0)
 
 
 class Metadata(unittest.TestCase):

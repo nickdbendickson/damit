@@ -216,7 +216,7 @@ class AnugaRain(_Base):
                     raise QgsProcessingException("A discharge section needs both GAUGE_A and GAUGE_B.")
                 ga = self.parameterAsPoint(P, "GAUGE_A", context, dem_layer.crs())
                 gb = self.parameterAsPoint(P, "GAUGE_B", context, dem_layer.crs())
-                gauge = [(ga.x(), ga.y()), (gb.x(), gb.y())]
+                gauge = AR.orient_gauge([(ga.x(), ga.y()), (gb.x(), gb.y())], start)
             region = AR.domain_region(grid, rings)
             outer, oinfo = AR.outer_ring(grid, region, st["buffer_m"], start, self._opt_num(P, "SIMPLIFY_M", context))
             channel, points, plen = [], [], 0.0

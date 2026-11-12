@@ -232,7 +232,8 @@ def main(argv):
                                 "peak_abs_m3_s": float(abs(q[ia])), "t_peak_s": float(ss[ia, 0]),
                                 "signed_q_at_peak_m3_s": float(q[ia]), "volume_abs_m3": vol,
                                 "note": "flow through the section from the centroid momentum of the cut triangles, sampled "
-                                        "once per yield step; the sign is the section's normal direction"}
+                                        "once per yield step; positive = to the right of the line a -> b (damit_pmp orders the ends so that is "
+                                        "away from FLOW_PATH_START, i.e. downstream, when it is given)"}
             np.savetxt(os.path.join(HERE, "anuga_rain_timeseries.csv" if mode_run else "anuga_rain_steps_timeseries.csv"), np.array(series), delimiter=",",
                        header="t_s,rain_in_m3,stored_m3,boundary_flux_integral_m3,rate_operator_m3,max_depth_m,wet_area_m2,gauge_q_m3_s",
                        comments="")
