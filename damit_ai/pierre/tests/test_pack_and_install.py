@@ -347,3 +347,22 @@ class TestAcceptance(StrictCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPackMatchesHazardNoDataRule(StrictCase):
+    """Hazard 0.2.6 (#67): neighbourhood fill of a NoData receptor only on grids coarser than 20 m. The pack must not
+    teach the older 'NoData is always dry' rule."""
+
+    def test_known_behaviours_states_the_20_m_rule_from_the_code(self):
+        src = read(REPO, "damit_hazard", "sampling", "rasters.py")
+        m = re.search(r"^NODATA_NEIGHBOURHOOD_MIN_CELL_M = ([0-9.]+)", src, re.M)
+        self.assertIsNotNone(m)
+        kb = read(PIERRE, "knowledge", "KNOWN-BEHAVIOURS.md")
+        self.assertIn("coarser than %g m" % float(m.group(1)), kb)
+        code = src + read(REPO, "damit_hazard", "engine", "core.py")
+        for needle in ("NODATA_NEIGHBOURHOOD_MIN_CELL_M", "centre_nodata_dry", "nodata_dry_review",
+                       "nodata_neighbourhood", "neighbourhood"):
+            self.assertIn(needle, kb)
+            self.assertIn(needle, code)                         # the pack names only what the code really writes
+        self.assertIn('"neighbourhood", True', src)             # sampling=neighbourhood
+        self.assertNotIn("Hazard reads a NoData cell as dry (0 ft).", kb)

@@ -71,8 +71,13 @@ also pinned in the Q&A persona's SYSTEM prompt (`prompts/persona_rules.txt`, cop
   `RAIL_TRAINS_LOOKUP` (`field,value,trains_per_day,source` = `SUBDIV,KO,15,...`). Other lines without a value
   stay flagged.
 - **Judgment zone = Medium in ND** (the TM-11 judgment zone counts as Medium in the ND preset).
-- **Receptors.** Hazard reads a NoData cell as dry (0 ft). A structure on a NoData cell next to wet cells, or on a
-  dry cell beside deep water, can be missed by a coarse grid: flag it for a person. DamIT Hazard does not score
+- **Receptors on NoData (Hazard 0.2.6).** When the cell under a structure (or every cell of its footprint) is NoData
+  and a neighbour is wet, the rule depends on the depth-grid cell (larger side, in metres): coarser than 20 m
+  (`NODATA_NEIGHBOURHOOD_MIN_CELL_M`), Hazard takes the peak depth and velocity over the wet cells of the 3x3
+  neighbourhood (`sampling=neighbourhood`, flag `nodata_neighbourhood`); at 20 m or finer it still scores the cell dry
+  (0 ft, `sampling=centre_nodata_dry`) and flags `nodata_dry_review`. Either way it goes to a person (`HAZARD_REVIEW`).
+  A dry (finite 0) cell stays dry; a NoData cell with no wet neighbour stays dry and is not flagged. A structure on a
+  dry cell beside deep water can still be missed by a coarse grid: flag it for a person. DamIT Hazard does not score
   roads with unknown class or AADT (M8a); the older DamSafety plugin scored them Medium by assumption.
 - **Peak depth and peak velocity are maxima over wet cells** (depth of 0.1 ft or more).
 - **Real tool names only:** `damit_screen:handoff`, `damit_run:rundam`, `damit:classify` (and `damit_lite:classify`).
