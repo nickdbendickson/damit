@@ -93,6 +93,11 @@ class _Feedback(object):
 class DamitHazardDialog(QDialog):
     def __init__(self, parent=None, iface=None):
         super().__init__(parent)
+        try:            # DamIT Core: the suite's display units (SI or US) in this window
+            from damit_core.lib.unit_widgets import watch_window as _watch_units
+            _watch_units(self)
+        except Exception:                                         # noqa - older DamIT Core
+            pass
         self.iface = iface
         self.cat = C.load()
         self.setWindowTitle(TITLE)
