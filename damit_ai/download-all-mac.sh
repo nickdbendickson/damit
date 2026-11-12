@@ -1,11 +1,11 @@
 #!/usr/bin/env zsh
 # ============================================================================
 # download-all-mac.sh — pre-download EVERYTHING the macOS installers need into
-# damit_ai/offline/, so setup-local-lumo.sh / setup-dam-research.zsh can then run
+# damit_ai/offline/, so setup-local-pierre.sh / setup-dam-research.zsh can then run
 # with no network:
 #
 #   offline/ollama/Ollama-darwin.zip (+ SHA256SUMS)   the Ollama app
-#   offline/models/                                   the AI models (Lumo + dam-research)
+#   offline/models/                                   the AI models (Pierre + dam-research)
 #   offline/DamResearch/library/                      the dam-research PDF library + url list
 #
 # Run this on a Mac WITH network, then carry the whole damit_ai/ folder to the target
@@ -113,7 +113,7 @@ fi
 say "Done"
 cat <<EOF
   offline/ is now populated. Carry the whole damit_ai/ folder to the target Mac and run:
-      zsh lumo/setup-local-lumo.sh
+      zsh pierre/setup-local-pierre.sh
       zsh research/setup-dam-research.zsh
   They use offline/ollama (no Ollama download) and seed models from offline/models.
   Size of offline/: $(du -sh "$OFFLINE" 2>/dev/null | awk '{print $1}')

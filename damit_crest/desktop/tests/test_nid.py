@@ -85,6 +85,18 @@ class CacheTests(unittest.TestCase):
         nid.load_state("RI", fetch=self.fetch, folder=self.dir)
         self.assertEqual(len(self.calls), 1)
 
+    def test_an_http_502_from_the_nid_is_an_error_naming_the_status(self):
+        import io
+        import urllib.error
+        from unittest import mock
+
+        def boom(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 502, "Bad Gateway", {}, io.BytesIO(b""))
+
+        with mock.patch("urllib.request.urlopen", side_effect=boom):
+            with self.assertRaisesRegex(nid.NidError, r"HTTP 502 Bad Gateway"):
+                nid._download("https://nid.sec.usace.army.mil/api/query?sy=%40stateKey%3ARI&out=csv")
+
     def test_a_failed_download_is_an_error_and_caches_nothing(self):
         def down(url):
             raise nid.NidError("the NID download failed (offline)")

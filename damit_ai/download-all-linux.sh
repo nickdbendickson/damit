@@ -4,7 +4,7 @@
 # damit_ai/offline/, so install-local-ai-linux.sh can then run with no network:
 #
 #   offline/ollama/ollama-linux-amd64.tar.zst (+ SHA256SUMS)   the Ollama runtime
-#   offline/models/                                        the AI models (Lumo + dam-research)
+#   offline/models/                                        the AI models (Pierre + dam-research)
 #   offline/DamResearch/library/                           the dam-research PDF library + url list
 #
 # Run this on a machine WITH network, then carry the whole damit_ai/ folder to the

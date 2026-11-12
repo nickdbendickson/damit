@@ -37,6 +37,49 @@ INFLOW_TOE_SIDE_MIN = 0.25
 NO_TOE = "no toe band"
 
 
+DAM_POINT_OFF_LINE_M = 100.0     # flag when the official / inventory point is farther than this from the dam line
+DAM_POINT_OFF_LINE_FLOOR_M = 25.0  # do not flag a shorter offset as GPS noise on a very short dam
+
+
+def polyline_length_m(line):
+    """Planar length of a vertex list already in metres."""
+    if not line or len(line) < 2:
+        return 0.0
+    return float(sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(line, line[1:])))
+
+
+def distance_to_polyline_m(pt, line):
+    """Nearest planar distance from pt (x, y) to the polyline `line` (metres), or None."""
+    if not line:
+        return None
+    if len(line) == 1:
+        return float(math.hypot(pt[0] - line[0][0], pt[1] - line[0][1]))
+    best = None
+    x, y = float(pt[0]), float(pt[1])
+    for (x1, y1), (x2, y2) in zip(line, line[1:]):
+        dx, dy = x2 - x1, y2 - y1
+        leng2 = dx * dx + dy * dy
+        if leng2 <= 0:
+            d = math.hypot(x - x1, y - y1)
+        else:
+            t = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / leng2))
+            d = math.hypot(x - (x1 + t * dx), y - (y1 + t * dy))
+        best = d if best is None else min(best, d)
+    return best
+
+
+def off_line_threshold_m(length_m):
+    """Distance at which an inventory / official point is treated as off the dam line.
+
+    Over 100 m, or over half the dam length when that is shorter (25 m floor so a very short
+    dam does not flag a 10 m GPS offset).
+    """
+    half = 0.5 * float(length_m) if length_m and length_m > 0 else None
+    if half is None:
+        return DAM_POINT_OFF_LINE_M
+    return max(DAM_POINT_OFF_LINE_FLOOR_M, min(DAM_POINT_OFF_LINE_M, half))
+
+
 class Grid:
     """A north-up raster: data[row, col], row 0 at the top; x0 / y0 the top-left corner; dx the cell (m)."""
 

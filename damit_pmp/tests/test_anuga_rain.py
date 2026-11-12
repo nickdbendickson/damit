@@ -145,6 +145,17 @@ class Domain(unittest.TestCase):
         self.assertGreater(len(outer), 8)
         self.assertEqual(info["simplify_m"], 30.0)                  # max(min(0, 3 dx), dx): the runner's tol
 
+    def test_outline_simplification_can_be_set_and_is_checked(self):
+        g, _ = self.grid()
+        region = AR.domain_region(g, [circle(self.cx, self.cy, 800.0)])
+        fine, i0 = AR.outer_ring(g, region)
+        coarse, i1 = AR.outer_ring(g, region, 0.0, None, 90.0)
+        self.assertEqual(i1["simplify_m"], 90.0)
+        self.assertLess(len(coarse), len(fine))
+        with self.assertRaises(AR.JobError) as cm:
+            AR.outer_ring(g, region, 0.0, None, 5.0)                 # below the 30 m cell
+        self.assertIn("below the cell size", str(cm.exception))
+
     def test_outer_ring_matches_the_runners_mesh_polygons(self):
         """anuga_model.mesh_polygons (the runner's outer ring rule) on the same region, no buffer."""
         from damit_runner.core import anuga_model as M
@@ -221,6 +232,39 @@ class Files(unittest.TestCase):
         for f in AR.SCRIPT_FILES:
             self.assertEqual(AR.sha256_file(os.path.join(d, f)), AR.sha256_file(os.path.join(AR.HERE, "runner_shared", f)))
         compile(open(os.path.join(d, "run_anuga_rain.py")).read(), "run_anuga_rain.py", "exec")
+
+    def test_gauge_ends_are_ordered_so_downstream_flow_is_positive(self):
+        # ANUGA's Cross_section is positive to the right of a -> b (a north -> south line reads -Q for an eastward
+        # flow; checked in ANUGA 4.0.1). Flow-path start in the west, so downstream is east: positive = east.
+        start = (0.0, 0.0)
+        ns = [(1000.0, 350.0), (1000.0, -350.0)]                # north -> south: east is on its LEFT -> reverse
+        sn = [(1000.0, -350.0), (1000.0, 350.0)]                # south -> north: east is on its right -> keep
+        self.assertEqual(AR.orient_gauge(ns, start), sn)
+        self.assertEqual(AR.orient_gauge(sn, start), sn)
+        # an oblique line like the DWR-2801 dam section (flow to the east-south-east)
+        a, b = (-106018.26, 2666821.74), (-106219.40, 2666151.26)
+        out = AR.orient_gauge([a, b], (-106318.83, 2666546.50))
+        nx, ny = out[1][1] - out[0][1], -(out[1][0] - out[0][0])
+        self.assertGreater(nx * 0.9578 + ny * -0.2873, 0.0)
+        self.assertEqual(out, [b, a])                           # it had been the wrong way round
+        self.assertEqual(AR.orient_gauge([a, b], None), [a, b])  # no start: as given
+        self.assertIsNone(AR.orient_gauge(None, start))
+
+    def test_discharge_gauge_goes_into_the_job_and_the_script(self):
+        d = tempfile.mkdtemp()
+        dem = os.path.join(d, "dem.tif")
+        make_dem(dem)
+        g, _ = AR.read_model_grid(dem, (500000, 5196000, 503000, 5200000), 30.0)
+        st = AR.check_settings({"cell_m": 30.0})
+        p = AR.write_job(d, g, np.array([0, 3600.0]), np.array([1e-7, 1e-7]), st, 7200.0)
+        self.assertNotIn("gauge", np.load(p).files)                  # none unless asked
+        p = AR.write_job(d, g, np.array([0, 3600.0]), np.array([1e-7, 1e-7]), st, 7200.0,
+                         gauge=[(501000.0, 5198000.0), (501000.0, 5197600.0)])
+        self.assertEqual(np.load(p)["gauge"].shape, (2, 2))
+        AR.copy_script_files(d)
+        src = open(os.path.join(d, "run_anuga_rain.py")).read()
+        self.assertIn("Cross_section", src)
+        self.assertIn("gauge_q_m3_s", src)
 
     def test_msh2_roundtrip_text(self):
         d = tempfile.mkdtemp()

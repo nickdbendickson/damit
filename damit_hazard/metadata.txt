@@ -11,6 +11,7 @@ author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
 tracker=https://github.com/nickdbendickson/damit/issues
 homepage=https://github.com/nickdbendickson/damit
+license=GPL-3.0-or-later
 experimental=True
 hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
@@ -21,6 +22,13 @@ changelog=
       * Which structures: Hazard's own habitability rule, the one M6 uses (a type in the catalog's habitable_types, or a habitable occupancy; no type = presumed a home, drawn hollow and counted in the title note). It now lives in one function (core.habitable_basis) that the engine and the chart both call; classification results are unchanged and type_unknown is still flagged. Structures only (facilities are not charted).
       * Source: Runner for a model run's 'Depth (Max).tif', Screener for a 'Screening Depth (Max).tif', otherwise the depth raster's file name (a DSS-WISE or other imported raster). New optional input SOURCE_LABEL names it (e.g. DSS-WISE). The raster inputs are the existing DEPTH, VELOCITY (needed for the chart) and METRES; with EXTRA_RUNS each run gets its own chart (damit_hazard_dv_habitable_run<N>_<scenario>).
       * matplotlib (Agg, no GUI) draws the PNG; if it is missing or fails the PNG is skipped with a warning and the CSV is still written. A chart problem never fails the classification.
+    0.2.6 - 2026-11-12
+      * Neighbourhood fill of a NoData receptor applies only on a depth grid coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m (strictly greater than; larger cell side, converted to metres from feet or other CRS units). At 20 m or finer, a NoData cell next to water is still scored dry (sampling=centre_nodata_dry) and flagged for review (nodata_dry_review). Coarser grids keep sampling=neighbourhood and nodata_neighbourhood. The report records the path, the threshold and the cell size. A dry (finite 0) cell is still scored dry.
+    0.2.5 - 2026-11-12
+      * When a structure sits on a NoData cell next to water, classify takes the peak depth and velocity over the wet cells in the 3x3 neighbourhood (and the footprint, if there is one), records sampling=neighbourhood, and flags the structure for review (nodata_neighbourhood). A dry (finite 0) cell is still scored dry. DWR-2659: three houses on NoData next to 1.5-3.0 ft water were scored dry. No change to habitability rules.
+    0.2.4 - 2026-11-12
+      * The window title reads the plugin version from metadata.txt (it still said 0.1.2 after 0.2.2).
+      * The jurisdiction preset note wraps instead of being clipped in the 760x720 window; the default size is 840x800.
     0.2.3 - 2026-11-12
       * M8a: a road whose class is Low (a private road) is no longer kept Low when its AADT is in a higher band. AADT over 2,000 is High and AADT of 500 to 2,000 is Significant, including a private road. A private road with AADT under 500 stays Low. This raises a published class; it does not lower one. The catalog already takes the highest matching rule.
     0.2.2 - 2026-11-11

@@ -4,7 +4,7 @@ download-all-windows.ps1 — pre-download EVERYTHING the Windows installer needs
 into damit_ai\offline\, so install-local-ai-windows.ps1 can then run offline:
 
   offline\ollama\OllamaSetup.exe (+ SHA256SUMS)   the Ollama installer
-  offline\models\                                 the AI models (Lumo + dam-research)
+  offline\models\                                 the AI models (Pierre + dam-research)
   offline\DamResearch\library\                    the dam-research PDF library + url list
 
 Run this on a machine WITH network, then carry the whole damit_ai\ folder to the

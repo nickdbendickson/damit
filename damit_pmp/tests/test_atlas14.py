@@ -192,18 +192,24 @@ class Atlas14Only(unittest.TestCase):
                 self.assertFalse(f.lower().endswith((".gdb", ".gpkg", ".zip", ".nc", ".h5")), p)
                 if f in allowed_text or f.endswith((".svg", ".pyc")) or os.path.basename(base) == "tests":
                     continue
+                if os.path.basename(base) == "runner_shared" and f == "data_conventions.py":
+                    continue                  # the runner's own executable-search file (sha-pinned; 'swc' is inside a word)
                 with open(p, encoding="utf-8", errors="replace") as fh:
                     self.assertIsNone(bad.search(fh.read()), p)
 
     def test_only_pfds_host(self):
-        hosts = set()
+        """Every precipitation byte comes from hdsc.nws.noaa.gov; the only other hosts are the USGS 3DEP DEM service (the
+        watershed tool's terrain, in two files) - no other data source."""
+        hosts, dem_hosts = set(), set()
         for base, dirs, files in os.walk(os.path.join(ROOT, "damit_pmp")):
             dirs[:] = [d for d in dirs if d not in ("__pycache__", "tests")]
             for f in files:
                 if f.endswith(".py"):
                     with open(os.path.join(base, f), encoding="utf-8") as fh:
-                        hosts |= set(re.findall(r"https?://([^/\s\"']+)", fh.read()))
+                        found = set(re.findall(r"https?://([^/\s\"']+)", fh.read()))
+                    (dem_hosts if f in ("demfetch.py", "terrain3dep.py") else hosts).update(found)
         self.assertEqual(hosts, {"hdsc.nws.noaa.gov"})
+        self.assertEqual(dem_hosts, {"elevation.nationalmap.gov", "www.usgs.gov"})
 
 
 if __name__ == "__main__":

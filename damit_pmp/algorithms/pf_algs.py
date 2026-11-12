@@ -25,6 +25,8 @@ from .. import _deps  # noqa: F401
 from .. import atlas14 as A
 from .. import gisgrid as G
 from .. import rainexport as R
+from .. import storm as S
+from .. import temporal as T
 from damit_core.lib import http, settings
 from damit_core.lib.qtcompat import make_fields
 
@@ -60,6 +62,88 @@ class _Base(QgsProcessingAlgorithm):
 
     def createInstance(self):  # noqa: N802
         return type(self)()
+
+    temporal_downloader = None            # tests set a fake: download(url, dest)
+
+    def _storm_params(self):
+        """Temporal pattern and losses, shared by hyetograph and raingrid."""
+        flag = QgsProcessingParameterDefinition.FlagAdvanced if hasattr(QgsProcessingParameterDefinition, "FlagAdvanced") else None
+        defs = [QgsProcessingParameterEnum("PATTERN", "Temporal pattern (the depth is always the Atlas 14 depth)",
+                                           T.PATTERN_LABELS, defaultValue=0),
+                QgsProcessingParameterEnum("QUARTILE", "Atlas 14 temporal distribution: quartile case",
+                                           T.QUARTILE_LABELS, defaultValue=T.QUARTILES.index(T.DEFAULT_QUARTILE)),
+                QgsProcessingParameterNumber("PERCENT", "Atlas 14 temporal distribution: percent of occurrence (10 - 90; 50 = "
+                                             "median curve)", INTEGER, defaultValue=T.DEFAULT_PERCENT, minValue=10, maxValue=90),
+                QgsProcessingParameterNumber("TDA", "Atlas 14 temporal distribution area (0 = find it from the point; Volume 8 "
+                                             "areas 1 - 4)", INTEGER, defaultValue=0, minValue=0, maxValue=4),
+                QgsProcessingParameterNumber("INITIAL_LOSS", "Initial loss (rain absorbed before any runoff; 0 = none)", DOUBLE,
+                                             defaultValue=0.0, minValue=0.0),
+                QgsProcessingParameterNumber("CONSTANT_LOSS", "Constant loss rate after the initial loss (per hour; 0 = none)",
+                                             DOUBLE, defaultValue=0.0, minValue=0.0),
+                QgsProcessingParameterEnum("LOSS_UNITS", "Loss units (initial loss in in or mm; constant loss in in/hr or mm/hr)",
+                                           S.UNITS, defaultValue=0),
+                QgsProcessingParameterFile("CACHE_DIR", "Atlas 14 temporal-distribution download cache folder (empty = DamIT "
+                                           "pfds_cache setting or next to the output)", behavior=FOLDER, optional=True),
+                QgsProcessingParameterBoolean("OFFLINE", "Offline (cached temporal files only)", defaultValue=False)]
+        for d in defs:
+            if flag is not None and d.name() in ("QUARTILE", "PERCENT", "TDA", "CACHE_DIR", "OFFLINE"):
+                d.setFlags(d.flags() | flag)
+            self.addParameter(d)
+
+    def _gross_rows(self, P, context, feedback, pf, years, storm_label, step, out_path):
+        """(rows, pattern id, record or None, meta) for the chosen temporal pattern; plain-message errors."""
+        pattern = T.PATTERNS[self.parameterAsEnum(P, "PATTERN", context)]
+        storm = A.duration_minutes(storm_label)
+        quartile = T.QUARTILES[self.parameterAsEnum(P, "QUARTILE", context)]
+        percent = self.parameterAsInt(P, "PERCENT", context)
+        curve, rec, meta = None, None, {}
+        try:
+            A.check_storm(storm, step, storm_label)
+            T.check_pattern(pattern, storm, storm_label)
+            if pattern == "atlas14":
+                cache = self.parameterAsString(P, "CACHE_DIR", context) or settings.get("pfds_cache") or \
+                    os.path.join(os.path.dirname(os.path.abspath(out_path)), "pfds_cache")
+
+                def download(url, dest):
+                    feedback.pushInfo("Downloading {}".format(url))
+                    if type(self).temporal_downloader is not None:
+                        return type(self).temporal_downloader(url, dest)
+                    return http.download_file(url, dest, timeout=120, max_bytes=20 * 10 ** 6, cancelled=feedback.isCanceled)
+
+                area = self.parameterAsInt(P, "TDA", context) or None
+                code = G.region_from_pfds(pf)
+                h, f, rec = T.atlas14_curve(pf["lon"], pf["lat"], code, storm // 60, quartile, percent, cache, download,
+                                            area, self.parameterAsBool(P, "OFFLINE", context))
+                curve = (h, f)
+                feedback.pushInfo("Atlas 14 temporal distribution: area {}, {} quartile, {}% of occurrence ({})".format(
+                    rec["area"], quartile, percent, rec["file"]["url"]))
+                meta = {"pattern": "atlas14", "quartile": quartile, "percent": str(percent), "area": str(rec["area"])}
+            elif pattern in T.NRCS_NAMES:
+                kind = T.NRCS_NAMES[pattern]
+                curve, rec = T.nrcs_curve(kind), T.nrcs_record(kind)
+                meta = {"pattern": pattern}
+            rows = S.build(pf, years, storm, step, pattern, storm_label, curve)
+        except (A.Atlas14Error, IOError) as e:
+            raise QgsProcessingException(str(e))
+        return rows, pattern, rec, meta
+
+    def _loss_table(self, P, context, rows, unit):
+        """(table [(t_end, gross, loss, excess)] or None, meta dict, summary dict) for INITIAL_LOSS / CONSTANT_LOSS."""
+        ia = self.parameterAsDouble(P, "INITIAL_LOSS", context)
+        cl = self.parameterAsDouble(P, "CONSTANT_LOSS", context)
+        if ia <= 0 and cl <= 0:
+            return None, {}, None
+        lu = S.UNITS[self.parameterAsEnum(P, "LOSS_UNITS", context)]
+        ia_u, cl_u = S.to_unit(ia, lu, unit), S.to_unit(cl, lu, unit)
+        try:
+            table = S.apply_losses(rows, ia_u, cl_u)
+        except A.Atlas14Error as e:
+            raise QgsProcessingException(str(e))
+        summ = S.loss_summary(table, unit)
+        summ.update({"initial_loss_{}".format(unit): round(ia_u, 4), "constant_loss_{}_per_hr".format(unit): round(cl_u, 4),
+                     "method": "initial loss, then constant loss rate per time step (initial-and-constant loss)"})
+        meta = {"loss_initial_" + unit: "{:g}".format(round(ia_u, 4)), "loss_constant_{}_hr".format(unit): "{:g}".format(round(cl_u, 4))}
+        return table, meta, summ
 
     def _pfds_params(self):
         self.addParameter(QgsProcessingParameterEnum("SERIES", "Series (pds = partial duration / ARI, ams = annual maximum / AEP)",
@@ -252,7 +336,12 @@ class Hyetograph(_Base):
                 "(JSON from damit_pmp:pointpf / :basinpf): storm total = the Atlas 14 depth for the storm duration "
                 "at the chosen frequency; sub-durations are log-log interpolated between published Atlas 14 "
                 "durations. Any of the 10 Atlas 14 frequencies and any of the 19 Atlas 14 durations can be chosen (STORM uses the same list and indices as DURATION in fetchgrid / gridbasin); a storm shorter than the time step, or not a whole number of steps, stops with a message saying which STEP_MIN to use. "
-                "Not an Atlas 14 temporal distribution. Feed the CSV to damit_pmp:raingrid for LISFLOOD-FP / ANUGA "
+                "The default pattern is the alternating block, which is not an Atlas 14 temporal distribution. PATTERN also offers "
+                "the NOAA Atlas 14 temporal distribution (Volume 8 quartile curves from the HDSC files, 6-, 12-, 24- or 96-hour "
+                "storms; area found from the point; first to fourth quartile or all cases; 90% - 10% of occurrence) and NRCS "
+                "Type I / IA / II / III (24-hour storms): these only spread the Atlas 14 depth in time, NOAA Atlas 14 stays the "
+                "only depth source, and a storm duration a pattern has no curve for stops with a message. INITIAL_LOSS and "
+                "CONSTANT_LOSS (0 = none) add loss and excess columns. Feed the CSV to damit_pmp:raingrid for LISFLOOD-FP / ANUGA "
                 "rain-on-grid files. " + NOTE)
 
     def initAlgorithm(self, config=None):  # noqa: N802
@@ -264,8 +353,13 @@ class Hyetograph(_Base):
                                                      defaultValue=A.DEFAULT_DURATION_INDEX))
         self.addParameter(QgsProcessingParameterNumber("STEP_MIN", "Time step (minutes)", INTEGER, defaultValue=60,
                                                        minValue=5, maxValue=1440))
+        self._storm_params()
         self.addParameter(QgsProcessingParameterFileDestination("OUTPUT_CSV", "Hyetograph (CSV)", "CSV files (*.csv)"))
-        self.addOutput(QgsProcessingOutputNumber("TOTAL", "Storm total"))
+        self.addParameter(QgsProcessingParameterFileDestination("OUTPUT_JSON", "Record of the pattern, its source and the losses "
+                                                                "(JSON)", "JSON files (*.json)", optional=True,
+                                                                createByDefault=False))
+        self.addOutput(QgsProcessingOutputNumber("TOTAL", "Storm total (gross)"))
+        self.addOutput(QgsProcessingOutputNumber("EXCESS", "Excess rain total (= TOTAL when there are no losses)"))
 
     def processAlgorithm(self, P, context, feedback):  # noqa: N802
         path = self.parameterAsFile(P, "INPUT_JSON", context)
@@ -277,22 +371,43 @@ class Hyetograph(_Base):
             raise QgsProcessingException("Not a DamIT PMP Atlas 14 JSON ({}): {}".format(path, e))
         storm_label = STORM[self.parameterAsEnum(P, "STORM", context)]
         storm = A.duration_minutes(storm_label)
-        try:
-            A.check_storm(storm, self.parameterAsInt(P, "STEP_MIN", context), storm_label)
-            rows = A.alternating_block(pf, self.parameterAsInt(P, "FREQUENCY", context), storm,
-                                       self.parameterAsInt(P, "STEP_MIN", context))
-        except A.Atlas14Error as e:
-            raise QgsProcessingException(str(e))
+        years, step = self.parameterAsInt(P, "FREQUENCY", context), self.parameterAsInt(P, "STEP_MIN", context)
         out = self.parameterAsFileOutput(P, "OUTPUT_CSV", context)
+        rows, pattern, rec, pmeta = self._gross_rows(P, context, feedback, pf, years, storm_label, step, out)
+        table, lmeta, lsum = self._loss_table(P, context, rows, pf["unit_label"])
+        u = pf["unit_label"]
         with open(out, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
-            w.writerow(["t_end_min", "incremental_" + pf["unit_label"], "cumulative_" + pf["unit_label"]])
-            w.writerows(rows)
-            fh.write("# alternating block on NOAA Atlas 14 depths; {}\n".format(doc.get("citation") or A.citation(pf)))
-            fh.write("# damit_pmp hyetograph: frequency_years={}; storm_min={}; step_min={}; series={}; depth_unit={}\n".format(
-                self.parameterAsInt(P, "FREQUENCY", context), storm, self.parameterAsInt(P, "STEP_MIN", context),
-                pf["series"], pf["unit_label"]))
-        return {"OUTPUT_CSV": out, "TOTAL": rows[-1][2]}
+            if table is None:
+                w.writerow(["t_end_min", "incremental_" + u, "cumulative_" + u])
+                w.writerows(rows)
+            else:
+                w.writerow(["t_end_min", "incremental_" + u, "cumulative_" + u, "loss_" + u, "excess_" + u])
+                for (t, inc, c), (_, _, lo, ex) in zip(rows, table):
+                    w.writerow([t, inc, c, lo, ex])
+            if pattern == "alternating":
+                fh.write("# alternating block on NOAA Atlas 14 depths; {}\n".format(doc.get("citation") or A.citation(pf)))
+            else:
+                fh.write("# NOAA Atlas 14 depths spread in time by {}; {}\n".format(
+                    (rec or {}).get("source", pattern), doc.get("citation") or A.citation(pf)))
+            extra_meta = "".join("; {}={}".format(k, v) for k, v in list(pmeta.items()) + list(lmeta.items()))
+            fh.write("# damit_pmp hyetograph: frequency_years={}; storm_min={}; step_min={}; series={}; depth_unit={}{}\n".format(
+                years, storm, step, pf["series"], u, extra_meta))
+            if rec:
+                fh.write("# temporal: {}\n".format(json.dumps(rec, separators=(",", ":"), default=str)))
+            if lsum:
+                fh.write("# losses: {}\n".format(json.dumps(lsum, separators=(",", ":"))))
+        total = rows[-1][2]
+        res = {"OUTPUT_CSV": out, "TOTAL": total, "EXCESS": round(sum(r[3] for r in table), 4) if table is not None else total}
+        if P.get("OUTPUT_JSON") not in (None, ""):
+            jp = self.parameterAsFileOutput(P, "OUTPUT_JSON", context)
+            R.dump_json(jp, {"schema": "damit.pmp.hyetograph", "schema_version": 1, "frequency_years": years,
+                             "storm": storm_label, "storm_min": storm, "step_min": step, "pattern": pattern,
+                             "pattern_label": T.PATTERN_LABELS[T.PATTERNS.index(pattern)], "temporal": rec,
+                             "depth_unit": u, "gross_total": total, "losses": lsum, "citation": A.citation(pf),
+                             "note": "NOAA Atlas 14 is the only depth source; a temporal pattern is a shape only."})
+            res["OUTPUT_JSON"] = jp
+        return res
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -567,6 +682,14 @@ class GridBasin(_GridChoice):
 # Rain-on-grid export
 
 TIME_UNITS = list(R.TIME_UNITS)
+PATTERN_WORD = {"alternating": "alternating-block", "atlas14": "NOAA Atlas 14 temporal-distribution",
+                "nrcs1": "NRCS Type I", "nrcs1a": "NRCS Type IA", "nrcs2": "NRCS Type II", "nrcs3": "NRCS Type III"}
+PATTERN_NOTE = {"alternating": R.ALTERNATING_NOTE,
+                "atlas14": "the time pattern is a NOAA Atlas 14 temporal distribution (HDSC quartile curve, see the JSON "
+                           "record); the depth is the Atlas 14 estimate.",
+                **{k: "the time pattern is the NRCS {} 24-hour distribution (a shape only); the depth is the NOAA Atlas 14 "
+                      "estimate.".format(v) for k, v in {"nrcs1": "Type I", "nrcs1a": "Type IA", "nrcs2": "Type II",
+                                                         "nrcs3": "Type III"}.items()}}
 
 
 class RainGrid(_Base):
@@ -600,6 +723,7 @@ class RainGrid(_Base):
                                                      defaultValue=A.DEFAULT_DURATION_INDEX))
         self.addParameter(QgsProcessingParameterNumber("STEP_MIN", "Time step (minutes; JSON route)", INTEGER,
                                                        defaultValue=60, minValue=5, maxValue=1440))
+        self._storm_params()
         self.addParameter(QgsProcessingParameterRasterLayer("SCALE_GRID", "Rescale the storm to this Atlas 14 grid "
                                                             "(same frequency and duration)", optional=True))
         self.addParameter(QgsProcessingParameterFeatureSource("SCALE_BASIN", "... mean over this basin (polygons)",
@@ -619,22 +743,34 @@ class RainGrid(_Base):
         self.addParameter(QgsProcessingParameterFileDestination("OUTPUT_JSON", "Record (JSON)", "JSON files (*.json)"))
         self.addParameter(QgsProcessingParameterRasterDestination("FACTOR_RASTER", "Spatial factor raster (grid / reference "
                                                                   "depth)", optional=True, createByDefault=False))
-        self.addOutput(QgsProcessingOutputNumber("TOTAL_MM", "Storm total (mm)"))
+        self.addOutput(QgsProcessingOutputNumber("TOTAL_MM", "Rain written to the files (mm; excess rain when losses are set)"))
+        self.addOutput(QgsProcessingOutputNumber("GROSS_MM", "Gross storm total (mm)"))
         self.addOutput(QgsProcessingOutputNumber("PEAK_MM_HR", "Peak rate (mm/hr)"))
 
-    def _blocks(self, P, context):
+    def _blocks(self, P, context, feedback):
+        """(blocks, desc, meta, st): gross blocks [(t0, t1, mm)]; st = {pattern, temporal, excess_blocks, losses} from the
+        hyetograph CSV (written by damit_pmp:hyetograph) or built here from the JSON."""
         csv_path = self.parameterAsFile(P, "INPUT_CSV", context) if P.get("INPUT_CSV") not in (None, "") else ""
         meta = {}
+        st = {"pattern": "alternating", "temporal": None, "excess_blocks": None, "losses": None}
         if csv_path:
             try:
                 blocks, unit = R.read_hyetograph(csv_path)
+                ex = R.read_excess(csv_path)
             except (OSError, ValueError) as e:
                 raise QgsProcessingException(str(e))
+            if ex is not None:
+                st["excess_blocks"] = R.blocks_from_rows(ex, unit)
             with open(csv_path, encoding="utf-8") as fh:
                 for ln in fh:
                     if ln.startswith("# damit_pmp hyetograph:"):
                         meta = dict(kv.strip().split("=", 1) for kv in ln.split(":", 1)[1].split(";") if "=" in kv)
-            return blocks, "hyetograph CSV " + os.path.basename(csv_path), meta
+                    elif ln.startswith("# temporal:"):
+                        st["temporal"] = json.loads(ln.split(":", 1)[1])
+                    elif ln.startswith("# losses:"):
+                        st["losses"] = json.loads(ln.split(":", 1)[1])
+            st["pattern"] = meta.get("pattern", "alternating")
+            return blocks, "hyetograph CSV " + os.path.basename(csv_path), meta, st
         js = self.parameterAsFile(P, "INPUT_JSON", context) if P.get("INPUT_JSON") not in (None, "") else ""
         if not js:
             raise QgsProcessingException("Give a hyetograph CSV or an Atlas 14 JSON (pointpf / basinpf).")
@@ -646,14 +782,34 @@ class RainGrid(_Base):
         storm_label = STORM[self.parameterAsEnum(P, "STORM", context)]
         storm = A.duration_minutes(storm_label)
         years, step = self.parameterAsInt(P, "FREQUENCY", context), self.parameterAsInt(P, "STEP_MIN", context)
+        rows, pattern, rec, pmeta = self._gross_rows(P, context, feedback, pf, years, storm_label, step,
+                                                     self.parameterAsFileOutput(P, "OUTPUT_JSON", context))
+        meta = {"frequency_years": str(years), "storm_min": str(storm), "step_min": str(step), "series": pf["series"]}
+        meta.update(pmeta)
+        st.update({"pattern": pattern, "temporal": rec})
+        return R.blocks_from_rows([(t, d) for t, d, _ in rows], pf["unit_label"] if pf["unit_label"] in ("in", "mm") else "in"), \
+            "Atlas 14 JSON {} ({}-year, {})".format(os.path.basename(js), years, storm_label), meta, st
+
+    def _loss_blocks(self, P, context, blocks):
+        """Apply INITIAL_LOSS / CONSTANT_LOSS to gross mm blocks -> (excess blocks or None, summary, meta)."""
+        ia = self.parameterAsDouble(P, "INITIAL_LOSS", context)
+        cl = self.parameterAsDouble(P, "CONSTANT_LOSS", context)
+        if ia <= 0 and cl <= 0:
+            return None, None
+        lu = S.UNITS[self.parameterAsEnum(P, "LOSS_UNITS", context)]
+        ia_mm, cl_mm = S.to_unit(ia, lu, "mm"), S.to_unit(cl, lu, "mm")
+        rows, c = [], 0.0
+        for t0, t1, d in blocks:
+            c += d
+            rows.append((t1, d, c))
         try:
-            A.check_storm(storm, step, storm_label)
-            rows = A.alternating_block(pf, years, storm, step)
+            table = S.apply_losses(rows, ia_mm, cl_mm)
         except A.Atlas14Error as e:
             raise QgsProcessingException(str(e))
-        meta = {"frequency_years": str(years), "storm_min": str(storm), "step_min": str(step), "series": pf["series"]}
-        return R.blocks_from_rows([(t, d) for t, d, _ in rows], pf["unit_label"] if pf["unit_label"] in ("in", "mm") else "in"), \
-            "Atlas 14 JSON {} ({}-year, {})".format(os.path.basename(js), years, storm_label), meta
+        summ = S.loss_summary(table, "mm")
+        summ.update({"initial_loss_mm": round(ia_mm, 4), "constant_loss_mm_per_hr": round(cl_mm, 4),
+                     "method": "initial loss, then constant loss rate per time step (initial-and-constant loss)"})
+        return [(b[0], b[1], r[3]) for b, r in zip(blocks, table)], summ
 
     def _target_depth(self, P, context):
         """(depth in, description) from the scale grid at a basin (mean) or a point, or (None, None)."""
@@ -683,11 +839,14 @@ class RainGrid(_Base):
         return v, "{} of {}".format(how, os.path.basename(grid.source())), (grid, scale)
 
     def processAlgorithm(self, P, context, feedback):  # noqa: N802
-        blocks, desc, meta = self._blocks(P, context)
+        blocks, desc, meta, st = self._blocks(P, context, feedback)
         storm_min = round(blocks[-1][1])
         total_in = R.total_mm(blocks) / R.MM_PER_IN
         extra = {"hyetograph": meta}
         target, how, gs = self._target_depth(P, context)
+        if target is not None and st["excess_blocks"] is not None:
+            raise QgsProcessingException("The hyetograph CSV already has losses applied (excess column); rescaling to a grid "
+                                         "needs the gross storm: build the hyetograph without losses and set the losses here.")
         if target is not None:
             side = G.read_sidecar(gs[0].source())
             info = dict(side or {})
@@ -712,6 +871,20 @@ class RainGrid(_Base):
             extra["rescaled_to_grid"] = {"grid": gs[0].source(), "how": how, "grid_depth_in": target,
                                          "hyetograph_total_in": round(total_in, 4), "factor": round(factor, 6)}
             feedback.pushInfo("Storm rescaled to {} = {:.3f} in (factor {:.4f})".format(how, target, factor))
+        gross_blocks = blocks
+        excess_blocks, loss_summary = self._loss_blocks(P, context, blocks)
+        if st["excess_blocks"] is not None:
+            if excess_blocks is not None:
+                raise QgsProcessingException("The hyetograph CSV already has losses applied (excess column) and losses are "
+                                             "set here too: set them in only one of the two tools.")
+            excess_blocks, loss_summary = st["excess_blocks"], st["losses"]
+        if excess_blocks is not None:
+            blocks = excess_blocks
+            extra["losses"] = loss_summary
+            feedback.pushInfo("Losses: {:.2f} mm gross -> {:.2f} mm excess rain".format(
+                R.total_mm(gross_blocks), R.total_mm(excess_blocks)))
+        extra["temporal_pattern"] = {"pattern": st["pattern"], "label": T.PATTERN_LABELS[T.PATTERNS.index(st["pattern"])]
+                                     if st["pattern"] in T.PATTERNS else st["pattern"], "record": st["temporal"]}
         sim_h = self.parameterAsDouble(P, "SIM_TIME_H", context)
         unit = TIME_UNITS[self.parameterAsEnum(P, "TIME_UNIT", context)]
         rain_path = self.parameterAsFileOutput(P, "OUTPUT_RAIN", context)
@@ -720,14 +893,19 @@ class RainGrid(_Base):
         try:
             rec = R.export(blocks, rain_path, anuga_path, unit, self.parameterAsInt(P, "RAMP_S", context),
                            sim_h * 3600.0 if sim_h > 0 else None, source="NOAA Atlas 14 - " + desc,
-                           desc="{:.3f} in over {:g} h, alternating-block hyetograph ({})".format(
-                               R.total_mm(blocks) / R.MM_PER_IN, blocks[-1][1] / 60.0, desc), extra=extra)
+                           desc="{:.3f} in {}over {:g} h, {} hyetograph ({})".format(
+                               R.total_mm(blocks) / R.MM_PER_IN,
+                               "of excess rain (of {:.3f} in gross) ".format(R.total_mm(gross_blocks) / R.MM_PER_IN)
+                               if excess_blocks is not None else "", blocks[-1][1] / 60.0,
+                               PATTERN_WORD.get(st["pattern"], st["pattern"]), desc),
+                           extra=extra, pattern_note=PATTERN_NOTE.get(st["pattern"], R.ALTERNATING_NOTE))
         except R.RainError as e:
             raise QgsProcessingException(str(e))
         feedback.pushInfo("{} points, {:.2f} mm, peak {:.2f} mm/hr, mass error {:.5f} %".format(
             rec["points"], rec["total_depth_mm"], rec["peak_rate_mm_hr"], rec["series_depth_error_pct"]))
         out = {"OUTPUT_RAIN": rain_path, "OUTPUT_ANUGA": anuga_path, "OUTPUT_JSON": json_path,
-               "TOTAL_MM": rec["total_depth_mm"], "PEAK_MM_HR": rec["peak_rate_mm_hr"]}
+               "TOTAL_MM": rec["total_depth_mm"], "GROSS_MM": round(R.total_mm(gross_blocks), 3),
+               "PEAK_MM_HR": rec["peak_rate_mm_hr"]}
         fr = self.parameterAsOutputLayer(P, "FACTOR_RASTER", context) if P.get("FACTOR_RASTER") not in (None, "") else ""
         if fr:
             if gs is None:

@@ -169,8 +169,7 @@ Use with ANUGA (the rate is in m/s and may be a function of time; do not multipl
     rain_op = anuga.Rate_operator(domain, rate=rain)          # whole domain, uniform
     # ... then the usual: for t in domain.evolve(yieldstep=60.0, finaltime=...): ...
 
-Atlas 14 gives point estimates up to the 1000-year ARI; this is not a probable maximum precipitation and the
-block pattern is an alternating-block pattern, not an Atlas 14 temporal distribution.
+Atlas 14 gives point estimates up to the 1000-year ARI; this is not a probable maximum precipitation and {pattern_note}
 """
 
 
@@ -180,8 +179,30 @@ def write_text(path, text):
         fh.write(text)
 
 
+ALTERNATING_NOTE = "the\nblock pattern is an alternating-block pattern, not an Atlas 14 temporal distribution."
+
+
+def read_excess(path):
+    """[(t_end_min, excess depth in the file's unit)] when the hyetograph CSV has an ``excess_in|mm`` column (written by
+    damit_pmp:hyetograph when losses are set), else None."""
+    with open(path, newline="", encoding="utf-8") as fh:
+        header, rows = None, []
+        for r in csv.reader(fh):
+            if not r or r[0].lstrip().startswith("#"):
+                continue
+            if header is None:
+                header = [c.strip() for c in r]
+                ex = [c for c in header if c.startswith("excess_")]
+                if not ex:
+                    return None
+                ti, ei = header.index("t_end_min"), header.index(ex[0])
+                continue
+            rows.append((float(r[ti]), float(r[ei])))
+    return rows
+
+
 def export(blocks, rain_path=None, anuga_path=None, time_unit="seconds", ramp_s=1, sim_time_s=None,
-           source="", desc="", extra=None):
+           source="", desc="", extra=None, pattern_note=ALTERNATING_NOTE):
     """Write the .rain and / or ANUGA files; returns the record (also written as JSON by the algorithm)."""
     if not rain_path and not anuga_path:
         raise RainError("nothing to write")
@@ -210,7 +231,7 @@ def export(blocks, rain_path=None, anuga_path=None, time_unit="seconds", ramp_s=
             stem=os.path.basename(os.path.splitext(anuga_path)[0]), source=source or "NOAA Atlas 14", desc=desc,
             total_in=depth_in, total_mm=total_mm(blocks), dur_h=dur_h, csv=os.path.basename(anuga_path),
             rain=os.path.basename(rain_path) if rain_path else "(not written)", ramp=ramp_s,
-            end_s=round(blocks[-1][1] * 60.0), err=err_pct))
+            end_s=round(blocks[-1][1] * 60.0), err=err_pct, pattern_note=pattern_note))
         rec["anuga_readme"] = readme
     return rec
 

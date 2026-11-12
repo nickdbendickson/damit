@@ -122,6 +122,9 @@ A method that needs a layer kind (M9a rail, M11a lifelines, M8a/M8b roads) repor
 was supplied. When some were supplied and sampled but none is in the scored set (every one outside the routed domain, or
 dropped by the scenario, development and cutoff filters), it reports `layer_none_scored` (info) with the counts instead.
 
+**NoData receptors (0.2.6).** When the cell under a structure (or every cell in its footprint) is NoData and a neighbour is wet, the path depends on the depth-grid cell size. The cell is the larger side of the pixel, converted to metres from the raster CRS units (metres, international feet, US survey feet, or a geographic CRS via metres-per-degree at mid-latitude). Neighbourhood fill is used only when that size is strictly greater than `NODATA_NEIGHBOURHOOD_MIN_CELL_M` = 20 m: peak depth and peak velocity over the wet cells in the 3×3 neighbourhood (and the footprint, if there is one), `sampling=neighbourhood`, flag `nodata_neighbourhood`. At 20 m or finer the NoData cell is still scored dry (`sampling=centre_nodata_dry`) and flagged for review (`nodata_dry_review`), so a hole on a fine product-of-record is not filled from a neighbour. The report *Inputs* line records the cell size, the threshold and which path this run uses. A dry (finite 0) cell stays dry (`RECEPTOR_DRY_NEXT_TO_WET`). A NoData cell with no wet neighbour is left dry and is not flagged.
+
+
 Attribute names are matched case-insensitively; the first of these per field is used
 (`engine/receptors.py` has the full list):
 

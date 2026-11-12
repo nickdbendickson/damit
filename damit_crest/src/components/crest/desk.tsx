@@ -1683,8 +1683,8 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
         Screening runs {algs.preflight} and starts {algs.runchain} only if the preflight is READY. Classify hands the
         folder, the jurisdiction choice, the model run&apos;s depth raster and the downstream receptors (structures, roads,
         the drawn area) to {algs.classify}, so the chosen preset or custom methods judge the downstream consequences; it
-        is not started without a depth raster or a receptor it can place. The flood model runs
-        {algs.rundam} for this dam only (DamIT Runner 0.1.0 prepares and records the run; it launches no engine). A
+        is not started without a depth raster or a receptor it can place. The flood model runs{" "}
+        {algs.rundam} for this dam only. A
         missing algorithm, a missing DEM or depth raster, or a preflight FAIL stops there. Cancel stops QGIS; DAMIT_SCREENING_TIMEOUT_S sets a time limit. The result is a suggested class,
         not an official one.
       </p>
