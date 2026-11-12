@@ -46,7 +46,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)" DAMIT_SETTINGS="$(mktemp -d)/s.json"
-          python3 -m unittest -v tests.test_qgis_new_plugins damit_pmp.tests.test_gis_rain damit_pmp.tests.test_anuga_rain
+          python3 -m unittest -v tests.test_qgis_new_plugins damit_pmp.tests.test_gis_rain damit_pmp.tests.test_anuga_rain damit_pmp.tests.test_watershed damit_pmp.tests.test_temporal_storm damit_pmp.tests.test_lisflood_rain
       - name: DamIT Finder (synthetic terrain, GDAL runs, the three tools in real QGIS)
         env:
           QT_QPA_PLATFORM: offscreen

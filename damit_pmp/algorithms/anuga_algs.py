@@ -89,6 +89,10 @@ class AnugaRain(_Base):
                                        "time_s, rate_m_per_s)", extension="csv"))
         add(QgsProcessingParameterRasterLayer("FACTOR_RASTER", "Spatial rain factor raster (damit_pmp:raingrid "
                                               "FACTOR_RASTER; empty = uniform rain)", optional=True))
+        add(QgsProcessingParameterPoint("GAUGE_A", "Discharge section, first end (with GAUGE_B: the script records the flow "
+                                        "through this line every yield step, e.g. just below a dam; empty = none)",
+                                        optional=True))
+        add(QgsProcessingParameterPoint("GAUGE_B", "Discharge section, second end", optional=True))
         add(QgsProcessingParameterPoint("FLOW_PATH_START", "Flow-path start for the refinement line (like the runner's "
                                         "inflow point; empty = no refinement, a uniform mesh)", optional=True))
         add(QgsProcessingParameterNumber("CELL_M", "Model cell size of the DEM grid (m; the runner's CELL default is "
@@ -111,6 +115,10 @@ class AnugaRain(_Base):
         add(adv(QgsProcessingParameterNumber("BUFFER_M", "Grow the domain by this much (m; the runner buffers its "
                                              "flood footprint by 500, a basin needs none)", DOUBLE, defaultValue=0.0,
                                              minValue=0.0)))
+        add(adv(QgsProcessingParameterNumber("SIMPLIFY_M", "Simplify the outer outline by this tolerance (m; empty = the "
+                                             "runner's rule, one cell with no buffer). A jagged basin outline needs 30 - 50 "
+                                             "to pass the mesher's 20 degree quality gate", DOUBLE, optional=True,
+                                             minValue=0.5)))
         add(adv(QgsProcessingParameterBoolean("FINE_ELEVATION", "Sample the native DEM at the triangle vertices when it "
                                               "is finer than the cell (the runner's 'fine' elevation)",
                                               defaultValue=True)))
@@ -202,8 +210,15 @@ class AnugaRain(_Base):
             if P.get("FLOW_PATH_START") not in (None, ""):
                 pt = self.parameterAsPoint(P, "FLOW_PATH_START", context, dem_layer.crs())
                 start = (pt.x(), pt.y())
+            gauge = None
+            if P.get("GAUGE_A") not in (None, "") or P.get("GAUGE_B") not in (None, ""):
+                if P.get("GAUGE_A") in (None, "") or P.get("GAUGE_B") in (None, ""):
+                    raise QgsProcessingException("A discharge section needs both GAUGE_A and GAUGE_B.")
+                ga = self.parameterAsPoint(P, "GAUGE_A", context, dem_layer.crs())
+                gb = self.parameterAsPoint(P, "GAUGE_B", context, dem_layer.crs())
+                gauge = [(ga.x(), ga.y()), (gb.x(), gb.y())]
             region = AR.domain_region(grid, rings)
-            outer, oinfo = AR.outer_ring(grid, region, st["buffer_m"], start)
+            outer, oinfo = AR.outer_ring(grid, region, st["buffer_m"], start, self._opt_num(P, "SIMPLIFY_M", context))
             channel, points, plen = [], [], 0.0
             if start is not None:
                 channel, plen = AR.flow_path(grid, outer, start)
@@ -231,7 +246,7 @@ class AnugaRain(_Base):
 
         spec_path = os.path.join(out_dir, AR.SPEC_NAME)
         AR.write_json(spec_path, spec)
-        AR.write_job(out_dir, grid, t, r, st, sim_time, factor, fine)
+        AR.write_job(out_dir, grid, t, r, st, sim_time, factor, fine, gauge)
         files = AR.copy_script_files(out_dir)
         rate_copy = os.path.join(out_dir, AR.RATE_NAME)
         with open(self.parameterAsFile(P, "RATE_CSV", context), "rb") as a, open(rate_copy, "wb") as b:
