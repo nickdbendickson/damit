@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.3"
+VERSION = "1.3.5"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -84,6 +84,7 @@ KNOWN_FLAG_IDS = (
     "START_WSE", "TOE_INFLOW", "TOE_BAND", "TOE_BAND_WIDENED", "OUTLET_FLOW", "ENGINE_FALLBACK", "RUN_WARNINGS",
     "RECEPTOR_NODATA", "RECEPTOR_DRY_NEXT_TO_WET", "ROADS_UNSCORED", "HAZARD_REVIEW", "RAIL_TRAINS",
     "NO_RUN_FILES", "DAM_RECORD_MISSING", "TOE_UNCHECKED", "TOE_SOURCE_RUN_REPORT", "RECEPTORS_UNCHECKED",
+    "DAM_POINT_OFF_LINE",
 )
 
 # Elevations from 300 ft up to this are taken to be in the NAVD88 range when no datum is stated (ND is ~800-3,500 ft;
@@ -1040,6 +1041,23 @@ def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None, setup=None):
     return info
 
 
+def check_dam_point(report, fl):
+    """WATCH when the inventory / official point is far from the dam line the model used (DWR-2659)."""
+    info = ((report or {}).get("dam_point") or {}) if isinstance(report, dict) else {}
+    if not info.get("off_line"):
+        return info or None
+    dist = info.get("line_distance_m")
+    thr = info.get("threshold_m")
+    length = info.get("dam_line_length_m")
+    title = "the inventory / official point is %.0f m from the dam line" % dist if dist is not None else \
+        "the inventory / official point is far from the dam line"
+    detail = info.get("how") or (
+        "threshold %.0f m (100 m, or half the %.0f m dam line when that is shorter). The model uses the dam line; "
+        "check that the point and the line are the same dam." % (thr or 100.0, length or 0.0))
+    fl.add("DAM_POINT_OFF_LINE", WATCH, "run", title, detail, **{k: info[k] for k in info})
+    return info
+
+
 def check_engine(report, fl):
     es = (report or {}).get("engine_selection") or {}
     eng = str((report or {}).get("engine") or "")
@@ -1234,8 +1252,12 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
     if nd:
         fl.add("RECEPTOR_NODATA", WATCH, "receptors", "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
-               "ids: %s. The results have a hole at the receptor; Hazard reads NoData as dry (0 ft) and can miss a "
-               "real, shallow inundation. Check these by hand.%s" % (_ids("%s (neighbour %.2f ft)" % t for t in nd), note),
+               "ids: %s. The results have a hole at the receptor. Hazard's path depends on the depth-grid "
+               "cell size (larger side, converted to metres; NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, strictly "
+               "greater than): on a grid coarser than 20 m it takes the peak depth and velocity over neighbouring "
+               "wet cells (sampling=neighbourhood, flag nodata_neighbourhood); at 20 m or finer it still scores "
+               "the NoData cell dry (sampling=centre_nodata_dry) and flags nodata_dry_review. Check these by hand.%s" % (
+                   _ids("%s (neighbour %.2f ft)" % t for t in nd), note),
                ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd}, grid_source=grid_source)
     if dn:
         fl.add("RECEPTOR_DRY_NEXT_TO_WET", WATCH, "receptors",
@@ -1260,6 +1282,8 @@ REVIEW_CODES = {
     "no_layer": "a receptor layer was not supplied (e.g. lifelines, M11a)",
     "outside_domain": "receptors outside the routed domain were not scored",
     "m13_guessed": "M13 descriptor guessed",
+    "nodata_neighbourhood": "a structure sits on a NoData cell on a grid coarser than 20 m; peak depth and velocity were taken from neighbouring wet cells and need review",
+    "nodata_dry_review": "a structure sits on a NoData cell on a grid at or finer than 20 m; scored dry from the NoData cell and need review",
 }
 
 
@@ -1367,6 +1391,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
     wse = check_start_wse(facts, report, setup, fl)
     check_outlets(run_dir, passes, setup, fl)
     toe = check_toe(facts, report, fl, run_dir=run_dir, setup=setup)
+    dam_pt = check_dam_point(report, fl)
     check_engine(report, fl)
 
     # peak depth / velocity over wet cells, and receptors (needs numpy; GDAL for the GeoTIFF)
@@ -1471,8 +1496,8 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
          "name": facts["name"], "verdict": verdict_of(flags), "verdict_set_by": "code (flags only; Pierre never changes it)",
          "flags": flags, "thresholds": THRESHOLDS,
          "checks": {"passes": [{k: v for k, v in p.items() if k != "mass_mtime"} for p in passes], "height": height,
-                    "datum": datum, "start_wse": wse, "toe_inflow": toe, "peaks": peaks, "receptors": rec,
-                    "hazard": hazard, "dam": facts, "receptors_skipped": skipped_receptors,
+                    "datum": datum, "start_wse": wse, "toe_inflow": toe, "dam_point": dam_pt, "peaks": peaks,
+                    "receptors": rec, "hazard": hazard, "dam": facts, "receptors_skipped": skipped_receptors,
                     "run": {"engine": (report or {}).get("engine") or (setup or {}).get("engine"),
                             "sim_time_hr": (report or {}).get("sim_time_hr"), "stop_reason": (report or {}).get("stop_reason"),
                             "finished": bool(report) or (setup or {}).get("status") == "finished",
@@ -1512,6 +1537,10 @@ def render_text(d):
         L.append("Toe inflow: %s m from the dam line%s; band %s-%s m (H x (%s:1 + 1), cap %d m)" % (
             _fmt(t.get("distance_m"), 0), src, _fmt(t.get("expected_inner_m"), 0), _fmt(t.get("expected_outer_m"), 1),
             _fmt(t.get("slope"), 1), THRESHOLDS["toe_cap_m"]))
+    dp = c.get("dam_point") or {}
+    if dp.get("off_line"):
+        L.append("Official / inventory point: %s m from the dam line (threshold %s m; line %s m)" % (
+            _fmt(dp.get("line_distance_m"), 0), _fmt(dp.get("threshold_m"), 0), _fmt(dp.get("dam_line_length_m"), 0)))
     ps = c["passes"]
     if ps:
         L.append("Passes (%d): pass | sim h | mass err %% | edge outflow %% | wet edges" % len(ps))

@@ -113,6 +113,7 @@ Pierre can watch a DamIT Runner run, but the review does not depend on the model
    **1.3.3 (DWR-2645).** A toe band the Runner widened (Runner 0.3.3 records the effective band and why) is judged by its effective
    band: an inflow inside it is the INFO note `TOE_BAND_WIDENED`, not a `TOE_INFLOW` problem. The Runner now warns when a run ends with a wet edge.
    Interactive Q&A (`pierre`, `pierre-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
+   **1.3.5 (DWR-2659).** `RECEPTOR_NODATA` describes both Hazard 0.2.6 paths: neighbourhood fill only on a depth grid coarser than 20 m (`sampling=neighbourhood`, flag `nodata_neighbourhood`); at 20 m or finer Hazard still scores the NoData cell dry (`sampling=centre_nodata_dry`) and flags `nodata_dry_review`.
 
 Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
 

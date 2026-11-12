@@ -112,7 +112,13 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "report names it.<br><br>"
                 "Receptor attributes are read by name (type, occupants, floor_elev / "
                 "floor_height_ft, aadt, road_class, func_class, sole_access, trains_per_day, "
-                "passenger, ...): see the plugin README.<br><br>"
+                "passenger, ...): see the plugin README. A structure on a NoData cell next to "
+                "water: on a depth grid coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m "
+                "(larger cell side, converted to metres; strictly greater than 20 m) the peak "
+                "depth and velocity of neighbouring wet cells are used (sampling=neighbourhood, "
+                "flag nodata_neighbourhood); at 20 m or finer the NoData cell is still scored "
+                "dry (sampling=centre_nodata_dry) and flagged for review (nodata_dry_review). "
+                "The report records the path, the threshold and the cell size.<br><br>"
                 "Informational screening aid, not a regulatory determination: the engineer of "
                 "record and the regulating agency make the determination.")
 
@@ -431,7 +437,8 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
             runs.append({"scenario": spec.get("scenario"), "model_dim": spec.get("model_dim"),
                          "label": spec.get("label") or "run {}".format(i + 1),
                          "breach_location": spec.get("breach_location"),
-                         "receptors": recs})
+                         "receptors": recs,
+                         "nodata_sampling": S.nodata_policy(rs["depth"])})
             feedback.setProgress(10 + 60.0 * (i + 1) / len(run_specs))
         res = core.classify(cat, cfg, runs, dam=dam, charts=charts, layers=layers_info)
         # reports

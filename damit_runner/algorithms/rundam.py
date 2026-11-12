@@ -82,7 +82,13 @@ class RunDam(_Base):
                 "job (damit:classify). DRY_RUN on: prepare and record only (the 0.1.0 behaviour).\n\n"
                 "NID dams only: the dam's id is its NID ID (National Inventory of Dams, e.g. ND00199), as dam_id "
                 "or nid_id. A DWR-, DUG- or other non-NID id is refused; a new / proposed dam (IS_NEW) or a desk "
-                "sample (IS_SAMPLE) may have none, with a warning.")
+                "sample (IS_SAMPLE) may have none, with a warning.\n\n"
+                "DEM_Z 'Detect from the raster' reads the band unit or vertical CRS; if neither is recorded, a "
+                "USGS 3DEP file (SOURCE tag, every file named USGS_*, or '3dep' in the path) is assumed metres "
+                "and that assumption is logged. An explicit Feet / US survey feet / Meters setting is used as "
+                "given. A unit-less DEM with no 3DEP cue is refused. If the inventory / official dam point is "
+                "far from the dam line (over 100 m, or half the dam length when that is shorter), the run notes "
+                "and run_report record it; the model still uses the dam line.")
 
     def initAlgorithm(self, config=None):  # noqa: N802
         P = self.addParameter

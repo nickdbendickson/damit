@@ -99,18 +99,40 @@ def site(p, wkt, log):
     """Dam point, line, downstream side and inflow point in the model CRS. p holds lon/lat inputs."""
     ll = p.get("dam_lonlat")
     line_ll = p.get("dam_line_lonlat")
+    point_given = bool(ll) or bool(p.get("dam_point_given"))
     if not ll and line_ll:
         a = np.asarray(line_ll, float)
         ll = (float(a[:, 0].mean()), float(a[:, 1].mean()))
     if not ll:
         raise RunError("no dam position: give X / Y (or a dam folder with dam.json lon / lat or dam_line.geojson)")
     dam_xy = R.transform_points([ll], "EPSG:4326", wkt)[0]
+    inventory_xy, inventory_ll = dam_xy, (float(ll[0]), float(ll[1]))
     line = R.transform_points(line_ll, "EPSG:4326", wkt) if line_ll and len(line_ll) >= 2 else None
+    dam_point = None
+    if line is not None and point_given:
+        length_m = G.polyline_length_m(line)
+        dist = G.distance_to_polyline_m(inventory_xy, line)
+        thr = G.off_line_threshold_m(length_m)
+        off = dist is not None and dist > thr
+        note = None
+        if off:
+            note = ("the inventory / official point is {:.0f} m from the dam line (threshold {:.0f} m: "
+                    "100 m, or half the {:.0f} m line when that is shorter). The model uses the dam line; "
+                    "check that the point and the line are the same dam (DWR-2659: the official DWR point "
+                    "sat on a different pool)."
+                    .format(dist, thr, length_m))
+        dam_point = {"lonlat": [inventory_ll[0], inventory_ll[1]],
+                     "xy": [float(inventory_xy[0]), float(inventory_xy[1])],
+                     "line_distance_m": None if dist is None else round(float(dist), 1),
+                     "threshold_m": round(float(thr), 1), "dam_line_length_m": round(float(length_m), 1),
+                     "off_line": bool(off), "how": note}
     if line is not None and not p.get("dam_point_given"):
         a = np.asarray(line, float)
         mids = 0.5 * (a[:-1] + a[1:])
         k = int(np.argmin(np.hypot(mids[:, 0] - dam_xy[0], mids[:, 1] - dam_xy[1])))
         dam_xy = (float(mids[k, 0]), float(mids[k, 1])) if len(a) == 2 else dam_xy
+        if dam_point is not None:
+            dam_point["snapped_xy"] = [float(dam_xy[0]), float(dam_xy[1])]
     res_xy = None
     if p.get("reservoir_lonlat"):
         res_xy = R.transform_points([p["reservoir_lonlat"]], "EPSG:4326", wkt)[0]
@@ -141,8 +163,15 @@ def site(p, wkt, log):
         checks.append("the DEM near the dam ({:.1f} ft) does not fit the top of dam {:.2f} ft and height {:.1f} ft; "
                       "check the DEM's vertical units and datum (Z_UNITS)".format(z_near / FT, top_m / FT, h_m / FT))
     log("Breach inflow at {:.1f}, {:.1f}: {}".format(inflow[0], inflow[1], note))
+    z_how = getattr(fine, "z_how", None)
+    if z_how:
+        log("DEM elevations: " + z_how)
+    if dam_point and dam_point.get("off_line") and dam_point.get("how"):
+        checks.append(dam_point["how"])
+        log("Warning: " + dam_point["how"])
     return {"dam_xy": dam_xy, "line": line, "reservoir_xy": res_xy, "downstream": downstream, "downstream_how": how,
-            "inflow_xy": inflow, "inflow_how": note, "toe_band": band, "fine_cell_m": fine_cell, "checks": checks}
+            "inflow_xy": inflow, "inflow_how": note, "toe_band": band, "fine_cell_m": fine_cell, "checks": checks,
+            "dam_point": dam_point, "z_how": z_how, "z_to_m": getattr(fine, "z_to_m", None)}
 
 
 def hydrograph_for(p):
@@ -495,12 +524,22 @@ def run_breach(p, out_dir, log=print, cancel=None):
               "inflow": {"xy": list(s["inflow_xy"]), "how": s["inflow_how"], "toe_band": s["toe_band"],
                          "downstream": list(s["downstream"]) if s["downstream"] else None,
                          "downstream_how": s["downstream_how"]},
+              "dam_point": s.get("dam_point"),
               "trace": {"length_mi": round(plen / MILE, 2), "points": len(path)}, "outputs": files}
     zu = str(p.get("z_units") or "auto").strip().lower()
     if zu != "auto":
         record["dem_z_to_m"] = R.z_scale({}, zu)
         record["dem_elevation_units"] = {"m": "metres", "ft": "feet", "us_ft": "us survey feet",
                                          "us_feet": "us survey feet"}.get(zu, zu)
+    elif s.get("z_to_m") is not None:
+        record["dem_z_to_m"] = s["z_to_m"]
+        record["dem_elevation_units"] = s.get("z_how") or "auto"
+    if s.get("dam_point") and s["dam_point"].get("off_line") and s["dam_point"].get("how"):
+        if s["dam_point"]["how"] not in record["warnings"]:
+            record["warnings"].append(s["dam_point"]["how"])
+    for n in (s.get("checks") or []):
+        if n and n not in record["warnings"]:
+            record["warnings"].append(n)
     for w in record["warnings"]:
         log("Warning: " + str(w))                    # 0.3.3: the report's warnings were never in the log
     with open(os.path.join(out_dir, "run_report.json"), "w", encoding="utf-8") as fh:
