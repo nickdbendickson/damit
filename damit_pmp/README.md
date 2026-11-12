@@ -37,8 +37,15 @@ Every tool takes the same choices:
   1000; AMS annual exceedance probability 1/2 ... 1/1000 (enter 2 ... 1000; there is no 1-year AMS file).
   Any other value stops with a message listing the allowed ones.
 * **Duration**: all 19 Atlas 14 durations, 5 min, 10, 15, 30, 60 min, 2, 3, 6, 12, 24 h, 2, 3, 4, 7, 10, 20, 30, 45,
-  60 days (`DURATION` in `fetchgrid` / `gridbasin`); the hyetograph and `raingrid` storms (`STORM`) offer the 11
-  from 60 min to 10 days.
+  60 days, **one shared list** (`atlas14.DURATION_LABELS`) used by `DURATION` in `fetchgrid` / `gridbasin` and `STORM` in
+  `hyetograph` / `raingrid`, so the same index is the same duration in every tool: 0 = 5-min, 1 = 10-min, 2 = 15-min,
+  3 = 30-min, 4 = 60-min, 5 = 2-hr, 6 = 3-hr, 7 = 6-hr, 8 = 12-hr, **9 = 24-hr (the default everywhere)**, 10 = 2-day,
+  11 = 3-day, 12 = 4-day, 13 = 7-day, 14 = 10-day, 15 = 20-day, 16 = 30-day, 17 = 45-day, 18 = 60-day. A storm that
+  cannot be built (shorter than `STEP_MIN`, not a whole number of steps, or more than 20 000 blocks) is not hidden:
+  the tool stops and says which `STEP_MIN` to use (e.g. a 5-min storm needs `STEP_MIN` 5).
+  **Breaking change since the 0.2.0 / early 0.3.0 `STORM` list** (60-min ... 10-day, 11 entries, 24-hr = 5): a caller
+  that passes a number now gets the duration of the shared list (old 5 is now 2-hr; old 0-10 are new 4-14; add 4). The
+  default is still 24-hr, so callers that leave `STORM` alone are unaffected.
 * **Series** (`pds` / `ams`) and, for the grids, the **estimate or its 90% lower / upper bound** (`BOUND`).
 
 ## Atlas 14 GIS grids from NOAA (`fetchgrid`)
@@ -132,9 +139,9 @@ input, output and runner file, mesh statistics, what was launched). In the ANUGA
     python run_anuga_rain.py --steps 2    # then evolve this many yield steps (after t = 0) and stop
     python run_anuga_rain.py --run        # the full simulation (long on a fine mesh)
 
-`--steps` and `--run` write `anuga_rain_run.json` with a water balance (exact rain volume put on the mesh, water stored,
+`--steps` writes `anuga_rain_steps.json` (+ `anuga_rain_steps_timeseries.csv`) and `--run` writes `anuga_rain_run.json` (+ `anuga_rain_timeseries.csv`), each with a water balance (exact rain volume put on the mesh, water stored,
 outflow through the outer boundary from ANUGA's boundary flux integral, residual, maximum depth, wet area over 5 cm /
-30 cm) and `anuga_rain_timeseries.csv`; `--run` also writes `anuga_rain_result.npz` (maximum depth per triangle).
+30 cm); `--dry` keeps its own `anuga_rain_dry_check.json`, so no mode overwrites another; `--run` also writes `anuga_rain_result.npz` (maximum depth per triangle).
 DWR-2801, coarse mesh (7 109 triangles), 100-yr 24-hr storm to 14 h: 37 s on one thread, balance residual 0.003 %.
 
 **Launching.** Default: nothing is launched. `ANUGA_PYTHON` (a path, as DamSafety Setup shows it; never auto-detected)

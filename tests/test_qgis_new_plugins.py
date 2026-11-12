@@ -534,6 +534,50 @@ class PMPGrids(unittest.TestCase):
                                                     "OUTPUT_JSON": os.path.join(self.tmp, "gb2.json")})
         self.assertAlmostEqual(r2["MEAN"], r["MEAN"], places=3)
 
+    def test_same_duration_index_in_every_tool(self):
+        """STORM (hyetograph, raingrid) and DURATION (fetchgrid, gridbasin) are one list: index i = same duration."""
+        import processing
+        from qgis.core import QgsApplication, QgsProcessingException
+        from damit_pmp import atlas14 as A
+        reg = QgsApplication.processingRegistry()
+        for alg, name in (("hyetograph", "STORM"), ("raingrid", "STORM"), ("fetchgrid", "DURATION"), ("gridbasin", "DURATION")):
+            p = reg.algorithmById("damit_pmp:" + alg).parameterDefinition(name)
+            self.assertEqual(list(p.options()), A.DURATION_LABELS, alg)
+            self.assertEqual(p.defaultValue(), 9, alg)
+            self.assertEqual(A.DURATION_LABELS[p.defaultValue()], "24-hr")
+        pt = processing.run("damit_pmp:pointpf", {"POINT": "-96.985,46.915 [EPSG:4326]", "CACHE_DIR": self.cache,
+                                                  "OUTPUT_CSV": os.path.join(self.tmp, "ip.csv"),
+                                                  "OUTPUT_JSON": os.path.join(self.tmp, "ip.json")})
+        for idx, label in ((9, "24-hr"), (7, "6-hr"), (6, "3-hr")):
+            h = processing.run("damit_pmp:hyetograph", {"INPUT_JSON": pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": idx,
+                                                        "STEP_MIN": 30, "OUTPUT_CSV": os.path.join(self.tmp, "i%d.csv" % idx)})
+            with open(os.path.join(self.tmp, "i%d.csv" % idx)) as fh:
+                self.assertIn("storm_min={}".format(A.duration_minutes(label)), fh.read())
+            r = processing.run("damit_pmp:raingrid", {"INPUT_JSON": pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": idx,
+                                                      "STEP_MIN": 30, "OUTPUT_RAIN": os.path.join(self.tmp, "i%d.rain" % idx),
+                                                      "OUTPUT_ANUGA": os.path.join(self.tmp, "i%d_a.csv" % idx),
+                                                      "OUTPUT_JSON": os.path.join(self.tmp, "i%d_r.json" % idx)})
+            self.assertAlmostEqual(r["TOTAL_MM"], h["TOTAL"] * 25.4, places=2, msg=label)
+        self.fetch("same_idx", DURATION=7, FREQUENCY=100)                    # 6-hr
+        self.assertTrue(self.urls[-1].endswith("mw100yr06ha.zip"), self.urls[-1])
+
+    def test_storms_that_cannot_be_built_say_why(self):
+        import processing
+        from qgis.core import QgsProcessingException
+        pt = processing.run("damit_pmp:pointpf", {"POINT": "-96.985,46.915 [EPSG:4326]", "CACHE_DIR": self.cache,
+                                                  "OUTPUT_CSV": os.path.join(self.tmp, "jp.csv"),
+                                                  "OUTPUT_JSON": os.path.join(self.tmp, "jp.json")})
+        for alg, extra in (("hyetograph", {"OUTPUT_CSV": os.path.join(self.tmp, "x.csv")}),
+                           ("raingrid", {"OUTPUT_RAIN": os.path.join(self.tmp, "x.rain"),
+                                         "OUTPUT_ANUGA": os.path.join(self.tmp, "x_a.csv"),
+                                         "OUTPUT_JSON": os.path.join(self.tmp, "x.json")})):
+            base = dict({"INPUT_JSON": pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": 0, "STEP_MIN": 60}, **extra)
+            with self.assertRaises(QgsProcessingException) as cm:             # 5-min storm, 60-min step
+                processing.run("damit_pmp:" + alg, base)
+            self.assertIn("5-min (5 min) is shorter than the time step of 60 min", str(cm.exception))
+            ok = processing.run("damit_pmp:" + alg, dict(base, STEP_MIN=5))   # the same storm with a fitting step
+            self.assertTrue(ok)
+
     # ---- damit_pmp:anugarain (the runner's gmsh mesh for ANUGA rain-on-grid); nothing is launched here ----
     def _anuga_inputs(self, name):
         import numpy as np
@@ -646,7 +690,7 @@ class PMPGrids(unittest.TestCase):
         pt = processing.run("damit_pmp:pointpf", {"POINT": "-96.8,46.9 [EPSG:4326]", "CACHE_DIR": os.path.join(out, "c"),
                                                   "OUTPUT_CSV": os.path.join(out, "a.csv"),
                                                   "OUTPUT_JSON": os.path.join(out, "a.json")})
-        h = processing.run("damit_pmp:hyetograph", {"INPUT_JSON": pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": 5,
+        h = processing.run("damit_pmp:hyetograph", {"INPUT_JSON": pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": 9,
                                                     "STEP_MIN": 60, "OUTPUT_CSV": os.path.join(out, "h.csv")})
         self.assertAlmostEqual(h["TOTAL"], 6.47, places=3)
         args = {"INPUT_CSV": os.path.join(out, "h.csv"), "OUTPUT_RAIN": os.path.join(out, "s.rain"),
@@ -663,7 +707,7 @@ class PMPGrids(unittest.TestCase):
         self.assertIn("anuga.Rate_operator", _slurp(os.path.join(out, "s_anuga_README.txt")))
         # the JSON route gives the same storm
         r_js = processing.run("damit_pmp:raingrid", dict(args, INPUT_CSV="", INPUT_JSON=pt["OUTPUT_JSON"], FREQUENCY=100,
-                                                         STORM=5, STEP_MIN=60, OUTPUT_RAIN=os.path.join(out, "j.rain")))
+                                                         STORM=9, STEP_MIN=60, OUTPUT_RAIN=os.path.join(out, "j.rain")))
         self.assertAlmostEqual(r_js["TOTAL_MM"], r["TOTAL_MM"], places=3)
         self.assertEqual(_slurp(os.path.join(out, "j.rain")).splitlines()[1:], lines[1:])
         # rescale to an Atlas 14 grid at a point, hours, SIM_TIME and a factor raster

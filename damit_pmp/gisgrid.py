@@ -43,7 +43,7 @@ DUR_CODES = {"5-min": "05m", "10-min": "10m", "15-min": "15m", "30-min": "30m", 
              "3-hr": "03h", "6-hr": "06h", "12-hr": "12h", "24-hr": "24h", "2-day": "48h", "3-day": "03d",
              "4-day": "04d", "7-day": "07d", "10-day": "10d", "20-day": "20d", "30-day": "30d", "45-day": "45d",
              "60-day": "60d"}
-DURATION_LABELS = [d for d, _ in A.DURATIONS]
+DURATION_LABELS = A.DURATION_LABELS                  # the one shared list (atlas14.py)
 assert set(DUR_CODES) == set(DURATION_LABELS)
 BOUNDS = (("estimate", "a"), ("lower90", "al"), ("upper90", "au"))
 # (code, Atlas 14 volume, name). 'auto' is not here: the region comes from the point.

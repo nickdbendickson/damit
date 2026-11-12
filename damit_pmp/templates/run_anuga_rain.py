@@ -17,7 +17,8 @@ job has a finer DEM, at the vertices (the worker's sample_fine), and make_outer_
 runner's worker only has a breach inlet; the rain is an anuga.Rate_operator on the whole mesh whose rate (m/s)
 is the series in the job times the optional per-triangle factor.
 
---steps and --run also report the water balance (anuga_rain_run.json "balance", anuga_rain_timeseries.csv): the
+--steps and --run also report the water balance (--steps: anuga_rain_steps.json and anuga_rain_steps_timeseries.csv,
+--run: anuga_rain_run.json and anuga_rain_timeseries.csv; --dry: anuga_rain_dry_check.json; no mode overwrites another): the
 exact rain volume put on the mesh, the water stored, the outflow through the outer boundary (ANUGA's boundary
 flux integral), the residual, the maximum depth and the wet area (depth over 5 cm / 30 cm at any time).
 """
@@ -216,14 +217,15 @@ def main(argv):
                 "wet_area_km2_depth_over_5cm_at_max": float(areas[hmax > 0.05].sum() / 1e6),
                 "wet_area_km2_depth_over_30cm_at_max": float(areas[hmax > 0.30].sum() / 1e6),
                 "wet_triangles_over_5cm": int((hmax > 0.05).sum())}
-            np.savetxt(os.path.join(HERE, "anuga_rain_timeseries.csv"), np.array(series), delimiter=",",
+            np.savetxt(os.path.join(HERE, "anuga_rain_timeseries.csv" if mode_run else "anuga_rain_steps_timeseries.csv"), np.array(series), delimiter=",",
                        header="t_s,rain_in_m3,stored_m3,boundary_flux_integral_m3,rate_operator_m3,max_depth_m,wet_area_m2",
                        comments="")
         if mode_run:
             np.savez(os.path.join(HERE, "anuga_rain_result.npz"), hmax_m=hmax,
                      centroids=np.asarray(domain.centroid_coordinates) + np.array([x_ref, y_ref]))
     rec["wall_s"] = round(time.time() - t_wall, 2)
-    out = os.path.join(HERE, "anuga_rain_run.json" if (mode_run or steps > 0) else "anuga_rain_dry_check.json")
+    out = os.path.join(HERE, "anuga_rain_run.json" if mode_run else "anuga_rain_steps.json" if steps > 0
+                       else "anuga_rain_dry_check.json")           # each mode has its own file: none overwrites another
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(rec, fh, indent=2, sort_keys=True)
     print("DAMIT_PMP_ANUGA " + ("RUN" if mode_run else "STEPS {}".format(steps) if steps else "DRY")

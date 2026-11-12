@@ -659,13 +659,13 @@ Outputs: `OUTPUT_JSON`, `MEAN`
 
 Group: NOAA Atlas 14
 
-Builds a design hyetograph by the alternating block method from the Atlas 14 depth-duration curve (JSON from damit_pmp:pointpf / :basinpf): storm total = the Atlas 14 depth for the storm duration at the chosen frequency; sub-durations are log-log interpolated between published Atlas 14 durations. Any of the 10 Atlas 14 frequencies and the 11 durations from 1 hour to 10 days can be chosen. Not an Atlas 14 temporal distribution. Feed the CSV to damit_pmp:raingrid for LISFLOOD-FP / ANUGA rain-on-grid files. Source: NOAA Atlas 14 only (NOAA/NWS Precipitation Frequency Data Server, https://hdsc.nws.noaa.gov/pfds/). Atlas 14 gives precipitation-frequency estimates up to the 1000-year ARI; it is not a PMP study, and DamIT PMP uses no other precipitation source. A location outside Atlas 14 coverage fails with a message.
+Builds a design hyetograph by the alternating block method from the Atlas 14 depth-duration curve (JSON from damit_pmp:pointpf / :basinpf): storm total = the Atlas 14 depth for the storm duration at the chosen frequency; sub-durations are log-log interpolated between published Atlas 14 durations. Any of the 10 Atlas 14 frequencies and any of the 19 Atlas 14 durations can be chosen (STORM uses the same list and indices as DURATION in fetchgrid / gridbasin); a storm shorter than the time step, or not a whole number of steps, stops with a message saying which STEP_MIN to use. Not an Atlas 14 temporal distribution. Feed the CSV to damit_pmp:raingrid for LISFLOOD-FP / ANUGA rain-on-grid files. Source: NOAA Atlas 14 only (NOAA/NWS Precipitation Frequency Data Server, https://hdsc.nws.noaa.gov/pfds/). Atlas 14 gives precipitation-frequency estimates up to the 1000-year ARI; it is not a PMP study, and DamIT PMP uses no other precipitation source. A location outside Atlas 14 coverage fails with a message.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
 | `INPUT_JSON` | Atlas 14 estimates (JSON from pointpf / basinpf) | file | - | - |
 | `FREQUENCY` | Frequency in years (ARI for PDS: 1, 2, 5, 10, 25, 50, 100, 200, 500, 1000; 1/AEP for AMS: 2 ... 1000) | number | 100 | - |
-| `STORM` | Storm duration (Atlas 14 durations, 1 hour - 10 days) | enum | 5 | options: 0=60-min; 1=2-hr; 2=3-hr; 3=6-hr; 4=12-hr; 5=24-hr; 6=2-day; 7=3-day; 8=4-day; 9=7-day; 10=10-day |
+| `STORM` | Storm duration (the 19 Atlas 14 durations, same list and indices as DURATION in fetchgrid) | enum | 9 | options: 0=5-min; 1=10-min; 2=15-min; 3=30-min; 4=60-min; 5=2-hr; 6=3-hr; 7=6-hr; 8=12-hr; 9=24-hr; 10=2-day; 11=3-day; 12=4-day; 13=7-day; 14=10-day; 15=20-day; 16=30-day; 17=45-day; 18=60-day |
 | `STEP_MIN` | Time step (minutes) | number | 60 | - |
 | `OUTPUT_CSV` | Hyetograph (CSV) | fileDestination | - | - |
 
@@ -701,7 +701,7 @@ Writes the design storm as rain-on-grid input: (a) a LISFLOOD-FP .rain file (spa
 | `INPUT_CSV` | Hyetograph (CSV from damit_pmp:hyetograph; empty = build one from the JSON below) | file | - | optional |
 | `INPUT_JSON` | Atlas 14 estimates (JSON from pointpf / basinpf; used when no hyetograph CSV is given) | file | - | optional |
 | `FREQUENCY` | Frequency in years (ARI for PDS: 1, 2, 5, 10, 25, 50, 100, 200, 500, 1000; 1/AEP for AMS: 2 ... 1000) (JSON route) | number | 100 | - |
-| `STORM` | Storm duration (JSON route) | enum | 5 | options: 0=60-min; 1=2-hr; 2=3-hr; 3=6-hr; 4=12-hr; 5=24-hr; 6=2-day; 7=3-day; 8=4-day; 9=7-day; 10=10-day |
+| `STORM` | Storm duration (JSON route; the 19 Atlas 14 durations, same indices as DURATION in fetchgrid) | enum | 9 | options: 0=5-min; 1=10-min; 2=15-min; 3=30-min; 4=60-min; 5=2-hr; 6=3-hr; 7=6-hr; 8=12-hr; 9=24-hr; 10=2-day; 11=3-day; 12=4-day; 13=7-day; 14=10-day; 15=20-day; 16=30-day; 17=45-day; 18=60-day |
 | `STEP_MIN` | Time step (minutes; JSON route) | number | 60 | - |
 | `SCALE_GRID` | Rescale the storm to this Atlas 14 grid (same frequency and duration) | raster | - | optional |
 | `SCALE_BASIN` | ... mean over this basin (polygons) | source | - | optional |

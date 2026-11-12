@@ -333,7 +333,8 @@ class RealMesherAndDryCheck(unittest.TestCase):
         # rain put on the mesh equals the exact series volume and the balance closes
         cp = launch.run_script(ANUGA_PY, os.path.join(d, "run_anuga_rain.py"), ["--steps", "2"], timeout_s=600)
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
-        run = json.load(open(os.path.join(d, "anuga_rain_run.json")))
+        run = json.load(open(os.path.join(d, "anuga_rain_steps.json")))
+        self.assertTrue(os.path.exists(os.path.join(d, "anuga_rain_dry_check.json")))      # not overwritten by --steps
         self.assertEqual(run["evolved_steps"], 2)
         b = run["balance"]
         self.assertAlmostEqual(b["time_s"], 600.0)

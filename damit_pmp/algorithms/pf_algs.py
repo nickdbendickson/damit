@@ -235,7 +235,9 @@ class BasinPF(_Base):
         return out
 
 
-STORM = [d for d, m in A.DURATIONS if 60 <= m <= 14400]       # 1 hour - 10 days
+# one list for every duration choice (atlas14.DURATION_LABELS): STORM index i is DURATION index i, in every tool
+DURATION_LABELS = A.DURATION_LABELS
+STORM = DURATION_LABELS
 
 
 class Hyetograph(_Base):
@@ -249,7 +251,7 @@ class Hyetograph(_Base):
         return ("Builds a design hyetograph by the alternating block method from the Atlas 14 depth-duration curve "
                 "(JSON from damit_pmp:pointpf / :basinpf): storm total = the Atlas 14 depth for the storm duration "
                 "at the chosen frequency; sub-durations are log-log interpolated between published Atlas 14 "
-                "durations. Any of the 10 Atlas 14 frequencies and the 11 durations from 1 hour to 10 days can be chosen. "
+                "durations. Any of the 10 Atlas 14 frequencies and any of the 19 Atlas 14 durations can be chosen (STORM uses the same list and indices as DURATION in fetchgrid / gridbasin); a storm shorter than the time step, or not a whole number of steps, stops with a message saying which STEP_MIN to use. "
                 "Not an Atlas 14 temporal distribution. Feed the CSV to damit_pmp:raingrid for LISFLOOD-FP / ANUGA "
                 "rain-on-grid files. " + NOTE)
 
@@ -258,8 +260,8 @@ class Hyetograph(_Base):
                                                      extension="json"))
         self.addParameter(QgsProcessingParameterNumber("FREQUENCY", FREQ_HELP,
                                                        INTEGER, defaultValue=100, minValue=1, maxValue=1000))
-        self.addParameter(QgsProcessingParameterEnum("STORM", "Storm duration (Atlas 14 durations, 1 hour - 10 days)", STORM,
-                                                     defaultValue=STORM.index("24-hr")))
+        self.addParameter(QgsProcessingParameterEnum("STORM", "Storm duration (the 19 Atlas 14 durations, same list and indices as DURATION in fetchgrid)", STORM,
+                                                     defaultValue=A.DEFAULT_DURATION_INDEX))
         self.addParameter(QgsProcessingParameterNumber("STEP_MIN", "Time step (minutes)", INTEGER, defaultValue=60,
                                                        minValue=5, maxValue=1440))
         self.addParameter(QgsProcessingParameterFileDestination("OUTPUT_CSV", "Hyetograph (CSV)", "CSV files (*.csv)"))
@@ -273,8 +275,10 @@ class Hyetograph(_Base):
             pf = doc["atlas14"]
         except (OSError, ValueError, KeyError) as e:
             raise QgsProcessingException("Not a DamIT PMP Atlas 14 JSON ({}): {}".format(path, e))
-        storm = A.DURATIONS[A.duration_index(STORM[self.parameterAsEnum(P, "STORM", context)])][1]
+        storm_label = STORM[self.parameterAsEnum(P, "STORM", context)]
+        storm = A.duration_minutes(storm_label)
         try:
+            A.check_storm(storm, self.parameterAsInt(P, "STEP_MIN", context), storm_label)
             rows = A.alternating_block(pf, self.parameterAsInt(P, "FREQUENCY", context), storm,
                                        self.parameterAsInt(P, "STEP_MIN", context))
         except A.Atlas14Error as e:
@@ -294,7 +298,6 @@ class Hyetograph(_Base):
 # ---------------------------------------------------------------------------------------------------------
 # Atlas 14 GIS grids
 
-DURATION_LABELS = G.DURATION_LABELS
 
 
 class _GridChoice(_Base):
@@ -310,7 +313,7 @@ class _GridChoice(_Base):
                                            SERIES, defaultValue=0),
                 QgsProcessingParameterNumber("FREQUENCY", FREQ_HELP, INTEGER, defaultValue=100, minValue=1, maxValue=1000),
                 QgsProcessingParameterEnum("DURATION", "Duration (the 19 Atlas 14 durations, 5 minutes - 60 days)",
-                                           DURATION_LABELS, defaultValue=DURATION_LABELS.index("24-hr")),
+                                           DURATION_LABELS, defaultValue=A.DEFAULT_DURATION_INDEX),
                 QgsProcessingParameterEnum("BOUND", "Estimate or 90% confidence bound", BOUND_LABELS, defaultValue=0),
                 QgsProcessingParameterFile("CACHE_DIR", "Download cache folder (empty = DamIT pfds_cache setting or next "
                                            "to the output)", behavior=FOLDER, optional=True),
@@ -593,8 +596,8 @@ class RainGrid(_Base):
                                                      "when no hyetograph CSV is given)", extension="json", optional=True))
         self.addParameter(QgsProcessingParameterNumber("FREQUENCY", FREQ_HELP + " (JSON route)", INTEGER,
                                                        defaultValue=100, minValue=1, maxValue=1000))
-        self.addParameter(QgsProcessingParameterEnum("STORM", "Storm duration (JSON route)", STORM,
-                                                     defaultValue=STORM.index("24-hr")))
+        self.addParameter(QgsProcessingParameterEnum("STORM", "Storm duration (JSON route; the 19 Atlas 14 durations, same indices as DURATION in fetchgrid)", STORM,
+                                                     defaultValue=A.DEFAULT_DURATION_INDEX))
         self.addParameter(QgsProcessingParameterNumber("STEP_MIN", "Time step (minutes; JSON route)", INTEGER,
                                                        defaultValue=60, minValue=5, maxValue=1440))
         self.addParameter(QgsProcessingParameterRasterLayer("SCALE_GRID", "Rescale the storm to this Atlas 14 grid "
@@ -641,9 +644,10 @@ class RainGrid(_Base):
         except (OSError, ValueError, KeyError) as e:
             raise QgsProcessingException("Not a DamIT PMP Atlas 14 JSON ({}): {}".format(js, e))
         storm_label = STORM[self.parameterAsEnum(P, "STORM", context)]
-        storm = A.DURATIONS[A.duration_index(storm_label)][1]
+        storm = A.duration_minutes(storm_label)
         years, step = self.parameterAsInt(P, "FREQUENCY", context), self.parameterAsInt(P, "STEP_MIN", context)
         try:
+            A.check_storm(storm, step, storm_label)
             rows = A.alternating_block(pf, years, storm, step)
         except A.Atlas14Error as e:
             raise QgsProcessingException(str(e))

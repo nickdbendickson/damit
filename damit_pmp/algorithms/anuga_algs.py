@@ -172,7 +172,7 @@ class AnugaRain(_Base):
     # ------------------------------------------------------------------ run
     def processAlgorithm(self, P, context, feedback):  # noqa: N802
         t_start = time.time()
-        out_dir = self.parameterAsString(P, "OUTPUT_DIR", context)
+        out_dir = os.path.abspath(self.parameterAsString(P, "OUTPUT_DIR", context))
         os.makedirs(out_dir, exist_ok=True)
         dem_layer = self.parameterAsRasterLayer(P, "DEM", context)
         if dem_layer is None or dem_layer.crs().isGeographic():
