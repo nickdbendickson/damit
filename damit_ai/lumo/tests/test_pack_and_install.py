@@ -188,6 +188,8 @@ class TestHfGgufFallback(StrictCase):
         super(TestHfGgufFallback, self).setUp()
         if not shutil.which("bash"):
             self.skipTest("no bash")
+        if not shutil.which("curl"):
+            self.skipTest("no curl (the installers need it for the GGUF download; CI installs it)")
         self.root = tempfile.mkdtemp(prefix="lumo_gguf_")
         self.addCleanup(shutil.rmtree, self.root, True)
         self.payload = b"GGUF" + os.urandom(2000)
