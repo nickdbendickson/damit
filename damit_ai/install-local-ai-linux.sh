@@ -14,6 +14,10 @@
 #   ./install-local-ai-linux.sh --watch-model=TAG # the SMALL run-watcher explainer (default qwen3:4b; phi4-mini is the
 #                                                 # alternative); --no-watch-model skips pulling it. lumo (Q&A) keeps the big model.
 #
+# If `ollama pull` fails (a proxy that breaks the registry redirect), the model's official GGUF is fetched from
+# Hugging Face (https_proxy / HF_ENDPOINT honoured), sha256-checked and loaded with `ollama create` under the
+# same tag (qwen3 4b/8b/14b/30b-a3b, phi4-mini, nomic-embed-text). LUMO_NO_HF_FALLBACK=1 turns that off.
+#
 # By default, when Lumo is installed the Lumo knowledge pack (lumo/knowledge) and, if present,
 # the dam-research engine docs are indexed into the RAG so Lumo comes up already knowing the
 # suite's behaviours, findings and tool contracts. Pass --no-index to skip that.
@@ -158,7 +162,52 @@ elif (( RAM_GB >= 16 )); then CHAT_MODEL="qwen3:14b"
 else CHAT_MODEL="qwen3:8b"; fi
 NUM_CTX=16384; (( RAM_GB < 32 )) && NUM_CTX=12288
 ok "RAM ${RAM_GB} GB -> chat model $CHAT_MODEL (num_ctx $NUM_CTX)"
-pull(){ "$OLLAMA" list 2>/dev/null | grep -q "^$1" || { ok "pulling $1 (first time, large)"; "$OLLAMA" pull "$1" || die "pull failed: $1"; }; }
+# >>> hf_gguf_fallback (the same block is in install-local-ai-linux.sh and lumo/setup-local-lumo.sh; a test keeps them equal)
+# `ollama pull` can fail behind a proxy (the registry's manifest / redirect never completes). Fallback: fetch the model's
+# official GGUF from Hugging Face (curl honours https_proxy; HF_ENDPOINT can point at a mirror), check its sha256, write a
+# Modelfile and `ollama create` the SAME tag, then delete the GGUF (Ollama keeps its own copy).
+# LUMO_GGUF_SPEC="repo file sha256 bytes" overrides the table (another quant, or a mirror's file); LUMO_GGUF_DIR = scratch dir.
+hf_gguf_spec(){
+  if [[ -n "${LUMO_GGUF_SPEC:-}" ]]; then echo "$LUMO_GGUF_SPEC"; return 0; fi
+  case "$1" in
+    qwen3:4b)       echo "Qwen/Qwen3-4B-GGUF Qwen3-4B-Q4_K_M.gguf 7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5 2497280256" ;;
+    qwen3:8b)       echo "Qwen/Qwen3-8B-GGUF Qwen3-8B-Q4_K_M.gguf d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785 5027783488" ;;
+    qwen3:14b)      echo "Qwen/Qwen3-14B-GGUF Qwen3-14B-Q4_K_M.gguf 500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0 9001752960" ;;
+    qwen3:30b-a3b)  echo "Qwen/Qwen3-30B-A3B-GGUF Qwen3-30B-A3B-Q4_K_M.gguf 0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5 18556685824" ;;
+    phi4-mini|phi4-mini:*) echo "unsloth/Phi-4-mini-instruct-GGUF Phi-4-mini-instruct-Q4_K_M.gguf 88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a 2491874272" ;;
+    nomic-embed-text|nomic-embed-text:*) echo "nomic-ai/nomic-embed-text-v1.5-GGUF nomic-embed-text-v1.5.f16.gguf f7af6f66802f4df86eda10fe9bbcfc75c39562bed48ef6ace719a251cf1c2fdb 274290560" ;;
+    *) return 1 ;;
+  esac
+}
+hf_gguf_create(){
+  local tag="$1" spec repo file sha size dir url got avail have
+  spec="$(hf_gguf_spec "$tag")" || { warn "no Hugging Face GGUF is known for $tag (set LUMO_GGUF_SPEC=\"repo file sha256 bytes\")"; return 1; }
+  read -r repo file sha size <<< "$spec"
+  if [[ "${LUMO_NO_HF_FALLBACK:-0}" == 1 ]]; then warn "LUMO_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return 1; fi
+  command -v curl >/dev/null 2>&1 || { warn "curl not found: cannot fetch the GGUF for $tag"; return 1; }
+  dir="${LUMO_GGUF_DIR:-${TMPDIR:-/tmp}/lumo-gguf}"; mkdir -p "$dir" || return 1
+  avail=$(df -Pk "$dir" 2>/dev/null | awk 'NR==2{print $4*1024}')
+  if [[ -n "$avail" ]] && (( avail < size + size / 10 )); then
+    warn "not enough free space in $dir for the $((size / 1048576)) MB GGUF (set LUMO_GGUF_DIR to a bigger disk)"; return 1
+  fi
+  url="${HF_ENDPOINT:-https://huggingface.co}/$repo/resolve/main/$file"
+  have=$(wc -c < "$dir/$file" 2>/dev/null || echo 0); have="${have//[[:space:]]/}"
+  if [[ "$have" != "$size" ]]; then
+    ok "ollama pull failed: downloading $file from Hugging Face ($((size / 1048576)) MB)"
+    curl -fL -C - --retry 3 --retry-delay 5 -o "$dir/$file" "$url" || { warn "download failed: $url"; return 1; }
+  fi
+  got="$( (sha256sum "$dir/$file" 2>/dev/null || shasum -a 256 "$dir/$file") | awk '{print $1}')"
+  if [[ "$got" != "$sha" ]]; then warn "sha256 of $file is $got, expected $sha: not used"; rm -f "$dir/$file"; return 1; fi
+  { printf 'FROM %s\n' "$dir/$file"
+    [[ "$tag" == nomic* ]] || printf 'PARAMETER num_ctx 4096\nPARAMETER temperature 0.2\nPARAMETER top_p 0.9\n'; } > "$dir/Modelfile.$$"
+  if ! "$OLLAMA" create "$tag" -f "$dir/Modelfile.$$" >/dev/null; then
+    warn "ollama create $tag failed"; rm -f "$dir/Modelfile.$$"; return 1
+  fi
+  rm -f "$dir/$file" "$dir/Modelfile.$$"
+  ok "created $tag from the Hugging Face GGUF"
+}
+# <<< hf_gguf_fallback
+pull(){ "$OLLAMA" list 2>/dev/null | grep -q "^$1" || { ok "pulling $1 (first time, large)"; "$OLLAMA" pull "$1" || hf_gguf_create "$1" || die "pull failed: $1"; }; }
 
 # ===========================================================================
 if [[ "$DO_LUMO" == 1 ]]; then
@@ -168,7 +217,7 @@ if [[ "$DO_LUMO" == 1 ]]; then
   # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
   case "$WATCH_MODEL" in phi) WATCH_MODEL="phi4-mini" ;; small) WATCH_MODEL="qwen3:4b" ;; esac
   if [[ -n "$WATCH_MODEL" ]]; then
-    "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" \
+    "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" || hf_gguf_create "$WATCH_MODEL" \
       || warn "could not pull the watcher model $WATCH_MODEL (lumo-watch still gives the digest and verdict)"
   fi
   cat > "$LOCAL_AI/Modelfile.lumo" <<EOF

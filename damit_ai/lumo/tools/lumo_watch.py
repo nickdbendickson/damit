@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lumo_watch.py 1.0.0 - Lumo as a DamIT run watcher.
+"""lumo_watch.py 1.1.0 - Lumo as a DamIT run watcher.
 
 How it fits together (the point of this tool):
 
@@ -22,11 +22,25 @@ Commands:
   lumo_watch.py prompt DIGEST_JSON        show the exact prompt and its size (no model call)
   lumo_watch.py system [--write FILE]     the pinned system prompt
 
+  * NEVER SLOWS THE ENGINE. A CPU-only box shares its cores between LISFLOOD-FP and the model (an explanation during a
+    pass made the Runner about 7x slower in a live test). So by default Lumo explains only when LISFLOOD is idle:
+    between passes after a quiet gap, or at the run end; events are queued until then (only the newest is kept), and
+    Ollama is capped to a few threads. The digest and its COMPLETE flag list are written at once either way.
+  * EVERY FLAG IS LISTED. The complete flag list is written by code at the top of lumo_<event>.md; Lumo's comments go
+    under it, one bullet per flag, and any flag Lumo skipped is named in a footer.
+
 Models (env or flags):  LUMO_WATCH_MODEL (default qwen3:4b; 'small' = qwen3:4b, 'phi' = phi4-mini, or any tag)
-  LUMO_WATCH_NUM_CTX (4096; kept between 4096 and 6144)   LUMO_WATCH_NUM_PREDICT (450)
+  LUMO_WATCH_NUM_CTX (4096; kept between 4096 and 6144)   LUMO_WATCH_NUM_PREDICT (600)
   LUMO_WATCH_URL (http://127.0.0.1:11434)   LUMO_WATCH_WAIT_S (5: how long `event` waits for Lumo before returning)
   LUMO_WATCH_FIRST_TOKEN_S (600) and LUMO_WATCH_IDLE_S (180): how long to wait for the FIRST piece (CPU prompt
   evaluation is slow) and between pieces. They only stop the wait; the partial text is kept.
+  LUMO_WATCH_EXPLAIN (idle | end | always | never; default idle): when Lumo may use the CPU.
+      idle   = LISFLOOD idle (no lisflood process, no unfinished pass) and, mid-run, quiet for LUMO_WATCH_IDLE_GAP_S (20 s)
+      end    = only once the run has finished     always = whenever an event fires (old behaviour)    never = no model
+  LUMO_WATCH_QUEUE_WAIT_S (300): after the run ends, how long `watch` keeps waiting for a busy engine before it leaves the
+      explanation queued (it prints the `explain` command to run later)
+  LUMO_WATCH_NUM_THREAD (2; 0 = Ollama's own default): num_thread for the model, so it cannot take every core
+  LUMO_WATCH_NICE (10): nice level of the explain process (POSIX). It does not nice the Ollama server; num_thread does.
 Interactive Q&A is a different model (LUMO_CHAT_MODEL, the `lumo` persona, 30B on a big Mac) and is not touched.
 
 Nothing is written into the run folder: output goes to --out (default ~/local-ai/watch/<dam>_<run>/).
@@ -47,31 +61,32 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import run_digest as RD  # noqa: E402
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 MODEL_ALIASES = {"small": "qwen3:4b", "phi": "phi4-mini", "qwen4b": "qwen3:4b", "default": "qwen3:4b"}
 DEFAULT_MODEL = "qwen3:4b"
 CTX_MIN, CTX_MAX = 4096, 6144
 EVENTS = ("pass_end", "stall", "before_hazard", "after_hazard", "run_end")
+EXPLAIN_MODES = ("idle", "end", "always", "never")
 
 # ----------------------------------------------------------------------------- the pinned system prompt
 # One source of truth: this string. prompts/watcher_system.md is a mirror written by `system --write` and kept
 # in step by a test. Every id and parameter below is checked against ALGORITHM-HELP-DAMIT.md (a test).
-SYSTEM_PROMPT = """You are Lumo, the run watcher for the DamIT dam-breach suite (North Dakota dams). Code has already checked the run and set the verdict; you only explain the flags in plain words. You never change the verdict and you do not decide anything.
+SYSTEM_PROMPT = """You are Lumo, the run watcher for the DamIT dam-breach suite (North Dakota dams). Code has already checked the run, set the verdict and listed every flag; you only explain the flags in plain words. You never change the verdict and you do not decide anything.
 
 Rules you must not contradict (Nick's standing rules):
 - Sunny day: the reservoir starts at the top of dam, which is the DWR max pool. There is NO inflow and NO outlet or spillway flow (outlets empty). The only water is the breach.
 - DWR elevations are NAVD88 only (NGVD29 + VERTCON). An elevation of 0-300 ft is a local datum, not NAVD88.
 - The breach inflow goes in at the lowest ground in the downstream toe band: 5 m out to H x (downstream slope + 1), 3:1 when the slope is not known, never more than 150 m from the dam line. H is the inventory height.
-- Early passes may leak through an edge while the domain grows; the FINAL pass must not.
+- "Edge" flags (EDGE_OUTFLOW_EARLY, EDGE_OUTFLOW_FINAL, EDGE_INFLOW) are about the edge of the MODEL DOMAIN, the border of the computation grid. They are never about the breach or the dam. Early-pass outflow through the model domain edge is EXPECTED while the domain grows. It is not dam leakage, says nothing about the dam being weak, and does not change the breach; only a leaking FINAL pass is a concern.
 - Peak depth and peak velocity are maxima over wet cells (depth of 0.1 ft or more).
 - North Dakota counts the TM-11 judgment zone as Medium. Roads with unknown class or AADT are not scored by DamIT Hazard.
 - BNSF KO subdivision = 15 trains per day (the DamSafety value) for the rail check.
 - Crest minus streambed should equal the inventory height; a mismatch moves the breach size and the toe band.
 
-The real tools (no others exist): damit_screen:handoff, damit_run:rundam, damit:classify (also damit_lite:classify). damit_run:rundam parameters include CELL, MAX_RUNS, DURATION_HR, DURATION_MAX_HR, GRID_REFINE, TIER, METHOD, DS_SLOPE, TOP_FT, BOTTOM_FT, HEIGHT_FT, LISFLOOD_EXE, FORCE_ANUGA, DEM, DEM_Z, DAMS_FOLDER, OUTPUT_FOLDER. damit:classify takes RAIL_TRAINS_LOOKUP. To turn the automatic 10 m refine off use --GRID_REFINE=0. Never invent a tool, switch or number: if something is not in the digest, say UNSURE.
+The real tools (no others exist): damit_screen:handoff, damit_run:rundam, damit:classify (also damit_lite:classify). damit_run:rundam parameters include CELL, MAX_RUNS, DURATION_HR, DURATION_MAX_HR, GRID_REFINE, TIER, METHOD, DS_SLOPE, TOP_FT, BOTTOM_FT, HEIGHT_FT, LISFLOOD_EXE, FORCE_ANUGA, DEM, DEM_Z, DAMS_FOLDER, OUTPUT_FOLDER. damit:classify takes RAIL_TRAINS_LOOKUP. To turn the automatic 10 m refine off use --GRID_REFINE=0. Never invent a tool, switch, number or flag id: the only flag ids are the ones in the FLAGS list. If something is not in the digest, say UNSURE.
 
-Answer in at most 6 short bullets: for each WATCH or PROBLEM flag say what it means for this run and what to check. Use only the numbers in the digest. Finish with the line "Verdict: <the verdict you were given>"."""
+Write ONE short bullet (at most 30 words) for EVERY WATCH or PROBLEM flag in the FLAGS list, in the same order, each starting with its flag id, then what it means for this run and what to check. Do not stop early and do not merge or skip flags. Use only the numbers in the digest. Finish with the line "Verdict: <the verdict you were given>"."""
 
 
 def system_prompt():
@@ -91,12 +106,32 @@ def clamp_ctx(n):
     return max(CTX_MIN, min(CTX_MAX, n))
 
 
+def _int(v, default):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _float(v, default):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def settings(model=None, num_ctx=None, num_predict=None):
     env = os.environ.get
     return {
         "model": resolve_model(model),
         "num_ctx": clamp_ctx(num_ctx or env("LUMO_WATCH_NUM_CTX") or CTX_MIN),
-        "num_predict": int(num_predict or env("LUMO_WATCH_NUM_PREDICT") or 450),
+        "num_predict": int(num_predict or env("LUMO_WATCH_NUM_PREDICT") or 600),
+        "num_thread": max(0, _int(env("LUMO_WATCH_NUM_THREAD"), 2)),
+        "explain": (env("LUMO_WATCH_EXPLAIN") or "idle").strip().lower() if (
+            (env("LUMO_WATCH_EXPLAIN") or "idle").strip().lower() in EXPLAIN_MODES) else "idle",
+        "idle_gap_s": max(0.0, _float(env("LUMO_WATCH_IDLE_GAP_S"), 20.0)),
+        "queue_wait_s": max(0.0, _float(env("LUMO_WATCH_QUEUE_WAIT_S"), 300.0)),
+        "nice": max(0, _int(env("LUMO_WATCH_NICE"), 10)),
         "url": env("LUMO_WATCH_URL", "http://127.0.0.1:11434"),
         "first_token_s": float(env("LUMO_WATCH_FIRST_TOKEN_S", "600")),
         "idle_s": float(env("LUMO_WATCH_IDLE_S", "180")),
@@ -110,38 +145,49 @@ def est_tokens(text):
     return int(len(text) / 3.5) + 1
 
 
-def flag_lines(digest, include_info=False):
+def flag_hint(f, n=None):
+    """The receptor ids a flag carries (first 10 and a count), so the commentary can name them (e.g. 104270538)."""
+    return RD.flag_ids_text(f, n)
+
+
+def flag_lines(digest, include_info=False, title_chars=None, hints=True, hint_n=None):
+    """EVERY WATCH/PROBLEM flag, one line each (INFO notes only with include_info). Nothing is dropped."""
     out = []
-    for f in sorted(digest["flags"], key=lambda x: -RD._RANK.get(x["severity"], 0)):
+    for f in sorted(digest["flags"], key=RD.flag_sort_key):
         if f["severity"] == RD.INFO and not include_info:
             continue
-        out.append("%s | %s | %s | %s" % (f["severity"], f["id"], f["where"], f["title"]))
+        title = f["title"] if not title_chars else f["title"][:title_chars]
+        hint = flag_hint(f, hint_n) if hints else ""
+        out.append("%s | %s | %s | %s%s" % (f["severity"], f["id"], f["where"], title, (" | " + hint) if hint else ""))
     return out
 
 
 def build_user_prompt(digest, event=None, max_tokens=1000):
     """The user message: the event, the verdict code already set, the digest text and the flag list.
-    Trimmed to max_tokens (system prompt not counted) by dropping the per-pass table, then the details."""
+    Trimmed to max_tokens (system prompt not counted) by dropping the per-pass table, the digest's flag bullets and
+    then shortening the titles. EVERY WATCH/PROBLEM flag stays in the list: Lumo is asked for one bullet each."""
     verdict = digest["verdict"]
-    flags = flag_lines(digest)
+    nflags = len([f for f in digest["flags"] if f["severity"] != RD.INFO])
     head = "EVENT: %s\nVERDICT (set by code, do not change): %s\n" % (event or digest.get("phase"), verdict)
-    task = "\nExplain the WATCH/PROBLEM flags. End with: Verdict: %s" % verdict
+    task = "\nWrite one bullet for each of the %d flag(s) above, in order, each starting with its flag id. End with: Verdict: %s" % (
+        nflags, verdict)
     lines = digest["text"].splitlines()
 
     def make(ls, fls):
         return head + "\nDIGEST\n" + "\n".join(ls) + "\n\nFLAGS (severity | id | where | title)\n" + (
             "\n".join(fls) if fls else "none") + task
 
-    text = make(lines, flags)
+    text = make(lines, flag_lines(digest))
     if est_tokens(text) > max_tokens:       # 1: drop the pass table rows
         lines = [l for l in lines if not re.match(r"^\s+\d+ \|", l)]
-        text = make(lines, flags)
+        text = make(lines, flag_lines(digest))
     if est_tokens(text) > max_tokens:       # 2: the digest's own flag bullets repeat the FLAGS list
         lines = [l for l in lines if not l.startswith("- ")]
-        text = make(lines, flags)
-    while est_tokens(text) > max_tokens and len(flags) > 3:     # 3: the shortest list that still has the top flags
-        flags = flags[:-1]
-        text = make(lines, flags)
+        text = make(lines, flag_lines(digest))
+    for chars in (140, 100, 70):            # 3: shorter titles, then fewer id hints; never fewer flags
+        if est_tokens(text) <= max_tokens:
+            break
+        text = make(lines, flag_lines(digest, title_chars=chars, hints=True, hint_n=10 if chars > 100 else 3))
     return text
 
 
@@ -153,13 +199,34 @@ def build_messages(digest, event=None, max_tokens=1000):
 # ----------------------------------------------------------------------------- Ollama: /api/chat, streamed
 def chat_payload(messages, cfg, think=False):
     """The /api/chat request: think:false (a Qwen3 model otherwise spends the whole budget thinking and /no_think
-    on /api/generate does not stop it), stream:true, a 4-6k context, a short reply."""
+    on /api/generate does not stop it), stream:true, a 4-6k context, a short reply, a capped thread count."""
     p = {"model": cfg["model"], "messages": messages, "stream": True,
          "options": {"num_ctx": cfg["num_ctx"], "num_predict": cfg["num_predict"], "temperature": 0.2, "top_p": 0.9},
          "keep_alive": "30m"}
+    if cfg.get("num_thread"):                   # cap the CPU threads so the model cannot take every core from LISFLOOD
+        p["options"]["num_thread"] = int(cfg["num_thread"])
     if think is not None:
         p["think"] = bool(think)
     return p
+
+
+# Every field Ollama puts on the final streamed object (durations are nanoseconds).
+OLLAMA_FIELDS = ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration", "eval_count",
+                 "eval_duration", "done_reason")
+
+
+def timing_summary(st):
+    """Seconds and tokens/s derived from Ollama's own counters (no estimate): load, prompt evaluation, generation."""
+    out = {}
+    for k, name in (("load_duration", "load_s"), ("prompt_eval_duration", "prompt_eval_s"), ("eval_duration", "eval_s"),
+                    ("total_duration", "total_s")):
+        if st.get(k) is not None:
+            out[name] = round(st[k] / 1e9, 3)
+    if st.get("prompt_eval_count") and st.get("prompt_eval_duration"):
+        out["prompt_tok_per_s"] = round(st["prompt_eval_count"] / (st["prompt_eval_duration"] / 1e9), 2)
+    if st.get("eval_count") and st.get("eval_duration"):
+        out["eval_tok_per_s"] = round(st["eval_count"] / (st["eval_duration"] / 1e9), 2)
+    return out
 
 
 def _write_status(path, st):
@@ -177,11 +244,13 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
 
     There is NO total timeout that throws the answer away: first_token_s and idle_s only stop the WAIT, and
     whatever has streamed is already on disk. Returns the status dict (also written to status_path):
-    status = done | partial | unavailable | error, text, chars, pieces, elapsed_s, eval counts when Ollama sent them.
+    status = done | partial | timeout | unavailable | error, text, chars, pieces, elapsed_s, eval counts when Ollama sent them.
     A model without thinking support answers 400 to think:false; that case is retried once without the field."""
     t0 = time.time()
     st = {"status": "starting", "model": payload.get("model"), "chars": 0, "pieces": 0, "started": t0,
-          "think": payload.get("think"), "elapsed_s": 0.0, "error": None}
+          "think": payload.get("think"), "elapsed_s": 0.0, "error": None, "thinking_chars": 0,
+          "thinking_despite_think_false": False, "first_piece_s": None, "first_byte_wait_s": first_token_s}
+    think_out = [None]                           # <out>.thinking.txt, opened only if thinking tokens arrive
     u = urlparse(url)
     text_parts = []
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -191,6 +260,7 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
         out.flush()
     _write_status(status_path, st)
     last_status = [t0]
+    conns = []
 
     def fin(status, err=None):
         st.update(status=status, error=err, elapsed_s=round(time.time() - t0, 2), text="".join(text_parts))
@@ -199,12 +269,23 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
             out.close()
         except OSError:
             pass
+        if think_out[0] is not None:
+            try:
+                think_out[0].close()
+            except OSError:
+                pass
+        for c in conns:                          # no socket is left to the garbage collector (ResourceWarning)
+            try:
+                c.close()
+            except OSError:
+                pass
         _write_status(status_path, {k: v for k, v in st.items() if k != "text"})
         return st
 
     def request(body):
         conn = (connect or (lambda h, p, t: http.client.HTTPConnection(h, p, timeout=t)))(
-            u.hostname, u.port or 80, first_token_s)
+            u.hostname, u.port or 80, first_token_s if first_token_s and first_token_s > 0 else None)
+        conns.append(conn)
         conn.request("POST", "/api/chat", body=json.dumps(body).encode("utf-8"),
                      headers={"Content-Type": "application/json"})
         return conn, conn.getresponse()
@@ -230,6 +311,10 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
             try:
                 line = resp.readline()
             except (OSError, http.client.HTTPException) as e:        # socket.timeout is an OSError
+                if first and not text_parts:
+                    return fin("timeout", "Ollama sent nothing for %.0f s (it may be busy with another job, or loading the "
+                               "model): this is a wait that ran out, not a partial answer. The digest stands; raise "
+                               "LUMO_WATCH_FIRST_TOKEN_S (0 = wait without limit) or ask again later (%s)" % (first_token_s, e))
                 return fin("partial" if text_parts else "error", "no data for %.0f s (%s); partial text kept" % (
                     first_token_s if first else idle_s, e))
             if not line:
@@ -237,7 +322,7 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
             if first:
                 first = False
                 try:
-                    conn.sock.settimeout(idle_s)
+                    conn.sock.settimeout(idle_s if idle_s and idle_s > 0 else None)
                 except (AttributeError, OSError):
                     pass
             try:
@@ -246,8 +331,19 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
                 continue
             if obj.get("error"):
                 return fin("error", str(obj["error"])[:300])
-            piece = (obj.get("message") or {}).get("content") or ""
+            msg = obj.get("message") or {}
+            think_piece = msg.get("thinking") or ""
+            if think_piece:                      # think:false should stop these; when they come anyway, keep and flag them
+                if think_out[0] is None:
+                    think_out[0] = open(out_path + ".thinking.txt", "w", encoding="utf-8")
+                think_out[0].write(think_piece)
+                think_out[0].flush()
+                st["thinking_chars"] += len(think_piece)
+                st["thinking_despite_think_false"] = payload.get("think") is False
+            piece = msg.get("content") or ""
             if piece:
+                if st["first_piece_s"] is None:
+                    st["first_piece_s"] = round(time.time() - t0, 2)
                 text_parts.append(piece)
                 out.write(piece)
                 out.flush()
@@ -258,11 +354,21 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
                     st["elapsed_s"] = round(time.time() - t0, 2)
                     _write_status(status_path, st)
             if obj.get("done"):
-                for k in ("prompt_eval_count", "eval_count", "total_duration", "eval_duration", "done_reason"):
+                for k in OLLAMA_FIELDS:
                     if k in obj:
                         st[k] = obj[k]
-                return fin("done")
+                st.update(timing_summary(st))
+                if st["thinking_despite_think_false"]:
+                    st["error"] = ("thinking tokens arrived although think:false was sent (%d chars, kept in %s); the "
+                                   "answer text is unaffected" % (st["thinking_chars"], os.path.basename(out_path) + ".thinking.txt"))
+                return fin("done", st["error"])
         return fin("partial" if text_parts else "error", "the stream ended before 'done'")
+    except TimeoutError as e:                   # no reply headers yet: Ollama is queued behind another job or loading the model
+        if text_parts:
+            return fin("partial", "no data for %.0f s (%s); partial text kept" % (idle_s, e))
+        return fin("timeout", "Ollama sent nothing for %.0f s (it may be busy with another job, or loading the model): "
+                   "this is a wait that ran out, not a partial answer. The digest stands; raise LUMO_WATCH_FIRST_TOKEN_S "
+                   "(0 = wait without limit) or ask again later (%s)" % (first_token_s, e))
     except (ConnectionRefusedError, ConnectionResetError) as e:
         return fin("unavailable", "Ollama is not reachable at %s (%s): the digest and verdict stand without Lumo" % (url, e))
     except OSError as e:
@@ -298,6 +404,8 @@ def write_digest(out_dir, digest, event, pass_no=None):
     os.replace(tmp, jp)
     with open(os.path.join(out_dir, "digest_%s.txt" % tag), "w", encoding="utf-8") as f:
         f.write(digest["text"] + "\n")
+        if "more flag(s)" in digest["text"]:        # the 40-line summary cut some bullets: the file still lists every flag
+            f.write("\n" + (digest.get("flags_text") or RD.render_flag_list(digest)) + "\n")
     with open(os.path.join(out_dir, "latest_verdict.json"), "w", encoding="utf-8") as f:
         json.dump({"event": event, "pass": pass_no, "verdict": digest["verdict"],
                    "flags": [x["id"] for x in digest["flags"] if x["severity"] != RD.INFO],
@@ -316,15 +424,47 @@ def _pid_alive(pid):
 def lumo_busy(out_dir):
     p = os.path.join(out_dir, "lumo.busy")
     try:
-        pid = int(open(p).read().strip())
+        with open(p, encoding="utf-8") as f:
+            pid = int(f.read().strip())
     except (OSError, ValueError):
         return False
     return _pid_alive(pid)
 
 
+def flag_coverage(text, digest):
+    """(covered, missing): which WATCH/PROBLEM flag ids the commentary mentions (by id, or id with spaces)."""
+    low = (text or "").lower()
+    ids = []
+    for f in sorted(digest["flags"], key=RD.flag_sort_key):
+        if f["severity"] != RD.INFO and f["id"] not in ids:
+            ids.append(f["id"])
+    hit = [i for i in ids if i.lower() in low or i.lower().replace("_", " ") in low]
+    return hit, [i for i in ids if i not in hit]
+
+
+def invented_ids(text):
+    """FLAG-LIKE ids (UPPER_CASE_WITH_UNDERSCORE) in Lumo's text that are neither one of the digest's flag ids nor a
+    parameter / tool name from the pinned prompt (a small model once invented WITHIN_BREACH)."""
+    known = set(RD.KNOWN_FLAG_IDS) | set(re.findall(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b", SYSTEM_PROMPT))
+    known |= {"LUMO_WATCH_MODEL", "NO_RUN_FILES"}
+    found = []
+    for m in re.finditer(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b", text or ""):
+        if m.group(0) not in known and m.group(0) not in found:
+            found.append(m.group(0))
+    return found
+
+
+def explain_header(digest, cfg, tag):
+    """Written by code before the first model token: the complete flag list, then the heading Lumo's text goes under."""
+    flags_text = digest.get("flags_text") or RD.render_flag_list(digest)
+    return ("<!-- Lumo (%s) comments on the code's verdict %s for %s; it does not set or change it. The flag list below "
+            "is written by code and is complete. -->\n%s\n\n## Lumo's comments (model %s, one bullet per flag)\n" % (
+                cfg["model"], digest["verdict"], tag, flags_text, cfg["model"]))
+
+
 def explain(digest_path, cfg=None, out_path=None, connect=None, max_tokens=1000):
-    """Ask Lumo to explain a saved digest. Writes lumo_<tag>.md (streaming) and lumo_<tag>.status.json next to it.
-    Never raises, never alters the digest or its verdict."""
+    """Ask Lumo to comment on a saved digest. Writes lumo_<tag>.md (the complete flag list, written by code, then
+    Lumo's streamed bullets) and lumo_<tag>.status.json next to it. Never raises, never alters the digest or verdict."""
     cfg = cfg or settings()
     with open(digest_path, encoding="utf-8") as f:
         digest = json.load(f)
@@ -335,10 +475,9 @@ def explain(digest_path, cfg=None, out_path=None, connect=None, max_tokens=1000)
     status_path = out_path[:-3] + ".status.json" if out_path.endswith(".md") else out_path + ".status.json"
     msgs = build_messages(digest, event, max_tokens)
     payload = chat_payload(msgs, cfg, think=False)
-    header = "<!-- Lumo (%s) explains the code's verdict %s for %s; it does not set or change it. -->\n" % (
-        cfg["model"], digest["verdict"], tag)
+    header = explain_header(digest, cfg, tag)
     lock = os.path.join(d, "lumo.busy")
-    with open(lock, "w") as f:
+    with open(lock, "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
     try:
         st = stream_chat(payload, cfg["url"], out_path, status_path, cfg["first_token_s"], cfg["idle_s"],
@@ -348,41 +487,197 @@ def explain(digest_path, cfg=None, out_path=None, connect=None, max_tokens=1000)
             os.remove(lock)
         except OSError:
             pass
-    st["prompt_tokens_est"] = est_tokens(msgs[0]["content"] + msgs[1]["content"])
+    covered, missing = flag_coverage(st.get("text"), digest)
+    bogus = invented_ids(st.get("text"))
+    if missing or bogus:                         # say so, deterministically (the list above has every real flag)
+        with open(out_path, "a", encoding="utf-8") as f:
+            f.write("\n\n---\n")
+            if missing:
+                f.write("Not commented on by Lumo (%s): %s. They are in the complete flag list above.\n" % (
+                    st.get("status"), ", ".join(missing)))
+            if bogus:
+                f.write("Lumo named ids that are not flags of this run: %s. Ignore them; the list above is the truth.\n" % (
+                    ", ".join(bogus)))
+    st.update(prompt_tokens_est=est_tokens(msgs[0]["content"] + msgs[1]["content"]), flags_total=len(covered) + len(missing),
+              flags_covered=covered, flags_missing=missing, invented_ids=bogus, num_thread=cfg.get("num_thread"), num_ctx=cfg["num_ctx"],
+              explain_mode=cfg.get("explain"))
+    _write_status(status_path, {k: v for k, v in st.items() if k != "text"})
     return st
 
 
+def _explain_env(cfg):
+    return dict(os.environ, LUMO_WATCH_MODEL=cfg["model"], LUMO_WATCH_NUM_CTX=str(cfg["num_ctx"]),
+                LUMO_WATCH_URL=cfg["url"], LUMO_WATCH_NUM_THREAD=str(cfg.get("num_thread", 2)),
+                LUMO_WATCH_NUM_PREDICT=str(cfg["num_predict"]), LUMO_WATCH_FIRST_TOKEN_S=str(cfg["first_token_s"]),
+                LUMO_WATCH_IDLE_S=str(cfg["idle_s"]))
+
+
+_CHILDREN = []          # explain processes this watcher started; kept so they are reaped, never "still running" on gc
+
+
+def reap_children(wait_s=0.0):
+    """Collect finished explain processes (poll). Returns how many are still running after waiting up to wait_s."""
+    t0 = time.time()
+    while True:
+        _CHILDREN[:] = [c for c in _CHILDREN if getattr(c, "poll", lambda: 0)() is None]
+        if not _CHILDREN or time.time() - t0 >= wait_s:
+            return len(_CHILDREN)
+        time.sleep(0.05)
+
+
 def spawn_explain(digest_path, cfg):
-    """Start the explanation in a detached process: the watcher never waits on it. Returns the Popen."""
-    env = dict(os.environ, LUMO_WATCH_MODEL=cfg["model"], LUMO_WATCH_NUM_CTX=str(cfg["num_ctx"]),
-               LUMO_WATCH_URL=cfg["url"])
+    """Start the explanation in a detached, niced process: the watcher never waits on it. Returns the Popen."""
     cmd = [sys.executable, os.path.abspath(__file__), "explain", digest_path]
-    kw = {"start_new_session": True} if os.name != "nt" else {}
-    log = open(digest_path[:-5] + ".lumo.log", "w")
-    return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env, **kw)
+    kw = {}
+    if os.name != "nt":
+        kw["start_new_session"] = True
+        n = int(cfg.get("nice") or 0)
+        if n > 0:
+            kw["preexec_fn"] = lambda: os.nice(n)
+    with open(digest_path[:-5] + ".lumo.log", "w", encoding="utf-8") as log:       # the child keeps its own copy
+        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                env=_explain_env(cfg), **kw)
+    _CHILDREN.append(proc)
+    return proc
+
+
+def _read_status(status_path):
+    try:
+        with open(status_path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def wait_for_lumo(status_path, wait_s):
     """Wait up to wait_s for the explanation to finish; then give up WITHOUT killing it (it keeps streaming to disk)."""
     t0 = time.time()
     while time.time() - t0 < wait_s:
-        try:
-            st = json.load(open(status_path))
-            if st.get("status") in ("done", "partial", "unavailable", "error"):
-                return st
-        except (OSError, ValueError):
-            pass
+        st = _read_status(status_path)
+        if st and st.get("status") in ("done", "partial", "unavailable", "error", "timeout"):
+            return st
         time.sleep(0.2)
+    return _read_status(status_path) or {"status": "pending"}
+
+
+# ----------------------------------------------------------------------------- when may Lumo use the CPU?
+def _lisflood_process_running():
+    """True when a lisflood process is alive on this machine (any run: they share the CPU). None when it cannot be
+    told (then only the run folder's files decide)."""
+    if os.environ.get("LUMO_WATCH_PROC_SCAN", "1") == "0":
+        return None
     try:
-        return json.load(open(status_path))
-    except (OSError, ValueError):
-        return {"status": "pending"}
+        if os.path.isdir("/proc/self"):                              # Linux
+            for pid in os.listdir("/proc"):
+                if pid.isdigit():
+                    try:
+                        with open("/proc/%s/comm" % pid, encoding="utf-8", errors="replace") as f:
+                            if f.read().strip().lower().startswith("lisflood"):
+                                return True
+                    except OSError:
+                        continue
+            return False
+        if os.name == "nt":
+            out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10).stdout
+        else:                                                         # macOS / BSD
+            out = subprocess.run(["ps", "-A", "-o", "comm="], capture_output=True, text=True, timeout=10).stdout
+        return any(os.path.basename(l.strip()).lower().startswith("lisflood") for l in out.splitlines())
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def engine_state(run_dir, cfg=None, now=None, proc=None):
+    """Is LISFLOOD (the Runner's engine) working? {idle: bool, reason, finished}. Pure file inspection plus a process
+    look (proc=True/False/None overrides the look, for tests). Idle means: no lisflood process, the latest pass is
+    finished, and mid-run the last pass ended at least idle_gap_s ago with no new pass (a real pause between passes);
+    a finished run is idle at once."""
+    cfg = cfg or settings()
+    now = now if now is not None else time.time()
+    setup = RD._load_json(os.path.join(run_dir, "run_setup.json")) or {}
+    finished = os.path.exists(os.path.join(run_dir, "run_report.json")) or (
+        setup.get("status") == "finished" and bool(setup.get("model_launched")))
+    running = _lisflood_process_running() if proc is None else proc
+    if running:
+        return {"idle": False, "reason": "a lisflood process is running", "finished": finished}
+    if finished:
+        return {"idle": True, "reason": "the run has finished", "finished": True}
+    pdirs = RD._pass_dirs(run_dir)
+    if pdirs:
+        last = pdirs[-1]
+        if RD._log_finished(last) is False:
+            return {"idle": False, "reason": "pass %s is still running" % RD._pass_number(last), "finished": False}
+        log = os.path.join(last, "lisflood.log")
+        age = now - os.path.getmtime(log) if os.path.exists(log) else None
+        if age is not None and age < cfg.get("idle_gap_s", 20.0):
+            return {"idle": False, "reason": "between passes, %.0f s since pass %s ended (waiting for a %.0f s pause)" % (
+                age, RD._pass_number(last), cfg.get("idle_gap_s", 20.0)), "finished": False}
+    return {"idle": True, "reason": "LISFLOOD is idle", "finished": False}
+
+
+def explain_gate(run_dir, cfg, now=None, proc=None):
+    """(may_start, reason) for the configured LUMO_WATCH_EXPLAIN mode."""
+    mode = cfg.get("explain", "idle")
+    if mode == "never":
+        return False, "LUMO_WATCH_EXPLAIN=never"
+    if mode == "always":
+        return True, "LUMO_WATCH_EXPLAIN=always"
+    st = engine_state(run_dir, cfg, now, proc)
+    if mode == "end" and not st["finished"] and st["idle"]:
+        return False, "waiting for the run to finish (LUMO_WATCH_EXPLAIN=end)"
+    return st["idle"], st["reason"]
+
+
+def start_explain(jp, out_dir, event, pass_no, cfg, spawn=None):
+    """Spawn one explanation and wait a few seconds for it. Returns the Lumo status dict."""
+    tag = event_tag(event, pass_no)
+    sp = os.path.join(out_dir, "lumo_%s.status.json" % tag)
+    for stale in (sp, sp + ".part"):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+    reap_children()
+    (spawn or spawn_explain)(jp, cfg)
+    st = wait_for_lumo(sp, cfg["wait_s"]) if cfg["wait_s"] > 0 else {"status": "started"}
+    reap_children()
+    return st
 
 
 # ----------------------------------------------------------------------------- hooks
-def run_event(run_dir, event, out_dir=None, pass_no=None, lumo=True, cfg=None, spawn=None, **digest_kw):
+DAM_RECORD_KEYS = ("dam_id", "nid_id", "name", "height_ft", "top_of_dam_elev_ft", "storage_acft", "surface_area_ac",
+                   "stated_datum")
+
+
+def flat_dam_record(digest):
+    """A FLAT dam record (top-level dam_id / nid_id) for damit:classify's DAM_JSON, built from what the digest found
+    (the dam folder's dam.json, else the run's own record, the hand-off or the folder name). The dam folder's own
+    dam.json nests its values under "fields", which Hazard does not read; this file is written beside the digest, never
+    into the dam or run folder. None when no dam id could be found."""
+    dam = (digest.get("checks") or {}).get("dam") or {}
+    if not dam.get("dam_id"):
+        return None
+    rec = {"dam_id": dam["dam_id"], "nid_id": dam["dam_id"], "name": dam.get("name"), "height_ft": dam.get("height_ft"),
+           "top_of_dam_elev_ft": dam.get("top_ft"), "stated_datum": dam.get("stated_datum"),
+           "_written_by": "lumo_watch %s (not the dam record: a flat copy for damit:classify DAM_JSON)" % VERSION,
+           "_dam_id_source": dam.get("dam_id_source")}
+    return {k: v for k, v in rec.items() if v is not None}
+
+
+def write_flat_dam_record(out_dir, digest):
+    rec = flat_dam_record(digest)
+    if not rec:
+        return None
+    path = os.path.join(out_dir, "dam_record_hazard.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rec, f, indent=1)
+    return path
+
+
+def run_event(run_dir, event, out_dir=None, pass_no=None, lumo=True, cfg=None, spawn=None, probe=None, **digest_kw):
     """One hook. Returns {digest, digest_path, verdict, lumo: status or None}. The verdict is final when this
-    returns; Lumo's text, if any, lands in lumo_<event>.md later."""
+    returns; Lumo's text, if any, lands in lumo_<event>.md later. lumo.status is "queued" when LISFLOOD is busy and
+    the configured mode (LUMO_WATCH_EXPLAIN) says to wait: `watch` starts it when the engine is idle; a one-shot
+    `event` leaves the digest and the complete flag list and says how to ask for the explanation later."""
     if event not in EVENTS:
         raise ValueError("event must be one of %s" % ", ".join(EVENTS))
     cfg = cfg or settings()
@@ -392,20 +687,20 @@ def run_event(run_dir, event, out_dir=None, pass_no=None, lumo=True, cfg=None, s
     if _inside(out_dir, run_dir):
         raise ValueError("refusing to write into the run folder")
     jp = write_digest(out_dir, d, event, pass_no)
-    res = {"digest": d, "digest_path": jp, "verdict": d["verdict"], "lumo": None, "out_dir": out_dir}
-    if lumo:
+    res = {"digest": d, "digest_path": jp, "verdict": d["verdict"], "lumo": None, "out_dir": out_dir,
+           "pass_no": pass_no, "hazard_dam_record": write_flat_dam_record(out_dir, d)}
+    if lumo and cfg.get("explain") == "never":
+        pass                                         # LUMO_WATCH_EXPLAIN=never: no model call at all ("not asked")
+    elif lumo:
         if lumo_busy(out_dir):
             res["lumo"] = {"status": "skipped", "error": "a Lumo explanation is still running"}
         else:
-            tag = event_tag(event, pass_no)
-            sp = os.path.join(out_dir, "lumo_%s.status.json" % tag)
-            for stale in (sp, sp + ".part"):
-                try:
-                    os.remove(stale)
-                except OSError:
-                    pass
-            (spawn or spawn_explain)(jp, cfg)
-            res["lumo"] = wait_for_lumo(sp, cfg["wait_s"]) if cfg["wait_s"] > 0 else {"status": "started"}
+            ok, why = (probe or explain_gate)(run_dir, cfg)
+            if not ok:
+                res["lumo"] = {"status": "queued", "error": "not started: " + why,
+                               "later": "python lumo_watch.py explain %s" % jp}
+            else:
+                res["lumo"] = start_explain(jp, out_dir, event, pass_no, cfg, spawn)
     return res
 
 
@@ -452,18 +747,39 @@ class EventDetector(object):
         return ev
 
 
+def _log_line(msg):
+    print(msg, flush=True)                       # a pipe or a file gets each line now, not when the process exits
+
+
 def watch(run_dir, out_dir=None, poll_s=2.0, until="before_hazard", lumo=True, cfg=None, max_wait_s=None, once=False,
-          stall_s=None, log=print, spawn=None, **digest_kw):
+          stall_s=None, log=_log_line, spawn=None, probe=None, sleep=time.sleep, **digest_kw):
     """Poll the run folder; fire the hooks. Returns the list of results. Stops after `until` fires (run_end |
-    before_hazard | after_hazard), after max_wait_s, or after one scan with once=True. When one scan finds several
-    events (a 45 s run), each gets its digest but only the last is sent to Lumo."""
+    before_hazard | after_hazard), after max_wait_s, or after one scan with once=True. Every event gets its digest
+    at once. Lumo is queued: only the NEWEST event waits, and it starts when LISFLOOD is idle (LUMO_WATCH_EXPLAIN:
+    idle | end | always | never), so the model never competes with the engine for the CPU. A 45 s run therefore
+    finishes at full speed and is explained as soon as it is done."""
+    cfg = cfg or settings()
     det, state, results = EventDetector(stall_s), {}, []
+    pending = None                              # (result, event) waiting for an idle engine
     t0 = time.time()
+
+    def try_start(force=False):
+        nonlocal pending
+        if pending is None or lumo_busy(pending[0]["out_dir"]):
+            return
+        r, e = pending
+        ok, why = (probe or explain_gate)(run_dir, cfg)
+        if not ok and not force:
+            return
+        r["lumo"] = start_explain(r["digest_path"], r["out_dir"], e["event"], e["pass"], cfg, spawn)
+        log("[%s] Lumo explains %s%s (%s)" % (time.strftime("%H:%M:%S"), e["event"],
+                                             " pass %s" % e["pass"] if e["pass"] else "", r["lumo"].get("status")))
+        pending = None
+
     while True:
         evs = det.scan(run_dir, state)
-        for i, e in enumerate(evs):
-            last = i == len(evs) - 1
-            r = run_event(run_dir, e["event"], out_dir, e["pass"], lumo=lumo and last, cfg=cfg, spawn=spawn,
+        for e in evs:
+            r = run_event(run_dir, e["event"], out_dir, e["pass"], lumo=False, cfg=cfg, spawn=spawn,
                           stall_s=stall_s, **digest_kw)
             r["event"] = e["event"]
             results.append(r)
@@ -471,9 +787,29 @@ def watch(run_dir, out_dir=None, poll_s=2.0, until="before_hazard", lumo=True, c
                                        r["verdict"], "; flags: " + ", ".join(
                                            sorted({f["id"] for f in r["digest"]["flags"] if f["severity"] != RD.INFO}))
                                        if r["digest"]["flags"] else ""))
-        if once or state.get(until) or (max_wait_s is not None and time.time() - t0 > max_wait_s):
+            if lumo and cfg.get("explain") != "never":
+                if pending is not None:
+                    pending[0]["lumo"] = {"status": "skipped", "error": "a newer event replaced it in the queue"}
+                r["lumo"] = {"status": "queued", "error": "waiting for LISFLOOD to be idle"}
+                pending = (r, e)
+        if lumo:
+            try_start()
+        done = once or state.get(until) or (max_wait_s is not None and time.time() - t0 > max_wait_s)
+        if done:
+            if lumo and pending is not None and once:
+                try_start()
+            elif lumo and pending is not None and state.get("run_end"):
+                # the run is over: give a busy engine (another LISFLOOD on this box) a while to go idle, then leave it queued
+                t1 = time.time()
+                while pending is not None and time.time() - t1 <= cfg.get("queue_wait_s", 300.0):
+                    try_start()
+                    if pending is not None:
+                        sleep(poll_s)
+                if pending is not None:
+                    log("[%s] Lumo explanation still queued (LISFLOOD busy): python lumo_watch.py explain %s" % (
+                        time.strftime("%H:%M:%S"), pending[0]["digest_path"]))
             return results
-        time.sleep(poll_s)
+        sleep(poll_s)
 
 
 # ----------------------------------------------------------------------------- CLI
@@ -482,6 +818,11 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p):
+        p.add_argument("--explain", choices=EXPLAIN_MODES, help="when Lumo may use the CPU (default idle: only when "
+                       "LISFLOOD is idle; end = after the run; always = any time; never)")
+        p.add_argument("--explain-now", action="store_true", help="same as --explain always")
+        p.add_argument("--num-thread", type=int, help="threads the model may use (default 2; 0 = Ollama's default)")
+        p.add_argument("--idle-gap", type=float, help="mid-run: seconds of quiet after a pass before 'idle' (default 20)")
         p.add_argument("--out", help="where to write (never inside the run folder); default ~/local-ai/watch/<dam>_<run>/")
         p.add_argument("--dam-folder")
         p.add_argument("--structures")
@@ -512,11 +853,16 @@ def main(argv=None):
     p = sub.add_parser("explain")
     p.add_argument("digest_json")
     p.add_argument("--model")
+    p.add_argument("--num-thread", type=int, help="threads the model may use (default 2; 0 = Ollama's default)")
     p = sub.add_parser("prompt")
     p.add_argument("digest_json")
     p = sub.add_parser("system")
     p.add_argument("--write")
     a = ap.parse_args(argv)
+    try:
+        sys.stdout.reconfigure(line_buffering=True)      # piped output is line-buffered too
+    except (AttributeError, ValueError, OSError):
+        pass
 
     if a.cmd == "system":
         if a.write:
@@ -526,11 +872,15 @@ def main(argv=None):
             print(system_prompt())
         return 0
     if a.cmd == "explain":
-        st = explain(a.digest_json, settings(a.model))
+        cfg = settings(a.model)
+        if a.num_thread is not None:
+            cfg["num_thread"] = max(0, a.num_thread)
+        st = explain(a.digest_json, cfg)
         print(json.dumps({k: v for k, v in st.items() if k != "text"}, indent=1))
         return 0
     if a.cmd == "prompt":
-        d = json.load(open(a.digest_json))
+        with open(a.digest_json, encoding="utf-8") as f:
+            d = json.load(f)
         m = build_messages(d, d.get("event"))
         print(m[1]["content"])
         print("\n[system ~%d tokens + user ~%d tokens]" % (est_tokens(m[0]["content"]), est_tokens(m[1]["content"])))
@@ -539,6 +889,14 @@ def main(argv=None):
     cfg = settings(a.model)
     if a.lumo_wait is not None:
         cfg["wait_s"] = a.lumo_wait
+    if a.explain_now:
+        cfg["explain"] = "always"
+    elif a.explain:
+        cfg["explain"] = a.explain
+    if a.num_thread is not None:
+        cfg["num_thread"] = max(0, a.num_thread)
+    if a.idle_gap is not None:
+        cfg["idle_gap_s"] = max(0.0, a.idle_gap)
     kw = dict(dam_folder=a.dam_folder, structures_path=a.structures, points_path=a.points, rail_lookup=a.rail_lookup)
     verdict = RD.OK
     if a.cmd == "digest":
@@ -554,6 +912,8 @@ def main(argv=None):
         r = run_event(a.run_dir, a.name, a.out, a.pass_no, lumo=not a.no_lumo, cfg=cfg, **kw)
         print(r["digest"]["text"])
         print("\nLumo: %s" % (r["lumo"] or {}).get("status", "not asked"))
+        if (r["lumo"] or {}).get("status") == "queued":
+            print("(%s) Ask later with: %s" % (r["lumo"]["error"], r["lumo"]["later"]))
         verdict = r["verdict"]
     elif a.cmd == "watch":
         rs = watch(a.run_dir, a.out, a.poll, a.until, not a.no_lumo, cfg, a.max_wait, a.once, a.stall_s, **kw)

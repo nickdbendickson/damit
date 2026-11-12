@@ -18,6 +18,7 @@ LUMO = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(LUMO, "tools"))
 sys.path.insert(0, HERE)
 import fixture_run as FX  # noqa: E402
+from strict import StrictCase, jdump, jload, slurp, spit  # noqa: E402,F401
 import lumo_watch as LW  # noqa: E402
 import run_digest as RD  # noqa: E402
 
@@ -26,7 +27,7 @@ class MockOllama(object):
     """A tiny /api/chat server. script: a list of ('piece', text) | ('wait', seconds) | ('wait_event', Event) |
     ('drop',) | ('done',). Records every request body."""
 
-    def __init__(self, script=None, status=200, body=None):
+    def __init__(self, script=None, status=200, body=None, header_delay=0.0):
         self.script = script if script is not None else [("piece", "ok"), ("done",)]
         self.requests = []
         self.paths = []
@@ -44,6 +45,8 @@ class MockOllama(object):
                 req = json.loads(self.rfile.read(n))
                 outer.requests.append(req)
                 outer.paths.append(self.path)
+                if header_delay:
+                    time.sleep(header_delay)             # queued behind another job: no byte at all yet
                 if outer.fail_think_400 and "think" in req:
                     data = json.dumps({"error": "\"phi4-mini\" does not support thinking"}).encode()
                     self.send_response(400)
@@ -72,6 +75,9 @@ class MockOllama(object):
                         k = step[0]
                         if k == "piece":
                             chunk({"model": req.get("model"), "message": {"role": "assistant", "content": step[1]}, "done": False})
+                        elif k == "thinking":
+                            chunk({"model": req.get("model"), "message": {"role": "assistant", "content": "", "thinking": step[1]},
+                                   "done": False})
                         elif k == "wait":
                             time.sleep(step[1])
                         elif k == "wait_event":
@@ -85,7 +91,9 @@ class MockOllama(object):
                             self.wfile.flush()
                         elif k == "done":
                             chunk({"message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "stop",
-                                   "prompt_eval_count": 700, "eval_count": 120})
+                                   "prompt_eval_count": 700, "eval_count": 120,
+                                   "total_duration": 30000000000, "load_duration": 1500000000,
+                                   "prompt_eval_duration": 14000000000, "eval_duration": 12000000000})
                     self.wfile.write(b"0\r\n\r\n")
                     self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
@@ -113,7 +121,7 @@ def free_port_url():
     return "http://127.0.0.1:%d" % port
 
 
-class Base(unittest.TestCase):
+class Base(StrictCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="lumo_watch_")
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -132,7 +140,7 @@ class Base(unittest.TestCase):
         return d, LW.build_messages(d, "run_end")
 
 
-class TestSettings(unittest.TestCase):
+class TestSettings(StrictCase):
     def setUp(self):
         self.env = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("LUMO_WATCH_")}
         self.addCleanup(os.environ.update, self.env)
@@ -199,8 +207,8 @@ class TestStreaming(Base):
         st = LW.stream_chat(LW.chat_payload(msgs, self.cfg), self.cfg["url"], out, st_path, idle_s=2, header="<!-- h -->\n")
         self.assertEqual(st["status"], "done")
         self.assertEqual(st["text"], "- Height differs by 2 ft.\nVerdict: WATCH")
-        self.assertEqual(open(out).read(), "<!-- h -->\n- Height differs by 2 ft.\nVerdict: WATCH")
-        self.assertEqual(json.load(open(st_path))["status"], "done")
+        self.assertEqual(slurp(out), "<!-- h -->\n- Height differs by 2 ft.\nVerdict: WATCH")
+        self.assertEqual(jload(st_path)["status"], "done")
         self.assertEqual((st["prompt_eval_count"], st["eval_count"]), (700, 120))
 
     def test_each_piece_is_on_disk_before_the_stream_ends(self):
@@ -213,10 +221,10 @@ class TestStreaming(Base):
                                                                       idle_s=8)))
         t.start()
         deadline = time.time() + 5
-        while time.time() < deadline and not (os.path.exists(out) and "first piece" in open(out).read()):
+        while time.time() < deadline and not (os.path.exists(out) and "first piece" in slurp(out)):
             time.sleep(0.05)
-        self.assertIn("first piece", open(out).read())         # on disk while the model is still "generating"
-        self.assertNotIn("second", open(out).read())
+        self.assertIn("first piece", slurp(out))         # on disk while the model is still "generating"
+        self.assertNotIn("second", slurp(out))
         gate.set()
         t.join(10)
         self.assertEqual(res["status"], "done")
@@ -230,7 +238,7 @@ class TestStreaming(Base):
         st = LW.stream_chat(LW.chat_payload(msgs, self.cfg), self.cfg["url"], out, idle_s=0.5)
         self.assertLess(time.time() - t0, 2.5)
         self.assertEqual(st["status"], "partial")
-        self.assertEqual(open(out).read(), "partial answer")
+        self.assertEqual(slurp(out), "partial answer")
         self.assertIn("partial text kept", st["error"])
 
     def test_dropped_connection_keeps_the_partial_text(self):
@@ -239,7 +247,7 @@ class TestStreaming(Base):
         _, msgs = self.messages()
         st = LW.stream_chat(LW.chat_payload(msgs, self.cfg), self.cfg["url"], out, idle_s=2)
         self.assertEqual(st["status"], "partial")
-        self.assertEqual(open(out).read(), "cut off")
+        self.assertEqual(slurp(out), "cut off")
 
     def test_deadline_stops_the_wait_not_the_text(self):
         self.mock([("piece", "a"), ("wait", 0.4), ("piece", "b"), ("wait", 0.4), ("piece", "c"), ("done",)])
@@ -247,7 +255,7 @@ class TestStreaming(Base):
         _, msgs = self.messages()
         st = LW.stream_chat(LW.chat_payload(msgs, self.cfg), self.cfg["url"], out, idle_s=2, deadline_s=0.3)
         self.assertEqual(st["status"], "partial")
-        self.assertTrue(open(out).read().startswith("a"))
+        self.assertTrue(slurp(out).startswith("a"))
 
     def test_bad_lines_are_skipped(self):
         self.mock([("raw", "not json\n"), ("piece", "fine"), ("done",)])
@@ -327,13 +335,13 @@ class TestPrompt(Base):
         self.assertIn("none", LW.build_user_prompt(d))
 
 
-class TestSystemPrompt(unittest.TestCase):
+class TestSystemPrompt(StrictCase):
     def test_pinned_rules(self):
         s = LW.system_prompt()
         for needle in ("NO inflow and NO outlet or spillway flow", "top of dam, which is the DWR max pool",
                        "NAVD88 only", "0-300 ft is a local datum", "H x (downstream slope + 1)", "3:1", "150 m",
                        "BNSF KO subdivision = 15 trains per day", "judgment zone as Medium", "maxima over wet cells",
-                       "Early passes may leak", "UNSURE", "Verdict:"):
+                       "EXPECTED while the domain grows", "not dam leakage", "model domain edge", "only flag ids are", "UNSURE", "Verdict:"):
             self.assertIn(needle, s)
 
     def test_the_rule_lumo_reversed_is_stated_the_right_way_round(self):
@@ -344,12 +352,12 @@ class TestSystemPrompt(unittest.TestCase):
 
     def test_mirror_file_is_in_step(self):
         p = os.path.join(LUMO, "prompts", "watcher_system.md")
-        self.assertEqual(open(p, encoding="utf-8").read().rstrip("\n"), LW.system_prompt())
+        self.assertEqual(slurp(p).rstrip("\n"), LW.system_prompt())
 
     def test_real_ids_and_parameters_only(self):
         """Every tool id, CELL-style parameter and switch the prompt names must exist in the generated dump of the
         real algorithms (ALGORITHM-HELP-DAMIT.md), and the invented names must not appear."""
-        help_md = open(os.path.join(LUMO, "knowledge", "ALGORITHM-HELP-DAMIT.md"), encoding="utf-8").read()
+        help_md = slurp(os.path.join(LUMO, "knowledge", "ALGORITHM-HELP-DAMIT.md"))
         s = LW.system_prompt()
         for tid in ("damit_screen:handoff", "damit_run:rundam", "damit:classify", "damit_lite:classify"):
             self.assertIn("### `%s`" % tid, help_md)
@@ -382,7 +390,7 @@ class TestHooks(Base):
         self.assertEqual(len(spawned), 1)
         self.assertTrue(os.path.exists(os.path.join(out, "digest_run_end.json")))
         self.assertTrue(os.path.exists(os.path.join(out, "digest_run_end.txt")))
-        self.assertEqual(json.load(open(os.path.join(out, "latest_verdict.json")))["verdict"], "WATCH")
+        self.assertEqual(jload(os.path.join(out, "latest_verdict.json"))["verdict"], "WATCH")
 
     def test_verdict_is_identical_with_and_without_lumo(self):
         run, dam = self.run_fx(mass_nan=True)
@@ -397,12 +405,12 @@ class TestHooks(Base):
         run, dam = self.run_fx()
         m = self.mock([("piece", "Everything is fine, verdict OK."), ("done",)])
         r = LW.run_event(run, "run_end", os.path.join(self.root, "w"), lumo=False, cfg=self.cfg, dam_folder=dam)
-        before = open(r["digest_path"]).read()
+        before = slurp(r["digest_path"])
         st = LW.explain(r["digest_path"], self.cfg)
         self.assertEqual(st["status"], "done")
-        self.assertEqual(open(r["digest_path"]).read(), before)
-        self.assertEqual(json.load(open(r["digest_path"]))["verdict"], "WATCH")
-        md = open(os.path.join(os.path.dirname(r["digest_path"]), "lumo_run_end.md")).read()
+        self.assertEqual(slurp(r["digest_path"]), before)
+        self.assertEqual(jload(r["digest_path"])["verdict"], "WATCH")
+        md = slurp(os.path.join(os.path.dirname(r["digest_path"]), "lumo_run_end.md"))
         self.assertIn("does not set or change it", md)
         self.assertIn("verdict OK", md)                      # Lumo's words are kept as written, the verdict is not
         self.assertEqual(m.paths, ["/api/chat"])
@@ -410,11 +418,12 @@ class TestHooks(Base):
 
     def test_event_with_a_real_background_process_and_the_mock_server(self):
         run, dam = self.run_fx()
+        self.addCleanup(LW.reap_children, 10)
         self.mock([("piece", "- Height 37 vs 39 ft.\n"), ("piece", "Verdict: WATCH"), ("done",)])
         self.cfg["wait_s"] = 20
         r = LW.run_event(run, "run_end", os.path.join(self.root, "w"), lumo=True, cfg=self.cfg, dam_folder=dam)
         self.assertEqual(r["lumo"]["status"], "done")
-        md = open(os.path.join(r["out_dir"], "lumo_run_end.md")).read()
+        md = slurp(os.path.join(r["out_dir"], "lumo_run_end.md"))
         self.assertIn("Height 37 vs 39 ft", md)
 
     def test_unknown_event_and_run_folder_output_are_refused(self):
@@ -429,7 +438,7 @@ class TestHooks(Base):
         run, dam = self.run_fx()
         out = os.path.join(self.root, "w")
         os.makedirs(out)
-        open(os.path.join(out, "lumo.busy"), "w").write(str(os.getpid()))
+        spit(os.path.join(out, "lumo.busy"), str(os.getpid()))
         r = LW.run_event(run, "run_end", out, lumo=True, cfg=self.cfg, spawn=lambda *a: self.fail("spawned"), dam_folder=dam)
         self.assertEqual(r["lumo"]["status"], "skipped")
         self.assertEqual(r["verdict"], "WATCH")

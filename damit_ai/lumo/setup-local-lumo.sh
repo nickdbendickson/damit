@@ -1,11 +1,17 @@
 #!/bin/zsh
 # ============================================================================
-# setup-local-lumo.sh v3.7 — local Ollama auditing for the dam suite (macOS)
+# setup-local-lumo.sh v3.8 — local Ollama auditing for the dam suite (macOS)
 #
 #   NO sudo · NO Homebrew. NO web downloads by the script itself (v3.5): Ollama
 #   comes from damit_ai/offline/ollama (sha256-checked) or a zip/dmg you download
 #   in a browser; the Python side is a conda env (bundled packages first). Only
-#   Ollama itself pulls the AI models.
+#   Ollama itself pulls the AI models. One exception (v3.8): when `ollama pull`
+#   fails (a proxy that breaks the registry redirect), the model's official GGUF is
+#   fetched from Hugging Face with curl (https_proxy / HF_ENDPOINT honoured),
+#   sha256-checked and loaded with `ollama create`. LUMO_NO_HF_FALLBACK=1 turns that off.
+#
+# v3.8: Hugging Face GGUF fallback for a failed `ollama pull`; the run watcher is
+#   run_digest 1.1.0 + lumo_watch 1.1.0 (Lumo explains only when LISFLOOD is idle).
 #
 # Fixes vs v3:
 #   - DMG install: the mount point was searched with `grep -B30 ... ^/Volumes/`,
@@ -211,14 +217,59 @@ if [[ "$CPU_KIND" == intel ]]; then NUM_CTX=$(( RAM_GB >= 32 ? 16384 : 12288 ))
 elif (( RAM_GB >= 64 )); then NUM_CTX=32768
 elif (( RAM_GB >= 32 )); then NUM_CTX=24576
 else NUM_CTX=12288; fi
-"$OLLAMA" list 2>/dev/null | grep -q "^$CHAT_MODEL" || "$OLLAMA" pull "$CHAT_MODEL" || die "pull failed: $CHAT_MODEL"
+# >>> hf_gguf_fallback (the same block is in install-local-ai-linux.sh and lumo/setup-local-lumo.sh; a test keeps them equal)
+# `ollama pull` can fail behind a proxy (the registry's manifest / redirect never completes). Fallback: fetch the model's
+# official GGUF from Hugging Face (curl honours https_proxy; HF_ENDPOINT can point at a mirror), check its sha256, write a
+# Modelfile and `ollama create` the SAME tag, then delete the GGUF (Ollama keeps its own copy).
+# LUMO_GGUF_SPEC="repo file sha256 bytes" overrides the table (another quant, or a mirror's file); LUMO_GGUF_DIR = scratch dir.
+hf_gguf_spec(){
+  if [[ -n "${LUMO_GGUF_SPEC:-}" ]]; then echo "$LUMO_GGUF_SPEC"; return 0; fi
+  case "$1" in
+    qwen3:4b)       echo "Qwen/Qwen3-4B-GGUF Qwen3-4B-Q4_K_M.gguf 7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5 2497280256" ;;
+    qwen3:8b)       echo "Qwen/Qwen3-8B-GGUF Qwen3-8B-Q4_K_M.gguf d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785 5027783488" ;;
+    qwen3:14b)      echo "Qwen/Qwen3-14B-GGUF Qwen3-14B-Q4_K_M.gguf 500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0 9001752960" ;;
+    qwen3:30b-a3b)  echo "Qwen/Qwen3-30B-A3B-GGUF Qwen3-30B-A3B-Q4_K_M.gguf 0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5 18556685824" ;;
+    phi4-mini|phi4-mini:*) echo "unsloth/Phi-4-mini-instruct-GGUF Phi-4-mini-instruct-Q4_K_M.gguf 88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a 2491874272" ;;
+    nomic-embed-text|nomic-embed-text:*) echo "nomic-ai/nomic-embed-text-v1.5-GGUF nomic-embed-text-v1.5.f16.gguf f7af6f66802f4df86eda10fe9bbcfc75c39562bed48ef6ace719a251cf1c2fdb 274290560" ;;
+    *) return 1 ;;
+  esac
+}
+hf_gguf_create(){
+  local tag="$1" spec repo file sha size dir url got avail have
+  spec="$(hf_gguf_spec "$tag")" || { warn "no Hugging Face GGUF is known for $tag (set LUMO_GGUF_SPEC=\"repo file sha256 bytes\")"; return 1; }
+  read -r repo file sha size <<< "$spec"
+  if [[ "${LUMO_NO_HF_FALLBACK:-0}" == 1 ]]; then warn "LUMO_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return 1; fi
+  command -v curl >/dev/null 2>&1 || { warn "curl not found: cannot fetch the GGUF for $tag"; return 1; }
+  dir="${LUMO_GGUF_DIR:-${TMPDIR:-/tmp}/lumo-gguf}"; mkdir -p "$dir" || return 1
+  avail=$(df -Pk "$dir" 2>/dev/null | awk 'NR==2{print $4*1024}')
+  if [[ -n "$avail" ]] && (( avail < size + size / 10 )); then
+    warn "not enough free space in $dir for the $((size / 1048576)) MB GGUF (set LUMO_GGUF_DIR to a bigger disk)"; return 1
+  fi
+  url="${HF_ENDPOINT:-https://huggingface.co}/$repo/resolve/main/$file"
+  have=$(wc -c < "$dir/$file" 2>/dev/null || echo 0); have="${have//[[:space:]]/}"
+  if [[ "$have" != "$size" ]]; then
+    ok "ollama pull failed: downloading $file from Hugging Face ($((size / 1048576)) MB)"
+    curl -fL -C - --retry 3 --retry-delay 5 -o "$dir/$file" "$url" || { warn "download failed: $url"; return 1; }
+  fi
+  got="$( (sha256sum "$dir/$file" 2>/dev/null || shasum -a 256 "$dir/$file") | awk '{print $1}')"
+  if [[ "$got" != "$sha" ]]; then warn "sha256 of $file is $got, expected $sha: not used"; rm -f "$dir/$file"; return 1; fi
+  { printf 'FROM %s\n' "$dir/$file"
+    [[ "$tag" == nomic* ]] || printf 'PARAMETER num_ctx 4096\nPARAMETER temperature 0.2\nPARAMETER top_p 0.9\n'; } > "$dir/Modelfile.$$"
+  if ! "$OLLAMA" create "$tag" -f "$dir/Modelfile.$$" >/dev/null; then
+    warn "ollama create $tag failed"; rm -f "$dir/Modelfile.$$"; return 1
+  fi
+  rm -f "$dir/$file" "$dir/Modelfile.$$"
+  ok "created $tag from the Hugging Face GGUF"
+}
+# <<< hf_gguf_fallback
+"$OLLAMA" list 2>/dev/null | grep -q "^$CHAT_MODEL" || "$OLLAMA" pull "$CHAT_MODEL" || hf_gguf_create "$CHAT_MODEL" || die "pull failed: $CHAT_MODEL"
 ok "chat model: $CHAT_MODEL (num_ctx $NUM_CTX)"
-"$OLLAMA" list 2>/dev/null | grep -q "^nomic-embed-text" || "$OLLAMA" pull nomic-embed-text || die "pull failed: nomic-embed-text"
+"$OLLAMA" list 2>/dev/null | grep -q "^nomic-embed-text" || "$OLLAMA" pull nomic-embed-text || hf_gguf_create nomic-embed-text || die "pull failed: nomic-embed-text"
 # the run-watcher's explainer: a SMALL model (a CPU box cannot read a long log with the big one; stock Ollama uses
 # only NVIDIA, Apple or AMD ROCm GPUs, so an Intel Arc / Intel GPU Mac runs on the CPU)
 if [[ -n "$WATCH_MODEL" ]]; then
   case "$WATCH_MODEL" in phi) WATCH_MODEL="phi4-mini" ;; small) WATCH_MODEL="qwen3:4b" ;; esac
-  "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" || warn "could not pull the watcher model $WATCH_MODEL (lumo-watch still gives the digest and verdict)"
+  "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" || hf_gguf_create "$WATCH_MODEL" || warn "could not pull the watcher model $WATCH_MODEL (lumo-watch still gives the digest and verdict)"
 fi
 ok "nomic-embed-text present"
 
@@ -3128,7 +3179,7 @@ SCRIPT_EOF_REPOAUDIT
     "$LUMO_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
   done
   ok "rag_index 2.4, rag_query 2.2, audit_plugin 1.3, suite_check 1.0, dam_chain 1.5.1, repo_audit 1.0 written and compiled"
-  # v3.7: the run watcher (deterministic digest + the small explainer) is copied, not generated
+  # v3.7/v3.8: the run watcher (deterministic digest + the small explainer) is copied, not generated
   for f in run_digest lumo_watch; do
     if [[ -f "${0:A:h}/tools/$f.py" ]]; then
       cp "${0:A:h}/tools/$f.py" "$LOCAL_AI/$f.py" && "$LUMO_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
@@ -3136,7 +3187,7 @@ SCRIPT_EOF_REPOAUDIT
       warn "tools/$f.py not found next to this script: the run watcher was not installed"
     fi
   done
-  ok "run_digest 1.0.0, lumo_watch 1.0.0 copied and compiled"
+  ok "run_digest 1.1.0, lumo_watch 1.1.0 copied and compiled"
 else
   ok "script rewrite skipped (--skip-scripts)"
 fi

@@ -61,7 +61,8 @@ def receptor_rows():
 def make_run(root, report=True, passes=3, final_leak=False, mass_nan=False, verr=0.0, unfinished=False,
              top_ft=1500.0, streambed_ft=1461.0, height_ft=37.0, datum="NAVD88", src="DWR", start_wse=None,
              extra_bci=None, toe_distance=39.0, toe_outer=None, ds_slope=2.5, hazard=False, trains_ko=15.0,
-             unscored_roads=0, west_edge_wet_ft=0.0, mass_in_report=None, inflow_scenario="none"):
+             unscored_roads=0, west_edge_wet_ft=0.0, mass_in_report=None, inflow_scenario="none",
+             dam_record=True, setup_dam_id=True, inflow_how=None, handoff=False):
     import numpy as np
     run = os.path.join(root, "dams", "TST00001", "run_20260101_000000")      # run folder
     dam_folder = os.path.join(root, "dams_folder", "TST00001")
@@ -75,12 +76,21 @@ def make_run(root, report=True, passes=3, final_leak=False, mass_nan=False, verr
              "parameters": {"edge_tol_ft": 1.0, "outflow_extend_pct": 5.0, "cell_m": CELL, "bottom_ft": bottom,
                             "top_ft": top_ft, "height_ft": height_ft, "ds_slope": ds_slope, "dam_id": "TST00001",
                             "z_units": "m"}}
+    if not dam_record:                      # what the Screener/Runner path leaves: no dam.json, no stated datum
+        setup["dam"].pop("stated_datum", None)
+    if not setup_dam_id:
+        setup["dam"].pop("dam_id", None)
+        setup["parameters"].pop("dam_id", None)
     write(os.path.join(run, "run_setup.json"), json.dumps(setup))
+    if handoff:
+        write(os.path.join(run, "damit_handoff.json"), json.dumps({"dam": {"dam_id": "TST00001", "nid_id": "TST00001"}}))
     # dam folder
     fields = {"dam_id": "TST00001", "height_ft": height_ft, "top_of_dam_elev_ft": top_ft, "streambed_elev_ft": streambed_ft,
               "stated_datum": datum}
-    write(os.path.join(dam_folder, "dam.json"), json.dumps({"fields": fields, "sources": {
-        "top_of_dam_elev_ft": {"src": src, "field": "max_pool_e_navd88", "value": top_ft}}}))
+    os.makedirs(dam_folder, exist_ok=True)
+    if dam_record:
+        write(os.path.join(dam_folder, "dam.json"), json.dumps({"fields": fields, "sources": {
+            "top_of_dam_elev_ft": {"src": src, "field": "max_pool_e_navd88", "value": top_ft}}}))
     # passes: 1 and 2 leak through N and W (early), later ones are clean unless final_leak
     rp = []
     for n in range(1, passes + 1):
@@ -126,13 +136,13 @@ def make_run(root, report=True, passes=3, final_leak=False, mass_nan=False, verr
     if report:
         outer = toe_outer if toe_outer is not None else round(height_ft * M_PER_FT * (ds_slope + 1.0), 4)
         write(os.path.join(run, "run_report.json"), json.dumps({
-            "dam_id": "TST00001", "engine": "LISFLOOD-FP (/x/lisflood)", "engine_selection": {"fallback": False, "warning": None},
+            **({"dam_id": "TST00001"} if setup_dam_id else {}), "engine": "LISFLOOD-FP (/x/lisflood)", "engine_selection": {"fallback": False, "warning": None},
             "sim_time_hr": 35.5, "bounds": BOUNDS, "crs_wkt": "", "passes": rp, "stop_reason": None, "warnings": [],
             "hydrograph": {"starting_wse_ft": start_wse if start_wse is not None else top_ft,
                            "rule": "sunny day, no outlet or spillway flow, starting at the top of dam",
                            "notes": ["The breach bottom is below the reservoir bottom (top of dam minus dam height); it was "
                                      "raised to the reservoir bottom."] if abs((top_ft - streambed_ft) - height_ft) > 0.5 else []},
-            "inflow": {"how": "lowest ground at the downstream toe band, %d m from the line, 34.9 ft below the top of dam" % toe_distance,
+            "inflow": {"how": inflow_how or "lowest ground at the downstream toe band, %d m from the line, 34.9 ft below the top of dam" % toe_distance,
                        "toe_band": {"inner_m": 5.0, "outer_m": outer, "height_known": True, "cap_m": 150.0}},
             "outputs": {}}))
     if hazard:

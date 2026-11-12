@@ -13,6 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "tools"))
 sys.path.insert(0, HERE)
 import fixture_run as FX  # noqa: E402
+from strict import StrictCase, jdump, jload, slurp, spit  # noqa: E402,F401
 import run_digest as RD  # noqa: E402
 
 try:
@@ -31,7 +32,7 @@ def ids(d, sev=None):
     return [f["id"] for f in d["flags"] if sev is None or f["severity"] == sev]
 
 
-class Base(unittest.TestCase):
+class Base(StrictCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="lumo_digest_")
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -172,10 +173,10 @@ class TestProgress(Base):
     def test_run_that_stopped_while_still_moving(self):
         run, dam = FX.make_run(self.root)
         rp = os.path.join(run, "run_report.json")
-        r = json.load(open(rp))
+        r = jload(rp)
         r["passes"][-1]["still_moving"] = True
         r["stop_reason"] = "MAX_RUNS reached"
-        json.dump(r, open(rp, "w"))
+        jdump(r, rp)
         d = RD.build_digest(run, dam_folder=dam)
         self.assertIn("STOPPED_MOVING", ids(d, "WATCH"))
 
@@ -347,10 +348,10 @@ class TestHazardDrivers(Base):
     def test_trains_unknown_asks_for_a_lookup_row(self):
         run, dam = FX.make_run(self.root, hazard=True)
         hp = os.path.join(dam, "classify", "damit_hazard_report.json")
-        h = json.load(open(hp))
+        h = jload(hp)
         h["flags"].append({"level": "warning", "code": "trains_unknown", "message": "x", "receptors": ["rail:1", "rail:2"]})
         h["layers"] = []
-        json.dump(h, open(hp, "w"))
+        jdump(h, hp)
         d = RD.build_digest(run, dam_folder=dam)
         f = [x for x in d["flags"] if x["id"] == "RAIL_TRAINS"][0]
         self.assertIn("BNSF KO", f["detail"])
@@ -359,9 +360,9 @@ class TestHazardDrivers(Base):
     def test_judgment_zone_hits_need_review(self):
         run, dam = FX.make_run(self.root, hazard=True)
         hp = os.path.join(dam, "classify", "damit_hazard_report.json")
-        h = json.load(open(hp))
+        h = jload(hp)
         h["flags"].append({"level": "info", "code": "judgment_zone", "message": "x", "receptors": ["structure:1"]})
-        json.dump(h, open(hp, "w"))
+        jdump(h, hp)
         d = RD.build_digest(run, dam_folder=dam)
         self.assertIn("HAZARD_REVIEW", ids(d, "WATCH"))
 
@@ -374,9 +375,9 @@ class TestEngineAndMisc(Base):
     def test_builtin_engine_fallback(self):
         run, dam = FX.make_run(self.root)
         rp = os.path.join(run, "run_report.json")
-        r = json.load(open(rp))
+        r = jload(rp)
         r["engine_selection"] = {"fallback": True, "warning": "no LISFLOOD-FP found"}
-        json.dump(r, open(rp, "w"))
+        jdump(r, rp)
         self.assertIn("ENGINE_FALLBACK", ids(RD.build_digest(run, dam_folder=dam), "WATCH"))
 
     def test_empty_folder(self):

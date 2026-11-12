@@ -13,6 +13,10 @@ damit_ai/lumo/setup-local-lumo.sh and research/setup-dam-research.zsh.
   .\install-local-ai-windows.ps1 -WatchModel phi4-mini   # the SMALL run-watcher explainer (default qwen3:4b);
                                                          # -NoWatchModel skips pulling it. lumo (Q&A) keeps the big model.
 
+  If 'ollama pull' fails (a proxy that breaks the registry redirect) the model's official GGUF is fetched from
+  Hugging Face with curl.exe (https_proxy / $env:HF_ENDPOINT honoured), sha256-checked and loaded with 'ollama create'
+  under the same tag. $env:LUMO_NO_HF_FALLBACK = 1 turns that off.
+
 By default, when Lumo is installed the Lumo knowledge pack (lumo\knowledge) and, if present,
 the dam-research engine docs are indexed into the RAG so Lumo comes up already knowing the
 suite's behaviours, findings and tool contracts. Pass -NoIndex to skip that.
@@ -185,10 +189,62 @@ else                   { $ChatModel = 'qwen3:8b' }
 $NumCtx = if ($RamGB -lt 32) { 12288 } else { 16384 }
 Ok "RAM $RamGB GB -> chat model $ChatModel (num_ctx $NumCtx)"
 
+# >>> hf_gguf_fallback (Windows copy of the bash block in install-local-ai-linux.sh; the table must match, a test checks it)
+# `ollama pull` can fail behind a proxy. Fallback: fetch the model's official GGUF from Hugging Face (curl.exe honours
+# https_proxy; $env:HF_ENDPOINT can point at a mirror), check its sha256, `ollama create` the SAME tag, delete the GGUF.
+# $env:LUMO_GGUF_SPEC = "repo file sha256 bytes" overrides the table; $env:LUMO_GGUF_DIR = scratch dir;
+# $env:LUMO_NO_HF_FALLBACK = 1 turns the fallback off.
+function Get-HfGgufSpec ($tag) {
+  if ($env:LUMO_GGUF_SPEC) { return ($env:LUMO_GGUF_SPEC -split '\s+') }
+  switch -Regex ($tag) {
+    '^qwen3:4b$'          { return @('Qwen/Qwen3-4B-GGUF','Qwen3-4B-Q4_K_M.gguf','7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5','2497280256') }
+    '^qwen3:8b$'          { return @('Qwen/Qwen3-8B-GGUF','Qwen3-8B-Q4_K_M.gguf','d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785','5027783488') }
+    '^qwen3:14b$'         { return @('Qwen/Qwen3-14B-GGUF','Qwen3-14B-Q4_K_M.gguf','500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0','9001752960') }
+    '^qwen3:30b-a3b$'     { return @('Qwen/Qwen3-30B-A3B-GGUF','Qwen3-30B-A3B-Q4_K_M.gguf','0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5','18556685824') }
+    '^phi4-mini(:.*)?$'   { return @('unsloth/Phi-4-mini-instruct-GGUF','Phi-4-mini-instruct-Q4_K_M.gguf','88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a','2491874272') }
+    '^nomic-embed-text(:.*)?$' { return @('nomic-ai/nomic-embed-text-v1.5-GGUF','nomic-embed-text-v1.5.f16.gguf','f7af6f66802f4df86eda10fe9bbcfc75c39562bed48ef6ace719a251cf1c2fdb','274290560') }
+  }
+  return $null
+}
+function New-OllamaFromHf ($tag) {
+  $spec = Get-HfGgufSpec $tag
+  if (-not $spec) { Warn "no Hugging Face GGUF is known for $tag (set LUMO_GGUF_SPEC=`"repo file sha256 bytes`")"; return $false }
+  $repo, $file, $sha, $size = $spec; $size = [int64]$size
+  if ($env:LUMO_NO_HF_FALLBACK -eq '1') { Warn "LUMO_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return $false }
+  if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { Warn "curl.exe not found: cannot fetch the GGUF for $tag"; return $false }
+  $dir = if ($env:LUMO_GGUF_DIR) { $env:LUMO_GGUF_DIR } else { Join-Path $env:TEMP 'lumo-gguf' }
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $free = (Get-PSDrive -Name ((Resolve-Path $dir).Drive.Name)).Free
+  if ($free -lt ($size + [int64]($size / 10))) { Warn "not enough free space in $dir for the $([int]($size / 1MB)) MB GGUF (set LUMO_GGUF_DIR to a bigger disk)"; return $false }
+  $ep = if ($env:HF_ENDPOINT) { $env:HF_ENDPOINT } else { 'https://huggingface.co' }
+  $gguf = Join-Path $dir $file
+  $have = if (Test-Path $gguf) { (Get-Item $gguf).Length } else { 0 }
+  if ($have -ne $size) {
+    Ok "ollama pull failed: downloading $file from Hugging Face ($([int]($size / 1MB)) MB)"
+    & curl.exe -fL -C - --retry 3 --retry-delay 5 -o $gguf "$ep/$repo/resolve/main/$file"
+    if ($LASTEXITCODE -ne 0) { Warn "download failed: $ep/$repo/resolve/main/$file"; return $false }
+  }
+  $got = (Get-FileHash -Algorithm SHA256 $gguf).Hash.ToLower()
+  if ($got -ne $sha) { Warn "sha256 of $file is $got, expected ${sha}: not used"; Remove-Item $gguf -Force; return $false }
+  $mf = Join-Path $dir "Modelfile.$PID"
+  $lines = @("FROM $gguf")
+  if ($tag -notlike 'nomic*') { $lines += @('PARAMETER num_ctx 4096','PARAMETER temperature 0.2','PARAMETER top_p 0.9') }
+  Set-Content -Path $mf -Value $lines -Encoding ASCII
+  & $Ollama create $tag -f $mf | Out-Null
+  $okc = ($LASTEXITCODE -eq 0)
+  Remove-Item $mf -Force -ErrorAction SilentlyContinue
+  if (-not $okc) { Warn "ollama create $tag failed"; return $false }
+  Remove-Item $gguf -Force -ErrorAction SilentlyContinue
+  Ok "created $tag from the Hugging Face GGUF"
+  return $true
+}
+# <<< hf_gguf_fallback
+
 function Pull ($m) {
   if (-not ((& $Ollama list) -match [regex]::Escape($m))) {
     Ok "pulling $m (first time, large)"
-    & $Ollama pull $m; if ($LASTEXITCODE -ne 0) { Die "pull failed: $m" }
+    & $Ollama pull $m
+    if ($LASTEXITCODE -ne 0) { if (-not [bool](@(New-OllamaFromHf $m))[-1]) { Die "pull failed: $m" } }
   }
 }
 
@@ -203,6 +259,7 @@ if ($DoLumo) {
     if (-not ((& $Ollama list) -match [regex]::Escape($WatchModel))) {
       Ok "pulling $WatchModel (the small watcher model)"
       & $Ollama pull $WatchModel
+      if ($LASTEXITCODE -ne 0) { if ([bool](@(New-OllamaFromHf $WatchModel))[-1]) { $global:LASTEXITCODE = 0 } }
       if ($LASTEXITCODE -ne 0) { Warn "could not pull the watcher model $WatchModel (lumo-watch still gives the digest and verdict)" }
     }
   }

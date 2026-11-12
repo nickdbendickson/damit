@@ -80,6 +80,14 @@
     {"id": "watcher-verdict",
      "q": "Who sets the OK / WATCH / PROBLEM verdict of the run watcher, and what does Lumo do?",
      "doc": "WATCHER-DIGEST",
-     "facts": ["code", "flags", "explain|commentary", "never|does not"]}
+     "facts": ["code", "flags", "explain|commentary", "never|does not"]},
+    {"id": "domain-edge-outflow",
+     "q": "A watcher flag says EDGE_OUTFLOW_EARLY in pass 1 and 2. Is that dam leakage or a weak dam?",
+     "doc": "WATCHER-DIGEST",
+     "facts": ["model domain edge", "not dam leakage|not the breach|border of the computation grid", "domain grows|final pass"]},
+    {"id": "lumo-slows-lisflood",
+     "q": "Why does the run watcher not ask Lumo to explain while LISFLOOD is running, and how is that set?",
+     "doc": "WATCHER-DIGEST",
+     "facts": ["LUMO_WATCH_EXPLAIN", "idle", "slower|share the cores|CPU"]}
   ]
 }

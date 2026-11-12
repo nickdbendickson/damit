@@ -156,7 +156,8 @@ def main(argv=None):
     path = os.path.abspath(a.out)
     if a.check:
         try:
-            cur = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as f:
+                cur = f.read()
         except OSError:
             cur = ""
         if cur != text:

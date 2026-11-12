@@ -19,7 +19,7 @@ jobs:
           python-version: "3.12"
       - run: python3 -m pip install numpy
       - name: Lumo tests (synthetic fixtures only; Ollama is a local mock)
-        run: python3 -m unittest discover -v -s damit_ai/lumo/tests
+        run: python3 -W error -m unittest discover -v -s damit_ai/lumo/tests
       - name: Installer scripts parse
         run: |
           bash -n damit_ai/install-local-ai-linux.sh

@@ -89,6 +89,15 @@ Lumo can watch a DamIT Runner run, but the review does not depend on the model. 
    alternative; `LUMO_WATCH_MODEL` or `--model`), through Ollama `/api/chat` with `think:false`, `num_ctx` about 4k and
    `stream:true`. Every streamed piece is saved at once, so a slow box leaves partial text; there is no hard timeout that
    throws it away. Lumo never changes or gates the verdict, and if it does not answer in a few seconds the review stands.
+   The **complete flag list** (every flag, receptor ids capped at 10 plus a count) is written by code at the top of
+   `lumo_<event>.md`; Lumo's one-line comments go below it, and a footer names any flag it skipped or any flag-like id it
+   invented. Timing (`prompt_eval_duration`, `eval_duration`, tokens/s ...) and any `message.thinking` that arrived despite
+   `think:false` are kept in the status JSON.
+   **Lumo does not compete with LISFLOOD for the CPU.** `LUMO_WATCH_EXPLAIN=idle` (default) queues the explanation until no
+   `lisflood` process runs and the pass log has been quiet for `LUMO_WATCH_IDLE_GAP_S` (20 s); at run end it runs at once.
+   `end` explains only at the run end, `always` is the old behaviour, `never` writes the digest only. Ollama gets
+   `num_thread` 2 (`LUMO_WATCH_NUM_THREAD`, 0 = Ollama's default) and the explain process is niced. A busy shared Ollama is
+   waited for (`LUMO_WATCH_FIRST_TOKEN_S`, default 600; 0 = no limit): it ends as status `timeout`, not a partial reply.
    Interactive Q&A (`lumo`, `lumo-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
 
 Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
@@ -103,6 +112,11 @@ Output goes to `~/local-ai/watch/<dam>_<run>/`, never into the run folder. Detai
 [`lumo/knowledge/WATCHER-DIGEST.md`](lumo/knowledge/WATCHER-DIGEST.md). The real algorithm ids and parameters Lumo cites come
 from [`lumo/knowledge/ALGORITHM-HELP-DAMIT.md`](lumo/knowledge/ALGORITHM-HELP-DAMIT.md), generated from the plugin code by
 `lumo/tools/dump_damit_algorithm_help.py` in an offscreen QGIS (CI checks it is current).
+
+No `dam.json` in the dam folder? The digest says so (`DAM_RECORD_MISSING`, info), does not raise a datum alarm for elevations in
+the NAVD88 range, takes the dam id from the run setup, the handoff or the folder name, and writes a flat
+`dam_record_hazard.json` next to the digest for Hazard (never into the dam or run folder). If PROJ cannot open its database
+(`NO_RUN_FILES` with a PROJ error), set `PROJ_DATA` (or `PROJ_LIB`) to the folder holding `proj.db`.
 
 > **GPUs:** stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs. An Intel Arc or Intel iGPU box runs the model on the CPU
 > (about 2.5-4 tokens/s for an 8B model in testing), which is why the watcher's explainer defaults to a 4B model and gets a
@@ -119,7 +133,10 @@ The `damit_ai-offline` download adds `damit_ai/offline/` next to `lumo/` and `re
   `ndresearch.txt` and `SHA256SUMS`. `setup-dam-research.zsh` builds the env from these files with
   `conda create --offline`, OCR included. It needs conda (the dam-suites package ships Miniforge).
 
-Models still come from Ollama's registry (`ollama pull`, 17 to 24 GB each). They are too big to bundle.
+Models still come from Ollama's registry (`ollama pull`, 17 to 24 GB each). They are too big to bundle. If `ollama pull` fails
+(for example behind a proxy), the Linux, Mac and Windows installers fall back to the model's Hugging Face GGUF (sha256 checked,
+resumable) and `ollama create` it under the same tag. `HF_ENDPOINT` points at a mirror, `LUMO_GGUF_SPEC` overrides the table,
+`LUMO_NO_HF_FALLBACK=1` turns the fallback off.
 
 ## Models by Mac
 
@@ -137,8 +154,8 @@ Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6
 - `lumo/knowledge/` is a knowledge pack to index into Lumo's RAG beyond the source code (known behaviours /
   conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
   it); see `lumo/knowledge/README.md` and `index-knowledge.zsh`.
-- `lumo/` is setup-local-lumo.sh v3.7 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
-  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.7 also copies the run watcher: run_digest 1.0.0 and lumo_watch 1.0.0; `lumo-chat` shows the
+- `lumo/` is setup-local-lumo.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
+  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.1.0 and lumo_watch 1.1.0; `lumo-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.

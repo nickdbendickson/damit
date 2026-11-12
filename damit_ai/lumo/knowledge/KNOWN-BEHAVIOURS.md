@@ -62,8 +62,9 @@ digest (`run_digest.py`). A local model once reversed the first one.
   inventory height (37 ft x 0.3048 x 3.5 = 39.5 m for a 2.5:1 slope).
 - **Height.** Crest minus streambed should equal the inventory height. When they differ (DWR-2658: 39.0 vs 37 ft)
   the Runner can raise the breach bottom to the reservoir bottom; flag it, do not average it away.
-- **Early passes may leak.** The Runner grows the domain while water leaves an edge, so edge outflow in pass 1-2
-  followed by a clean final pass is normal (WATCH); a leaking final pass is not.
+- **Early passes may let water out of the model domain edge.** The Runner grows the domain while water leaves the
+  border of the computation grid (the *model domain edge*; it is not the breach and not dam leakage), so edge outflow in
+  pass 1-2 followed by a clean final pass is normal (WATCH); a leaking final pass is not.
 - **BNSF KO subdivision = 15 trains per day** (the DamSafety value) for the M9a / M9b rail checks, passed as
   `RAIL_TRAINS_LOOKUP` (`field,value,trains_per_day,source` = `SUBDIV,KO,15,...`). Other lines without a value
   stay flagged.

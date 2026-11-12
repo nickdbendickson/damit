@@ -38,8 +38,9 @@ import os
 import re
 import sys
 import time
+import traceback
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -74,7 +75,7 @@ THRESHOLDS = {
     "wet_ft": 0.1,                      # arrival depth: a cell this deep is wet
     "near_wet_ft": 1.0,                 # a dry receptor cell whose neighbour is this deep is flagged
     "bnsf_ko_trains_per_day": 15.0,     # Nick's rule (DamSafety's value)
-    "max_ids_listed": 8,
+    "max_ids_listed": 10,               # receptor / road ids named in a flag line, then "(+N more)"
 }
 
 KNOWN_FLAG_IDS = (
@@ -82,11 +83,33 @@ KNOWN_FLAG_IDS = (
     "PASS_UNFINISHED", "STALL", "STOPPED_MOVING", "HEIGHT_MISMATCH", "BREACH_BOTTOM_RAISED", "DATUM",
     "START_WSE", "TOE_INFLOW", "TOE_BAND", "OUTLET_FLOW", "ENGINE_FALLBACK", "RUN_WARNINGS",
     "RECEPTOR_NODATA", "RECEPTOR_DRY_NEXT_TO_WET", "ROADS_UNSCORED", "HAZARD_REVIEW", "RAIL_TRAINS",
-    "NO_RUN_FILES",
+    "NO_RUN_FILES", "DAM_RECORD_MISSING", "TOE_UNCHECKED", "RECEPTORS_UNCHECKED",
 )
+
+# Elevations from 300 ft up to this are taken to be in the NAVD88 range when no datum is stated (ND is ~800-3,500 ft;
+# nothing in the contiguous US is above 14,500 ft).
+NAVD88_RANGE_MAX_FT = 15000.0
 
 
 # ----------------------------------------------------------------------------- small helpers
+def describe_error(e):
+    """The exception's type and message; a type alone when the message is empty (GDAL/PROJ errors often are)."""
+    msg = " ".join(str(e).split())
+    return "%s: %s" % (type(e).__name__, msg) if msg else "%s (no message)" % type(e).__name__
+
+
+def error_detail(e, lines=4):
+    """The last few traceback lines, and a PROJ hint when the failure looks like a PROJ database problem."""
+    tb = [l for l in traceback.format_exception(type(e), e, e.__traceback__) if l.strip()]
+    tail = " | ".join(" ".join(l.split()) for l in tb[-lines:])
+    text = (str(e) + tail).lower()
+    hint = ""
+    if "proj" in text or isinstance(e, (AttributeError, TypeError)) and "transform" in text:
+        hint = (" PROJ cannot open its database (proj.db): set PROJ_DATA (PROJ_LIB on GDAL before 3.x / PROJ 9) to the "
+                "folder that holds proj.db, e.g. <conda env>/share/proj or the QGIS share/proj, then run again.")
+    return "traceback tail: %s.%s" % (tail, hint)
+
+
 def _load_json(path):
     try:
         with open(path, encoding="utf-8") as f:
@@ -112,6 +135,16 @@ def _ids(ids, limit=None):
     limit = limit or THRESHOLDS["max_ids_listed"]
     ids = [str(i) for i in ids]
     return ", ".join(ids[:limit]) + (" (+%d more)" % (len(ids) - limit) if len(ids) > limit else "")
+
+
+def flag_ids_text(flag, limit=None):
+    """"ids a, b, c (+N more)" for a flag that carries receptor ids in its data, else "". Capped (default 10) so a long
+    list cannot swell the digest or the prompt; the JSON data keeps every id."""
+    ids = (flag.get("data") or {}).get("ids")
+    if not isinstance(ids, (list, tuple)) or not ids:
+        return ""
+    limit = limit or THRESHOLDS["max_ids_listed"]
+    return "ids " + ", ".join(str(i) for i in ids[:limit]) + (" (+%d more)" % (len(ids) - limit) if len(ids) > limit else "")
 
 
 class Flags(object):
@@ -385,7 +418,7 @@ def check_mass(passes, fl, th=THRESHOLDS):
                    "an edge is importing water (limit %.2fx)" % th["domain_volume_ratio_problem"], ratio=r)
         ei = p["edge_inflow_pct"]
         if ei is not None and ei > th["edge_inflow_problem_pct"]:
-            fl.add("EDGE_INFLOW", PROBLEM, w, "water enters through an edge: %.1f%% of the injected volume" % ei,
+            fl.add("EDGE_INFLOW", PROBLEM, w, "water enters through a model domain edge: %.1f%% of the injected volume" % ei,
                    "negative Qout in the .mass file", pct=ei)
 
 
@@ -404,7 +437,7 @@ def check_edges(passes, fl, params=None, th=THRESHOLDS, in_progress=False):
         leaking = bool(p["over"] or p["over_outflow"]) or (op is not None and op >= th["edge_outflow_watch_pct"])
         if not (wet and leaking) and not (op is not None and op >= ext):
             continue
-        desc = "edges %s wet (%s ft); boundary outflow %s%%" % (
+        desc = "model domain edge(s) %s wet (%s ft); boundary outflow %s%%" % (
             "/".join(wet) or "none", ", ".join("%s %.2f" % (k, ed[k]) for k in wet) or "n/a",
             _fmt(op, 1))
         data = {"edges": wet, "depth_ft": {k: ed.get(k) for k in wet}, "outflow_pct": op}
@@ -412,12 +445,12 @@ def check_edges(passes, fl, params=None, th=THRESHOLDS, in_progress=False):
         if p["pass"] == last and not in_progress:
             sev = PROBLEM if (p["over"] or p["over_outflow"] or (op is not None and op >= ext) or
                               any((ed.get(k) or 0.0) >= tol for k in wet)) else WATCH
-            fl.add("EDGE_OUTFLOW_FINAL", sev, w, "the FINAL pass leaks through the edge" if sev == PROBLEM else
-                   "the final pass has water at an edge", desc + "; the flood left the model (depths and extent are "
+            fl.add("EDGE_OUTFLOW_FINAL", sev, w, "the FINAL pass leaks through the model domain edge" if sev == PROBLEM else
+                   "the final pass has water at a model domain edge", desc + "; the flood left the model (depths and extent are "
                    "not final)", **data)
         else:
-            fl.add("EDGE_OUTFLOW_EARLY", WATCH, w, "early-pass edge outflow (%s%%)" % _fmt(op, 1),
-                   desc + "; normal while the domain grows, so confirm the final pass is clean", **data)
+            fl.add("EDGE_OUTFLOW_EARLY", WATCH, w, "early-pass outflow through the model domain edge (%s%%)" % _fmt(op, 1),
+                   desc + "; water leaving the edge of the model grid (not the breach) is normal while the domain grows, so confirm the final pass is clean", **data)
 
 
 def check_progress(passes, report, fl, now=None, th=THRESHOLDS, stall_s=None):
@@ -454,6 +487,8 @@ def check_progress(passes, report, fl, now=None, th=THRESHOLDS, stall_s=None):
 
 
 def _dam_folder(run_dir, setup, explicit=None):
+    if explicit and os.path.isdir(explicit):             # an explicit folder wins, with or without a dam.json in it
+        return explicit
     cands = [explicit, (setup or {}).get("dam_folder"), os.path.dirname(os.path.abspath(run_dir))]
     for c in cands:
         if c and os.path.exists(os.path.join(c, "dam.json")):
@@ -461,16 +496,45 @@ def _dam_folder(run_dir, setup, explicit=None):
     return explicit or (setup or {}).get("dam_folder")
 
 
-def dam_facts(setup, dam_folder):
-    """Merge the dam record the run used with the dam folder's dam.json (for the streambed)."""
+def _handoff_dam(run_dir):
+    h = _load_json(os.path.join(run_dir, "damit_handoff.json")) if run_dir else None
+    return (h or {}).get("dam") or {}
+
+
+def resolve_dam_id(setup, report, dam_folder, run_dir=None, dj_fields=None):
+    """(dam_id, source). The run's own record first; with no dam.json: the run report, the hand-off, then the
+    dam folder's name (the Dams folder names it by its dam id)."""
+    d = (setup or {}).get("dam") or {}
+    prm = (setup or {}).get("parameters") or {}
+    h = _handoff_dam(run_dir)
+    for v, src in ((d.get("dam_id"), "run_setup.dam"), (prm.get("dam_id"), "run_setup.parameters"),
+                   ((report or {}).get("dam_id"), "run_report"), (h.get("dam_id") or h.get("nid_id"), "damit_handoff.json"),
+                   ((dj_fields or {}).get("dam_id"), "dam.json"), (d.get("nid_id"), "run_setup.dam.nid_id")):
+        if v:
+            return str(v), src
+    if dam_folder:
+        name = os.path.basename(os.path.abspath(dam_folder))
+        if name:
+            return name, "dam folder name"
+    return None, None
+
+
+def dam_facts(setup, dam_folder, report=None, run_dir=None):
+    """Merge the dam record the run used with the dam folder's dam.json (for the streambed). `has_record` is False
+    when the dam folder has no dam.json: the streambed and the stated datum are then unknown, and a dam id is taken
+    from the run report, the hand-off or the folder name."""
     d = dict((setup or {}).get("dam") or {})
     prm = (setup or {}).get("parameters") or {}
     dj = _load_json(os.path.join(dam_folder, "dam.json")) if dam_folder else None
     fields = (dj or {}).get("fields") or {}
     sources = (dj or {}).get("sources") or {}
     streambed = _num(fields.get("streambed_elev_ft"))
+    dam_id, dam_id_source = resolve_dam_id(setup, report, dam_folder, run_dir, fields)
     return {
-        "dam_id": d.get("dam_id") or prm.get("dam_id") or fields.get("dam_id"),
+        "dam_id": dam_id,
+        "dam_id_source": dam_id_source,
+        "has_record": dj is not None,
+        "dam_folder": dam_folder,
         "name": d.get("name") or prm.get("name"),
         "height_ft": _num(d.get("height_ft"), _num(prm.get("height_ft"))),
         "top_ft": _num(d.get("top_of_dam_elev_ft"), _num(prm.get("top_ft"))),
@@ -485,24 +549,43 @@ def dam_facts(setup, dam_folder):
     }
 
 
+def check_dam_record(f, fl):
+    """No dam.json in the dam folder: say so once (INFO), and what was used instead."""
+    if f["has_record"]:
+        return
+    fl.add("DAM_RECORD_MISSING", INFO, "run", "no dam record (dam.json) in the dam folder",
+           "streambed and stated datum are unknown; the dam id (%s) comes from %s%s. Checks that need the record "
+           "fall back to the run's own values or are skipped (see the DATUM, HEIGHT and TOE notes)." % (
+               f["dam_id"] or "unknown", f["dam_id_source"] or "nowhere",
+               "" if f["dam_folder"] else "; no dam folder was found"), dam_id=f["dam_id"], source=f["dam_id_source"])
+
+
 def check_height(f, fl, th=THRESHOLDS):
     top, h = f["top_ft"], f["height_ft"]
     bed = f["streambed_ft"]
     label = "streambed"
+    used = "streambed"
     if bed is None and f["breach_bottom_ft"] is not None:
-        bed, label = f["breach_bottom_ft"], "breach bottom (BOTTOM_FT)"
+        bed, used = f["breach_bottom_ft"], "breach bottom used as streambed (no streambed in dam record)"
+        label = used
     if None in (top, h, bed):
         return None
     diff = (top - bed) - h
-    info = {"top_ft": top, "bed_ft": bed, "bed_label": label, "crest_minus_bed_ft": round(top - bed, 2),
+    info = {"top_ft": top, "bed_ft": bed, "bed_label": label, "bed_source": "dam record" if used == "streambed" else "BOTTOM_FT", "crest_minus_bed_ft": round(top - bed, 2),
             "inventory_height_ft": h, "diff_ft": round(diff, 2)}
     if abs(diff) >= th["height_watch_ft"]:
         sev = PROBLEM if abs(diff) >= max(th["height_problem_ft"], th["height_problem_frac"] * h) else WATCH
-        fl.add("HEIGHT_MISMATCH", sev, "run", "crest minus %s is %.1f ft; the inventory height is %.1f ft (%+.1f ft)" % (
-            label, top - bed, h, diff),
-            "top of dam %.2f - %s %.2f; the toe band and breach size use the inventory height; check which is right "
-            "before trusting the breach%s" % (top, label, bed, ("; record note: " + f["height_note"]) if f["height_note"] else ""),
-            **info)
+        if used == "streambed":
+            what = "crest minus streambed is %.1f ft" % (top - bed)
+        else:
+            what = "crest minus %s is %.1f ft" % (used, top - bed)
+        fl.add("HEIGHT_MISMATCH", sev, "run", "%s; the inventory height is %.1f ft (%+.1f ft)" % (what, h, diff),
+               "top of dam %.2f - %s %.2f; the toe band and breach size use the inventory height; check which is right "
+               "before trusting the breach%s%s" % (
+                   top, "streambed" if used == "streambed" else "breach bottom (BOTTOM_FT)", bed,
+                   "" if used == "streambed" else ". The dam folder has no streambed elevation, so BOTTOM_FT stands in "
+                   "for it; if BOTTOM_FT was raised to the reservoir bottom this is not the true streambed",
+                   ("; record note: " + f["height_note"]) if f["height_note"] else ""), **info)
     return info
 
 
@@ -516,20 +599,28 @@ def check_bottom_raised(report, fl):
 
 
 def check_datum(f, fl, th=THRESHOLDS):
+    """DWR elevations are NAVD88 only. Evidence of another datum is a flag. A top of dam in the NAVD88 range with no
+    datum stated is NOT an alarm (the Runner never writes a stated datum itself). Only when the elevation cannot be
+    judged at all (no top of dam) is the datum reported, as an INFO note."""
     top = f["top_ft"]
     datum = (f["stated_datum"] or "").upper().replace(" ", "")
     dwr = (f["top_source"] or "").upper() == "DWR"
     local = top is not None and 0.0 <= top <= th["local_datum_max_ft"]
-    info = {"top_ft": top, "stated_datum": f["stated_datum"], "source": f["top_source"], "local_datum": local}
+    navd_range = top is not None and th["local_datum_max_ft"] < top <= NAVD88_RANGE_MAX_FT
+    info = {"top_ft": top, "stated_datum": f["stated_datum"], "source": f["top_source"], "local_datum": local,
+            "has_dam_record": f["has_record"],
+            "basis": ("stated NAVD88" if datum == "NAVD88" else "stated " + str(f["stated_datum"]) if datum else
+                      "NAVD88 range (no datum stated)" if navd_range else "unknown")}
     if local or (datum and datum != "NAVD88"):
         why = ("%.1f ft is in the 0-%d ft range: treated as a LOCAL datum, not NAVD88" % (top, th["local_datum_max_ft"])
                if local else "stated datum is %s, not NAVD88" % f["stated_datum"])
         fl.add("DATUM", PROBLEM if (dwr or datum) else WATCH, "run", "elevations are not NAVD88: " + why,
                "DWR elevations are NAVD88 only (NGVD29 + VERTCON); a local or NGVD29 elevation against a NAVD88 DEM "
                "moves the whole breach", **info)
-    elif not datum:
-        fl.add("DATUM", WATCH, "run", "no datum stated for the dam elevations",
-               "ND elevations must be NAVD88; the dam record does not say", **info)
+    elif not datum and not navd_range:
+        fl.add("DATUM", INFO, "run", "unknown datum%s" % ("" if f["has_record"] else " (no dam record)"),
+               "no top of dam elevation and no stated datum: the NAVD88 rule cannot be checked%s" % (
+                   "" if f["has_record"] else "; the dam folder has no dam.json"), **info)
     return info
 
 
@@ -580,7 +671,15 @@ def toe_expected(height_ft, slope, th=THRESHOLDS):
     return th["toe_inner_m"], max(th["toe_inner_m"], min(th["toe_cap_m"], outer)), s, not (slope and slope > 0)
 
 
-def check_toe(f, report, fl, th=THRESHOLDS):
+def _dam_line_found(dam_folder, run_dir=None):
+    for base in (dam_folder, os.path.join(dam_folder, "inputs") if dam_folder else None, run_dir):
+        if base and (os.path.exists(os.path.join(base, "dam_line.geojson")) or
+                     os.path.exists(os.path.join(base, "inputs", "dam_line.geojson"))):
+            return True
+    return False
+
+
+def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None):
     inflow = (report or {}).get("inflow")
     if not inflow:
         return None
@@ -589,6 +688,16 @@ def check_toe(f, report, fl, th=THRESHOLDS):
     m = re.search(r"([\d.]+)\s*m from the (?:dam )?line", str(inflow.get("how") or ""))
     dist = _num(m.group(1)) if m else None
     info["distance_m"] = dist
+    if dist is None:
+        line = _dam_line_found(f.get("dam_folder"), run_dir)
+        how = str(inflow.get("how") or "")
+        fallback = "fallback" in how.lower()
+        info["dam_line_found"] = line
+        fl.add("TOE_UNCHECKED", WATCH if fallback else INFO, "run",
+               "toe inflow position not checked: the report gives no distance from the dam line",
+               "%s%s. The band (5 m to H x (slope+1), 150 m cap) can still be checked; the inflow point cannot." % (
+                   "the Runner's own words: '%s'" % how if how else "no inflow description in the run report",
+                   "; no dam_line.geojson was found" if not line else ""), **info)
     h = f["height_ft"]
     if h:
         lo, hi, s, defaulted = toe_expected(h, f["ds_slope"])
@@ -817,7 +926,8 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                "model/run*/ in " + run_dir)
     prm = (setup or {}).get("parameters") or {}
     dam_folder = _dam_folder(run_dir, setup, dam_folder)
-    facts = dam_facts(setup, dam_folder)
+    facts = dam_facts(setup, dam_folder, report, run_dir)
+    check_dam_record(facts, fl)
 
     check_mass(passes, fl)
     check_edges(passes, fl, prm, in_progress=upto_pass is not None)
@@ -827,7 +937,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
     datum = check_datum(facts, fl)
     wse = check_start_wse(facts, report, setup, fl)
     check_outlets(run_dir, passes, setup, fl)
-    toe = check_toe(facts, report, fl)
+    toe = check_toe(facts, report, fl, run_dir=run_dir)
     check_engine(report, fl)
 
     # peak depth / velocity over wet cells, and receptors (needs numpy; GDAL for the GeoTIFF)
@@ -864,14 +974,24 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                     for l in (_load_json(hr) or {}).get("layers") or []:
                         if str(l.get("role", "")).lower() == "structures":
                             spath = l.get("source")
+                if spath and not os.path.exists(spath):
+                    fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: the structure layer was not found",
+                           "no file at %s" % spath)
                 if spath and os.path.exists(spath) and (report or {}).get("crs_wkt"):
                     pts = load_points_ogr(spath, report["crs_wkt"])
+                    if pts is None:
+                        fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: GDAL/OGR is not installed",
+                               "the structure layer %s needs the osgeo Python package (QGIS or GDAL); the other checks "
+                               "are unaffected" % os.path.basename(spath))
             if pts:
                 rec = check_receptors(depth_grid, pts, fl)
-    except ImportError:
-        pass
+    except ImportError as e:
+        fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: a Python package is missing",
+               "%s. The structure layer needs GDAL/OGR (osgeo) and the grids need numpy; the other checks are "
+               "unaffected." % e)
     except Exception as e:                  # noqa: BLE001 - a raster problem must not stop the digest
-        fl.add("NO_RUN_FILES", WATCH, "run", "could not read the result rasters: %s" % e)
+        fl.add("NO_RUN_FILES", WATCH, "run", "could not read the result rasters: %s" % describe_error(e),
+               error_detail(e), error_type=type(e).__name__)
 
     hazard = None
     if use_hazard and upto_pass is None:
@@ -890,6 +1010,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                             "sim_time_hr": (report or {}).get("sim_time_hr"), "stop_reason": (report or {}).get("stop_reason"),
                             "finished": bool(report) or (setup or {}).get("status") == "finished"}}}
     d["text"] = render_text(d)
+    d["flags_text"] = render_flag_list(d)
     return d
 
 
@@ -948,16 +1069,38 @@ def render_text(d):
     L.append("FLAGS (%d): %s" % (len(fl), ", ".join("%s %s" % (x["severity"], x["id"]) for x in fl) or "none"))
     budget = MAX_LINES - len(L) - 1
     shown = 0
-    for x in fl:
-        if x["severity"] == INFO:
-            continue
+    scored = [x for x in fl if x["severity"] != INFO]
+    for x in scored:
         if budget - shown <= 0:
             break
-        L.append("- [%s] %s: %s" % (x["severity"], x["where"], x["title"]))
+        ids = flag_ids_text(x)
+        L.append("- [%s] %s: %s%s" % (x["severity"], x["where"], x["title"], " [%s]" % ids if ids else ""))
         shown += 1
-    if shown < len([x for x in fl if x["severity"] != INFO]):
-        L.append("- ... more flags in the JSON")
+    if shown < len(scored):
+        L.append("- ... %d more flag(s): see the complete flag list" % (len(scored) - shown))
     return "\n".join(L[:MAX_LINES])
+
+
+def flag_sort_key(x):
+    return (-_RANK.get(x["severity"], 0), x["id"], str(x["where"]))
+
+
+def render_flag_list(d, detail_chars=170):
+    """EVERY flag, deterministically (code, not a model): numbered, severity first, INFO notes last. Nothing is
+    capped or left out; Lumo's commentary is written under this list and never replaces it."""
+    fl = sorted(d["flags"], key=flag_sort_key)
+    n = {k: sum(1 for x in fl if x["severity"] == k) for k in (PROBLEM, WATCH, INFO)}
+    L = ["COMPLETE FLAG LIST - %d flag(s): %d PROBLEM, %d WATCH, %d INFO (verdict %s, set by code)" % (
+        len(fl), n[PROBLEM], n[WATCH], n[INFO], d["verdict"])]
+    for i, x in enumerate(fl, 1):
+        ids = flag_ids_text(x)
+        L.append("%d. [%s] %s (%s): %s%s" % (i, x["severity"], x["id"], x["where"], x["title"], " [%s]" % ids if ids else ""))
+        det = " ".join(str(x.get("detail") or "").split())
+        if det:
+            L.append("   %s%s" % (det[:detail_chars], "..." if len(det) > detail_chars else ""))
+    if not fl:
+        L.append("(no flags)")
+    return "\n".join(L)
 
 
 def machine_flags(d):
