@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.2.0
+version=0.2.2
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -16,6 +16,13 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.2.2 - 2026-11-11
+      * Dam record auto-find (DWR-2824 retest): the normal raster path is <Dams>/<dam id>/Depth (Max).tif, with no run folder in it, so the 0.2.1 search for the run watcher's copy never matched the watcher's real folder <dam id>_run_<timestamp>/. It now also finds the newest ~/local-ai/watch/<dam id>_run_<timestamp>/dam_record_hazard.json (DAMIT_WATCH_DIR changes the folder) for a folder above the raster that is the dam id, when the copy's own dam_id agrees. A dam.json above the raster still wins.
+      * The report's Inputs line for the dam record is in words. With no record it said only {"name": "..."}; it now says "Dam record: none given or found (...); only the name was given: ..." and, when one was used, its name and values.
+      * A method whose receptor layer was supplied and sampled but has no receptor in the scored set (all outside the routed domain, as the 132 rail features of DWR-2824): an INFO note "N rail receptor(s) were supplied and sampled, but none is in the scored set (...)" (code layer_none_scored) instead of the warning "no rail receptors supplied". The warning no_layer stays for a layer that really was not given.
+    0.2.1 - 2026-11-11
+      * Dam record (DAM_JSON): a dam.json with nested "fields" (the dam folder's own file) is read as it is, over any top-level values, so it no longer has to be flattened by hand. A flat record is read exactly as before.
+      * With no DAM_JSON, damit:classify uses a dam record it can find: the dam.json in the depth raster's folder or up to four folders above it, else the run watcher's flat copy ~/local-ai/watch/<dam id>_<run folder>/dam_record_hazard.json (DAMIT_WATCH_DIR changes the folder). A record found this way that has no usable NID ID is left out with a warning instead of stopping the run, and the run report names the file used. Nothing is written beside it.
     0.1.2 - 2026-11-10
       * M9a / M9b: trains per day can come from a new explicit input, RAIL_TRAINS_LOOKUP (CSV: field, value, trains_per_day, source), for rail layers such as NARN that have no trains-per-day field. No default is assumed; every value taken from the lookup is flagged (trains_lookup) as needing Nick's ruling. DWR-2801: DamSafety scored the BNSF KO line High at 15 trains a day; DamIT stays Medium (trains_unknown) unless the lookup gives the number.
       * M6: a structure whose sampled depth rounds to 0.00 ft is no longer counted as inundated (flag m6_trace_depth).

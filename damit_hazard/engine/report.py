@@ -24,6 +24,30 @@ def _params(p):
     return json.dumps(p, sort_keys=True, ensure_ascii=False)
 
 
+def _dam_line(result):
+    """The Inputs line for the dam record, in words (0.2.2). It used to print the record as JSON, so a run with no dam
+    record file showed only {"name": "..."} (the DAM_NAME input) as if that were the record."""
+    dam = {k: v for k, v in (result.get("dam") or {}).items() if v not in (None, "")}
+    name = dam.pop("name", None)
+    from_file = any(L.get("role") == "dam record" for L in result.get("layers") or [])
+    searched = [L for L in result.get("layers") or [] if L.get("role") == "dam record search"]
+    if not from_file:
+        txt = "Dam record: none given or found" + (" ({})".format(searched[0].get("note")) if searched else "")
+        if name:
+            txt += "; only the name was given: {}".format(name)
+        if dam:
+            txt += "; other values set: " + ", ".join("{} = {}".format(k, _scalar(dam[k])) for k in sorted(dam))
+        return txt
+    txt = "Dam record: " + (name if name else "(no name)")
+    if dam:
+        txt += " (" + ", ".join("{} = {}".format(k, _scalar(dam[k])) for k in sorted(dam)) + ")"
+    return txt
+
+
+def _scalar(v):
+    return json.dumps(v, sort_keys=True, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
+
+
 def sections(result, cat):
     """[(title, [lines] | ("table", header, rows))] - one structure for every format."""
     cfg = result["config"]
@@ -92,13 +116,14 @@ def sections(result, cat):
     out.append(("Labels", ["{} = {}".format(k, v) for k, v in sorted(lab.items())]))
     lines = []
     for L in result.get("layers") or []:
+        if L.get("role") == "dam record search":          # said in the "Dam record:" line below
+            continue
         lines.append("{}: {} (modified {}, {} bytes{})".format(
             L.get("role"), L.get("source"), L.get("modified"), L.get("size"),
             ", " + L["note"] if L.get("note") else ""))
     if result.get("nid_id"):
         lines.append("NID ID: {} (USACE National Inventory of Dams)".format(result["nid_id"]))
-    if result.get("dam"):
-        lines.append("Dam record: " + _params(result["dam"]))
+    lines.append(_dam_line(result))
     out.append(("Inputs (R10: re-run when these change)", lines or ["-"]))
     cites = []
     if cfg["mode"] == "preset":
@@ -126,7 +151,40 @@ def sections(result, cat):
             dc.get("catalog_version"), dc.get("sha256"), dc.get("folder")))
     out.append(("Citations", cites))
     out.append(("Disclaimer", [result.get("disclaimer") or ""]))
-    return out
+    return _display_units(out)
+
+
+_FREE_TEXT_COLUMNS = ("Why", "Message", "Condition")
+_KEEP_SECTIONS = ("Labels", "Inputs (R10: re-run when these change)", "Citations")
+
+
+def _display_units(out):
+    """Under the DamIT SI display setting, quantities in the free-text parts of the report
+    (reasons, flag messages, notes) are shown in SI and the report says so. Parameters, the
+    dam record, inputs and citations stay as stored (US); the JSON report is never converted."""
+    try:
+        from damit_core.lib import display_units as DU
+    except Exception:                                             # noqa - older DamIT Core
+        return out
+    if DU.system() != DU.SI:
+        return out
+    conv = []
+    for name, body in out:
+        if name in _KEEP_SECTIONS:
+            pass
+        elif isinstance(body, tuple):
+            _t, hdr, rows = body
+            cols = [i for i, h in enumerate(hdr) if h in _FREE_TEXT_COLUMNS]
+            body = (_t, hdr, [[DU.convert_text(c) if i in cols and isinstance(c, str) else c
+                               for i, c in enumerate(r)] for r in rows])
+        else:
+            body = [DU.convert_text(x) if isinstance(x, str) else x for x in body]
+        conv.append((name, body))
+    if conv and not isinstance(conv[0][1], tuple):
+        conv[0] = (conv[0][0], list(conv[0][1]) + [
+            "Units: SI in reasons and messages, converted from the US values the "
+            "classification uses; parameters, the dam record and the JSON report keep US units."])
+    return conv
 
 
 def markdown(result, cat, title="DamIT Hazard run report"):

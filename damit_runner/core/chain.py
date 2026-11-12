@@ -23,7 +23,8 @@ software versions, input checksums). The batch writes Chain_Batch_Summary.csv (a
 and chain_manifest.json into the output folder.
 
 HEC-RAS stage (HEC_MODE): run / wait (for a manual run of the built package) / skip (the
-Runner's LISFLOOD-FP or ANUGA rasters go straight to the Hazard classification).
+Runner's LISFLOOD-FP or ANUGA rasters go straight to the Hazard classification). The
+default is skip. A run is opt-in.
 """
 import csv
 import datetime
@@ -41,7 +42,7 @@ STAGES = ("screening", "runner", "hec_build", "hec_run", "hazard_import", "class
 STAGE_LABELS = {"screening": "Screening", "runner": "Runner", "hec_build": "HEC-RAS build",
                 "hec_run": "HEC-RAS run", "hazard_import": "Hazard import",
                 "classify": "Hazard classify"}
-ALGS = {"screening": "nddam:runchain", "runner": "damit_run:batch",
+ALGS = {"screening": "damit_screen:runchain", "runner": "damit_run:batch",
         "hec_build": "damit_run:hecrasexport", "hazard_import": "ndhazard:hecrasplan",
         "classify": "ndhazard:classify", "save_state": "ndhazard:savedamstate"}
 # the settings rows each stage's tool takes
@@ -94,7 +95,7 @@ KEYS = (
     Key("SCREEN_INCLUDE", "text", "", "Optional Screening steps to include (e.g. '6, 9')"),
     Key("SCREEN_PREFLIGHT", "bool", True, "Screening preflight before each dam"),
     Key("RUNNER_MODELS", "enum", 0, "Runner models", options=RUNNER_MODELS),
-    Key("HEC_MODE", "enum", 0, "HEC-RAS 2D stage", options=HEC_MODE_LABELS),
+    Key("HEC_MODE", "enum", 2, "HEC-RAS 2D stage", options=HEC_MODE_LABELS),
     Key("HEC_WAIT_MIN", "number", 0.0, "Wait for a manual HEC-RAS run (minutes; 0 = do not "
         "wait, the next run of the chain picks the results up)"),
     Key("HEC_STRUCTURES", "enum", 0, "Culverts and bridges in the HEC-RAS model",
@@ -213,8 +214,16 @@ def chain_values(values):
 
 
 def hec_mode(cv):
-    i = int(cv.get("HEC_MODE") or 0)
-    return HEC_MODES[i] if 0 <= i < len(HEC_MODES) else "run"
+    """'run', 'wait' or 'skip'. Missing is skip: the chain does not start HEC-RAS unless
+    the setting says so. An explicit 0 is still Run."""
+    raw = None if not cv else cv.get("HEC_MODE")
+    if raw in (None, ""):
+        raw = 2
+    try:
+        i = int(raw)
+    except (TypeError, ValueError):
+        return "skip"
+    return HEC_MODES[i] if 0 <= i < len(HEC_MODES) else "skip"
 
 
 def key_of_column(col):

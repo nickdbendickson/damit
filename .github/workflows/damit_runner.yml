@@ -44,8 +44,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install numpy (the one non-stdlib dep the core modules need)
-        run: pip install numpy
+      - name: Install numpy (core modules) and pytest (the smoke-test runner)
+        run: pip install numpy pytest
       - name: Run smoke tests
         run: PYTHONPATH=. python3 -m unittest damit_runner.tests.test_engine_imports -v
 

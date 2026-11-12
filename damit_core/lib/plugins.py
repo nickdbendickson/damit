@@ -18,6 +18,7 @@ SUITE = (
     ("damit_hazard", "DamIT Hazard", "damit", "suggested hazard class from finished runs", False),
     ("damit_hazardlite", "DamIT Hazard Lite", "damit_lite", "one-tool suggested class", False),
     ("damit_pmp", "DamIT PMP", "damit_pmp", "NOAA Atlas 14 precipitation frequency", False),
+    ("damit_finder", "DamIT Finder", "damit_find", "dams, ponds and crossings not on the lists", False),
     ("damit_crest", "DamIT Crest", None, "desktop app (outside QGIS)", False),
 )
 FOREIGN_PROVIDERS = ("nddam", "ndbreach")

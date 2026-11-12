@@ -269,6 +269,115 @@ def test_dam_json_needs_an_nid_id():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_dam_record_nested_and_found_without_dam_json():
+    """0.2.1: a dam.json with nested "fields" is read as it is; with no DAM_JSON the dam.json beside the rasters is used
+    (or the run watcher's flat copy); a found record with no usable NID ID is left out with a warning, not an error."""
+    _app()
+    from qgis.core import QgsProcessingContext, QgsProcessingFeedback, QgsProject
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    try:
+        dep, vel = _rasters(d)
+        s, p, r = _layers(d)
+        from damit_hazard.engine import catalog as C
+        pids = [None] + list(C.load()["presets"])
+        alg = QgsApplication.processingRegistry().algorithmById("damit:classify")
+        nested = {"format": "nd_dam_suite/dam_record", "fields": {"dam_id": "ND00199", "storage_acft": 300},
+                  "sources": {}, "status": []}
+
+        def go(name, dam_json=None):
+            ctx = QgsProcessingContext()
+            ctx.setProject(QgsProject.instance())
+            fb = QgsProcessingFeedback()
+            prm = {"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "VELOCITY": vel,
+                   "METRES": True, "STRUCTURES": s, "OUTPUT": os.path.join(d, name)}
+            if dam_json:
+                prm["DAM_JSON"] = dam_json
+            res, ok = alg.run(prm, ctx, fb)
+            rep = None
+            if ok:
+                rep = json.load(open(os.path.join(d, name, "damit_hazard_report.json"), encoding="utf-8"))
+            return res, ok, rep
+
+        def record_layer(rep):
+            return [x for x in rep["layers"] if x["role"] == "dam record"]
+
+        npath = os.path.join(d, "nested_given.json")
+        json.dump(nested, open(npath, "w", encoding="utf-8"))
+        _res, ok, rep = go("given", npath)                      # explicit and nested
+        assert ok and rep["nid_id"] == "ND00199"
+        assert "found automatically" not in record_layer(rep)[0]["note"]
+        _res, ok, rep = go("none")                              # nothing to find: as before
+        assert ok and not record_layer(rep) and rep["nid_id"] is None
+        dam_json = os.path.join(d, "dam.json")                  # beside the rasters
+        json.dump(nested, open(dam_json, "w", encoding="utf-8"))
+        _res, ok, rep = go("found")
+        assert ok and rep["nid_id"] == "ND00199", rep.get("nid_id")
+        assert "found automatically" in record_layer(rep)[0]["note"]
+        assert record_layer(rep)[0]["source"] == dam_json
+        json.dump({"fields": {"dam_id": "DWR-2801"}}, open(dam_json, "w", encoding="utf-8"))
+        _res, ok, rep = go("found_bad")                         # found, but not an NID id: left out, no failure
+        assert ok and not record_layer(rep) and rep["nid_id"] is None
+        _res, ok, _rep = go("given_bad", dam_json)              # the same file given on purpose still fails
+        assert not ok
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_dam_folder_raster_finds_the_watcher_copy_and_the_inputs_line_says_so():
+    """0.2.2, the DWR-2824 shape: classify on <Dams>/<dam id>/Depth (Max).tif with the run watcher's copy in
+    <watch>/<dam id>_run_<timestamp>/dam_record_hazard.json and no DAM_JSON."""
+    _app()
+    import shutil
+    from qgis.core import QgsProcessingContext, QgsProcessingFeedback, QgsProject
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    old = os.environ.get("DAMIT_WATCH_DIR")
+    try:
+        dep0, vel0 = _rasters(d)
+        dam_dir = os.path.join(d, "work", "dams", "ND00199")
+        os.makedirs(dam_dir)
+        dep, vel = (shutil.copy(x, os.path.join(dam_dir, n)) for x, n in ((dep0, "Depth (Max).tif"), (vel0, "Velocity (Max).tif")))
+        s, p, r = _layers(d)
+        watch = os.path.join(d, "home", "local-ai", "watch")
+        os.environ["DAMIT_WATCH_DIR"] = watch
+        from damit_hazard.engine import catalog as C
+        pids = [None] + list(C.load()["presets"])
+        alg = QgsApplication.processingRegistry().algorithmById("damit:classify")
+
+        def go(name, **extra):
+            ctx = QgsProcessingContext()
+            ctx.setProject(QgsProject.instance())
+            prm = {"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "VELOCITY": vel,
+                   "METRES": True, "STRUCTURES": s, "OUTPUT": os.path.join(d, name), "DAM_NAME": "Square Butte Creek Dam 2"}
+            prm.update(extra)
+            res, ok = alg.run(prm, ctx, QgsProcessingFeedback())
+            assert ok, res
+            md = open(os.path.join(d, name, "damit_hazard_report.md"), encoding="utf-8").read()
+            return json.load(open(os.path.join(d, name, "damit_hazard_report.json"), encoding="utf-8")), md
+
+        rep, md = go("none")                                       # nothing to find: the line says so, no {"name": ...}
+        line = [l for l in md.splitlines() if l.startswith("- Dam record:")][0]
+        assert line.startswith("- Dam record: none given or found (DAM_JSON was empty"), line
+        assert "only the name was given: Square Butte Creek Dam 2" in line and '{"name"' not in md
+        assert "dam record search:" not in md and rep["nid_id"] is None
+        flat = os.path.join(watch, "ND00199_run_20261111_221952", "dam_record_hazard.json")
+        os.makedirs(os.path.dirname(flat))
+        json.dump({"dam_id": "ND00199", "nid_id": "ND00199", "name": "Watcher Name", "storage_acft": 300},
+                  open(flat, "w", encoding="utf-8"))
+        rep, md = go("found")
+        assert rep["nid_id"] == "ND00199"
+        rec = [x for x in rep["layers"] if x["role"] == "dam record"]
+        assert rec and rec[0]["source"] == flat and "found automatically" in rec[0]["note"]
+        line = [l for l in md.splitlines() if l.startswith("- Dam record:")][0]
+        assert "ND00199" in line and "storage_acft = 300" in line and '{"' not in line, line
+    finally:
+        if old is None:
+            os.environ.pop("DAMIT_WATCH_DIR", None)
+        else:
+            os.environ["DAMIT_WATCH_DIR"] = old
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_custom_mode_headless():
     _app()
     d = tempfile.mkdtemp(prefix="damit_smoke_")

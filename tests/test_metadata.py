@@ -5,14 +5,15 @@ import re
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None, "0.1.1"),
-           "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog,DamIT Runner", "0.3.0"),
-           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.3.0")}
-FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
-# DamIT Runner 0.2.0 launches the flood model: only this module may start a process (LISFLOOD-FP or the ANUGA
-# worker); everything else in the three plugins still may not
-LAUNCH_OK = {os.path.join("damit_runner", "flood", "lisflood.py")}
-FOREIGN_RUN = re.compile(r"['\"](wine|wine64)['\"]|\b(ndbreach|nddam):|HEC-?RAS\.exe|RasUnsteady", re.I)
+PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None, "0.2.0"),
+           "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog,DamIT Runner", "0.3.1"),
+           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.3.3")}
+# DamIT Runner 0.3.0 carries the full ported flood engine, so these plugins MAY spawn processes directly
+# (LISFLOOD-FP, the ANUGA worker, HEC-RAS and Wine, ffmpeg, pandoc, conda, caffeinate). Two teeth stay:
+# never through a shell, and never the North Dakota breach/screening suite's processing ids. The HEC-RAS ->
+# Hazard hand-off targets ndhazard:* and is allowed.
+SHELL_LAUNCH = re.compile(r"shell\s*=\s*True|\bos\.system\b|\bos\.popen\b")
+FOREIGN_PROVIDER = re.compile(r"\b(ndbreach|nddam):")
 
 
 def meta(folder):
@@ -57,19 +58,16 @@ class Metadata(unittest.TestCase):
                 self.assertNotRegex(src, r"\bfrom PyQt[56]\b|\bimport PyQt[56]\b", p)
                 self.assertFalse("QVariant" in src, p)
 
-    def test_no_process_launch_and_no_foreign_providers(self):
+    def test_no_shell_and_no_foreign_providers(self):
+        # the full engine may spawn processes, but never through a shell, and never the ND breach /
+        # screening suite (ndbreach:* / nddam:*); the ndhazard:* Hazard hand-off stays allowed
         for folder in PLUGINS:
             for p in py_files(folder):
                 with open(p, encoding="utf-8") as fh:
                     src = fh.read()
                 code = "\n".join(ln.split("#")[0] for ln in src.splitlines())
-                if os.path.relpath(p, ROOT) in LAUNCH_OK:
-                    # the one launcher: argv lists only (no shell), never a foreign provider or HEC-RAS / Wine
-                    self.assertNotRegex(code, r"shell\s*=\s*True", p)
-                    self.assertIsNone(FOREIGN_RUN.search(code), p)
-                    continue
-                self.assertIsNone(FORBIDDEN_LAUNCH.search(code), p)
-                self.assertNotRegex(code, r"processing\.run\(\s*['\"](ndbreach|nddam):", p)
+                self.assertIsNone(SHELL_LAUNCH.search(code), p)
+                self.assertIsNone(FOREIGN_PROVIDER.search(code), p)
 
     def test_hazard_depends_on_catalog(self):
         # DamIT Hazard reads its presets and thresholds from DamIT Catalog and ships no catalog of its own

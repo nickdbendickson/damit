@@ -137,6 +137,45 @@ class ModelRun(unittest.TestCase):
         self.assertLessEqual(dist, band["outer_m"] + 2.0)
         with open(os.path.join(out, "outputs", "units.json")) as fh:
             self.assertEqual(json.load(fh)["depth"], "ft")
+        # 0.3.1: run_progress.json, the watcher's mid-run CRS / pass bounds and the completion marker
+        with open(os.path.join(out, "run_progress.json"), encoding="utf-8") as fh:
+            prog = json.load(fh)
+        self.assertTrue(prog["complete"])
+        self.assertGreaterEqual(prog["growth_loops_done"], 1)
+        self.assertEqual(prog["crs_wkt"], rec["crs_wkt"])
+        self.assertGreaterEqual(len(prog["passes"]), len(rec["passes"]))
+        last = prog["passes"][-1]
+        self.assertEqual(last["bounds"], rec["passes"][-1]["bounds"])
+        self.assertTrue(os.path.isdir(os.path.join(out, "model", last["dir"])))
+        self.assertFalse(os.path.exists(os.path.join(out, "run_progress.json.tmp")))
+
+    def test_progress_is_written_per_pass_before_the_run_ends(self):
+        from damit_runner.flood import model as M
+        out = os.path.join(self.tmp, "midrun")
+        seen = []
+        orig = M.growth_loop
+
+        def spy(*a, **k):
+            r = orig(*a, **k)
+            with open(os.path.join(out, "run_progress.json"), encoding="utf-8") as fh:
+                seen.append(json.load(fh))      # after the loop, before run_report.json / the outputs
+            return r
+        M.growth_loop = spy
+        try:
+            M.run_breach(self.params(), out, log=lambda *_: None)
+        finally:
+            M.growth_loop = orig
+        self.assertTrue(seen)
+        self.assertFalse(seen[0]["complete"])
+        self.assertTrue(seen[0]["crs_wkt"] and seen[0]["passes"])
+        self.assertGreaterEqual(seen[0]["growth_loops_done"], 1)
+
+    def test_progress_is_only_written_for_a_model_folder(self):
+        from damit_runner.flood import model as M
+        d = os.path.join(self.tmp, "scratch", "work")
+        os.makedirs(d)
+        self.assertIsNone(M.write_progress(d, complete=True))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "scratch", "run_progress.json")))
 
     def test_hecras_refused_and_named_exe_must_exist(self):
         from damit_runner.flood import model as M
@@ -202,6 +241,7 @@ class ModelRun(unittest.TestCase):
         self.assertEqual(setup["parameters"]["manning"], 0.06)
         self.assertEqual(setup["parameters"]["method"], "piping")
         self.assertTrue(any("PMF_FT" in n for n in setup["parameter_notes"]))
+        self.assertEqual(setup["run_notes"], setup["model"]["warnings"])         # 0.3.3: the run's warnings are in the setup too
         for name in ("Depth (Max).tif", "Velocity (Max).tif", "hmax_ft.tif", "Flood Polygons (Max Depth).geojson"):
             self.assertTrue(os.path.isfile(os.path.join(dam_dir, name)), name)
         self.assertTrue(folder.startswith(os.path.join(runs, "ND00199", "run_")))

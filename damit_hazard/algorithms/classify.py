@@ -19,7 +19,7 @@ from qgis.core import (QgsCoordinateTransform, QgsFeature, QgsFeatureRequest, Qg
                        QgsProcessingOutputFile)
 
 from .. import compat, styles
-from ..engine import catalog as C, core, rail_lookup, receptors as R, report, tm11
+from ..engine import catalog as C, core, dam_record, rail_lookup, receptors as R, report, tm11
 from ..sampling import rasters as S
 
 SCENARIO_IDS = ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
@@ -73,7 +73,14 @@ class _Style(QgsProcessingLayerPostProcessorInterface):
         styles.apply(layer, self.labels)
 
 
-class Classify(QgsProcessingAlgorithm):
+try:            # DamIT Core 0.3.0: number inputs in the chosen display unit system (SI or US)
+    from damit_core.lib.unit_widgets import UnitParamsMixin as _UnitParams
+except Exception:                                                 # noqa - no / older DamIT Core
+    class _UnitParams(object):
+        pass
+
+
+class Classify(_UnitParams, QgsProcessingAlgorithm):
     def name(self):
         return "classify"
 
@@ -99,7 +106,10 @@ class Classify(QgsProcessingAlgorithm):
                 "NID dams only: the dam record (DAM_JSON) names the dam by its NID ID (USACE "
                 "National Inventory of Dams, e.g. ND00199) as dam_id or nid_id. A DWR-, DUG- or "
                 "other non-NID id fails; only a new / proposed dam (is_new) or a desk sample "
-                "(is_sample) may have none, with a warning.<br><br>"
+                "(is_sample) may have none, with a warning. The record may be flat or a dam.json with "
+                "nested \"fields\"; with no DAM_JSON, the dam.json above the depth raster (or the run "
+                "watcher's dam_record_hazard.json for that run) is used when it has a dam id, and the "
+                "report names it.<br><br>"
                 "Receptor attributes are read by name (type, occupants, floor_elev / "
                 "floor_height_ft, aadt, road_class, func_class, sole_access, trains_per_day, "
                 "passenger, ...): see the plugin README.<br><br>"
@@ -157,7 +167,9 @@ class Classify(QgsProcessingAlgorithm):
             "EXTRA_RUNS", "More runs (JSON list: scenario, model_dim, depth, velocity, ...)",
             behavior=compat.FILE_FILE, extension="json", optional=True))
         self.addParameter(QgsProcessingParameterFile(
-            "DAM_JSON", "Dam record (JSON: dam_id = NID ID, nid_id, storage_acft, current_class, is_new, ...)",
+            "DAM_JSON", "Dam record (JSON: dam_id = NID ID, nid_id, storage_acft, current_class, is_new, ...; a dam.json with "
+            "nested \"fields\" is read as it is; left empty, the dam.json above the depth raster or the run watcher's "
+            "dam_record_hazard.json is used when one is found)",
             behavior=compat.FILE_FILE, extension="json", optional=True))
         self.addParameter(QgsProcessingParameterFile(
             "CHARTS_JSON", "Extra digitized TM-11 charts (JSON)", behavior=compat.FILE_FILE,
@@ -280,6 +292,14 @@ class Classify(QgsProcessingAlgorithm):
         with S.no_pam():
             return self._process(p, context, feedback)
 
+    def _find_dam_record(self, p, context):
+        """No DAM_JSON: the dam.json above the depth raster, else the run watcher's flat copy (engine/dam_record.py)."""
+        lyr = self.parameterAsRasterLayer(p, "DEPTH", context)
+        src = lyr.source() if lyr is not None else None
+        if not src:
+            return None, None
+        return dam_record.discover([src])
+
     def _process(self, p, context, feedback):
         cat = _cat()
         cfg = self._config(cat, p, context)
@@ -288,12 +308,34 @@ class Classify(QgsProcessingAlgorithm):
         dam = {}
         dam_path = self.parameterAsFile(p, "DAM_JSON", context)
         layers_info = []
+        auto_kind = None
+        if not dam_path:
+            dam_path, auto_kind = self._find_dam_record(p, context)
+            if not dam_path:
+                layers_info.append({"role": "dam record search", "source": "(nothing found)", "modified": None,
+                                    "size": None, "note": "DAM_JSON was empty; no dam.json above the depth raster and no run "
+                                    "watcher copy for it"})
         if dam_path:
-            with open(dam_path, encoding="utf-8") as f:
-                dam = json.load(f)
-            layers_info.append(_stat(dam_path, "dam record"))
+            try:
+                dam, nested = dam_record.load(dam_path)
+            except (OSError, ValueError) as e:
+                if not auto_kind:
+                    raise QgsProcessingException("Cannot read the dam record {}: {}".format(dam_path, e))
+                feedback.pushWarning("Dam record {} was found but cannot be read ({}): not used.".format(dam_path, e))
+                dam, dam_path = {}, None
+        if dam_path:
             # NID dams only: the dam record needs its NID ID unless it is a new / proposed dam or a sample.
             nid_error, nid_warning, _nid = core.nid_rule(dam)
+            if nid_error and auto_kind:
+                # Nobody asked for this record: do not fail the run over it, say that it was left out.
+                feedback.pushWarning("Dam record {} ({}) was found but not used: {}.".format(dam_path, auto_kind, nid_error))
+                dam, dam_path = {}, None
+        if dam_path:
+            layers_info.append(_stat(dam_path, "dam record", "{}{}".format(
+                "found automatically: " + auto_kind if auto_kind else "",
+                "; nested fields read" if (not auto_kind and nested) else "")))
+            if auto_kind:
+                feedback.pushInfo("No DAM_JSON given: using the dam record found at {} ({}).".format(dam_path, auto_kind))
             if nid_error:
                 raise QgsProcessingException(
                     nid_error + ". DamIT Hazard classifies NID dams: the dam record (DAM_JSON) needs "

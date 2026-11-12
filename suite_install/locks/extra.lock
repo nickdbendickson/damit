@@ -1,0 +1,18 @@
+# Files besides conda packages, per platform. Pinned: each is checked against the sha256 here.
+# <platform> <kind> <path in the package> <url> <sha256>
+# Miniforge 26.9.4-2 (hashes = conda-forge's published .sha256 files)
+linux-64  miniforge offline/miniforge/Miniforge3-26.9.4-2-Linux-x86_64.sh  https://github.com/conda-forge/miniforge/releases/download/26.9.4-2/Miniforge3-26.9.4-2-Linux-x86_64.sh  bbaf16b3897da24c4be50315934ba74848f617b4495982841d6a0a60e0edbbdf
+osx-arm64 miniforge offline/miniforge/Miniforge3-26.9.4-2-MacOSX-arm64.sh  https://github.com/conda-forge/miniforge/releases/download/26.9.4-2/Miniforge3-26.9.4-2-MacOSX-arm64.sh  fb567612b76f4ef46de326f04425dbe381b6afc6a66c545f5043255a5ef34258
+osx-64    miniforge offline/miniforge/Miniforge3-26.9.4-2-MacOSX-x86_64.sh https://github.com/conda-forge/miniforge/releases/download/26.9.4-2/Miniforge3-26.9.4-2-MacOSX-x86_64.sh 30e82ce68875fc50b917a3a541ea0516272866584187f7ea980ce8eaf715807d
+win-64    miniforge offline/miniforge/Miniforge3-26.9.4-2-Windows-x86_64.exe https://github.com/conda-forge/miniforge/releases/download/26.9.4-2/Miniforge3-26.9.4-2-Windows-x86_64.exe 9d83983669bc5d3b5dd4c631454bf953c3caf4ac78b9c9ada9971e5b021d83c3
+# Ollama 0.40.16 for the local AIs (hashes = Ollama's published sha256sum.txt); damit_ai's installers look here
+linux-64  ollama    damit_ai/offline/ollama/ollama-linux-amd64.tar.zst  https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-linux-amd64.tar.zst  87bfafb2acbc89b2e6a1be0a9043de6aa75fb450696f86bc426e65fc448f788d
+osx-arm64 ollama    damit_ai/offline/ollama/Ollama-darwin.zip  https://github.com/ollama/ollama/releases/download/v0.40.16/Ollama-darwin.zip  4715531bc49d21337381b193765041e535a9fb4716f84e5d6eccc3a9af1b5303
+osx-64    ollama    damit_ai/offline/ollama/Ollama-darwin.zip  https://github.com/ollama/ollama/releases/download/v0.40.16/Ollama-darwin.zip  4715531bc49d21337381b193765041e535a9fb4716f84e5d6eccc3a9af1b5303
+win-64    ollama    damit_ai/offline/ollama/OllamaSetup.exe  https://github.com/ollama/ollama/releases/download/v0.40.16/OllamaSetup.exe  84db4f756ddc9e091142a85cdc0f7ae5db68bc9b3e075f114388b326f8ed912d
+# portable Windows Ollama: only used by download-all-windows.ps1 to pull the models
+win-64    ollama-pull offline/tools/ollama-windows-amd64.zip  https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-windows-amd64.zip  50fcf5ad54277f2fa5d173ebfc93bcb017adbc0c9ef2314daabc96ca9e6aa64e
+# LISFLOOD-FP 8.3 official source (Zenodo 13121119): macOS builds it at install; Linux only if the shipped binary can't run
+osx-arm64 lisflood-src offline/lisflood-src/LISFLOOD-FP-8.3.zip  https://zenodo.org/records/13121119/files/LISFLOOD-FP-8.3.zip?download=1  f9ea2753482da1e730ba34645a2b9b773d05d0a401a3524f79825b76ec7a4e8d
+osx-64    lisflood-src offline/lisflood-src/LISFLOOD-FP-8.3.zip  https://zenodo.org/records/13121119/files/LISFLOOD-FP-8.3.zip?download=1  f9ea2753482da1e730ba34645a2b9b773d05d0a401a3524f79825b76ec7a4e8d
+linux-64  lisflood-src offline/lisflood-src/LISFLOOD-FP-8.3.zip  https://zenodo.org/records/13121119/files/LISFLOOD-FP-8.3.zip?download=1  f9ea2753482da1e730ba34645a2b9b773d05d0a401a3524f79825b76ec7a4e8d

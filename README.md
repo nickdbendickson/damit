@@ -18,7 +18,8 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 | [`damit_setup/`](damit_setup/README.md) | DamIT Setup | none | Start here: suite data folder, work folder, state / preset, suite check, settings fill, hand-off to `damit_screen:preflight` |
 | [`damit_data/`](damit_data/README.md) | DamIT Data | `damit_data` | 9 national data sources: NSI, Microsoft footprints, OSM, USA Structures, HPMS roads, FRA rail, Census TIGER counties, NBI bridges, HIFLD facilities (`damit_data:download`, `:status`) |
 | [`damit_hazardlite/`](damit_hazardlite/README.md) | DamIT Hazard Lite | `damit_lite` | One tool, `damit_lite:classify`: suggested class from depth / velocity rasters at structures, roads and rail with DamIT Catalog presets or custom methods |
-| [`damit_pmp/`](damit_pmp/README.md) | DamIT PMP | `damit_pmp` | NOAA Atlas 14 only: point / basin precipitation-frequency tables, alternating-block hyetograph, Atlas 14 grid basin statistics (no PMP values in 0.1.0) |
+| [`damit_pmp/`](damit_pmp/README.md) | DamIT PMP | `damit_pmp` | NOAA Atlas 14 only: point / basin precipitation-frequency tables, Atlas 14 GIS grids fetched from NOAA for any return period and duration, alternating-block hyetograph, grid basin statistics, LISFLOOD-FP / ANUGA rain-on-grid files, an ANUGA rain-on-grid job on the runner's gmsh mesh (no PMP values; launches nothing unless asked) |
+| [`damit_finder/`](damit_finder/README.md) | DamIT Finder | `damit_find` | Structures not on the lists: fills across streams in the LiDAR (dams, dry dams, road fills), ponds and dugouts in a water-body layer, road / rail stream crossings (culverts); each listed / unsure / new against the NID and the other layers you give |
 | [`damit_crest/`](damit_crest/README.md) | DamIT Crest | none (desktop app) | Local desktop app (pywebview), adapted from Crest: draw a dam, size its breach, view results and flood maps, and hand one dam to the DamIT QGIS plugins through `qgis_process` |
 
 **DamIT Hazard** (`damit_hazard/`, provider `damit`, algorithm `damit:classify`) classifies finished runs from
@@ -42,9 +43,9 @@ North Dakota REG_05.2026) are unchanged.
 DamIT Hazard, DamIT Screener and DamIT Runner all declare `plugin_dependencies=DamIT Catalog` and read their
 presets, methods and thresholds from it, so install DamIT Catalog first (the QGIS Plugin Manager offers it). None of the DamIT plugins depend on the DamSafety / DWR plugins.
 
-DamIT Setup, DamIT Data, DamIT Hazard Lite and DamIT PMP declare `plugin_dependencies=DamIT Core` (Setup and
+DamIT Setup, DamIT Data, DamIT Hazard Lite, DamIT PMP and DamIT Finder declare `plugin_dependencies=DamIT Core` (Setup and
 Hazard Lite also DamIT Catalog). Install order: DamIT Core, DamIT Catalog, then the rest. Provider IDs are all
-distinct: `damit` (Hazard), `damit_lite` (Hazard Lite), `damit_screen`, `damit_run`, `damit_data`, `damit_pmp`;
+distinct: `damit` (Hazard), `damit_lite` (Hazard Lite), `damit_screen`, `damit_run`, `damit_data`, `damit_pmp`, `damit_find`;
 no DamIT tool hands off to `nddam:*` or `ndbreach:*`. DamIT Hazard, Screener, Runner and Crest do not import
 DamIT Core yet; they can switch to its settings / plugin registry later.
 

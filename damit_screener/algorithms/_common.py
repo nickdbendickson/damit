@@ -89,7 +89,14 @@ def terrain_info(path):
     return {"crs": lyr.crs().authid(), "extent": (e.xMinimum(), e.yMinimum(), e.xMaximum(), e.yMaximum())}
 
 
-class DamitAlgorithm(QgsProcessingAlgorithm):
+try:            # DamIT Core 0.3.0: number inputs in the chosen display unit system (SI or US)
+    from damit_core.lib.unit_widgets import UnitParamsMixin as _UnitParams
+except Exception:                                                 # noqa - no / older DamIT Core
+    class _UnitParams(object):
+        pass
+
+
+class DamitAlgorithm(_UnitParams, QgsProcessingAlgorithm):
     """Base: the common inputs of every damit_screen tool."""
     _name = ""
     _display = ""
@@ -110,7 +117,7 @@ class DamitAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):  # noqa: N802
         return (self._help + "\n\nPresets: " + _preset_help() + "\n\nSuggested classifications only; the "
-                "engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D "
+                "engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D "
                 "screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and "
                 "downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.")
 

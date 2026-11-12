@@ -9,7 +9,7 @@ import shutil
 from . import catalog_bridge as CB
 from . import steps as ST
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 PROVIDER_ID = "damit_screen"
 OK, WARN, FAIL = "ok", "warn", "fail"
 MIN_FREE_MB = 200.0
@@ -319,6 +319,26 @@ def run_chain(work, settings, dams, dam_problems=None, receptors=None, receptor_
     return summary
 
 
+def _display_units_lines(lines):
+    """Under the DamIT SI display setting, quantities in the flood notes and flags are shown
+    in SI and the report says so; the parameters and citations stay as stored (US)."""
+    try:
+        from damit_core.lib import display_units as DU
+    except Exception:                                             # noqa - older DamIT Core
+        return lines
+    if DU.system() != DU.SI:
+        return lines
+    out, section = [], ""
+    for ln in lines:
+        if ln.startswith("## "):
+            section = ln[3:]
+        out.append(DU.convert_text(ln) if section in ("Screening flood (engine2d)", "Flags")
+                   else ln)
+    out[1:1] = ["", "Units: SI in the flood notes and flags, converted from the US values the "
+                    "tools compute; parameters, citations and the data files keep US units."]
+    return out
+
+
 def write_report(work, summary, cat, config):
     """Markdown run report: scenarios, parameters, flags and citations per Appendix A.7."""
     lines = ["# DamIT Screener run report", "",
@@ -354,6 +374,7 @@ def write_report(work, summary, cat, config):
     lines += ["", "## Citations", ""]
     for k, v in sorted(cat.citations(config).items()):
         lines.append("- {}: {}".format(k, v))
+    lines = _display_units_lines(lines)
     path = os.path.join(work, "reports", "damit_screener_report.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:

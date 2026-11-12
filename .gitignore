@@ -4,3 +4,6 @@ __pycache__/
 pfds_cache/
 .staging_*/
 dist/
+# suite_install: downloaded offline files and built packages are never committed
+suite_install/offline/
+suite_install/offline-*.zip

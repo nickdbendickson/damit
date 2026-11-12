@@ -23,6 +23,7 @@ def make_dem(path, nx=240, ny=360, cell=10.0, x0=600000.0, y0=5210000.0, epsg=26
     ds.SetProjection(s.ExportToWkt())
     ds.GetRasterBand(1).WriteArray(z.astype(np.float32))
     ds.GetRasterBand(1).SetNoDataValue(-9999)
+    ds.GetRasterBand(1).SetUnitType("m")
     ds = None
     w = osr.SpatialReference()
     w.ImportFromEPSG(4326)
@@ -113,6 +114,7 @@ def write_tif(path, z, x0, y0, cell, epsg):
     ds.SetProjection(s.ExportToWkt())
     ds.GetRasterBand(1).WriteArray(z.astype(np.float32))
     ds.GetRasterBand(1).SetNoDataValue(-9999)
+    ds.GetRasterBand(1).SetUnitType("m")
     ds = None
     return path
 

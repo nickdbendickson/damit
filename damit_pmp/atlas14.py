@@ -1,7 +1,7 @@
 """NOAA Atlas 14 precipitation-frequency estimates from the NOAA/NWS Precipitation Frequency Data
 Server (PFDS, https://hdsc.nws.noaa.gov/pfds/). Pure Python.
 
-This is the only data source of DamIT PMP 0.1.0. It reads the PFDS point query
+This is (with the GIS grids of gisgrid.py) the only data source of DamIT PMP. It reads the PFDS point query
 (cgi_readH5.py), which returns, for a latitude / longitude, the Atlas 14 estimates for 19
 durations (5 min - 60 days) and 10 average recurrence intervals (partial-duration series,
 1 - 1000 years) or 9 annual exceedance probabilities (annual-maximum series, 1/2 - 1/1000), with
@@ -26,6 +26,13 @@ DURATIONS = (("5-min", 5), ("10-min", 10), ("15-min", 15), ("30-min", 30), ("60-
              ("3-hr", 180), ("6-hr", 360), ("12-hr", 720), ("24-hr", 1440), ("2-day", 2880), ("3-day", 4320),
              ("4-day", 5760), ("7-day", 10080), ("10-day", 14400), ("20-day", 28800), ("30-day", 43200),
              ("45-day", 64800), ("60-day", 86400))
+# THE duration list of damit_pmp: every tool that offers a duration (fetchgrid / gridbasin DURATION, hyetograph /
+# raingrid STORM) builds its choice from this one list, so the same index is the same duration everywhere
+# (0 = 5-min ... 9 = 24-hr ... 18 = 60-day). Do not reorder it: it is also the row order of PFDS tables.
+DURATION_LABELS = [d for d, _ in DURATIONS]
+DEFAULT_DURATION = "24-hr"
+DEFAULT_DURATION_INDEX = DURATION_LABELS.index(DEFAULT_DURATION)
+MAX_STORM_STEPS = 20000
 PDS_ARI = (1, 2, 5, 10, 25, 50, 100, 200, 500, 1000)          # average recurrence interval, years
 AMS_AEP_YEARS = (2, 5, 10, 25, 50, 100, 200, 500, 1000)       # 1 / annual exceedance probability
 UNITS = {("depth", "english"): "in", ("depth", "metric"): "mm",
@@ -64,7 +71,7 @@ def parse(text):
         m = re.search(r"ErrorMsg\s*=\s*'([^']*)'", text)
         msg = m.group(1).strip() if m else "no Atlas 14 values in the answer"
         if sc.get("result") == "none":
-            raise CoverageError("NOAA Atlas 14 does not cover this location (PFDS: {}). DamIT PMP 0.1.0 uses "
+            raise CoverageError("NOAA Atlas 14 does not cover this location (PFDS: {}). DamIT PMP uses "
                                 "NOAA Atlas 14 only and has no other source.".format(msg))
         raise Atlas14Error("unexpected PFDS answer: {}".format(msg if m else text[:200]))
     arrays = {}
@@ -230,16 +237,40 @@ def depth_at(pf, minutes, years):
     return pf["quantiles"][-1][j]
 
 
+def duration_minutes(label):
+    return DURATIONS[duration_index(label)][1]
+
+
+def check_storm(storm_minutes, step_minutes, label=None):
+    """A storm of this duration can only be built from whole time steps, with a step of at least the shortest
+    Atlas 14 duration; otherwise Atlas14Error says what to change (never silently dropped from the choice)."""
+    name = "{} ({} min)".format(label, storm_minutes) if label else "{} min".format(storm_minutes)
+    if step_minutes < DURATIONS[0][1]:
+        raise Atlas14Error("the time step must be at least {} min (the shortest Atlas 14 duration)".format(DURATIONS[0][1]))
+    if storm_minutes < step_minutes:
+        ok = [m for m in (5, 10, 15, 30, 60) if m <= storm_minutes and storm_minutes % m == 0]
+        raise Atlas14Error("the storm duration {} is shorter than the time step of {} min: set the time step to {} min or "
+                           "less{}".format(name, step_minutes, storm_minutes, " (e.g. {})".format(
+                               ", ".join(str(m) for m in ok)) if ok else ""))
+    if storm_minutes % step_minutes:
+        ok = [m for m in (5, 10, 15, 30, 60, 120, 180, 360, 720, 1440) if m <= storm_minutes and storm_minutes % m == 0]
+        raise Atlas14Error("the storm duration {} is not a whole number of {}-min time steps: choose a time step that "
+                           "divides {} min{}".format(name, step_minutes, storm_minutes, " (e.g. {})".format(
+                               ", ".join(str(m) for m in ok)) if ok else ""))
+    if storm_minutes // step_minutes > MAX_STORM_STEPS:
+        raise Atlas14Error("the storm {} with a {}-min time step is {} blocks (at most {}): use a longer time step".format(
+            name, step_minutes, storm_minutes // step_minutes, MAX_STORM_STEPS))
+
+
 def alternating_block(pf, years, storm_minutes, step_minutes):
     """Design hyetograph by the alternating block method (Chow, Maidment and Mays 1988, sec. 14.4)
     from the Atlas 14 depth-duration curve at one frequency: the storm total equals the Atlas 14
     depth for the storm duration and every centred window of k steps holds the Atlas 14 depth for
     that duration. This is not an Atlas 14 temporal distribution (those are published separately
     as quartile curves). Returns [(t_end_min, incremental, cumulative)]."""
-    if step_minutes <= 0 or storm_minutes <= 0 or storm_minutes % step_minutes:
-        raise Atlas14Error("the storm duration must be a whole number of time steps")
-    if step_minutes < DURATIONS[0][1]:
-        raise Atlas14Error("the time step must be at least {} min (the shortest Atlas 14 duration)".format(DURATIONS[0][1]))
+    if step_minutes <= 0 or storm_minutes <= 0:
+        raise Atlas14Error("the storm duration and the time step must be positive")
+    check_storm(storm_minutes, step_minutes)
     n = int(storm_minutes // step_minutes)
     cum = [depth_at(pf, step_minutes * (k + 1), years) for k in range(n)]
     inc = [cum[0]] + [max(cum[k] - cum[k - 1], 0.0) for k in range(1, n)]
