@@ -160,6 +160,17 @@ def hydrograph_for(p):
     return dam, hy
 
 
+def _hydrograph_record(hy, dam):
+    """The breach the run used, including the width and formation time, so a later HEC-RAS
+    export writes that opening and not a recomputed one."""
+    rec = hy.summary()
+    rec["label"] = BR.METHOD_LABELS.get(hy.method)
+    rec["starting_wse_ft"] = dam.top_of_dam_ft
+    rec["rule"] = "sunny day, no outlet or spillway flow, starting at the top of dam"
+    rec["notes"] = list(hy.notes)
+    return rec
+
+
 # ------------------------------------------------------------------------------------------------- runs --
 def one_run(p, wkt, s, hy, bounds, cell, sim_s, workdir, log, cancel, wall_s):
     dem = R.read_window(p["dem"], bounds, cell, wkt, p.get("z_units"))
@@ -400,14 +411,23 @@ def run_breach(p, out_dir, log=print, cancel=None):
               "sim_time_hr": round(g["sim_s"] / 3600.0, 2), "bounds": [round(b, 1) for b in g["bounds"]],
               "crs_wkt": wkt, "passes": g["passes"], "stop_reason": g["stop"], "warnings": warnings + g["warnings"],
               "grid_refine": refine, "grid_check": check, "anuga": anuga, "stats": stats,
-              "hydrograph": {"method": p["method"], "label": BR.METHOD_LABELS.get(p["method"]),
-                             "peak_cfs": round(hy.peak_cfs, 0), "duration_hr": round(hy.duration_s / 3600.0, 2),
-                             "starting_wse_ft": dam.top_of_dam_ft, "rule": "sunny day, no outlet or spillway flow, "
-                             "starting at the top of dam", "notes": list(hy.notes)},
+              "hydrograph": _hydrograph_record(hy, dam),
+              "dam": BR.dam_to_dict(dam),
+              "dam_xy": [float(s["dam_xy"][0]), float(s["dam_xy"][1])],
+              "work_crs": wkt,
+              "inflow_point": {"xy": [float(s["inflow_xy"][0]), float(s["inflow_xy"][1])]},
+              "settings": {"input_files": {"DEM": p["dem"]}, "cell_size_m": float(p["cell_m"]),
+                           "manning_n": float(p["manning"]),
+                           "breach_xy": [float(s["inflow_xy"][0]), float(s["inflow_xy"][1])]},
               "inflow": {"xy": list(s["inflow_xy"]), "how": s["inflow_how"], "toe_band": s["toe_band"],
                          "downstream": list(s["downstream"]) if s["downstream"] else None,
                          "downstream_how": s["downstream_how"]},
               "trace": {"length_mi": round(plen / MILE, 2), "points": len(path)}, "outputs": files}
+    zu = str(p.get("z_units") or "auto").strip().lower()
+    if zu != "auto":
+        record["dem_z_to_m"] = R.z_scale({}, zu)
+        record["dem_elevation_units"] = {"m": "metres", "ft": "feet", "us_ft": "us survey feet",
+                                         "us_feet": "us survey feet"}.get(zu, zu)
     with open(os.path.join(out_dir, "run_report.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=1, default=str)
     return record

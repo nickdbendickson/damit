@@ -344,4 +344,47 @@ class CheckHandoff(_Base):
         return {"VALID": not errs, "GAPS": "; ".join(gaps), "ERRORS": errs}
 
 
-ALGORITHMS = (RunDam, CheckHandoff)
+class ExportHecRas(_Base):
+    def name(self):
+        return "hecrasexport"
+
+    def displayName(self):  # noqa: N802
+        return "Export a HEC-RAS project (does not run it)"
+
+    def shortHelpString(self):  # noqa: N802
+        return ("Writes a HEC-RAS 6.6 project from a finished DamIT breach run (.prj, .g01, "
+                ".u01, .p01, .rasmap, the terrain GeoTIFF and a zip) so it can be opened in "
+                "HEC-RAS. HEC-RAS is not started and Wine is not started. Depth (Max).tif and "
+                "the other final rasters are not replaced. The breach opening is the one the "
+                "run used.")
+
+    def initAlgorithm(self, config=None):  # noqa: N802
+        self.addParameter(QgsProcessingParameterFile(
+            "RUN_FOLDER", "Finished run folder (run_report.json and outputs/)", behavior=FILE_FOLDER))
+        self.addParameter(QgsProcessingParameterFile(
+            "DEM", "DEM (empty = the DEM recorded on the run)", behavior=FILE_FILE, optional=True))
+        self.addParameter(QgsProcessingParameterFile(
+            "OUTPUT_FOLDER", "Folder for the HEC-RAS project (empty = <run>/_hecras_export)",
+            behavior=FILE_FOLDER, optional=True))
+        self.addOutput(QgsProcessingOutputFolder("PACKAGE", "HEC-RAS project folder"))
+        self.addOutput(QgsProcessingOutputFile("ZIP", "HEC-RAS project zip"))
+
+    def processAlgorithm(self, params, context, feedback):  # noqa: N802
+        from ..core.hecras import HecRasError
+        from ..core.hecras_export import ExportError, export_package
+        try:
+            from ..core.hecras_model import HecRasModelError
+        except ImportError as e:
+            raise QgsProcessingException("the HEC-RAS export cannot load: {}".format(e))
+        run = self.parameterAsFile(params, "RUN_FOLDER", context)
+        dem = self.parameterAsFile(params, "DEM", context) or None
+        out = self.parameterAsFile(params, "OUTPUT_FOLDER", context) or None
+        try:
+            built = export_package(run, out_folder=out, dem_path=dem, log=feedback.pushInfo)
+        except (ExportError, HecRasError, HecRasModelError) as e:
+            raise QgsProcessingException(str(e))
+        feedback.pushInfo("HEC-RAS was not started. Project: {}".format(built.get("folder")))
+        return {"PACKAGE": built.get("folder"), "ZIP": built.get("zip") or ""}
+
+
+ALGORITHMS = (RunDam, CheckHandoff, ExportHecRas)
