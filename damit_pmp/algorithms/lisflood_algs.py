@@ -9,6 +9,8 @@ import os
 import sys
 import time
 
+import numpy as np
+
 from qgis.core import (Qgis, QgsProcessing, QgsProcessingException, QgsProcessingOutputNumber, QgsProcessingOutputString,
                        QgsProcessingParameterBoolean, QgsProcessingParameterEnum, QgsProcessingParameterExtent,
                        QgsProcessingParameterFeatureSource, QgsProcessingParameterFile,
@@ -58,6 +60,11 @@ class LisfloodRain(_Base):
             "uniform: the .rain file is a single series.\n\n"
             "SOLVER: ACC (default) runs on any CPU build. " + LR.CUDA_NOTE + " FV1 and DG2 are refused, as in the "
             "runner.\n\n"
+            "0.4.2: STAGE_PROBE writes the water level at a point (the pond) every MASSINT_S to "
+            "lisflood_probe_stage.csv. OUTLET_* model a dam's principal outlet pipe as a point sink at its inlet and a point "
+            "source at its outlet end (LISFLOOD-FP has no pipe element; the weir file is weir flow only), the discharge being "
+            "the Boyd inlet-control rating of the pond stage series OUTLET_STAGE_CSV from an earlier run of the same model: "
+            "one coupling iteration, labelled in the manifest (and assumed unless OUTLET_ASSUMED is off).\n\n"
             "Nothing is launched by default. RUN_LISFLOOD (off) runs the executable (LISFLOOD_EXE, or the runner's "
             "search: DAMIT_LISFLOOD, PATH, the usual build folders) and then reads results/rain.max, rain.mass and the "
             "gauge into lisflood_rain_results.json and lisflood_max_depth.tif. Otherwise run it yourself: `lisflood -v "
@@ -91,6 +98,21 @@ class LisfloodRain(_Base):
         add(QgsProcessingParameterPoint("FLOW_PATH_START", "Dam / pour point (the same point as the ANUGA job's flow-path "
                                         "start: it seeds the domain's main piece and orients the gauge downstream)",
                                         optional=True))
+        add(adv(QgsProcessingParameterPoint("STAGE_PROBE", "Record the water level at this point (e.g. the pond; LISFLOOD-FP "
+                                             "stagefile -> lisflood_probe_stage.csv, to rate an outlet in a second run)",
+                                             optional=True)))
+        add(adv(QgsProcessingParameterPoint("OUTLET_INLET", "Principal outlet (pipe through the dam), inlet end on the pond "
+                                             "side: a point sink here and a point source at OUTLET_OUTLET, each the pipe's "
+                                             "discharge (empty = no outlet)", optional=True)))
+        add(adv(QgsProcessingParameterPoint("OUTLET_OUTLET", "Principal outlet, outlet end downstream of the dam", optional=True)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_DIAMETER_M", "Outlet pipe diameter (m)", DOUBLE, optional=True, minValue=0.05)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_INVERT_IN_M", "Outlet inlet invert elevation (m, DEM datum)", DOUBLE, optional=True)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_INVERT_OUT_M", "Outlet outlet invert elevation (m, recorded only)", DOUBLE, optional=True)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_BARRELS", "Outlet number of barrels", DOUBLE, 1.0, minValue=1.0)))
+        add(adv(QgsProcessingParameterBoolean("OUTLET_ASSUMED", "The outlet values are assumed (not from the as-built drawings)", True)))
+        add(adv(QgsProcessingParameterFile("OUTLET_STAGE_CSV", "Pond stage at the inlet from an earlier run of this model "
+                                            "(lisflood_probe_stage.csv: t_s,stage_m): the pipe flow is its Boyd inlet-control "
+                                            "rating (one coupling iteration)", optional=True)))
         add(adv(QgsProcessingParameterNumber("SIMPLIFY_M", "Simplify the outer outline by this tolerance (m; empty = the "
                                              "runner's rule; use the ANUGA job's value for the same domain)", DOUBLE,
                                              optional=True, minValue=0.5)))
@@ -157,6 +179,31 @@ class LisfloodRain(_Base):
                 gb = self.parameterAsPoint(P, "GAUGE_B", context, dem_layer.crs())
                 gauge = LR.gauge_from_ab((ga.x(), ga.y()), (gb.x(), gb.y()), start)
             terrain, tinfo = LR.model_terrain(grid, rings, st["buffer_m"], start, self._opt_num(P, "SIMPLIFY_M", context))
+            outlet, outlet_q, probe = None, None, None
+            if P.get("OUTLET_INLET") not in (None, "") or P.get("OUTLET_OUTLET") not in (None, ""):
+                nums = [self._opt_num(P, k, context) for k in ("OUTLET_DIAMETER_M", "OUTLET_INVERT_IN_M", "OUTLET_INVERT_OUT_M")]
+                if P.get("OUTLET_INLET") in (None, "") or P.get("OUTLET_OUTLET") in (None, "") or any(v is None for v in nums) \
+                        or P.get("OUTLET_STAGE_CSV") in (None, ""):
+                    raise QgsProcessingException("An outlet needs OUTLET_INLET, OUTLET_OUTLET, OUTLET_DIAMETER_M, OUTLET_INVERT_IN_M, "
+                                                 "OUTLET_INVERT_OUT_M and OUTLET_STAGE_CSV (first run the model without the outlet "
+                                                 "and a STAGE_PROBE at the pond, then give its lisflood_probe_stage.csv).")
+                pi = self.parameterAsPoint(P, "OUTLET_INLET", context, dem_layer.crs())
+                po = self.parameterAsPoint(P, "OUTLET_OUTLET", context, dem_layer.crs())
+                outlet = AR.outlet_spec((pi.x(), pi.y()), (po.x(), po.y()), nums[0], nums[1], nums[2], barrels=self.parameterAsDouble(
+                    P, "OUTLET_BARRELS", context), assumed=self.parameterAsBool(P, "OUTLET_ASSUMED", context))
+                try:
+                    sd = np.loadtxt(self.parameterAsFile(P, "OUTLET_STAGE_CSV", context), delimiter=",", skiprows=1, ndmin=2)
+                except (OSError, ValueError) as e:
+                    raise QgsProcessingException("Cannot read OUTLET_STAGE_CSV ({})".format(e))
+                if sd.shape[1] < 2:
+                    raise QgsProcessingException("OUTLET_STAGE_CSV needs the columns t_s,stage_m")
+                outlet_q = LR.outlet_flow_series(sd[:, 0], sd[:, 1], outlet)
+                feedback.pushInfo("Outlet: {:.2f} m pipe, inverts {:.2f} -> {:.2f} m{}; peak rated flow {:.2f} m3/s".format(
+                    outlet["width_m"], *outlet["invert_elevations"], " (ASSUMED values)" if outlet["assumed"] else "",
+                    float(outlet_q[1].max())))
+            if P.get("STAGE_PROBE") not in (None, ""):
+                pp = self.parameterAsPoint(P, "STAGE_PROBE", context, dem_layer.crs())
+                probe = (pp.x(), pp.y())
             t, r = AR.read_rate_csv(self.parameterAsFile(P, "RATE_CSV", context))
             sim_h = self.parameterAsDouble(P, "SIM_TIME_H", context)
             sim_time = sim_h * 3600.0 if sim_h > 0 else float(t[-1]) + LR.DEFAULTS["extra_h"] * 3600.0
@@ -178,7 +225,7 @@ class LisfloodRain(_Base):
             b.write(a.read())
         comment = "rainfall in mm/hr (time in s) from {}: damit_pmp:lisfloodrain".format(
             os.path.basename(self.parameterAsFile(P, "RATE_CSV", context)))
-        par = LR.write_inputs(out_dir, terrain, t, r, st, sim_time, gauge, comment)
+        par = LR.write_inputs(out_dir, terrain, t, r, st, sim_time, gauge, comment, outlet, outlet_q, probe)
         rain_mm = LR.depth_mm(t, r)
 
         run_rec, results = None, None
@@ -212,7 +259,9 @@ class LisfloodRain(_Base):
                        "outside_domain": "NODATA (a wall in LISFLOOD-FP)", "edge_valid_cells": tinfo["edge_valid_cells"],
                        "cropped_from_grid": tinfo["cropped_from"], "edges": "FREE except " + ",".join(
                            st["closed_edges"]) if st["closed_edges"] else "FREE on all four edges"},
-            "settings": dict(st, sim_time_s=sim_time, cuda_note=LR.CUDA_NOTE, par_lines=LR.par_lines(st, sim_time, gauge=bool(gauge))),
+            "settings": dict(st, sim_time_s=sim_time, cuda_note=LR.CUDA_NOTE, par_lines=LR.par_lines(st, sim_time, gauge=bool(gauge), bdy=outlet is not None,
+                                                    stage=probe is not None)),
+            "outlet": None if outlet is None else dict(outlet, rated_peak_m3_s=float(outlet_q[1].max()), coupling="pipe flow rated from the stage series of an earlier run (Boyd inlet control): a point sink at the inlet and a point source at the outlet end"),
             "gauge": gauge, "rain": {"depth_mm": rain_mm, "peak_mm_hr": float(r.max()) * LR.MM_PER_HR,
                                      "spatial": "uniform", "file": LR.RAIN_NAME},
             "inputs": {"dem": {"path": dem_path, "sha256": AR.sha256_file(dem_path) if os.path.isfile(dem_path) else None,

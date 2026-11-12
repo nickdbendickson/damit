@@ -253,3 +253,33 @@ real LISFLOOD-FP for five simulated minutes) and `PMPPatternsLossesWatershedLisf
 (a north -> south line reads -Q for an eastward flow). With `FLOW_PATH_START` given, `anugarain` orders `GAUGE_A` /
 `GAUGE_B` so positive is away from that point (downstream), the same sign as the LISFLOOD-FP gauge of `lisfloodrain`;
 without it the ends are used as given. The magnitude was never affected.
+
+## 0.4.2: bed sampling, stream refinement, principal outlet, stage probes
+
+All new options are off by default; a job made without them is unchanged.
+
+**`VERTEX_ELEVATION` (anugarain).** Without a finer DEM the runner's worker samples the model DEM once per triangle,
+at the centroid, so the bed jumps between neighbouring triangles and every triangle that is lower than its three
+neighbours holds water. On DWR-2801 (Atlas 14 100-yr 24-hr, no losses, 10 m model DEM, 36 h) that rule strands rain
+water: 4.84 Mm3 stored (the DEM's depression storage is 2.3-2.5 Mm3), the pond stays about 3 m under the spillway
+sill and the dam section peaks at 0.6 m3/s, where LISFLOOD-FP ACC (10 m) fills the pond to the sill and spills.
+Sampling the same DEM at the vertices (a continuous bed) alone, on the same 20.6k-triangle mesh, stores 3.09 Mm3
+and spills 65 m3/s. A finer mesh does not fix the centroid rule (it stores more at the same time: 5.2 vs 4.95 Mm3 at
+18.7 h). `FINE_ELEVATION` with a DEM finer than the model cell already samples at the vertices (that is the runner's
+rule for its 1 m jobs). The rain template now also writes `hfinal_m`, the centroid bed and a stage probe series
+(`STAGE_PROBE`, one point, DEM CRS) into `anuga_rain_result.npz`.
+
+**Stream-network refinement.** `STREAM_AREA_KM2` takes the D8 channels (`watershed.stream_lines`) that drain at least
+that area, clips them to the domain, simplifies them and gives them to the mesher as extra `channel` lines;
+`CHANNEL_AREA_M2`, `CHANNEL_DIST_MIN_M`, `CHANNEL_DIST_MAX_M` set the channel triangle size and grading, and
+`REFINE_LINES` embeds any line layer (a dam crest) as mesh edges.
+
+**Principal outlet.** `OUTLET_INLET` / `OUTLET_OUTLET` (points), `OUTLET_DIAMETER_M`, `OUTLET_INVERT_IN_M`,
+`OUTLET_INVERT_OUT_M` (+ Manning n, losses, barrels) add the runner's Boyd *pipe* culvert operator
+(`anuga_worker.add_boyd_culvert`) to the ANUGA job. The values are recorded as **assumed** unless `OUTLET_ASSUMED` is
+switched off: take them from the as-built drawings. LISFLOOD-FP has no pipe element (the weir file is weir flow
+only), so `lisfloodrain` imposes the pipe as a point sink at the inlet cell and a point source at the outlet cell
+(`QVAR` in `rain.bdy`); the discharge is the Boyd inlet-control rating (`lisfloodrain.boyd_pipe_q`, the smaller of
+ANUGA's unsubmerged and submerged forms; no outlet control) of the pond stage series `OUTLET_STAGE_CSV` taken from an
+earlier run of the same model made with `STAGE_PROBE` (one coupling iteration; `lisflood_probe_stage.csv`). A sink
+cannot take more than the cell holds, so use it with a pond cell that is wet whenever the rating is not zero.

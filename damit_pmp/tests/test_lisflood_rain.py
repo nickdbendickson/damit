@@ -346,5 +346,94 @@ class RealExecutable(unittest.TestCase):
         self.assertGreater(r["balance"]["outflow_m3_from_qout"], 0.0)
 
 
+@unittest.skipUnless(HAVE, "numpy / scipy / GDAL not installed")
+class OutletPipe(unittest.TestCase):
+    """0.4.2: the principal outlet as a sink / source pair rated from a pond stage series."""
+    OUTLET = {"end_points": [(500050.0, 5200100.0), (500350.0, 5200100.0)], "width_m": 0.9, "invert_elevations": [100.0, 99.0],
+              "barrels": 1.0, "assumed": True}
+
+    def terr(self):
+        return Grid(np.full((20, 40), 100.0), 500000.0, 5200200.0, 10.0, NODATA, None)
+
+    def test_boyd_rating_is_zero_without_head_rises_and_takes_the_smaller_form(self):
+        self.assertEqual(float(LR.boyd_pipe_q(0.0, 0.9)), 0.0)
+        self.assertEqual(float(LR.boyd_pipe_q(-1.0, 0.9)), 0.0)
+        h = np.array([0.1, 0.5, 1.0, 2.0, 3.0])
+        q = LR.boyd_pipe_q(h, 0.9)
+        self.assertTrue(np.all(np.diff(q) > 0))
+        d, g = 0.9, LR.G
+        unsub = 0.421 * g ** 0.5 * d ** 0.87 * h ** 1.63
+        sub = 0.530 * g ** 0.5 * d ** 1.87 * h ** 0.63
+        self.assertTrue(np.allclose(q, np.minimum(unsub, sub)))
+        self.assertTrue(np.allclose(LR.boyd_pipe_q(h, 0.9, 2.0), 2.0 * q))              # barrels
+        self.assertGreater(float(LR.boyd_pipe_q(3.0, 0.9)), 1.0)                        # a 36 in pipe at 3 m head: m3/s, not l/s
+        self.assertLess(float(LR.boyd_pipe_q(3.0, 0.9)), 10.0)
+
+    def test_flow_series_follows_the_stage_over_the_invert(self):
+        t, q = LR.outlet_flow_series([0, 100, 200], [99.0, 100.0, 102.0], self.OUTLET)
+        self.assertEqual(q[0], 0.0)
+        self.assertEqual(q[1], 0.0)                                  # stage at the invert: no head
+        self.assertGreater(q[2], 0.0)
+        with self.assertRaises(LR.JobError):
+            LR.outlet_flow_series([0], [1.0], self.OUTLET)
+
+    def test_inputs_have_a_sink_and_a_source_and_the_runners_keyword_order(self):
+        tmp = tempfile.mkdtemp()
+        st = LR.check_settings({})
+        q = (np.array([0, 3600.0]), np.array([0.5, 1.5]))
+        par = LR.write_inputs(tmp, self.terr(), [0, 600.0], [1e-5, 1e-5], st, 3600.0, outlet=self.OUTLET, outlet_q=q,
+                              probe=(500050.0, 5200100.0))
+        bci = open(os.path.join(tmp, "rain.bci")).read().splitlines()
+        self.assertEqual(bci[0], "P 50.000 100.000 QVAR outlet_in")
+        self.assertEqual(bci[1], "P 350.000 100.000 QVAR outlet_out")
+        self.assertTrue(any(l.endswith("FREE") for l in bci[2:]))
+        bdy = open(os.path.join(tmp, "rain.bdy")).read().split("\n")
+        self.assertIn("ASSUMED", bdy[0])
+        i = bdy.index("outlet_in")
+        self.assertEqual(bdy[i + 1], "2 seconds")
+        self.assertAlmostEqual(float(bdy[i + 2].split()[0]), -0.05)                   # m3/s / 10 m cell, negative = sink
+        j = bdy.index("outlet_out")
+        self.assertAlmostEqual(float(bdy[j + 3].split()[0]), 0.15)                    # positive = source
+        lines = open(par).read().splitlines()
+        self.assertLess(lines.index("bcifile rain.bci"), lines.index("bdyfile rain.bdy"))
+        self.assertIn("stagefile rain.stagepts", lines)
+        self.assertEqual(open(os.path.join(tmp, "rain.stagepts")).read().split(), ["1", "50.000", "100.000"])
+        with self.assertRaises(LR.JobError):
+            LR.write_inputs(tmp, self.terr(), [0, 600.0], [1e-5, 1e-5], st, 3600.0, outlet=self.OUTLET)
+
+    def test_no_outlet_no_bdy_no_stage_lines(self):
+        lines = LR.par_lines(LR.check_settings({}), 3600.0)
+        self.assertFalse(any(l.startswith(("bdyfile", "stagefile")) for l in lines))
+
+    def test_probe_stage_is_elevation_plus_depth(self):
+        p = os.path.join(tempfile.mkdtemp(), "rain.stage")
+        open(p, "w").write("Stage output, depth (m). Stage locations from: rain.stagepts\n\nStage information (stage,x,y,elev):\n"
+                            "1\t50.0000\t100.0000\t321.5000\n\nOutput, depths:\nTime; stages 1 to 1\n   10.000    0.0100\n  70.000    0.2500\n")
+        t, z = LR.read_probe_stage(p)
+        self.assertEqual(list(t), [10.0, 70.0])
+        self.assertTrue(np.allclose(z, [321.51, 321.75]))
+        self.assertIsNone(LR.read_probe_stage(p + ".none"))
+
+
+@unittest.skipUnless(HAVE and REAL_EXE, "set DAMIT_PMP_LISFLOOD to a LISFLOOD-FP executable to run the real solver")
+class RealOutlet(unittest.TestCase):
+    def test_the_source_wets_the_outlet_cell_and_the_probe_stage_is_written(self):
+        # a closed flat basin: the pipe's sink / source pair puts 50 L/s at the far cell, well above the rain alone
+        tmp = tempfile.mkdtemp()
+        data = np.full((20, 40), 100.0)
+        terr = Grid(data, 500000.0, 5200200.0, 10.0, NODATA, None)
+        o = dict(OutletPipe.OUTLET)
+        q = (np.array([0, 1200.0]), np.array([0.05, 0.05]))
+        st = LR.check_settings({"massint_s": 60, "closed_edges": ("N", "S", "E", "W")})
+        par = LR.write_inputs(tmp, terr, [0, 300.0], [2e-5, 2e-5], st, 1200.0, outlet=o, outlet_q=q, probe=(500050.0, 5200100.0))
+        cp = launch.run_lisflood(REAL_EXE, par, threads=1, timeout_s=300)
+        self.assertEqual(cp.returncode, 0, cp.stdout[-400:])
+        r = LR.summarize(tmp, terr, 1200.0, 72.0)
+        mx = Grid.read_asc(os.path.join(tmp, "results", "rain.max")).data
+        self.assertGreater(mx[10, 35], 0.02)                                  # the source cell is wet (50 L/s for 20 min; the rain alone is 6 mm)
+        self.assertIn("probe_stage", r)
+        self.assertTrue(os.path.isfile(os.path.join(tmp, LR.PROBE_STAGE_NAME)))
+
+
 if __name__ == "__main__":
     unittest.main()

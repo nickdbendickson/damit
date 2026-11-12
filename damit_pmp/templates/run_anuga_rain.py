@@ -112,6 +112,11 @@ def build_domain(anuga, W, job, mesh):
         domain.set_quantity("elevation", elevation, location="vertices")
         elev = {"mode": "fine", "cell_m": fdx, "sampled_at": "vertices", "vertex_samples": count["vertices"],
                 "model_grid_fallback_samples": count["fallback"]}
+    elif "vertex_elevation" in job and int(job["vertex_elevation"]):
+        # 0.4.2: the model DEM sampled at the triangle VERTICES (a continuous bed, ANUGA averages them to the centroid),
+        # instead of one bilinear sample per centroid (a bed that jumps between neighbouring triangles)
+        domain.set_quantity("elevation", lambda x, y: W.bilinear(dem, lx0, ly0, dx, x, y), location="vertices")
+        elev = {"mode": "model_grid", "cell_m": dx, "sampled_at": "vertices"}
     else:
         domain.set_quantity("elevation", lambda x, y: W.bilinear(dem, lx0, ly0, dx, x, y), location="centroids")
     domain.set_quantity("friction", s("manning_n"))
@@ -154,6 +159,24 @@ def main(argv):
         from anuga.shallow_water.shallow_water_domain import Cross_section
         gl = np.asarray(job["gauge"], float).reshape(2, 2)
         xsec = Cross_section(domain, [[gl[0, 0] - x_ref, gl[0, 1] - y_ref], [gl[1, 0] - x_ref, gl[1, 1] - y_ref]])
+    outlet_op, outlet_rec = None, None
+    if "outlet_json" in job:              # 0.4.2: the principal outlet as the runner's Boyd culvert operator
+        spec = json.loads(str(job["outlet_json"]))
+        ends = [[e[0] - x_ref, e[1] - y_ref] for e in spec["end_points"]]
+        cspec = dict(losses=spec.get("losses", 0.5), barrels=spec.get("barrels", 1), apron=spec.get("apron", 0.0),
+                     manning=spec["manning"], shape=spec.get("shape", "pipe"), width=spec["width_m"],
+                     height=spec.get("height_m", spec["width_m"]), invert_elevations=spec["invert_elevations"],
+                     enquiry_gap=spec.get("enquiry_gap_m", 0.0), name=spec.get("name", "outlet"))
+        outlet_op, outlet_rec = W.add_boyd_culvert(anuga, domain, cspec, ends)
+        outlet_rec = dict(outlet_rec, spec=spec)
+        print("OUTLET: Boyd {} d={} m, inverts {}, record {}".format(cspec["shape"], cspec["width"], cspec["invert_elevations"],
+                                                                      {k: v for k, v in outlet_rec.items() if k != "spec"}), flush=True)
+    probes = None
+    if "probes" in job:                   # stage time series at points (DEM CRS), e.g. the pond
+        pp = np.asarray(job["probes"], float).reshape(-1, 2) - np.array([x_ref, y_ref])
+        cc = np.asarray(domain.centroid_coordinates)
+        probes = [int(np.argmin(np.hypot(cc[:, 0] - a, cc[:, 1] - b))) for a, b in pp]
+    probe_rows = []
     # mass check for the wiring: the storm volume the operator will add (m3), without evolving
     depth_m = float(np.trapz(job["rain_rate"], job["rain_t"])) if hasattr(np, "trapz") \
         else float(np.trapezoid(job["rain_rate"], job["rain_t"]))
@@ -201,7 +224,10 @@ def main(argv):
             except Exception:                    # noqa: BLE001
                 frac = float("nan")
             gq = float(xsec.get_flow_through_cross_section()) if xsec is not None else float("nan")
-            series.append((float(t), rain, vol, bflux, frac, float(d.max()), float(areas[d > 0.05].sum()), gq))
+            oq = float(getattr(outlet_op, "discharge", float("nan"))) if outlet_op is not None else float("nan")
+            if probes is not None:
+                probe_rows.append([float(t)] + [float(domain.quantities["stage"].centroid_values[i]) for i in probes])
+            series.append((float(t), rain, vol, bflux, frac, float(d.max()), float(areas[d > 0.05].sum()), gq, oq))
             print("t = {:.0f} s  max depth {:.4f} m  stored {:.1f} m3  rain in {:.1f} m3".format(
                 t, float(d.max()), vol, rain), flush=True)
             if not mode_run and k >= steps + 1:      # the first yield is the initial state (t = 0)
@@ -235,11 +261,24 @@ def main(argv):
                                         "once per yield step; positive = to the right of the line a -> b (damit_pmp orders the ends so that is "
                                         "away from FLOW_PATH_START, i.e. downstream, when it is given)"}
             np.savetxt(os.path.join(HERE, "anuga_rain_timeseries.csv" if mode_run else "anuga_rain_steps_timeseries.csv"), np.array(series), delimiter=",",
-                       header="t_s,rain_in_m3,stored_m3,boundary_flux_integral_m3,rate_operator_m3,max_depth_m,wet_area_m2,gauge_q_m3_s",
+                       header="t_s,rain_in_m3,stored_m3,boundary_flux_integral_m3,rate_operator_m3,max_depth_m,wet_area_m2,gauge_q_m3_s,outlet_q_m3_s",
                        comments="")
+            if outlet_op is not None:
+                ss = np.array(series)
+                oqs = ss[:, 8]
+                io = int(np.nanargmax(np.abs(oqs)))
+                vo = float(np.trapz(np.abs(oqs), ss[:, 0])) if hasattr(np, "trapz") else float(np.trapezoid(np.abs(oqs), ss[:, 0]))
+                rec["outlet"] = dict(outlet_rec, peak_abs_m3_s=float(abs(oqs[io])), t_peak_s=float(ss[io, 0]), volume_m3=vo,
+                                     note="the Boyd operator's discharge at each yield step; the water leaves the pond at "
+                                          "the inlet end and enters at the outlet end, inside the domain")
         if mode_run:
-            np.savez(os.path.join(HERE, "anuga_rain_result.npz"), hmax_m=hmax,
-                     centroids=np.asarray(domain.centroid_coordinates) + np.array([x_ref, y_ref]))
+            extra = {}
+            if probe_rows:
+                pr = np.array(probe_rows)
+                extra = dict(probe_t=pr[:, 0], probe_stage=pr[:, 1:], probe_xy=np.asarray(job["probes"], float).reshape(-1, 2))
+            np.savez(os.path.join(HERE, "anuga_rain_result.npz"), hmax_m=hmax, hfinal_m=d,
+                     elev_m=np.asarray(domain.quantities["elevation"].centroid_values),
+                     centroids=np.asarray(domain.centroid_coordinates) + np.array([x_ref, y_ref]), **extra)
     rec["wall_s"] = round(time.time() - t_wall, 2)
     out = os.path.join(HERE, "anuga_rain_run.json" if mode_run else "anuga_rain_steps.json" if steps > 0
                        else "anuga_rain_dry_check.json")           # each mode has its own file: none overwrites another

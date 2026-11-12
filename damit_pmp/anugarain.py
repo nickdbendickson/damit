@@ -264,15 +264,63 @@ def flow_path(grid, outer, start_xy):
     return [np.asarray(c, float).tolist() for c in pieces], length
 
 
-SIZING_NUMBERS = ("max_area_m2", "line_min_area_m2", "grade_dist_m")
+SIZING_NUMBERS = ("max_area_m2", "line_min_area_m2", "grade_dist_m",
+                  "channel_area_m2", "channel_dist_min_m", "channel_dist_max_m")     # the last three: 0.4.2
 
 
-def mesh_spec(outer, channel=None, points=None, threads=1, sizing=None):
+def stream_refine_lines(grid, outer, min_area_km2, simplify_m=None, filled=None):
+    """0.4.2: the stream network (D8 accumulation of at least ``min_area_km2``, watershed.stream_lines) as mesh
+    refinement lines: clipped to the outer ring and simplified (Douglas-Peucker, default max(cell, 10 m)), pieces under
+    3 cells dropped. They are given to the mesher as extra ``channel`` lines, so they get its channel sizing
+    (channel_area_m2 within channel_dist_min_m, growing to the far field). Returns (lines [[x, y]...], info)."""
+    from . import watershed as W
+    if not (min_area_km2 and min_area_km2 > 0):
+        raise JobError("the stream threshold must be above 0 km2")
+    raw, info = W.stream_lines(grid, float(min_area_km2) * 1e6, filled)
+    tol = float(simplify_m) if simplify_m else max(grid.dx, 10.0)
+    keep = []
+    for c in clip_lines_to_polygon(raw, outer):
+        c = terrain.douglas_peucker(np.asarray(c, float), tol)
+        if len(c) >= 2 and float(np.hypot(*np.diff(c, axis=0).T).sum()) >= 3.0 * grid.dx:
+            keep.append(np.asarray(c, float).tolist())
+    length = float(sum(np.hypot(*np.diff(np.asarray(c), axis=0).T).sum() for c in keep))
+    return keep, {"threshold_km2": float(min_area_km2), "network_km_grid": round(info["length_m"] / 1000.0, 2),
+                  "lines": len(keep), "length_km_in_domain": round(length / 1000.0, 2), "simplify_m": tol}
+
+
+def outlet_spec(inlet, outlet, diameter_m, invert_in_m, invert_out_m, manning=0.013, losses=0.5, barrels=1,
+                assumed=True, name="principal outlet"):
+    """0.4.2: the dam's principal outlet as one Boyd pipe culvert (the runner's anuga_worker.add_boyd_culvert), ends in the
+    DEM CRS. Returns the dict the template reads (job key outlet_json). ``assumed`` is recorded: set it False only for
+    values taken from the as-built drawings. Raises JobError for a bad value."""
+    def num(k, v, positive=True):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            raise JobError("{} must be a number".format(k))
+        if not np.isfinite(v) or (positive and v <= 0):
+            raise JobError("{} must be a positive number".format(k))
+        return v
+    a, b = [(num("outlet x", p[0], False), num("outlet y", p[1], False)) for p in (inlet, outlet)]
+    length = float(np.hypot(b[0] - a[0], b[1] - a[1]))
+    d = num("OUTLET_DIAMETER_M", diameter_m)
+    if length < 2.0 * d:
+        raise JobError("the outlet ends are {:.1f} m apart: they must be at least two diameters ({:.2f} m) apart".format(length, 2 * d))
+    iv = [num("OUTLET_INVERT_IN_M", invert_in_m, False), num("OUTLET_INVERT_OUT_M", invert_out_m, False)]
+    return {"name": name, "shape": "pipe", "end_points": [list(a), list(b)], "width_m": d, "invert_elevations": iv,
+            "length_m": length, "manning": num("OUTLET_MANNING", manning), "losses": num("OUTLET_LOSSES", losses, False),
+            "barrels": num("OUTLET_BARRELS", barrels), "apron": d, "enquiry_gap_m": 10.0, "assumed": bool(assumed),
+            "note": ("ASSUMED pipe values - not from the as-built drawings" if assumed else "values supplied by the user")
+            + "; ANUGA Boyd pipe operator: inlet-controlled flow, head read at the inlet end"}
+
+
+def mesh_spec(outer, channel=None, points=None, threads=1, sizing=None, lines=None):
     """The gmsh_mesher input, as anuga_model.gmsh_spec builds it: outer ring, lines (none: there is
     no breach or structure), channel (the flow path), points (its start), threads, and the
     far-field sizing keys only when set (gmsh_mesher.default_sizes otherwise, the runner's mesh).
     Bad sizing values raise JobError naming the key (gmsh_mesher.positive_number)."""
-    spec = dict(outer=np.asarray(outer, float).tolist(), lines=[],
+    spec = dict(outer=np.asarray(outer, float).tolist(),
+                lines=[np.asarray(c, float).tolist() for c in (lines or [])],
                 channel=[np.asarray(c, float).tolist() for c in (channel or [])],
                 points=[list(map(float, p)) for p in (points or [])], threads=int(threads or 0))
     for k in SIZING_NUMBERS:
@@ -334,7 +382,8 @@ def orient_gauge(gauge, start_xy):
     return [(bx, by), (ax, ay)] if away < 0 else [(ax, ay), (bx, by)]
 
 
-def write_job(folder, grid, t, r, settings, sim_time_s, factor=None, fine=None, gauge=None):
+def write_job(folder, grid, t, r, settings, sim_time_s, factor=None, fine=None, gauge=None, outlet=None, probes=None,
+              vertex_elevation=False):
     """anuga_rain_job.npz (model DEM, rain, run settings; the keys the runner's worker reads where
     it has them: dem, dem_x0, dem_y0, dem_dx, algorithm, threads, manning_n, edge_bc, sim_time,
     yieldstep, elev_fine_*) plus anuga_rain_settings.json. Returns the npz path."""
@@ -349,6 +398,12 @@ def write_job(folder, grid, t, r, settings, sim_time_s, factor=None, fine=None, 
         job.update(fine)
     if gauge is not None:                         # two points (x, y) in the DEM CRS: a discharge section
         job["gauge"] = np.asarray(gauge, float).reshape(2, 2)
+    if outlet is not None:                        # 0.4.2: outlet_spec(...) as JSON, built by the template (add_boyd_culvert)
+        job["outlet_json"] = json.dumps(outlet)
+    if probes:                                    # 0.4.2: stage time series at these points (DEM CRS)
+        job["probes"] = np.asarray(probes, float).reshape(-1, 2)
+    if vertex_elevation:                          # 0.4.2: model DEM sampled at the vertices (continuous bed)
+        job["vertex_elevation"] = np.array(1)
     p = os.path.join(folder, JOB_NAME)
     np.savez(p, **job)
     return p

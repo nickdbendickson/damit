@@ -131,6 +131,47 @@ def delineate(grid, x, y, snap_m=150.0, filled=None, frac=SNAP_FRACTION):
             "cell_m": grid.dx, "filled": filled, "acc": acc2d}
 
 
+def stream_lines(grid, min_area_m2, filled=None):
+    """The stream network of a Grid as polylines [(N, 2) x, y arrays]: the D8 cells (flow_directions on the filled DEM,
+    accumulate) draining at least ``min_area_m2``, traced downstream from every headwater stream cell; a trace ends at
+    the grid edge / a no-data cell or when it joins a cell an earlier trace already used (the junction cell is the
+    last point). Returns (lines, info) with info {cells, length_m, lines, threshold_m2}. Nothing is simplified here."""
+    if min_area_m2 <= 0:
+        raise WatershedError("the stream threshold must be above 0")
+    if filled is None:
+        filled = _terrain.priority_flood(grid.masked())
+    valid = np.isfinite(filled).ravel()
+    nxt = flow_directions(filled)
+    acc, _order = accumulate(nxt, valid)
+    stream = valid & (acc * grid.dx * grid.dx >= min_area_m2)
+    n = stream.size
+    down = np.where(stream & (nxt >= 0), nxt, -1)
+    down[(down >= 0) & ~stream[np.clip(down, 0, n - 1)]] = -1
+    inflow = np.bincount(down[down >= 0], minlength=n)
+    heads = np.nonzero(stream & (inflow == 0))[0]
+    used = np.zeros(n, dtype=bool)
+    lines = []
+    for h in heads[np.argsort(-acc[heads])]:
+        cells = [int(h)]
+        used_here = False
+        k = int(h)
+        while True:
+            if used[k] and k != h:
+                break
+            nk = int(down[k])
+            if nk < 0:
+                used[k] = True
+                break
+            used[k] = True
+            cells.append(nk)
+            k = nk
+        if len(cells) >= 2:
+            rr, cc = np.divmod(np.asarray(cells), grid.nx)
+            lines.append(np.array([grid.xy(int(r), int(c)) for r, c in zip(rr, cc)], dtype=float))
+    length = float(sum(np.hypot(*np.diff(l, axis=0).T).sum() for l in lines))
+    return lines, {"cells": int(stream.sum()), "length_m": length, "lines": len(lines), "threshold_m2": float(min_area_m2)}
+
+
 def describe(res, nid_sqmi=None):
     """Plain-language lines for the log / JSON."""
     out = ["basin {:.2f} sq mi ({:.2f} km2, {} cells of {:g} m); pour point snapped {:.0f} m to a stream cell with {:,.0f} "
