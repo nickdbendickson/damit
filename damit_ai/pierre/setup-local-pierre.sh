@@ -3200,6 +3200,16 @@ SCRIPT_EOF_REPOAUDIT
     fi
   done
   ok "run_digest 1.3.3, pierre_watch 1.3.3 copied and compiled"
+  # the code-triage eval, like install-local-ai-linux.sh: the scorer plus the question set it
+  # reads from ../eval/questions.json. Without both, `python3 ~/local-ai/eval_pierre.py` is missing.
+  if [[ -f "${0:A:h}/tools/eval_pierre.py" ]]; then
+    cp "${0:A:h}/tools/eval_pierre.py" "$LOCAL_AI/eval_pierre.py"
+    "$PIERRE_PY" -m py_compile "$LOCAL_AI/eval_pierre.py" || die "eval_pierre.py did not compile"
+    [[ -d "${0:A:h}/eval" ]] && { rm -rf "$LOCAL_AI/eval"; cp -R "${0:A:h}/eval" "$LOCAL_AI/eval"; }
+    ok "eval_pierre copied (run: python3 $LOCAL_AI/eval_pierre.py)"
+  else
+    warn "tools/eval_pierre.py not found next to this script: the code-triage eval was not installed"
+  fi
 else
   ok "script rewrite skipped (--skip-scripts)"
 fi

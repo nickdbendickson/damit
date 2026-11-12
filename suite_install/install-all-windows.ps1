@@ -13,6 +13,7 @@ Installs, for you only (no admin, no pip, no system packages):
   * QGIS 3.34 (conda env ndqgis), ANUGA 4.1 + gmsh 4.15 (env ndanuga)
   * LISFLOOD-FP 8.3 with the Runner patch (lisflood\windows-x64\lisflood.exe, no DLLs)
   * the local AIs from damit_ai: Pierre and dam-research (Ollama, env, models, library)
+  * the DamIT Crest desk (damit_crest), run on the ndqgis env; it opens in the browser
   * a launcher per profile (in %USERPROFILE%\dam-suite and on the Desktop)
 
 OFFLINE: if offline\ is filled (an offline set unzipped here, or download-all run on any
@@ -25,8 +26,8 @@ It never touches your data folders, offline packs, or other QGIS profiles.
 =============================================================================
 #>
 param(
-  [switch]$Offline, [switch]$Check, [switch]$NoDamSafety, [switch]$NoDamIT, [switch]$NoAI,
-  [switch]$NoPierre, [switch]$NoResearch, [switch]$SkipLisflood, [switch]$NoShortcuts
+  [switch]$Offline, [switch]$Check, [switch]$NoDamSafety, [switch]$NoDamIT, [switch]$NoCrest,
+  [switch]$NoAI, [switch]$NoPierre, [switch]$NoResearch, [switch]$SkipLisflood, [switch]$NoShortcuts
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -41,7 +42,7 @@ $DsProfile = 'damsafety'; $DiProfile = 'damit'
 $DsDir = Join-Path $Profiles $DsProfile; $DiDir = Join-Path $Profiles $DiProfile
 $DsPlugins = @('DamSafety_Core','DamSafety_Setup','DamSafety_Data','DamSafety_Screening','DamSafety_Runner','DamSafety_Hazard','DamSafety_HazardLite','DamSafety_PMP','DamSafety_Finder')
 $DiPlugins = @('damit_core','damit_catalog','damit_setup','damit_data','damit_screener','damit_runner','damit_hazard','damit_hazardlite','damit_pmp','damit_finder')
-$DoDs = -not $NoDamSafety; $DoDi = -not $NoDamIT
+$DoDs = -not $NoDamSafety; $DoDi = -not $NoDamIT; $DoCrest = -not $NoCrest
 $DoPierre = -not ($NoAI -or $NoPierre); $DoResearch = -not ($NoAI -or $NoResearch)
 $Threads = if ($env:DAMSUITE_THREADS) { $env:DAMSUITE_THREADS } else { [Environment]::ProcessorCount }
 $CondaPkgs = Join-Path $Here "offline\conda\$P"
@@ -270,6 +271,39 @@ function Make-Launcher($file, $profile) {
 Say 'Settings and launchers'
 if ($DoDs) { Write-Settings $DsDir 'damsafety' $DsPlugins; Make-Launcher (Join-Path $Prefix 'open-damsafety-qgis.cmd') $DsProfile }
 if ($DoDi) { Write-Settings $DiDir 'damit' $DiPlugins;     Make-Launcher (Join-Path $Prefix 'open-damit-qgis.cmd') $DiProfile }
+
+# DamIT Crest desk. It runs on the ndqgis env: that env already has pyproj (Crest's only
+# third-party import) and puts qgis_process on PATH, which Crest's Report step calls. pywebview is
+# not installed, so the desk opens in the browser, which is Crest's documented fallback.
+#
+# The tree layout matters: damit_desktop\nid_rule.py loads DamIT Catalog's NID-ID rule from
+# <parents[3]>\damit_catalog\handoff.py and refuses to start without it, so Crest keeps its
+# damit_crest\desktop nesting and gets a damit_catalog\handoff.py beside it, taken from the
+# Catalog plugin zip we just installed so the rule always matches the plugin.
+$CrestSrc = Join-Path $Here 'damit_crest'
+$CatZip = Get-ChildItem (Join-Path $Here 'plugins\damit') -Filter 'damit_catalog_*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($DoCrest -and (Test-Path (Join-Path $CrestSrc 'desktop'))) {
+  if (-not $CatZip) { Warn "no DamIT Catalog zip: the Crest desk needs its NID-ID rule, so Crest was skipped" }
+  else {
+    Say "DamIT Crest desk -> $Prefix\damit_crest"
+    $CrestDir = Join-Path $Prefix 'damit_crest'
+    New-Item -ItemType Directory -Force -Path $CrestDir, (Join-Path $Prefix 'damit_catalog') | Out-Null
+    Copy-Item -Recurse -Force (Join-Path $CrestSrc '*') $CrestDir
+    $ho = Join-Path $Prefix 'damit_catalog\handoff.py'
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zf = [System.IO.Compression.ZipFile]::OpenRead($CatZip.FullName)
+    try {
+      $ent = $zf.Entries | Where-Object { $_.FullName -eq 'damit_catalog/handoff.py' } | Select-Object -First 1
+      if ($ent) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($ent, $ho, $true) }
+    } finally { $zf.Dispose() }
+    if (Test-Path $ho) {
+      $cl = Join-Path $Prefix 'open-damit-crest.cmd'
+      @("@echo off", "call `"$CondaBat`" activate ndqgis || exit /b 1",
+        "cd /d `"$CrestDir\desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
+      Ok "Crest desk (open: $cl)"
+    } else { Warn "could not read damit_catalog/handoff.py from $($CatZip.Name): Crest was skipped" }
+  }
+}
 Remove-Item $SettingsPy -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
@@ -315,6 +349,7 @@ $rec = @("Installed by $Stamp on $(Get-Date)",
          "  platform $P | QGIS $qv | ANUGA python $(if ($AnugaPy) {$AnugaPy} else {'none'}) | LISFLOOD-FP $(if ($Lisflood) {$Lisflood} else {'built-in engine'})")
 if ($DoDs) { $rec += "  DamSafety -> profile $DsProfile  (open: $Prefix\open-damsafety-qgis.cmd)" }
 if ($DoDi) { $rec += "  DamIT     -> profile $DiProfile  (open: $Prefix\open-damit-qgis.cmd)" }
+if (Test-Path (Join-Path $Prefix 'open-damit-crest.cmd')) { $rec += "  DamIT Crest desk              (open: $Prefix\open-damit-crest.cmd)" }
 $rec | Set-Content (Join-Path $Prefix 'INSTALLED.txt')
 Say $(if ($Fail) { "Done, with warnings (see above and $Log)." } else { 'Done: all checks passed.' })
 $rec | ForEach-Object { Write-Host $_ }

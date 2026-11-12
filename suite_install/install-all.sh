@@ -14,6 +14,7 @@
 #     official source with conda's clang on macOS (needs Apple's Command Line Tools)
 #   * the local AIs from damit_ai: Pierre (code triage) and dam-research (literature),
 #     with Ollama, their conda env, the models and the reference library
+#   * the DamIT Crest desk (damit_crest), run on the ndqgis env; it opens in the browser
 #   * one launcher per profile, and the Absaraka Dam (DWR-2801) run folder
 #
 # OFFLINE: if offline/ is filled (an offline set unzipped here, or download-all.sh run on
@@ -25,7 +26,7 @@
 #   bash install-all.sh                  # everything
 #   bash install-all.sh --offline        # refuse to download anything
 #   bash install-all.sh --check          # report what is installed
-#   options: --no-damsafety --no-damit --no-ai --no-pierre --no-research --skip-lisflood
+#   options: --no-damsafety --no-damit --no-crest --no-ai --no-pierre --no-research --skip-lisflood
 #
 # It never touches your data folders (~/ND_Suite_Data, DamIT data), offline packs, or
 # any QGIS profile other than "damsafety" and "damit".
@@ -40,10 +41,10 @@ DI_PROFILE="${DAMIT_PROFILE:-damit}"
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
-DO_DS=1; DO_DI=1; DO_PIERRE=1; DO_RESEARCH=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
+DO_DS=1; DO_DI=1; DO_PIERRE=1; DO_RESEARCH=1; DO_CREST=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
 while [ $# -gt 0 ]; do
   case "$1" in
-    --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;
+    --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;  --no-crest) DO_CREST=0 ;;
     --no-ai) DO_PIERRE=0; DO_RESEARCH=0 ;;  --no-pierre) DO_PIERRE=0 ;;  --no-research) DO_RESEARCH=0 ;;
     --skip-lisflood) SKIP_LISFLOOD=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
     -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
@@ -109,7 +110,15 @@ fi
 
 mkdir -p "$PREFIX/logs"
 LOG="$PREFIX/logs/install_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "$LOG") 2>&1
+# Mirror everything to the log. Process substitution needs /dev/fd, which a few minimal
+# containers do not mount; there the redirect itself kills the shell ("/dev/fd/63: No such
+# file or directory"), so probe first and keep going without the log rather than dying for it.
+if [ -d /dev/fd ]; then
+  exec > >(tee -a "$LOG") 2>&1
+else
+  LOG="(not written: this system has no /dev/fd)"
+  warn "no /dev/fd here, so the install log cannot be written; the output below is all on screen"
+fi
 say "$STAMP on $P ($OS $ARCH).  Log: $LOG"
 
 # ---------------------------------------------------------------------------
@@ -193,10 +202,12 @@ make_env ndanuga ndanuga || warn "the ANUGA env could not be built: the ANUGA ti
 QP="$(env_prefix ndqgis)"
 qpy() { env PYTHONPATH="$QP/share/qgis/python:$QP/share/qgis/python/plugins" QT_PLUGIN_PATH="$QP/plugins" \
             QGIS_PREFIX_PATH="$QP" PROJ_DATA="$QP/share/proj" GDAL_DATA="$QP/share/gdal" QT_QPA_PLATFORM=offscreen \
-            "$QP/bin/python" "$@"; }
+            "$MAMBA" run -n ndqgis python "$@"; }
+# `mamba run` activates the env. Calling $QP/bin/python directly works on Linux (RPATH $ORIGIN)
+# but fails on macOS, where dyld only resolves the QGIS dylibs with the env activated.
 qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis (see $LOG)"
 ANUGA_PY="$(env_prefix ndanuga)/bin/python"
-"$ANUGA_PY" -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
+"$MAMBA" run -n ndanuga python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
 
 # ---------------------------------------------------------------------------
 # 3. plugins (zips in plugins/; Core first so every dependency is in place)
@@ -316,6 +327,44 @@ if [ "$DO_DI" = 1 ]; then
   # shellcheck disable=SC2086
   write_settings "$DI_DIR/QGIS/QGIS3.ini" damit $DI_PLUGINS; mk_launcher "$PREFIX/open-damit-qgis.sh" "$DI_PROFILE"; fi
 
+# DamIT Crest desktop. It runs on the ndqgis env: that env already has pyproj (Crest's only
+# third-party import) and puts qgis_process on PATH, which Crest's Report step calls. The launcher
+# activates the env with conda.sh rather than `mamba run`, so dyld resolves pyproj's libraries on
+# macOS and Crest's own output (the URL it prints) is not captured. pywebview is not installed, so
+# the desk opens in the browser, which is Crest's documented fallback.
+#
+# The tree layout matters: damit_desktop/nid_rule.py loads DamIT Catalog's NID-ID rule from
+# <parents[3]>/damit_catalog/handoff.py and refuses to start without it, so Crest has to keep its
+# damit_crest/desktop/ nesting and get a damit_catalog/handoff.py beside it. That one file is
+# extracted from the Catalog plugin zip we just installed, so the rule always matches the plugin.
+CREST_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1)"
+if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
+  if [ -z "$CREST_ZIP" ]; then
+    warn "no DamIT Catalog zip: the Crest desk needs its NID-ID rule, so Crest was skipped"
+  else
+    say "DamIT Crest desk -> $PREFIX/damit_crest"
+    mkdir -p "$PREFIX/damit_crest" "$PREFIX/damit_catalog"
+    cp -R "$HERE/damit_crest/." "$PREFIX/damit_crest/"
+    if unzip -p "$CREST_ZIP" 'damit_catalog/handoff.py' > "$PREFIX/damit_catalog/handoff.py" 2>/dev/null \
+       && [ -s "$PREFIX/damit_catalog/handoff.py" ]; then
+      { echo '#!/bin/bash'
+        echo "# DamIT Crest desk (conda env ndqgis). Written by $STAMP."
+        printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
+        echo 'conda activate ndqgis || exit 1'
+        printf 'cd %q || exit 1\n' "$PREFIX/damit_crest/desktop"
+        printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+        echo 'exec python run.py "$@"'; } > "$PREFIX/open-damit-crest.sh"
+      chmod +x "$PREFIX/open-damit-crest.sh"
+      if [ "$OS" = Darwin ]; then cp "$PREFIX/open-damit-crest.sh" "$PREFIX/open-damit-crest.command"
+        chmod +x "$PREFIX/open-damit-crest.command"; fi
+      ok "Crest desk (open: $PREFIX/open-damit-crest.sh)"
+    else
+      rm -f "$PREFIX/damit_catalog/handoff.py"
+      warn "could not read damit_catalog/handoff.py from $(basename "$CREST_ZIP"): Crest was skipped"
+    fi
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 6. the local AIs (damit_ai's own installers; envs + Ollama + models from offline/)
 # ---------------------------------------------------------------------------
@@ -374,6 +423,7 @@ if [ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs
   echo "  platform $P | QGIS ${QV:-?} | ANUGA python ${ANUGA_PY:-none} | LISFLOOD-FP ${LISFLOOD_EXE:-built-in engine}"
   [ "$DO_DS" = 1 ] && echo "  DamSafety -> profile $DS_PROFILE  (open: $PREFIX/open-damsafety-qgis.sh)"
   [ "$DO_DI" = 1 ] && echo "  DamIT     -> profile $DI_PROFILE  (open: $PREFIX/open-damit-qgis.sh)"
+  [ -f "$PREFIX/open-damit-crest.sh" ] && echo "  DamIT Crest desk              (open: $PREFIX/open-damit-crest.sh)"
   true; } > "$PREFIX/INSTALLED.txt"
 
 say "Done$( [ "$FAIL" = 0 ] && echo ': all checks passed.' || echo ", with warnings (see above and $LOG).")"

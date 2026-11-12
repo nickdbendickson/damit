@@ -77,10 +77,16 @@ offline set (offline/lisflood-src/) or at the Zenodo record.
 EOF
 (cd "$OUT/lisflood" && sha */lisflood* > SHA256SUMS)
 
-echo "== damit_ai + Absaraka"
+echo "== damit_ai + damit_crest + Absaraka"
 mkdir -p "$OUT/damit_ai"
 (cd "$DAMIT/damit_ai" && git ls-files) | while IFS= read -r f; do
   mkdir -p "$OUT/damit_ai/$(dirname "$f")"; cp -p "$DAMIT/damit_ai/$f" "$OUT/damit_ai/$f"; done
+# the Crest desk: install-all runs it on the ndqgis env (pyproj + qgis_process are already there).
+# Only desktop/ is shipped: it holds the committed web bundle. The JS sources, lockfile and the
+# vite/eslint config are build-time only and would add a couple of MB to every package.
+mkdir -p "$OUT/damit_crest"
+(cd "$DAMIT/damit_crest" && git ls-files desktop README.md) | while IFS= read -r f; do
+  mkdir -p "$OUT/damit_crest/$(dirname "$f")"; cp -p "$DAMIT/damit_crest/$f" "$OUT/damit_crest/$f"; done
 cp -R "$DWR/tools/mac/absaraka" "$OUT/absaraka"
 rm -rf "$T"
 
