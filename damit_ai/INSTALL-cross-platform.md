@@ -26,7 +26,7 @@ that pattern). Ollama and Miniforge are **reused** if already installed.
 Otherwise you place the installer yourself and the script verifies its SHA256
 before running it:
 
-- **Linux** — save `ollama-linux-amd64.tgz` into `~/Downloads` (or put it under
+- **Linux** — save `ollama-linux-amd64.tar.zst` (older releases: `.tgz`) into `~/Downloads` (or put it under
   `damit_ai/offline/ollama/` with a `SHA256SUMS`), then re-run. No `sudo`.
 - **Windows** — save `OllamaSetup.exe` into your Downloads (or
   `damit_ai\offline\ollama\` with `SHA256SUMS`), or let the script use

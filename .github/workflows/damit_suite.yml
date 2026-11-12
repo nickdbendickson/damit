@@ -3,10 +3,10 @@ name: damit_suite
 on:
   push:
     paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**",
-            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", ".github/workflows/damit_suite.yml"]
+            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", ".github/workflows/damit_suite.yml"]
   pull_request:
     paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**",
-            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", ".github/workflows/damit_suite.yml"]
+            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", ".github/workflows/damit_suite.yml"]
 
 jobs:
   pure:
@@ -23,7 +23,7 @@ jobs:
         run: >-
           python3 -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup
           damit_data.tests.test_data damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14
-          tests.test_metadata_suite tests.test_hazard_screener_agree
+          tests.test_metadata_suite tests.test_hazard_screener_agree tests.test_suite_install
 
   qgis:
     name: QGIS 3.34 offscreen

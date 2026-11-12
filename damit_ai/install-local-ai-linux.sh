@@ -66,26 +66,33 @@ for c in "$(command -v ollama 2>/dev/null)" "$LOCAL_AI/ollama/bin/ollama" "$HOME
   [[ -n "$c" && -x "$c" ]] && { OLLAMA="$c"; break; }
 done
 if [[ -z "$OLLAMA" ]]; then
+  # Ollama ships ollama-linux-amd64.tar.zst in current releases (older ones: .tgz); either is accepted
   TGZ=""
-  for cand in "$OFFLINE/ollama/ollama-linux-amd64.tgz" "$DOWNLOADS/ollama-linux-amd64.tgz"; do
+  for cand in "$OFFLINE/ollama/ollama-linux-amd64.tar.zst" "$OFFLINE/ollama/ollama-linux-amd64.tgz" \
+              "$DOWNLOADS/ollama-linux-amd64.tar.zst" "$DOWNLOADS/ollama-linux-amd64.tgz"; do
     [[ -f "$cand" ]] && { TGZ="$cand"; break; }
   done
-  if [[ -n "$TGZ" && -f "$OFFLINE/ollama/SHA256SUMS" ]]; then
-    want=$(awk '$2 ~ /ollama-linux-amd64.tgz$/ {print $1}' "$OFFLINE/ollama/SHA256SUMS")
-    [[ -n "$want" && "$want" == "$(sha "$TGZ")" ]] || { warn "bundled Ollama tgz failed its SHA256SUMS; ignoring"; TGZ=""; }
+  if [[ -n "$TGZ" && "$TGZ" == "$OFFLINE"/* && -f "$OFFLINE/ollama/SHA256SUMS" ]]; then
+    want=$(awk -v n="$(basename "$TGZ")" '{f=$2; sub(/^.*\//,"",f)} f==n {print $1}' "$OFFLINE/ollama/SHA256SUMS")
+    [[ -n "$want" && "$want" == "$(sha "$TGZ")" ]] || { warn "bundled Ollama archive failed its SHA256SUMS; ignoring"; TGZ=""; }
   fi
   if [[ -z "$TGZ" ]]; then
     cat >&2 <<EOF
   No Ollama found, and no local tarball to install from.
   Download it yourself (no root needed) and re-run this script:
     1) Open https://ollama.com/download/linux  (or the GitHub releases page)
-    2) Save 'ollama-linux-amd64.tgz' into $DOWNLOADS
+    2) Save 'ollama-linux-amd64.tar.zst' (or an older '.tgz') into $DOWNLOADS
   (Or install Ollama however you prefer so 'ollama' is on your PATH.)
 EOF
     die "Ollama not available"
   fi
   mkdir -p "$LOCAL_AI/ollama"
-  tar -xzf "$TGZ" -C "$LOCAL_AI/ollama" || die "could not extract $TGZ"
+  case "$TGZ" in
+    *.zst) tar --zstd -xf "$TGZ" -C "$LOCAL_AI/ollama" 2>/dev/null \
+             || { command -v zstd >/dev/null && zstd -dc "$TGZ" | tar -xf - -C "$LOCAL_AI/ollama"; } \
+             || die "could not extract $TGZ (needs zstd: it is in every openSUSE install; Debian/Ubuntu: zstd package)" ;;
+    *) tar -xzf "$TGZ" -C "$LOCAL_AI/ollama" || die "could not extract $TGZ" ;;
+  esac
   OLLAMA="$LOCAL_AI/ollama/bin/ollama"
   [[ -x "$OLLAMA" ]] || OLLAMA="$(find "$LOCAL_AI/ollama" -name ollama -type f -perm -u+x | head -1)"
   [[ -x "$OLLAMA" ]] || die "ollama binary not found after extracting"
