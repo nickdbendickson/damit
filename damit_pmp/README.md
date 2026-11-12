@@ -222,7 +222,7 @@ Reuse of damit_runner's LISFLOOD-FP setup, as sha-pinned verbatim copies in `run
 | Settings and solver choice | `LisfloodSettings`, `solver_from_text`: **ACC** (the local-inertial CPU solver) by default; FV2 / MWDG2 only by name; FV1 / DG2 refused with the runner's message |
 | Model DEM | the runner's `Grid` at `CELL_M`, masked to the same outer ring as `anugarain` (written as `Model Terrain (LISFLOOD).tif` and as `rain.dem.asc` in local coordinates, `local_grid`: the LISFLOOD-FP build is single precision) |
 | `.par` | the runner's keywords and order (`DEMfile`, `resroot`, `dirroot`, `sim_time`, `initial_tstep`, `massint`, `saveint`, `bcifile`, solver, `elevoff`, `depthoff`, optional `theta` / `cfl`, `fpfric`, `gaugefile`); the test `runner_inputs_match` pins every shared line to `lisflood.write_inputs`. Rain run differences: `rainfall rain.rain` instead of the breach `bdyfile`, no `hazard` / `inittm_depth` (the arrival-time patch is not needed) |
-| `.bci` | `FREE` (outflow) on all four grid edges (`CLOSED_EDGES` closes some); cells outside the domain polygon are NODATA, which LISFLOOD-FP treats as walls |
+| `.bci` | `FREE` (outflow, bed slope) on all four grid edges (`CLOSED_EDGES` closes some); cells outside the domain polygon are NODATA, which LISFLOOD-FP treats as walls. The grid is cropped to the domain's valid cells, so FREE acts where the domain reaches an edge (the manifest's `edge_valid_cells`; all zero = a closed model, warned) |
 | `.rain` | mm/hr from the ANUGA rate series' own breakpoints (both solvers interpolate linearly, so the volume is the same) |
 | Gauge | `GAUGE_A` / `GAUGE_B`: the runner's `gauge_section` / `_gauge_line` clip; LISFLOOD-FP sections run along a grid axis, so an oblique line becomes the nearest E / W / N / S section of the same width, centred on the line |
 | Executable | `LISFLOOD_EXE`, else `data_conventions.detect_lisflood` (`DAMIT_LISFLOOD`, `PATH`, the usual build folders); the runner's numpy "built-in" engine is never offered |
@@ -241,7 +241,7 @@ allowlist change is `lisfloodrain.py` and `algorithms/lisflood_algs.py` in `SOLV
 not import them), `lisflood_algs.py` as a second importer of `launch`, and a check that `RUN_LISFLOOD` defaults to off.
 
 Limits: uniform rain only (one `.rain` series); no infiltration unless the series is already excess rain; the domain
-rim is a wall in LISFLOOD-FP but an outflow boundary in ANUGA; the gauge follows a grid axis; 10 m ACC on a 40 km2
+rim is a wall in LISFLOOD-FP (only domain cells on the grid edge drain) but an outflow boundary all round in ANUGA; the gauge follows a grid axis; 10 m ACC on a 40 km2
 domain is a long single-core run (hours for 36 h of simulated time).
 
 Tests added in 0.4.0: `test_watershed.py` (synthetic valleys, the 3DEP fetch with a fake service),

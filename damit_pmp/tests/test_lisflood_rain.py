@@ -213,10 +213,29 @@ class Domain(unittest.TestCase):
         self.assertEqual(info["simplify_m"], 60.0)
         self.assertTrue(np.allclose(info["ring"], outer))
         want = AR.domain_region(grid, [outer]) & grid.valid()
-        self.assertTrue(((terr.data != NODATA) == want).all())
+        rows, cols = np.where(want.any(axis=1))[0], np.where(want.any(axis=0))[0]          # the terrain is cropped to these
+        self.assertTrue(((terr.data != NODATA) == want[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]).all())
         self.assertEqual(info["domain_cells"], int(want.sum()))
         self.assertAlmostEqual(info["domain_km2"], want.sum() * 900.0 / 1e6)
         self.assertLess(info["domain_km2"], 2.1)                                 # a circle of radius 800 m, not the extent
+
+    def test_grid_is_cropped_so_the_free_edges_touch_the_domain(self):
+        # a NODATA frame would put the FREE edges outside the domain and close the model (found on DWR-2801:
+        # Qout 0 for the whole storm). The grid is cropped to the valid cells, on the same cell lattice.
+        grid, _ = AR.read_model_grid(self.dem, (500500, 5197000, 503500, 5199500), 30.0)
+        terr, info = LR.model_terrain(grid, [self.ring], 0.0, None, 60.0)
+        self.assertLess(terr.data.size, grid.data.size)
+        self.assertEqual(info["cropped_from"], [grid.ny, grid.nx])
+        v = terr.valid()
+        self.assertTrue(v[0].any() and v[-1].any() and v[:, 0].any() and v[:, -1].any())
+        self.assertEqual(info["edge_valid_cells"], {"N": int(v[0].sum()), "S": int(v[-1].sum()),
+                                                    "W": int(v[:, 0].sum()), "E": int(v[:, -1].sum())})
+        self.assertTrue(all(n > 0 for n in info["edge_valid_cells"].values()))
+        self.assertEqual((terr.x0 - grid.x0) % 30.0, 0.0)
+        self.assertEqual((grid.y0 - terr.y0) % 30.0, 0.0)
+        r0, c0 = int(round((grid.y0 - terr.y0) / 30.0)), int(round((terr.x0 - grid.x0) / 30.0))
+        self.assertTrue(np.array_equal(terr.data, np.where(AR.domain_region(grid, [info["ring"]]) & grid.valid(), grid.data,
+                                                           NODATA)[r0:r0 + terr.ny, c0:c0 + terr.nx]))
 
     def test_geotiff_and_ascii_agree(self):
         grid, _ = AR.read_model_grid(self.dem, (500500, 5197000, 503500, 5199500), 30.0)
@@ -310,6 +329,21 @@ class RealExecutable(unittest.TestCase):
         r = LR.summarize(tmp, terr, 600.0, 36.0)
         self.assertAlmostEqual(r["balance"]["rain_in_m3"], 1e-5 * 600.0 * 400 * 100.0, delta=1.0)
         self.assertGreater(r["max_depth_m"], 0.0)
+
+    def test_a_masked_domain_drains_through_the_grid_edge(self):
+        # the same cropping as the job: a tilted plane inside a polygon, water must reach Qout
+        tmp = tempfile.mkdtemp()
+        n = 60
+        data = np.full((n, n), 400.0) - 0.01 * 10.0 * np.arange(n)[None, :]      # falls to the east
+        grid = Grid(data, 500000.0, 5200600.0, 10.0, NODATA, None)
+        ring = circle(500300.0, 5200300.0, 250.0)
+        terr, info = LR.model_terrain(grid, [ring])
+        self.assertGreater(info["edge_valid_cells"]["E"], 0)
+        par = LR.write_inputs(tmp, terr, [0, 1200.0], [2e-5, 2e-5], LR.check_settings({"massint_s": 60}), 1800.0)
+        cp = launch.run_lisflood(REAL_EXE, par, threads=1, timeout_s=300)
+        self.assertEqual(cp.returncode, 0, cp.stdout[-400:])
+        r = LR.summarize(tmp, terr, 1800.0, 36.0)
+        self.assertGreater(r["balance"]["outflow_m3_from_qout"], 0.0)
 
 
 if __name__ == "__main__":

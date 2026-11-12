@@ -11,7 +11,7 @@ Mirrors anugarain.py. What is the runner's, as verbatim sha-pinned copies in run
 New here: the .rain file, the .par / .bci of a rain run (no breach inflow: runner_inputs_match() pins every
 shared .par line to lisflood.write_inputs), the same domain as damit_pmp:anugarain (outer ring and all), and the
 result readers. Atlas 14 stays the only depth source. NODATA outside the domain polygon is a wall in LISFLOOD-FP;
-the grid edges are FREE (outflow) as in the runner.
+the grid is cropped to the domain so the FREE edges (as in the runner) touch it: water leaves where the domain reaches the edge.
 """
 import json
 import math
@@ -99,8 +99,17 @@ def model_terrain(grid, rings, buffer_m=0.0, start_xy=None, simplify_m=None):
     if int(inside.sum()) < 9:
         raise JobError("the domain has fewer than 9 valid model cells")
     data = np.where(inside, grid.data, NODATA)
-    info = dict(info, ring=ring, domain_cells=int(inside.sum()), domain_km2=float(inside.sum() * grid.dx ** 2 / 1e6))
-    return grid.like(data, NODATA), info
+    # crop to the valid cells: the grid edge must touch the domain, or the FREE edges of the .bci lie in a NODATA
+    # frame and the model is closed (no valid cell is on an edge, so nothing can leave). Where the domain reaches
+    # the grid edge, FREE lets the water out at the bed slope; elsewhere the NODATA rim is a wall.
+    rows, cols = np.where(inside.any(axis=1))[0], np.where(inside.any(axis=0))[0]
+    r0, r1, c0, c1 = int(rows[0]), int(rows[-1]) + 1, int(cols[0]), int(cols[-1]) + 1
+    cropped = Grid(data[r0:r1, c0:c1], grid.x0 + c0 * grid.dx, grid.y0 - r0 * grid.dx, grid.dx, NODATA, grid.crs_wkt)
+    edge = cropped.valid()
+    edge_cells = {"N": int(edge[0].sum()), "S": int(edge[-1].sum()), "W": int(edge[:, 0].sum()), "E": int(edge[:, -1].sum())}
+    info = dict(info, ring=ring, domain_cells=int(inside.sum()), domain_km2=float(inside.sum() * grid.dx ** 2 / 1e6),
+                edge_valid_cells=edge_cells, cropped_from=[int(grid.ny), int(grid.nx)])
+    return cropped, info
 
 
 def write_tif(path, grid, data=None, nodata=NODATA):

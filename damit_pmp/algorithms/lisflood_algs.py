@@ -50,9 +50,12 @@ class LisfloodRain(_Base):
             "balance) and an optional discharge gauge across the line GAUGE_A - GAUGE_B. The runner's own lisflood.py, "
             "data_conventions.py, grid.py and units.py are verbatim, sha-pinned copies (runner_shared); the breach "
             "inflow and the arrival-time patch keywords are left out (a rain run has no breach).\n\n"
-            "Cells outside the domain polygon are NODATA, which LISFLOOD-FP treats as walls; water leaves through the "
-            "FREE grid edges only (ANUGA's outer ring is an outflow boundary all round: a small difference at the "
-            "basin rim, documented in the manifest). Rain is uniform: the .rain file is a single series.\n\n"
+            "Cells outside the domain polygon are NODATA, which LISFLOOD-FP treats as walls. The grid is cropped to the "
+            "domain's valid cells so the FREE edges touch it: water leaves only where the domain reaches the grid "
+            "edge (a downstream box that reaches the DEM edge does), at the bed slope. ANUGA's outer ring is an "
+            "outflow boundary all round, so ANUGA also drains the basin rim: a difference documented in the "
+            "manifest (edge_valid_cells counts the domain cells on each edge; all zero = a closed model). Rain is "
+            "uniform: the .rain file is a single series.\n\n"
             "SOLVER: ACC (default) runs on any CPU build. " + LR.CUDA_NOTE + " FV1 and DG2 are refused, as in the "
             "runner.\n\n"
             "Nothing is launched by default. RUN_LISFLOOD (off) runs the executable (LISFLOOD_EXE, or the runner's "
@@ -163,6 +166,10 @@ class LisfloodRain(_Base):
             raise QgsProcessingException(str(e))
         feedback.pushInfo("Domain: {:.2f} km2 ({:.2f} sq mi), {} valid cells of {} x {}".format(
             tinfo["domain_km2"], tinfo["domain_km2"] / 2.589988, tinfo["domain_cells"], terrain.ny, terrain.nx))
+        free = [e for e in "NSEW" if e not in st["closed_edges"]]
+        if not any(tinfo["edge_valid_cells"][e] for e in free):
+            feedback.pushInfo("Warning: no domain cell touches a FREE grid edge, so this model is closed: all rain stays "
+                              "in the domain (extend the domain to a DEM edge, e.g. a downstream box, to let water leave).")
         if st["solver"] != L.SOLVER_ACC:
             feedback.pushInfo("Warning: " + LR.CUDA_NOTE)
         tif = LR.write_tif(os.path.join(out_dir, LR.TERRAIN_NAME), terrain)
@@ -202,7 +209,8 @@ class LisfloodRain(_Base):
                        "area_sq_mi": tinfo["domain_km2"] / 2.589988, "simplify_m": tinfo["simplify_m"],
                        "model_cell_m": st["cell_m"], "grid": [terrain.ny, terrain.nx], "valid_cells": tinfo["domain_cells"],
                        "x0": terrain.x0, "y0": terrain.y0, "pour_point": start,
-                       "outside_domain": "NODATA (a wall in LISFLOOD-FP)", "edges": "FREE except " + ",".join(
+                       "outside_domain": "NODATA (a wall in LISFLOOD-FP)", "edge_valid_cells": tinfo["edge_valid_cells"],
+                       "cropped_from_grid": tinfo["cropped_from"], "edges": "FREE except " + ",".join(
                            st["closed_edges"]) if st["closed_edges"] else "FREE on all four edges"},
             "settings": dict(st, sim_time_s=sim_time, cuda_note=LR.CUDA_NOTE, par_lines=LR.par_lines(st, sim_time, gauge=bool(gauge))),
             "gauge": gauge, "rain": {"depth_mm": rain_mm, "peak_mm_hr": float(r.max()) * LR.MM_PER_HR,
@@ -223,7 +231,8 @@ class LisfloodRain(_Base):
             "limitations": ["not a PMP; Atlas 14 only", "uniform rain: LISFLOOD-FP reads one .rain series here",
                             "no infiltration or losses unless the rain series is already excess rain",
                             "the arrival-time patch keywords of the runner (hazard, inittm_depth) are not written",
-                            "NODATA outside the polygon is a wall, ANUGA's ring is an outflow boundary",
+                            "NODATA outside the polygon is a wall and only the domain cells on the grid edge drain (FREE); ANUGA's ring is an "
+                            "outflow boundary all round",
                             "the gauge runs along the nearest grid axis, not along the line itself",
                             "the runner's keep-awake wrapper is not used"],
             "elapsed_s": round(time.time() - t_start, 1),
