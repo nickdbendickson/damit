@@ -28,6 +28,8 @@ JobError = AR.JobError
 NAME = "rain"                                   # resroot: rain.par, rain.dem.asc, results/rain.max ...
 TERRAIN_NAME = "Model Terrain (LISFLOOD).tif"   # the runner's name for the model DEM product
 PAR_NAME, RAIN_NAME, BCI_NAME, GAUGE_NAME = NAME + ".par", NAME + ".rain", NAME + ".bci", NAME + ".gauge"
+BDY_NAME, STAGEPTS_NAME = NAME + ".bdy", NAME + ".stagepts"       # 0.4.2: the outlet's flows, the stage probe point
+PROBE_STAGE_NAME = "lisflood_probe_stage.csv"
 MANIFEST_NAME = "run_manifest.json"
 RESULTS_NAME = "lisflood_rain_results.json"
 MAX_DEPTH_NAME = "lisflood_max_depth.tif"
@@ -175,7 +177,7 @@ def gauge_from_ab(a, b, downstream_xy=None):
     return g
 
 
-def par_lines(st, sim_time_s, has_manning_grid=False, gauge=False):
+def par_lines(st, sim_time_s, has_manning_grid=False, gauge=False, bdy=False, stage=False):
     """The .par lines of a rain run: the keywords and order of lisflood.write_inputs, minus the breach
     inflow (bdyfile) and the arrival-time patch (hazard, inittm_depth), plus rainfall."""
     lines = [
@@ -187,9 +189,10 @@ def par_lines(st, sim_time_s, has_manning_grid=False, gauge=False):
         "massint {:.0f}".format(st["massint_s"]),
         "saveint {:.0f}".format(sim_time_s + 10.0),
         "bcifile {}".format(BCI_NAME),
-        "rainfall {}".format(RAIN_NAME),
-        st["solver"],
     ]
+    if bdy:                                       # 0.4.2: the outlet's QVAR series (runner: bdyfile follows bcifile)
+        lines.append("bdyfile {}".format(BDY_NAME))
+    lines += ["rainfall {}".format(RAIN_NAME), st["solver"]]
     if st["solver"] in L.LIMIT_SLOPES_SOLVERS:
         lines.append("limitslopes")
     lines += ["elevoff", "depthoff"]
@@ -201,10 +204,61 @@ def par_lines(st, sim_time_s, has_manning_grid=False, gauge=False):
     lines.append("fpfric {:.4f}".format(st["manning_n"]))
     if gauge:
         lines.append("gaugefile {}".format(GAUGE_NAME))
+    if stage:
+        lines.append("stagefile {}".format(STAGEPTS_NAME))
     return lines
 
 
-def write_inputs(folder, terrain, t, r_m_s, st, sim_time_s, gauge=None, comment=""):
+G = 9.80665
+
+
+def boyd_pipe_q(head_m, diameter_m, barrels=1.0):
+    """0.4.2: inlet-control discharge (m3/s) of a circular pipe for a head above its inlet invert: the smaller of the
+    unsubmerged and submerged forms ANUGA's Boyd pipe operator uses (boyd_pipe_function, bf = 1). Outlet control and
+    the pipe's length are not modelled (the operator limits by them only for a submerged outlet)."""
+    h = np.maximum(np.asarray(head_m, float), 0.0)
+    d = float(diameter_m)
+    unsub = 0.421 * math.sqrt(G) * d ** 0.87 * h ** 1.63
+    sub = 0.530 * math.sqrt(G) * d ** 1.87 * h ** 0.63
+    return float(barrels) * np.minimum(unsub, sub)
+
+
+def outlet_flow_series(t_s, stage_m, outlet):
+    """0.4.2: the pipe discharge series (t, Q m3/s) the model imposes: the Boyd inlet-control rating at the stage the pond
+    had at the inlet (a series from an earlier run, rain.stage at STAGE_PROBE). One coupling iteration."""
+    t = np.asarray(t_s, float)
+    z = np.asarray(stage_m, float)
+    if len(t) < 2 or len(t) != len(z) or not np.all(np.diff(t) >= 0):
+        raise JobError("the stage series needs 2+ rows with increasing time")
+    q = boyd_pipe_q(z - float(outlet["invert_elevations"][0]), outlet["width_m"], outlet.get("barrels", 1))
+    return t, q
+
+
+def read_probe_stage(path):
+    """(t_s, stage_m) from results/rain.stage (LISFLOOD-FP 'stagefile' output: the point's ground elevation in the header
+    line 'n x y elev', then 't depth' rows; the stage is the elevation plus the depth), or None."""
+    rows, elev = [], None
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                p = line.split()
+                try:
+                    v = [float(x) for x in p]
+                except ValueError:
+                    continue
+                if len(v) == 4 and elev is None:
+                    elev = v[3]
+                elif len(v) == 2:
+                    rows.append(v)
+    except OSError:
+        return None
+    if not rows or elev is None:
+        return None
+    a = np.asarray(rows, float)
+    return a[:, 0], a[:, 1] + elev
+
+
+def write_inputs(folder, terrain, t, r_m_s, st, sim_time_s, gauge=None, comment="", outlet=None, outlet_q=None, probe=None):
     """Write rain.dem.asc (local coordinates), rain.bci (FREE edges, as the runner), rain.rain, rain.gauge
     and rain.par into `folder`. Returns the .par path."""
     os.makedirs(folder, exist_ok=True)
@@ -213,9 +267,26 @@ def write_inputs(folder, terrain, t, r_m_s, st, sim_time_s, gauge=None, comment=
     xmin, ymin, xmax, ymax = dem.bounds
     closed = st["closed_edges"]
     with open(os.path.join(folder, BCI_NAME), "w", encoding="utf-8") as f:
+        if outlet is not None:                    # 0.4.2: the pipe as a point sink at its inlet cell and a point source at its outlet
+            for nm, (x, y) in (("outlet_in", outlet["end_points"][0]), ("outlet_out", outlet["end_points"][1])):
+                f.write("P {:.3f} {:.3f} QVAR {}\n".format(x - terrain.x0, y - terrain.yll, nm))
         for edge, lo, hi in (("N", xmin, xmax), ("S", xmin, xmax), ("E", ymin, ymax), ("W", ymin, ymax)):
             if edge not in closed:
                 f.write("{} {:.3f} {:.3f} FREE\n".format(edge, lo, hi))
+    if outlet is not None:
+        if outlet_q is None:
+            raise JobError("an outlet needs its discharge series (outlet_q = (t, Q)): see outlet_flow_series")
+        tq, qq = (np.asarray(v, float) for v in outlet_q)
+        with open(os.path.join(folder, BDY_NAME), "w", encoding="utf-8") as f:
+            f.write("principal outlet pipe flow (m3/s / cell size): sink at the inlet end, source at the outlet end"
+                    + ("; ASSUMED pipe values" if outlet.get("assumed") else "") + "\n")
+            for nm, sign in (("outlet_in", -1.0), ("outlet_out", 1.0)):
+                f.write("{}\n{} seconds\n".format(nm, len(tq)))
+                for tv, qv in zip(tq, qq):
+                    f.write("{:.6f} {:.4f}\n".format(sign * qv / dem.dx, tv))
+    if probe is not None:
+        with open(os.path.join(folder, STAGEPTS_NAME), "w", encoding="utf-8") as f:
+            f.write("1\n{:.3f} {:.3f}\n".format(probe[0] - terrain.x0, probe[1] - terrain.yll))
     with open(os.path.join(folder, RAIN_NAME), "w", encoding="utf-8") as f:
         f.write(rain_text(t, r_m_s, comment))
     if gauge:
@@ -227,7 +298,7 @@ def write_inputs(folder, terrain, t, r_m_s, st, sim_time_s, gauge=None, comment=
     par = os.path.join(folder, PAR_NAME)
     with open(par, "w", encoding="utf-8") as f:
         f.write("# written by DamIT PMP (damit_pmp:lisfloodrain)\n")
-        f.write("\n".join(par_lines(st, sim_time_s, gauge=bool(gauge))) + "\n")
+        f.write("\n".join(par_lines(st, sim_time_s, gauge=bool(gauge), bdy=outlet is not None, stage=probe is not None)) + "\n")
     return par
 
 
@@ -312,6 +383,11 @@ def summarize(folder, terrain, sim_time_s, rain_depth_mm):
         out["gauge"] = {"peak_abs_m3_s": float(abs(q[i])), "t_peak_s": float(t[i]), "signed_q_at_peak_m3_s": float(q[i]),
                         "volume_abs_m3": float(np.sum(0.5 * (np.abs(q[1:]) + np.abs(q[:-1])) * np.diff(t))) if len(t) > 1 else 0.0,
                         "samples": int(len(t))}
+    ps = read_probe_stage(os.path.join(res, NAME + ".stage"))
+    if ps is not None:
+        np.savetxt(os.path.join(folder, PROBE_STAGE_NAME), np.column_stack(ps), delimiter=",", header="t_s,stage_m", comments="")
+        out["probe_stage"] = {"file": PROBE_STAGE_NAME, "final_m": float(ps[1][-1]), "max_m": float(np.max(ps[1])),
+                              "samples": int(len(ps[0]))}
     AR.write_json(os.path.join(folder, RESULTS_NAME), out)
     return out
 

@@ -579,7 +579,9 @@ Builds an ANUGA rain-on-grid job the way damit_runner builds its ANUGA gmsh mode
 
 Output folder: gmsh_mesh_in.json (mesher input), gmsh_mesh.npz + gmsh_mesh.msh + mesh_triangles.geojson (when the mesh is built), anuga_rain_job.npz, run_anuga_rain.py with the runner files it imports, and run_manifest.json (settings, versions, sha256 of every file). Run the script in the ANUGA Python: `python run_anuga_rain.py --dry` builds the domain and rate operator and checks the storm volume without evolving; `--run` simulates.
 
-Nothing is launched by default. Give an ANUGA Python to build the gmsh mesh here (BUILD_MESH; gmsh only, the runner's launcher with a timeout); RUN_ANUGA (off by default) also runs the full simulation. The runner's worker has no rain: only its mesher, outer ring, flow path, sizes and domain build are reused. Source: NOAA Atlas 14 only (NOAA/NWS Precipitation Frequency Data Server, https://hdsc.nws.noaa.gov/pfds/). Atlas 14 gives precipitation-frequency estimates up to the 1000-year ARI; it is not a PMP study, and DamIT PMP uses no other precipitation source. A location outside Atlas 14 coverage fails with a message.
+Nothing is launched by default. Give an ANUGA Python to build the gmsh mesh here (BUILD_MESH; gmsh only, the runner's launcher with a timeout); RUN_ANUGA (off by default) also runs the full simulation. The runner's worker has no rain: only its mesher, outer ring, flow path, sizes and domain build are reused.
+
+0.4.2 options (all off by default): VERTEX_ELEVATION samples the model DEM at the triangle vertices (a continuous bed) instead of once per centroid; without a finer DEM the runner's centroid rule leaves a bed that jumps between neighbouring triangles, which strands rain water (DWR-2801: 4.8 vs 3.1 Mm3 stored at 36 h, 0.6 vs 65 m3/s at the dam). STREAM_AREA_KM2, CHANNEL_AREA_M2, CHANNEL_DIST_MIN_M / MAX_M refine the mesh along the D8 stream network; REFINE_LINES puts mesh edges along given lines (a dam crest); OUTLET_* add the dam's principal outlet as the runner's Boyd pipe culvert (the values are labelled assumed unless OUTLET_ASSUMED is off); STAGE_PROBE records the water level at a point (the pond) every yield step. Source: NOAA Atlas 14 only (NOAA/NWS Precipitation Frequency Data Server, https://hdsc.nws.noaa.gov/pfds/). Atlas 14 gives precipitation-frequency estimates up to the 1000-year ARI; it is not a PMP study, and DamIT PMP uses no other precipitation source. A location outside Atlas 14 coverage fails with a message.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -600,6 +602,22 @@ Nothing is launched by default. Give an ANUGA Python to build the gmsh mesh here
 | `MAX_AREA_M2` | Far-field triangle area (m2; empty = the runner's 20000) | number | - | optional; advanced |
 | `LINE_MIN_AREA_M2` | Smallest triangle on the flow path (m2; empty = the runner's 100) | number | - | optional; advanced |
 | `GRADE_DIST_M` | Distance over which the size grows to the far field (m; empty = the runner's 1500) | number | - | optional; advanced |
+| `STREAM_AREA_KM2` | Refine the mesh along the stream network: channels draining at least this area (km2) from the D8 accumulation of the model DEM get the mesher's channel sizing (empty = only the flow path, the runner's rule) | number | - | optional; advanced |
+| `CHANNEL_AREA_M2` | Triangle area on the flow path and stream lines (m2; empty = the runner's 250) | number | - | optional; advanced |
+| `CHANNEL_DIST_MIN_M` | Distance from a channel line kept at the channel size (m; empty = the runner's 250) | number | - | optional; advanced |
+| `CHANNEL_DIST_MAX_M` | Distance at which the size has grown to the far field (m; empty = the runner's 2500) | number | - | optional; advanced |
+| `REFINE_LINES` | Extra mesh refinement lines (embankment crests, a dam line: mesh edges are put along them at the runner's line size) | source | - | optional; advanced |
+| `VERTEX_ELEVATION` | Sample the model DEM at the triangle vertices (a continuous bed) instead of once per centroid (the runner's rule without a finer DEM) | boolean | False | advanced |
+| `OUTLET_INLET` | Principal outlet (pipe through the dam), inlet end on the pond side (with the other OUTLET_* values: the runner's Boyd pipe culvert; empty = no outlet) | point | - | optional; advanced |
+| `OUTLET_OUTLET` | Principal outlet, outlet end downstream of the dam | point | - | optional; advanced |
+| `OUTLET_DIAMETER_M` | Outlet pipe diameter (m) | number | - | optional; advanced |
+| `OUTLET_INVERT_IN_M` | Outlet inlet invert elevation (m, DEM datum) | number | - | optional; advanced |
+| `OUTLET_INVERT_OUT_M` | Outlet outlet invert elevation (m, DEM datum) | number | - | optional; advanced |
+| `OUTLET_MANNING` | Outlet pipe Manning n | number | 0.013 | advanced |
+| `OUTLET_LOSSES` | Outlet entrance/exit loss coefficient | number | 0.5 | advanced |
+| `OUTLET_BARRELS` | Outlet number of barrels | number | 1 | advanced |
+| `OUTLET_ASSUMED` | The outlet values are assumed (not from the as-built drawings): the manifest and the maps say so | boolean | True | advanced |
+| `STAGE_PROBE` | Record the water level at this point every yield step (e.g. the pond; anuga_rain_result.npz probe_stage) | point | - | optional; advanced |
 | `BUFFER_M` | Grow the domain by this much (m; the runner buffers its flood footprint by 500, a basin needs none) | number | 0 | advanced |
 | `SIMPLIFY_M` | Simplify the outer outline by this tolerance (m; empty = the runner's rule, one cell with no buffer). A jagged basin outline needs 30 - 50 to pass the mesher's 20 degree quality gate | number | - | optional; advanced |
 | `FINE_ELEVATION` | Sample the native DEM at the triangle vertices when it is finer than the cell (the runner's 'fine' elevation) | boolean | True | advanced |
@@ -718,6 +736,8 @@ Cells outside the domain polygon are NODATA, which LISFLOOD-FP treats as walls. 
 
 SOLVER: ACC (default) runs on any CPU build. FV2 and MWDG2 are the CUDA solvers of LISFLOOD-FP 8: a CPU build does not stop, it silently runs another solver (check the log), so the result is then NOT that solver's. ACC (CPU) is the default. FV1 and DG2 are refused, as in the runner.
 
+0.4.2: STAGE_PROBE writes the water level at a point (the pond) every MASSINT_S to lisflood_probe_stage.csv. OUTLET_* model a dam's principal outlet pipe as a point sink at its inlet and a point source at its outlet end (LISFLOOD-FP has no pipe element; the weir file is weir flow only), the discharge being the Boyd inlet-control rating of the pond stage series OUTLET_STAGE_CSV from an earlier run of the same model: one coupling iteration, labelled in the manifest (and assumed unless OUTLET_ASSUMED is off).
+
 Nothing is launched by default. RUN_LISFLOOD (off) runs the executable (LISFLOOD_EXE, or the runner's search: DAMIT_LISFLOOD, PATH, the usual build folders) and then reads results/rain.max, rain.mass and the gauge into lisflood_rain_results.json and lisflood_max_depth.tif. Otherwise run it yourself: `lisflood -v rain.par` in the output folder. Source: NOAA Atlas 14 only (NOAA/NWS Precipitation Frequency Data Server, https://hdsc.nws.noaa.gov/pfds/). Atlas 14 gives precipitation-frequency estimates up to the 1000-year ARI; it is not a PMP study, and DamIT PMP uses no other precipitation source. A location outside Atlas 14 coverage fails with a message.
 
 | Parameter | Label | Type | Default | Notes |
@@ -733,6 +753,15 @@ Nothing is launched by default. RUN_LISFLOOD (off) runs the executable (LISFLOOD
 | `GAUGE_A` | Discharge section, first end (with GAUGE_B: LISFLOOD-FP records the flow through this section, e.g. just below a dam; it is run along the nearest grid axis; empty = none) | point | - | optional |
 | `GAUGE_B` | Discharge section, second end | point | - | optional |
 | `FLOW_PATH_START` | Dam / pour point (the same point as the ANUGA job's flow-path start: it seeds the domain's main piece and orients the gauge downstream) | point | - | optional |
+| `STAGE_PROBE` | Record the water level at this point (e.g. the pond; LISFLOOD-FP stagefile -> lisflood_probe_stage.csv, to rate an outlet in a second run) | point | - | optional; advanced |
+| `OUTLET_INLET` | Principal outlet (pipe through the dam), inlet end on the pond side: a point sink here and a point source at OUTLET_OUTLET, each the pipe's discharge (empty = no outlet) | point | - | optional; advanced |
+| `OUTLET_OUTLET` | Principal outlet, outlet end downstream of the dam | point | - | optional; advanced |
+| `OUTLET_DIAMETER_M` | Outlet pipe diameter (m) | number | - | optional; advanced |
+| `OUTLET_INVERT_IN_M` | Outlet inlet invert elevation (m, DEM datum) | number | - | optional; advanced |
+| `OUTLET_INVERT_OUT_M` | Outlet outlet invert elevation (m, recorded only) | number | - | optional; advanced |
+| `OUTLET_BARRELS` | Outlet number of barrels | number | 1 | advanced |
+| `OUTLET_ASSUMED` | The outlet values are assumed (not from the as-built drawings) | boolean | True | advanced |
+| `OUTLET_STAGE_CSV` | Pond stage at the inlet from an earlier run of this model (lisflood_probe_stage.csv: t_s,stage_m): the pipe flow is its Boyd inlet-control rating (one coupling iteration) | file | - | optional; advanced |
 | `SIMPLIFY_M` | Simplify the outer outline by this tolerance (m; empty = the runner's rule; use the ANUGA job's value for the same domain) | number | - | optional; advanced |
 | `BUFFER_M` | Grow the domain by this much (m) | number | 0 | advanced |
 | `MASSINT_S` | Mass-balance / gauge interval (s) | number | 300 | advanced |
