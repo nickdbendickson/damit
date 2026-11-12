@@ -21,7 +21,21 @@ from .engine import catalog as C
 from .ui.ui_fit import _scroll as scroll_area, fit_window
 from .ui.ui_widgets import CheckPanel, Collapsible, InfoBanner, WrapLabel, ERROR, OK, WARNING
 
-VERSION = "0.1.2"
+
+def _metadata_version():
+    """The version= line of this plugin's metadata.txt, so the window title cannot drift."""
+    path = os.path.join(os.path.dirname(__file__), "metadata.txt")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("version="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return "0.2.3"
+
+
+VERSION = _metadata_version()
 TITLE = "DamIT Hazard {}".format(VERSION)
 SCENARIOS = ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
 DIMS = ["2D", "1D", "Not known"]
@@ -127,7 +141,10 @@ class DamitHazardDialog(QDialog):
         mg.addWidget(self.preset, 0, 1)
         mg.addWidget(self.r_custom, 1, 0, 1, 2)
         self.preset_note = WrapLabel("")
+        self.preset_note.setMinimumHeight(48)
+        self.preset_note.setMaximumHeight(160)
         mg.addWidget(self.preset_note, 2, 0, 1, 2)
+        mg.setRowMinimumHeight(2, 48)
         body.addWidget(mode)
 
         # -- methods, modifiers, scenarios ------------------------------------------------
@@ -244,7 +261,7 @@ class DamitHazardDialog(QDialog):
         self.classify_btn.clicked.connect(self._run)
         self.close_btn.clicked.connect(self.reject)
         self._mode_changed()
-        fit_window(self, prefer=(760, 720), key="DamitHazard/size")
+        fit_window(self, prefer=(840, 800), key="DamitHazard/size")
 
     # -- building blocks -------------------------------------------------------------------
     def _boxes(self, records, order, cols):

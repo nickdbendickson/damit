@@ -65,7 +65,10 @@ export function loadNidState(code: string, opts: LoadStateOptions = {}): Promise
       );
     }
     const body = (await res.json().catch(() => null)) as (NidBundle & { error?: string }) | null;
-    if (!res.ok || !body || !Array.isArray(body.rows)) throw new Error(body?.error ?? `NID download for ${state} failed (HTTP ${res.status}).`);
+    if (!res.ok || !body || !Array.isArray(body.rows)) {
+      const detail = body?.error ? `: ${body.error}` : "";
+      throw new Error(`NID download for ${state} failed (HTTP ${res.status})${detail}.`);
+    }
     return makeNidData(body);
   })();
   cache.set(key, p);
