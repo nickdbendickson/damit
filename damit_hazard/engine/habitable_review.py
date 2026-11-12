@@ -17,6 +17,7 @@ Pure Python and the standard library.
 """
 import datetime
 import json
+import csv
 import os
 
 REVIEW_FILE = "habitable_review.json"
@@ -123,3 +124,15 @@ def sign_off(path, keys, habitable, decided_by, note="", decided_on=None):
         fh.write("\n")
     os.replace(tmp, path)
     return path
+
+
+def keys_from(text, csv_path=None):
+    """Structure keys from the typed list (commas, semicolons, new lines) and the struct_key column of a CSV."""
+    keys = [k.strip() for k in (text or "").replace(";", ",").replace("\n", ",").split(",") if k.strip()]
+    if csv_path:
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            rd = csv.DictReader(fh)
+            if "struct_key" not in (rd.fieldnames or []):
+                raise ValueError("{} has no struct_key column".format(os.path.basename(csv_path)))
+            keys += [row["struct_key"].strip() for row in rd if (row.get("struct_key") or "").strip()]
+    return list(dict.fromkeys(keys))

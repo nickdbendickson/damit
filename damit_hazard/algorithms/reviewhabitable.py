@@ -6,7 +6,6 @@ for the structure keys it is given, in habitable_review.json in the dam folder. 
 and the Screener only READ that file; this tool is the only thing that writes it, and only when run. The keys are the
 struct_key column of the chart's worklist (damit_hazard_dv_habitable_unverified.csv) or of the receptors GeoPackage.
 """
-import csv
 import os
 
 from qgis.core import (QgsProcessingAlgorithm, QgsProcessingException, QgsProcessingOutputFile,
@@ -14,22 +13,11 @@ from qgis.core import (QgsProcessingAlgorithm, QgsProcessingException, QgsProces
 
 from .. import compat
 from ..engine import habitable_review
+from ..engine.habitable_review import keys_from
 
 DECISIONS = ["Habitable (an engineer reviewed: people live or work there)", "Not habitable (reviewed)",
              "Remove the review (back to unverified)"]
 VALUES = [True, False, None]
-
-
-def keys_from(text, csv_path=None):
-    """Structure keys from the typed list (commas, semicolons, new lines) and the struct_key column of a CSV."""
-    keys = [k.strip() for k in (text or "").replace(";", ",").replace("\n", ",").split(",") if k.strip()]
-    if csv_path:
-        with open(csv_path, newline="", encoding="utf-8") as fh:
-            rd = csv.DictReader(fh)
-            if "struct_key" not in (rd.fieldnames or []):
-                raise ValueError("{} has no struct_key column".format(os.path.basename(csv_path)))
-            keys += [row["struct_key"].strip() for row in rd if (row.get("struct_key") or "").strip()]
-    return list(dict.fromkeys(keys))
 
 
 class ReviewHabitable(QgsProcessingAlgorithm):

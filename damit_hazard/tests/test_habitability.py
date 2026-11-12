@@ -100,7 +100,7 @@ def test_review_file_is_written_only_by_sign_off_and_read_back():
 
 
 def test_review_algorithm_keys_from_text_and_csv():
-    from damit_hazard.algorithms.reviewhabitable import keys_from
+    keys_from = HR.keys_from
     d = tempfile.mkdtemp(prefix="hrev_")
     c = os.path.join(d, "w.csv")
     open(c, "w").write("id,struct_key\nstructure:1,bid:a\nstructure:2,bid:b\nstructure:3,\n")
