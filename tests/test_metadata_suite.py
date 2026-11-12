@@ -13,11 +13,22 @@ PLUGINS = {"damit_core": ("DamIT Core", "no", None, None),
            "damit_pmp": ("DamIT PMP", "yes", "DamIT Core", "damit_pmp"),
            "damit_finder": ("DamIT Finder", "yes", "DamIT Core", "damit_find")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
-# DamIT PMP 0.3.0 writes rain-on-grid FILES for LISFLOOD-FP and ANUGA (damit_pmp:raingrid), so these two files name
-# the solvers in help text and file-format notes. They still may not launch anything (FORBIDDEN_LAUNCH below) or
-# import a solver (SOLVER_IMPORT): the plugin writes input files and never runs a model.
-SOLVER_NAMES_OK = {os.path.join("damit_pmp", "rainexport.py"), os.path.join("damit_pmp", "algorithms", "pf_algs.py")}
+# DamIT PMP 0.3.0 writes rain-on-grid FILES for LISFLOOD-FP and ANUGA (damit_pmp:raingrid) and sets up an ANUGA
+# rain-on-grid job (damit_pmp:anugarain), so these files name the solvers in help text and file-format notes. They
+# still may not import a solver (SOLVER_IMPORT): in QGIS the plugin only writes input files.
+SOLVER_NAMES_OK = {os.path.join("damit_pmp", "rainexport.py"), os.path.join("damit_pmp", "algorithms", "pf_algs.py"),
+                   os.path.join("damit_pmp", "anugarain.py"), os.path.join("damit_pmp", "launch.py"),
+                   os.path.join("damit_pmp", "algorithms", "anuga_algs.py"), os.path.join("damit_pmp", "provider.py")}
 SOLVER_IMPORT = re.compile(r"^\s*(import|from)\s+(anuga|lisflood)\b", re.M | re.I)
+# The two documented exceptions in damit_pmp (0.3.0, anugarain), narrow on purpose:
+#  1. SHARED_DIR: verbatim copies of damit_runner/core files (gmsh mesher, ANUGA worker helpers, launcher). They run
+#     only in the ANUGA Python (or, grid.py / terrain.py / gmsh_mesher.py / wallclock.py, as plain helpers), are pinned
+#     byte for byte to the runner by damit_pmp/tests/test_runner_shared_sync.py, and so are not edited here.
+#  2. LAUNCH_OK: damit_pmp/launch.py, the only PMP module that starts a process (the optional gmsh mesh build and the
+#     optional ANUGA run). test_launch_is_opt_in checks who may import it and that the run switch is off by default.
+SHARED_DIR = os.path.join("damit_pmp", "runner_shared")
+LAUNCH_OK = {os.path.join("damit_pmp", "launch.py")}
+TEMPLATE = os.path.join("damit_pmp", "templates", "run_anuga_rain.py")     # runs only in the ANUGA Python
 LEGACY_QT_OK = {os.path.join("damit_core", "lib", "qtcompat.py")}      # the one QGIS < 3.38 field-type fallback
 
 
@@ -96,13 +107,37 @@ class Metadata(unittest.TestCase):
         for folder in PLUGINS:
             for p in py_files(folder):
                 code = code_of(p)
-                self.assertIsNone(FORBIDDEN_LAUNCH.search(code), p)
+                rel = os.path.relpath(p, ROOT)
+                if rel.startswith(SHARED_DIR + os.sep):
+                    continue                              # the runner's own files, pinned by the sync test
+                if rel not in LAUNCH_OK:
+                    self.assertIsNone(FORBIDDEN_LAUNCH.search(code), p)
                 self.assertNotRegex(code, r"['\"](ndbreach|nddam):\w", p)
-                if os.path.relpath(p, ROOT) in SOLVER_NAMES_OK:
+                if rel == TEMPLATE:
+                    self.assertNotRegex(code.lower(), r"hec-?ras|\bwine\b", p)
+                elif rel in SOLVER_NAMES_OK:
                     self.assertIsNone(SOLVER_IMPORT.search(code), p)
                     self.assertNotRegex(code.lower(), r"hec-?ras|\bwine\b", p)
                 else:
                     self.assertNotRegex(code.lower(), r"lisflood|anuga|hec-?ras|\bwine\b", p)
+
+    def test_launch_is_opt_in(self):
+        """damit_pmp's one launcher: shell-free, imported only by the anugarain algorithm, ANUGA run off by default."""
+        launch = os.path.join(ROOT, "damit_pmp", "launch.py")
+        self.assertNotRegex(code_of(launch), r"shell\s*=\s*True|os\.system")
+        for p in py_files("damit_pmp"):
+            rel = os.path.relpath(p, ROOT)
+            if rel.startswith(SHARED_DIR + os.sep) or rel in LAUNCH_OK:
+                continue
+            code = code_of(p)
+            if re.search(r"import launch\b|from \.launch\b|from \.\.launch\b|runner_shared\.wallclock|import wallclock",
+                         code):
+                self.assertEqual(rel, os.path.join("damit_pmp", "algorithms", "anuga_algs.py"), p)
+        with open(os.path.join(ROOT, "damit_pmp", "algorithms", "anuga_algs.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertRegex(src, r'"RUN_ANUGA"[\s\S]{0,200}?defaultValue=False')
+        self.assertRegex(src, r'"ANUGA_PYTHON"[\s\S]{0,260}?optional=True')
+        self.assertIn("ANUGA Python", src)
 
 
 if __name__ == "__main__":

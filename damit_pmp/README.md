@@ -17,6 +17,7 @@ estimates up to the 1000-year ARI; **this plugin computes no probable maximum pr
 | `damit_pmp:gridbasin` | Basin mean / min / max of an Atlas 14 GIS grid: a file you have (NOAA's, thousandths of an inch, SCALE 0.001; frequency and duration read from the standard file name, e.g. `mw100yr24ha.asc`, also the 2-day `48h` and `al` / `au` bound names) or a `fetchgrid` GeoTIFF (already inches, read with scale 1), **or** leave GRID empty and give the same frequency / duration / series / bound / region choices as `fetchgrid`: it fetches the NOAA grid itself. |
 | `damit_pmp:fetchgrid` | **New in 0.3.0.** Downloads the Atlas 14 "PF in GIS format" grid for one frequency and duration, clips it to a point buffer, an extent or a basin (optionally blanking cells outside the polygons) and writes a Float32 GeoTIFF in **inches** (NOAA's thousandths x 0.001; NAD83 geographic, nodata -9999) plus `<tif>.json` (source URL, fetch time, SHA-256, Atlas 14 volume / version, citation, stats, value at the point). |
 | `damit_pmp:raingrid` | **New in 0.3.0.** Rain-on-grid files from a hyetograph CSV (or a pointpf / basinpf JSON + FREQUENCY + STORM + STEP_MIN): a LISFLOOD-FP `.rain` file (mm/hr), an ANUGA rate series CSV (m/s) with a README, and a JSON record (units, totals, mass check). Optionally rescaled to an Atlas 14 grid at a point or as a basin mean, with a spatial factor raster. Launches nothing. |
+| `damit_pmp:anugarain` | **New in 0.3.0.** An ANUGA rain-on-grid job on the damit_runner gmsh mesh: DEM + basin polygon / extent + the `raingrid` rate CSV (+ factor raster) -> the runner's gmsh mesh, a self-contained `run_anuga_rain.py`, a run manifest. Builds the mesh only when an ANUGA Python is given; runs ANUGA only with `RUN_ANUGA` (off by default). |
 
 A location outside Atlas 14 coverage (for example Portland, Oregon, checked 2026-11-09) fails with
 "NOAA Atlas 14 does not cover this location (PFDS: …)". PFDS answers are cached (CACHE_DIR, else the
@@ -99,7 +100,52 @@ Units are explicit in every file.
   without the solver, which this plugin never runs. Use `FACTOR_RASTER` and the uniform series as the inputs for it.
   The block order is the alternating-block pattern, not an Atlas 14 temporal distribution.
 
+## ANUGA rain-on-grid on the runner's gmsh mesh (`anugarain`)
+
+Chain: `fetchgrid` -> `hyetograph` -> `raingrid` (the `*_anuga_rate.csv` and `FACTOR_RASTER`) -> `anugarain`.
+`damit_pmp:anugarain` makes the ANUGA 2D model the way `damit_runner` does for its ANUGA gmsh tier, by reuse and not by
+re-implementation:
+
+| Part | Runner code used |
+|---|---|
+| Mesher | `damit_runner/core/gmsh_mesher.py`, run as the runner runs it: a stand-alone script in the ANUGA Python (spec JSON in, npz out), clean environment, 600 s wall-clock timeout (`wallclock.run`: SIGTERM then SIGKILL), the same `MESHOK` / `MESHERROR` handling |
+| Sizing | the mesher's own `default_sizes()` (lines 100 m2, flow path 250 m2, far field 20 000 m2, min angle 20 deg, gate 0.45 x the smallest size); optional `MAX_AREA_M2`, `LINE_MIN_AREA_M2`, `GRADE_DIST_M` are the runner's `NDBREACH_ANUGA_GMSH_*` keys and set nothing when empty |
+| Domain ring | `terrain.mask_outline` of the basin cells, kept a tolerance from the DEM edge / no-data (`anuga_model.mesh_polygons`' rule for `outer`, pinned to it by a test), tolerance `max(min(buffer / 10, 3 dx), dx)` |
+| Refinement | optional `FLOW_PATH_START` (the runner's inflow point): `terrain.trace_downstream`, clipped to the ring, `douglas_peucker` (as `anuga_model.gmsh_spec`); empty = a uniform far-field mesh |
+| DEM | the runner's `Grid` model DEM (default cell 10 m; bilinear at the centroids); a DEM finer than `CELL_M` is also sampled at the triangle vertices (`sample_fine`, the runner's `fine` elevation) |
+| Domain | the worker's build: local coordinates (DEM lower left = 0, 0), `Geo_reference(0, 0)`, every outer edge `outflow`, `DE0`, `set_minimum_storable_height(0.001)`, Manning n 0.06, dry start, `make_outer_boundary` for `edge_bc` (`outflow` default | `transmissive`) |
+| Not in the runner | rain: its worker has only a breach inlet. The generated script adds `anuga.Rate_operator(domain, rate=f(x, y, t))`, the series in m/s times the optional per-triangle factor (the factor raster resampled to the model grid, sampled at the centroids) |
+
+**Shared-code pattern.** The plugins install independently, so `damit_pmp/runner_shared/` holds byte copies of
+`gmsh_mesher.py`, `grid.py`, `terrain.py`, `anuga_worker.py`, `omp_probe.py`, `anuga_dtdiag.py` and `wallclock.py` from
+`damit_runner/core` (the repo's per-plugin copy pattern, as `catalog_bridge.py` / `_deps.py` / `compat/`). Edit the
+runner, run `python3 scripts/sync_pmp_runner_shared.py`; `damit_pmp/tests/test_runner_shared_sync.py` (CI) fails on any
+difference, and `tests/test_anuga_rain.py` pins the outer ring and line clipping to the runner's functions.
+
+**Output folder**: `gmsh_mesh_in.json` (mesher input), `gmsh_mesh.npz` (the runner's mesh format), `gmsh_mesh.msh` (gmsh
+MSH 2.2 with the ground height), `mesh_triangles.geojson` (up to 400 000 triangles), `anuga_rain_job.npz` (DEM, rain
+series, settings; the runner's job keys), `run_anuga_rain.py` with the four runner files it imports,
+`rain_rate_m_per_s.csv` and `run_manifest.json` (settings, QGIS / ANUGA / gmsh / numpy versions, sha256 of every
+input, output and runner file, mesh statistics, what was launched). In the ANUGA Python:
+
+    python run_anuga_rain.py --dry        # mesh if missing, domain, rate operator, storm-volume check; evolves nothing
+    python run_anuga_rain.py --steps 1    # then evolve this many yield steps and stop
+    python run_anuga_rain.py --run        # the full simulation (long on a fine mesh)
+
+**Launching.** Default: nothing is launched. `ANUGA_PYTHON` (a path, as DamSafety Setup shows it; never auto-detected)
+plus `BUILD_MESH` (on) runs the runner's mesher (gmsh only) so the mesh and its statistics are in the folder;
+`RUN_ANUGA` (**off by default**, needs the mesh) also runs `run_anuga_rain.py --run` with `RUN_TIMEOUT_H`. Only
+`damit_pmp/launch.py` starts a process; `tests/test_metadata_suite.py` still bans process launching everywhere else in
+the plugin and checks that the run switch defaults to off. gmsh needs the ANUGA Python (`pip install gmsh`; on Linux
+`libGLU`).
+
+Limits: the rain is a rate on the whole mesh (no infiltration, no losses, no channel network); ANUGA's `Rate_operator`
+with a spatial `f(x, y, t)` runs on the CPU only; the basin is the polygon you give (not a delineated watershed); the
+mesh is only as good as the DEM and the sizes (the quality gate rejects a bad one); the runner's worker features that
+need a breach (inlet, culverts, crest hold, checkpoints) are not part of a rain job.
+
 Tests: `damit_pmp/tests/test_atlas14.py` (recorded PFDS answers), `test_gis_rain.py` (URL building for every
 frequency / duration / series / bound, cache, offline, 404, clip and 0.001 scaling on synthetic NOAA-style zips, `.rain`
 format, mm/hr and m/s conversions, mass checks) and `PMPGrids` in `tests/test_qgis_new_plugins.py` (the algorithms in real
-QGIS with a fake PFDS and a fake download). No test calls NOAA unless `DAMIT_NETWORK_TESTS=1` (one real download).
+QGIS with a fake PFDS and a fake download); `test_anuga_rain.py` and `test_runner_shared_sync.py` for `anugarain`
+(set `DAMIT_PMP_ANUGA_PYTHON` to run the real gmsh mesher and the script's `--dry` check). No test calls NOAA unless `DAMIT_NETWORK_TESTS=1` (one real download).

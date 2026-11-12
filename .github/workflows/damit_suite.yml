@@ -3,10 +3,16 @@ name: damit_suite
 on:
   push:
     paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**", "damit_finder/**",
-            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", ".github/workflows/damit_suite.yml"]
+            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", "damit_runner/core/gmsh_mesher.py", "damit_runner/core/grid.py",
+            "damit_runner/core/terrain.py", "damit_runner/core/anuga_worker.py", "damit_runner/core/omp_probe.py",
+            "damit_runner/core/anuga_dtdiag.py", "damit_runner/core/wallclock.py", "damit_runner/core/anuga_model.py",
+            "scripts/sync_pmp_runner_shared.py", ".github/workflows/damit_suite.yml"]
   pull_request:
     paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**", "damit_finder/**",
-            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", ".github/workflows/damit_suite.yml"]
+            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", "damit_runner/core/gmsh_mesher.py", "damit_runner/core/grid.py",
+            "damit_runner/core/terrain.py", "damit_runner/core/anuga_worker.py", "damit_runner/core/omp_probe.py",
+            "damit_runner/core/anuga_dtdiag.py", "damit_runner/core/wallclock.py", "damit_runner/core/anuga_model.py",
+            "scripts/sync_pmp_runner_shared.py", ".github/workflows/damit_suite.yml"]
 
 jobs:
   pure:
@@ -22,7 +28,7 @@ jobs:
           DAMIT_SETTINGS: ${{ runner.temp }}/damit_settings.json
         run: >-
           python3 -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup
-          damit_data.tests.test_data damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 damit_pmp.tests.test_gis_rain
+          damit_data.tests.test_data damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 damit_pmp.tests.test_gis_rain damit_pmp.tests.test_runner_shared_sync
           tests.test_metadata_suite tests.test_hazard_screener_agree tests.test_suite_install
 
   qgis:
@@ -33,12 +39,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: QGIS Python is importable (else the QGIS tests would only skip)
         run: python3 -c "import qgis.core, osgeo.gdal, numpy"
+      - name: scipy (the runner's terrain helpers that damit_pmp:anugarain reuses need it; the image has numpy and GDAL)
+        run: python3 -c "import scipy" 2>/dev/null || python3 -m pip install -q "numpy<2" scipy
       - name: Tests with QGIS
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)" DAMIT_SETTINGS="$(mktemp -d)/s.json"
-          python3 -m unittest -v tests.test_qgis_new_plugins damit_pmp.tests.test_gis_rain
+          python3 -m unittest -v tests.test_qgis_new_plugins damit_pmp.tests.test_gis_rain damit_pmp.tests.test_anuga_rain
       - name: DamIT Finder (synthetic terrain, GDAL runs, the three tools in real QGIS)
         env:
           QT_QPA_PLATFORM: offscreen

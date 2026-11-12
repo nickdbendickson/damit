@@ -3,6 +3,7 @@ import os
 from qgis.core import QgsProcessingProvider
 from qgis.PyQt.QtGui import QIcon
 
+from .algorithms.anuga_algs import ALGORITHMS as ANUGA_ALGORITHMS
 from .algorithms.pf_algs import ALGORITHMS
 
 PROVIDER_ID = "damit_pmp"
@@ -22,7 +23,7 @@ def plugin_version():
 
 class DamitPmpProvider(QgsProcessingProvider):
     def loadAlgorithms(self):  # noqa: N802
-        for cls in ALGORITHMS:
+        for cls in tuple(ALGORITHMS) + tuple(ANUGA_ALGORITHMS):
             self.addAlgorithm(cls())
 
     def id(self):

@@ -16,6 +16,10 @@ import qgis_helper as QH  # noqa: E402
 ROOT = QH.ROOT
 sys.path.insert(0, os.path.join(ROOT, "damit_data", "tests"))
 FIX_PMP = os.path.join(ROOT, "damit_pmp", "tests", "fixtures")
+try:      # import scipy now: numpy 2's numpy.testing may run `lscpu` on first import, inside a test that bans processes
+    import scipy.ndimage  # noqa: F401
+except ImportError:                                            # pragma: no cover - the ANUGA tests need it
+    pass
 
 if QH.HAVE_QGIS:
     from qgis.core import (QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsProcessingException, QgsProject, QgsVectorFileWriter, QgsVectorLayer)
@@ -529,6 +533,110 @@ class PMPGrids(unittest.TestCase):
         r2 = processing.run("damit_pmp:gridbasin", {"GRID": g["OUTPUT"], "BASIN": basin,
                                                     "OUTPUT_JSON": os.path.join(self.tmp, "gb2.json")})
         self.assertAlmostEqual(r2["MEAN"], r["MEAN"], places=3)
+
+    # ---- damit_pmp:anugarain (the runner's gmsh mesh for ANUGA rain-on-grid); nothing is launched here ----
+    def _anuga_inputs(self, name):
+        import numpy as np
+        from damit_pmp.tests.test_anuga_rain import make_dem
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d, exist_ok=True)
+        dem = os.path.join(d, "dem.tif")
+        make_dem(dem)
+        rate = os.path.join(d, "rate.csv")
+        with open(rate, "w") as fh:
+            fh.write("time_s,rate_m_per_s\n0,2.0e-7\n3599,2.0e-7\n3600,0\n7200,0\n")
+        return d, dem, rate, np
+
+    def test_anugarain_writes_the_job_and_launches_nothing(self):
+        import processing
+        d, dem, rate, np = self._anuga_inputs("anuga1")
+        out = os.path.join(d, "job")
+        r = processing.run("damit_pmp:anugarain", {
+            "DEM": dem, "EXTENT": "501000,503000,5196800,5198800 [EPSG:26914]", "RATE_CSV": rate, "CELL_M": 30,
+            "FLOW_PATH_START": "501500,5198300 [EPSG:26914]", "MAX_AREA_M2": 40000, "OUTPUT_DIR": out})
+        self.assertEqual(r["MESH"], "")                                     # no ANUGA Python: no mesh, no launch
+        self.assertEqual(r["TRIANGLES"], 0)
+        for f in ("run_anuga_rain.py", "gmsh_mesher.py", "anuga_worker.py", "omp_probe.py", "anuga_dtdiag.py",
+                  "gmsh_mesh_in.json", "anuga_rain_job.npz", "rain_rate_m_per_s.csv", "run_manifest.json"):
+            self.assertTrue(os.path.exists(os.path.join(out, f)), f)
+        self.assertFalse(os.path.exists(os.path.join(out, "gmsh_mesh.npz")))
+        with open(os.path.join(out, "run_manifest.json")) as fh:
+            m = json.load(fh)
+        self.assertEqual(m["launched"], {"anuga": False, "gmsh_mesher": False, "result": None})
+        self.assertEqual((m["settings"]["algorithm"], m["settings"]["edge_bc"], m["settings"]["manning_n"]),
+                         ("DE0", "outflow", 0.06))
+        self.assertAlmostEqual(m["rain"]["depth_mm"], 2.0e-7 * 3599.5 * 1000, places=3)
+        from damit_pmp import anugarain as AR
+        self.assertEqual(m["runner_shared_sha256"], AR.runner_sources())
+        self.assertEqual(m["files"]["gmsh_mesher.py"]["sha256"], AR.runner_sources()["gmsh_mesher.py"])
+        with open(os.path.join(out, "gmsh_mesh_in.json")) as fh:
+            spec = json.load(fh)
+        self.assertEqual(spec["max_area_m2"], 40000.0)
+        self.assertEqual(len(spec["channel"]), 1)                           # the flow path
+        self.assertEqual(spec["lines"], [])
+        job = np.load(os.path.join(out, "anuga_rain_job.npz"))
+        self.assertEqual(float(job["sim_time"]), 7200.0 + 6 * 3600.0)       # rain series end + 6 h
+
+    def test_anugarain_basin_and_factor_raster(self):
+        import processing
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsVectorFileWriter, QgsVectorLayer, QgsCoordinateTransformContext
+        d, dem, rate, np = self._anuga_inputs("anuga2")
+        shp = os.path.join(d, "basin.gpkg")
+        lyr = QgsVectorLayer("Polygon?crs=EPSG:26914", "b", "memory")
+        f = QgsFeature()
+        cx, cy = 502500.0, 5198500.0
+        a = np.linspace(0, 2 * np.pi, 40, endpoint=False)
+        f.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(cx + 900 * np.cos(t), cy + 900 * np.sin(t)) for t in a]]))
+        lyr.dataProvider().addFeatures([f])
+        QgsVectorFileWriter.writeAsVectorFormatV3(lyr, shp, QgsCoordinateTransformContext(), QgsVectorFileWriter.SaveVectorOptions())
+        fac = os.path.join(d, "factor.tif")
+        from osgeo import gdal, osr
+        ds = gdal.GetDriverByName("GTiff").Create(fac, 20, 20, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((501000.0, 150.0, 0, 5200000.0, 0, -150.0))
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(26914)
+        ds.SetProjection(srs.ExportToWkt())
+        ds.GetRasterBand(1).WriteArray(np.full((20, 20), 1.2, dtype="float32"))
+        ds.FlushCache()
+        ds = None
+        out = os.path.join(d, "job")
+        processing.run("damit_pmp:anugarain", {"DEM": dem, "BASIN": shp, "RATE_CSV": rate, "FACTOR_RASTER": fac, "CELL_M": 30,
+                                               "EDGE_BC": 1, "SIM_TIME_H": 3.0, "OUTPUT_DIR": out})
+        with open(os.path.join(out, "run_manifest.json")) as fh:
+            m = json.load(fh)
+        self.assertEqual(m["settings"]["edge_bc"], "transmissive")
+        self.assertEqual(m["settings"]["sim_time_s"], 10800.0)
+        self.assertIn("factor", m["rain"]["spatial"])
+        self.assertAlmostEqual(m["inputs"]["factor_raster"]["stats_on_model_grid"]["mean"], 1.2, places=3)
+        self.assertAlmostEqual(m["domain"]["area_km2"], np.pi * 0.9 ** 2, delta=0.25)
+        import numpy
+        job = numpy.load(os.path.join(out, "anuga_rain_job.npz"))
+        self.assertAlmostEqual(float(numpy.nanmean(job["factor"])), 1.2, places=3)
+
+    def test_anugarain_refusals(self):
+        import processing
+        from qgis.core import QgsProcessingException
+        d, dem, rate, np = self._anuga_inputs("anuga3")
+        base = {"DEM": dem, "EXTENT": "501000,503000,5196800,5198800 [EPSG:26914]", "RATE_CSV": rate, "CELL_M": 30,
+                "OUTPUT_DIR": os.path.join(d, "o")}
+        with self.assertRaises(QgsProcessingException) as cm:               # no basin and no extent
+            processing.run("damit_pmp:anugarain", {k: v for k, v in base.items() if k != "EXTENT"})
+        self.assertIn("basin polygon or an extent", str(cm.exception))
+        with self.assertRaises(QgsProcessingException) as cm:               # running needs an interpreter
+            processing.run("damit_pmp:anugarain", dict(base, RUN_ANUGA=True))
+        self.assertIn("RUN_ANUGA needs the ANUGA Python", str(cm.exception))
+        with self.assertRaises(QgsProcessingException):                     # an interpreter that does not exist
+            processing.run("damit_pmp:anugarain", dict(base, ANUGA_PYTHON="/no/such/python"))
+        with self.assertRaises(QgsProcessingException) as cm:               # mm/hr instead of m/s
+            bad = os.path.join(d, "bad.csv")
+            with open(bad, "w") as fh:
+                fh.write("time_s,rate\n0,60\n3600,0\n")
+            processing.run("damit_pmp:anugarain", dict(base, RATE_CSV=bad))
+        self.assertIn("m/s", str(cm.exception))
+        with self.assertRaises(QgsProcessingException) as cm:               # bad mesher sizing: the mesher's message
+            processing.run("damit_pmp:anugarain", dict(base, GRADE_DIST_M=10.0))
+        self.assertIn("grade_dist_m", str(cm.exception))
+        self.assertFalse(os.path.exists(os.path.join(d, "o", "gmsh_mesh.npz")))
 
     def test_raingrid_files_units_and_scaling(self):
         import processing
