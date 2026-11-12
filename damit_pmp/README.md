@@ -129,8 +129,13 @@ series, settings; the runner's job keys), `run_anuga_rain.py` with the four runn
 input, output and runner file, mesh statistics, what was launched). In the ANUGA Python:
 
     python run_anuga_rain.py --dry        # mesh if missing, domain, rate operator, storm-volume check; evolves nothing
-    python run_anuga_rain.py --steps 1    # then evolve this many yield steps and stop
+    python run_anuga_rain.py --steps 2    # then evolve this many yield steps (after t = 0) and stop
     python run_anuga_rain.py --run        # the full simulation (long on a fine mesh)
+
+`--steps` and `--run` write `anuga_rain_run.json` with a water balance (exact rain volume put on the mesh, water stored,
+outflow through the outer boundary from ANUGA's boundary flux integral, residual, maximum depth, wet area over 5 cm /
+30 cm) and `anuga_rain_timeseries.csv`; `--run` also writes `anuga_rain_result.npz` (maximum depth per triangle).
+DWR-2801, coarse mesh (7 109 triangles), 100-yr 24-hr storm to 14 h: 37 s on one thread, balance residual 0.003 %.
 
 **Launching.** Default: nothing is launched. `ANUGA_PYTHON` (a path, as DamSafety Setup shows it; never auto-detected)
 plus `BUILD_MESH` (on) runs the runner's mesher (gmsh only) so the mesh and its statistics are in the folder;

@@ -329,6 +329,16 @@ class RealMesherAndDryCheck(unittest.TestCase):
         self.assertEqual(rec["evolved_steps"], 0)
         self.assertEqual(rec["boundary"], "outflow")
         self.assertEqual(rec["rate_operator_rate_type"], "x,y,t")
+        # two short steps (a few seconds of ANUGA; this test only runs where DAMIT_PMP_ANUGA_PYTHON is set): the
+        # rain put on the mesh equals the exact series volume and the balance closes
+        cp = launch.run_script(ANUGA_PY, os.path.join(d, "run_anuga_rain.py"), ["--steps", "2"], timeout_s=600)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        run = json.load(open(os.path.join(d, "anuga_rain_run.json")))
+        self.assertEqual(run["evolved_steps"], 2)
+        b = run["balance"]
+        self.assertAlmostEqual(b["time_s"], 600.0)
+        self.assertAlmostEqual(b["rain_in_m3"], b["anuga_rate_operator_volume_m3"], delta=0.001 * b["rain_in_m3"])
+        self.assertLess(abs(b["residual_m3"]), 0.001 * b["rain_in_m3"])
 
 
 if __name__ == "__main__":

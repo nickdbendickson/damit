@@ -3,7 +3,7 @@
 
     python run_anuga_rain.py                 # default: --dry (build everything, evolve nothing)
     python run_anuga_rain.py --dry           # mesh (if missing), domain, rate operator, mass check; no evolve
-    python run_anuga_rain.py --steps 1       # the same, then evolve this many yield steps and stop
+    python run_anuga_rain.py --steps 2       # the same, then evolve this many yield steps (after t = 0) and stop
     python run_anuga_rain.py --run           # the full simulation (long on a fine mesh)
     python run_anuga_rain.py --mesh          # (re)build the gmsh mesh first with the runner's mesher
 
@@ -16,6 +16,10 @@ height / Manning n / dry start, the ground height from the model DEM (bilinear a
 job has a finer DEM, at the vertices (the worker's sample_fine), and make_outer_boundary for edge_bc. The
 runner's worker only has a breach inlet; the rain is an anuga.Rate_operator on the whole mesh whose rate (m/s)
 is the series in the job times the optional per-triangle factor.
+
+--steps and --run also report the water balance (anuga_rain_run.json "balance", anuga_rain_timeseries.csv): the
+exact rain volume put on the mesh, the water stored, the outflow through the outer boundary (ANUGA's boundary
+flux integral), the residual, the maximum depth and the wet area (depth over 5 cm / 30 cm at any time).
 """
 import hashlib
 import json
@@ -162,17 +166,59 @@ def main(argv):
     if mode_run or steps > 0:
         ystep = float(job["yieldstep"])
         final = float(job["sim_time"]) if mode_run else ystep * steps
+        total_area_f = float((fac * areas).sum()) if fac is not None else float(areas.sum())
+        rt, rr = np.asarray(job["rain_t"], float), np.asarray(job["rain_rate"], float)
+
+        def rain_in_m3(t_now):
+            """Exact volume (m3) the rain series has put on the mesh by t_now (piecewise-linear rate)."""
+            tt = np.clip(t_now, rt[0], rt[-1])
+            k = int(np.searchsorted(rt, tt, side="right")) - 1
+            k = min(max(k, 0), len(rt) - 2)
+            full = np.trapz(rr[:k + 1], rt[:k + 1]) if hasattr(np, "trapz") else np.trapezoid(rr[:k + 1], rt[:k + 1])
+            r_tt = float(np.interp(tt, rt, rr))
+            return (float(full) + 0.5 * (rr[k] + r_tt) * (tt - rt[k])) * total_area_f
         hmax = np.zeros(n)
+        series = []
         k = 0
         for t in domain.evolve(yieldstep=ystep, finaltime=final):
             k += 1
             d = domain.quantities["stage"].centroid_values - domain.quantities["elevation"].centroid_values
             hmax = np.maximum(hmax, d)
-            print("t = {:.0f} s  max depth {:.4f} m  volume {:.1f} m3".format(t, float(d.max()),
-                                                                              float((d * areas).sum())), flush=True)
-            if not mode_run and k >= steps:
+            vol = float((d * areas).sum())
+            rain = rain_in_m3(t)
+            try:
+                bflux = float(domain.get_boundary_flux_integral())
+            except Exception:                    # noqa: BLE001 - not DE flow, or the setter differs
+                bflux = float("nan")
+            try:
+                frac = float(domain.get_fractional_step_volume_integral())
+            except Exception:                    # noqa: BLE001
+                frac = float("nan")
+            series.append((float(t), rain, vol, bflux, frac, float(d.max()), float(areas[d > 0.05].sum())))
+            print("t = {:.0f} s  max depth {:.4f} m  stored {:.1f} m3  rain in {:.1f} m3".format(
+                t, float(d.max()), vol, rain), flush=True)
+            if not mode_run and k >= steps + 1:      # the first yield is the initial state (t = 0)
                 break
-        rec["evolved_steps"] = k
+        rec["evolved_steps"] = max(k - 1, 0)
+        if series:
+            tl = series[-1]
+            # balance: rain in = stored + left through the outer boundary. ANUGA's own totals (boundary flux
+            # integral, fractional-step volume = what Rate_operator added) are recorded next to the exact rain
+            # volume computed here; the outflow is what the boundary flux says, else rain in - stored.
+            outflow = -tl[3] if tl[3] == tl[3] else float("nan")
+            rec["balance"] = {
+                "time_s": tl[0], "rain_in_m3": tl[1], "stored_m3": tl[2], "boundary_flux_integral_m3": tl[3],
+                "outflow_m3_from_boundary_flux": outflow, "anuga_rate_operator_volume_m3": tl[4],
+                "residual_m3": (tl[1] - tl[2] - outflow) if outflow == outflow else None,
+                "residual_percent_of_rain": (100.0 * (tl[1] - tl[2] - outflow) / tl[1])
+                if outflow == outflow and tl[1] > 0 else None,
+                "outflow_m3_by_difference": tl[1] - tl[2], "max_depth_m": float(hmax.max()),
+                "wet_area_km2_depth_over_5cm_at_max": float(areas[hmax > 0.05].sum() / 1e6),
+                "wet_area_km2_depth_over_30cm_at_max": float(areas[hmax > 0.30].sum() / 1e6),
+                "wet_triangles_over_5cm": int((hmax > 0.05).sum())}
+            np.savetxt(os.path.join(HERE, "anuga_rain_timeseries.csv"), np.array(series), delimiter=",",
+                       header="t_s,rain_in_m3,stored_m3,boundary_flux_integral_m3,rate_operator_m3,max_depth_m,wet_area_m2",
+                       comments="")
         if mode_run:
             np.savez(os.path.join(HERE, "anuga_rain_result.npz"), hmax_m=hmax,
                      centroids=np.asarray(domain.centroid_coordinates) + np.array([x_ref, y_ref]))
