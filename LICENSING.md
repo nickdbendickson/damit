@@ -28,8 +28,7 @@ Noncommercial.
 ## The DaMiT name and logo
 
 The **DaMiT** name and the DaMiT logo/wordmark (`docs/img/`, and each plugin's `icon.svg`) are **not**
-covered by either code license. All rights reserved; trademark rights reserved. The logo artwork is drawn
-with the Inter typeface (SIL Open Font License 1.1).
+covered by either code license. All rights reserved; trademark rights reserved.
 
 > This file describes the maintainer's licensing intent; it is not legal advice. For anything you intend to
 > enforce, confirm with a lawyer familiar with open-source and GPL combination.

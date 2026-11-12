@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/damit-wordmark-dark.svg">
-    <img src="docs/img/damit-wordmark-light.svg" alt="DaMiT" width="360">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/damit-wordmark-dark.png">
+    <img src="docs/img/damit-wordmark-light.png" alt="DaMiT" width="420">
   </picture>
 </p>
 

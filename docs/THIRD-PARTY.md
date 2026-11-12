@@ -52,5 +52,5 @@ redistributed. DamIT Catalog encodes *US Dam Hazard Classification — Corrected
 
 ## Brand
 
-DaMiT wordmark and mark (`docs/img/`): drawn with the Inter typeface (SIL Open Font License 1.1). The DaMiT name
+DaMiT wordmark and mark (`docs/img/`): the project wordmark; not licensed for reuse. The DaMiT name
 and logo are not licensed for reuse.
