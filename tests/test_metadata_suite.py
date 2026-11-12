@@ -13,19 +13,23 @@ PLUGINS = {"damit_core": ("DamIT Core", "no", None, None),
            "damit_pmp": ("DamIT PMP", "yes", "DamIT Core", "damit_pmp"),
            "damit_finder": ("DamIT Finder", "yes", "DamIT Core", "damit_find")}
 FORBIDDEN_LAUNCH = re.compile(r"\b(subprocess|Popen|os\.system|os\.exec\w*|QProcess|startDetached)\b")
-# DamIT PMP 0.3.0 writes rain-on-grid FILES for LISFLOOD-FP and ANUGA (damit_pmp:raingrid) and sets up an ANUGA
+# DamIT PMP 0.3.0 / 0.4.0 write rain-on-grid FILES for LISFLOOD-FP and ANUGA (damit_pmp:raingrid) and sets up an ANUGA
 # rain-on-grid job (damit_pmp:anugarain), so these files name the solvers in help text and file-format notes. They
 # still may not import a solver (SOLVER_IMPORT): in QGIS the plugin only writes input files.
 SOLVER_NAMES_OK = {os.path.join("damit_pmp", "rainexport.py"), os.path.join("damit_pmp", "algorithms", "pf_algs.py"),
                    os.path.join("damit_pmp", "anugarain.py"), os.path.join("damit_pmp", "launch.py"),
-                   os.path.join("damit_pmp", "algorithms", "anuga_algs.py"), os.path.join("damit_pmp", "provider.py")}
+                   os.path.join("damit_pmp", "algorithms", "anuga_algs.py"), os.path.join("damit_pmp", "provider.py"),
+                   # 0.4.0: the LISFLOOD-FP rain-on-grid job (damit_pmp:lisfloodrain), counterpart of anugarain
+                   os.path.join("damit_pmp", "lisfloodrain.py"), os.path.join("damit_pmp", "algorithms", "lisflood_algs.py")}
 SOLVER_IMPORT = re.compile(r"^\s*(import|from)\s+(anuga|lisflood)\b", re.M | re.I)
 # The two documented exceptions in damit_pmp (0.3.0, anugarain), narrow on purpose:
 #  1. SHARED_DIR: verbatim copies of damit_runner/core files (gmsh mesher, ANUGA worker helpers, launcher). They run
 #     only in the ANUGA Python (or, grid.py / terrain.py / gmsh_mesher.py / wallclock.py, as plain helpers), are pinned
 #     byte for byte to the runner by damit_pmp/tests/test_runner_shared_sync.py, and so are not edited here.
-#  2. LAUNCH_OK: damit_pmp/launch.py, the only PMP module that starts a process (the optional gmsh mesh build and the
-#     optional ANUGA run). test_launch_is_opt_in checks who may import it and that the run switch is off by default.
+#  2. LAUNCH_OK: damit_pmp/launch.py, the only PMP module that starts a process (the optional gmsh mesh build, the
+#     optional ANUGA run and, 0.4.0, the optional LISFLOOD-FP run). test_launch_is_opt_in checks who may import it
+#     (anuga_algs.py and lisflood_algs.py) and that both run switches are off by default.
+#     0.4.0 also adds lisflood.py, units.py, data_conventions.py and terrain3dep.py to SHARED_DIR (same rule).
 SHARED_DIR = os.path.join("damit_pmp", "runner_shared")
 LAUNCH_OK = {os.path.join("damit_pmp", "launch.py")}
 TEMPLATE = os.path.join("damit_pmp", "templates", "run_anuga_rain.py")     # runs only in the ANUGA Python
@@ -59,7 +63,7 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.3.0"           # DamIT PMP 0.3.0: fetchgrid, raingrid (the other suite plugins are 0.2.0)
+PMP_VERSION = "0.4.0"           # DamIT PMP 0.4.0: watershed, temporal patterns, losses, lisfloodrain (the others are 0.2.0)
 
 
 class Metadata(unittest.TestCase):
@@ -122,7 +126,7 @@ class Metadata(unittest.TestCase):
                     self.assertNotRegex(code.lower(), r"lisflood|anuga|hec-?ras|\bwine\b", p)
 
     def test_launch_is_opt_in(self):
-        """damit_pmp's one launcher: shell-free, imported only by the anugarain algorithm, ANUGA run off by default."""
+        """damit_pmp's one launcher: shell-free, imported only by the anugarain and lisfloodrain algorithms, both runs off by default."""
         launch = os.path.join(ROOT, "damit_pmp", "launch.py")
         self.assertNotRegex(code_of(launch), r"shell\s*=\s*True|os\.system")
         for p in py_files("damit_pmp"):
@@ -132,12 +136,18 @@ class Metadata(unittest.TestCase):
             code = code_of(p)
             if re.search(r"import launch\b|from \.launch\b|from \.\.launch\b|runner_shared\.wallclock|import wallclock",
                          code):
-                self.assertEqual(rel, os.path.join("damit_pmp", "algorithms", "anuga_algs.py"), p)
+                self.assertIn(rel, (os.path.join("damit_pmp", "algorithms", "anuga_algs.py"),
+                                    os.path.join("damit_pmp", "algorithms", "lisflood_algs.py")), p)
         with open(os.path.join(ROOT, "damit_pmp", "algorithms", "anuga_algs.py"), encoding="utf-8") as fh:
             src = fh.read()
         self.assertRegex(src, r'"RUN_ANUGA"[\s\S]{0,200}?defaultValue=False')
         self.assertRegex(src, r'"ANUGA_PYTHON"[\s\S]{0,260}?optional=True')
         self.assertIn("ANUGA Python", src)
+        with open(os.path.join(ROOT, "damit_pmp", "algorithms", "lisflood_algs.py"), encoding="utf-8") as fh:
+            lsrc = fh.read()
+        self.assertRegex(lsrc, r'"RUN_LISFLOOD"[\s\S]{0,200}?defaultValue=False')
+        self.assertRegex(lsrc, r'"LISFLOOD_EXE"[\s\S]{0,260}?optional=True')
+        self.assertNotIn("subprocess", lsrc)                       # only launch.py starts the process
 
 
 if __name__ == "__main__":
