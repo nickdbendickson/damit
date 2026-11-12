@@ -5,7 +5,7 @@ and macOS (Apple Silicon or Intel, macOS 13+):
 
 | What | Where it goes |
 |---|---|
-| **DamSafety plugins** (DWR_Plugins): Core, Setup, Data, Screening, Runner, Hazard, Hazard Lite, PMP | QGIS profile `damsafety` (Core first) |
+| **DamSafety plugins** (DWR_Plugins): Core, Setup, Data, Screening, Runner, Hazard, Hazard Lite, PMP, Finder | QGIS profile `damsafety` (Core first) |
 | **DamIT plugins** (damit): Core, Catalog, Setup, Data, Screener, Runner, Hazard, Hazard Lite, PMP | QGIS profile `damit` (Core and Catalog first) |
 | **QGIS 3.34** | conda env `ndqgis` |
 | **ANUGA 4.1 + gmsh 4.15** (the Runners mesh with gmsh) | conda env `ndanuga` |
