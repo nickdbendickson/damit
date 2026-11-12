@@ -329,10 +329,13 @@ class TestPrompt(Base):
         self.assertIn("HEIGHT_MISMATCH", u)
         self.assertNotIn("Tstep", u)                          # no .mass dump
 
-    def test_info_flags_are_not_in_the_prompt(self):
+    def test_info_flags_are_in_the_prompt_and_asked_for(self):
         d = {"verdict": "OK", "phase": "run_end", "text": "x", "flags": [
-            {"id": "RUN_WARNINGS", "severity": "INFO", "where": "run", "title": "note"}]}
-        self.assertIn("none", LW.build_user_prompt(d))
+            {"id": "DAM_RECORD_MISSING", "severity": "INFO", "where": "run", "title": "note"}]}
+        u = LW.build_user_prompt(d)
+        self.assertIn("INFO | DAM_RECORD_MISSING | run | note", u)
+        self.assertIn("one bullet for each of the 1 flag", u)
+        self.assertNotIn("\nnone\n", u)
 
 
 class TestSystemPrompt(StrictCase):
@@ -492,7 +495,9 @@ class TestEventDetector(Base):
         r = LW.run_event(run, "pass_end", os.path.join(self.root, "w"), pass_no=2, lumo=False, dam_folder=dam)
         ids = [f["id"] for f in r["digest"]["flags"]]
         self.assertNotIn("EDGE_OUTFLOW_FINAL", ids)
-        self.assertEqual(ids.count("EDGE_OUTFLOW_EARLY"), 2)
+        self.assertEqual(ids.count("EDGE_OUTFLOW_EARLY"), 1)           # passes 1 and 2 leak: one flag, occurrences 2 (1.2.0)
+        early = [f for f in r["digest"]["flags"] if f["id"] == "EDGE_OUTFLOW_EARLY"][0]
+        self.assertEqual(early["data"]["occurrences"], 2)
         self.assertEqual(r["verdict"], "WATCH")
         self.assertIsNone(r["digest"]["checks"]["hazard"])           # no Hazard in a pass digest
 

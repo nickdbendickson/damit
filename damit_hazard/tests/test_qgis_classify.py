@@ -269,6 +269,61 @@ def test_dam_json_needs_an_nid_id():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_dam_record_nested_and_found_without_dam_json():
+    """0.2.1: a dam.json with nested "fields" is read as it is; with no DAM_JSON the dam.json beside the rasters is used
+    (or the run watcher's flat copy); a found record with no usable NID ID is left out with a warning, not an error."""
+    _app()
+    from qgis.core import QgsProcessingContext, QgsProcessingFeedback, QgsProject
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    try:
+        dep, vel = _rasters(d)
+        s, p, r = _layers(d)
+        from damit_hazard.engine import catalog as C
+        pids = [None] + list(C.load()["presets"])
+        alg = QgsApplication.processingRegistry().algorithmById("damit:classify")
+        nested = {"format": "nd_dam_suite/dam_record", "fields": {"dam_id": "ND00199", "storage_acft": 300},
+                  "sources": {}, "status": []}
+
+        def go(name, dam_json=None):
+            ctx = QgsProcessingContext()
+            ctx.setProject(QgsProject.instance())
+            fb = QgsProcessingFeedback()
+            prm = {"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "VELOCITY": vel,
+                   "METRES": True, "STRUCTURES": s, "OUTPUT": os.path.join(d, name)}
+            if dam_json:
+                prm["DAM_JSON"] = dam_json
+            res, ok = alg.run(prm, ctx, fb)
+            rep = None
+            if ok:
+                rep = json.load(open(os.path.join(d, name, "damit_hazard_report.json"), encoding="utf-8"))
+            return res, ok, rep
+
+        def record_layer(rep):
+            return [x for x in rep["layers"] if x["role"] == "dam record"]
+
+        npath = os.path.join(d, "nested_given.json")
+        json.dump(nested, open(npath, "w", encoding="utf-8"))
+        _res, ok, rep = go("given", npath)                      # explicit and nested
+        assert ok and rep["nid_id"] == "ND00199"
+        assert "found automatically" not in record_layer(rep)[0]["note"]
+        _res, ok, rep = go("none")                              # nothing to find: as before
+        assert ok and not record_layer(rep) and rep["nid_id"] is None
+        dam_json = os.path.join(d, "dam.json")                  # beside the rasters
+        json.dump(nested, open(dam_json, "w", encoding="utf-8"))
+        _res, ok, rep = go("found")
+        assert ok and rep["nid_id"] == "ND00199", rep.get("nid_id")
+        assert "found automatically" in record_layer(rep)[0]["note"]
+        assert record_layer(rep)[0]["source"] == dam_json
+        json.dump({"fields": {"dam_id": "DWR-2801"}}, open(dam_json, "w", encoding="utf-8"))
+        _res, ok, rep = go("found_bad")                         # found, but not an NID id: left out, no failure
+        assert ok and not record_layer(rep) and rep["nid_id"] is None
+        _res, ok, _rep = go("given_bad", dam_json)              # the same file given on purpose still fails
+        assert not ok
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_custom_mode_headless():
     _app()
     d = tempfile.mkdtemp(prefix="damit_smoke_")

@@ -115,7 +115,8 @@ from [`lumo/knowledge/ALGORITHM-HELP-DAMIT.md`](lumo/knowledge/ALGORITHM-HELP-DA
 
 No `dam.json` in the dam folder? The digest says so (`DAM_RECORD_MISSING`, info), does not raise a datum alarm for elevations in
 the NAVD88 range, takes the dam id from the run setup, the handoff or the folder name, and writes a flat
-`dam_record_hazard.json` next to the digest for Hazard (never into the dam or run folder). If PROJ cannot open its database
+`dam_record_hazard.json` next to the digest for Hazard (never into the dam or run folder; DamIT Hazard 0.2.1 also reads the nested
+`dam.json` itself and finds either file when `DAM_JSON` is empty). If PROJ cannot open its database
 (`NO_RUN_FILES` with a PROJ error), set `PROJ_DATA` (or `PROJ_LIB`) to the folder holding `proj.db`.
 
 > **GPUs:** stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs. An Intel Arc or Intel iGPU box runs the model on the CPU
@@ -155,7 +156,7 @@ Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6
   conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
   it); see `lumo/knowledge/README.md` and `index-knowledge.zsh`.
 - `lumo/` is setup-local-lumo.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
-  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.1.0 and lumo_watch 1.1.0; `lumo-chat` shows the
+  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.2.0 and lumo_watch 1.2.0; `lumo-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.
