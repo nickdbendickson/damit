@@ -3769,6 +3769,22 @@ def render_report(r):
     lines += ["", "Units: {}.".format(s["units"]),
               "These rasters are the input for the ND hazard classification; this tool does "
               "not classify the dam.", ""]
+    return _display_units_md("\n".join(lines))
+
+
+def _display_units_md(md):
+    """DamIT Core 0.3.0: under the suite's SI display units the report text is converted (pipe
+    tables column by column, quantities in the text) and says so; run_report.json, the rasters
+    and the CSVs keep US units. Under US, or without DamIT Core, `md` comes back unchanged."""
+    try:
+        from damit_core.lib import display_units as DU
+    except Exception:                                             # noqa - no / older DamIT Core
+        return md
+    if DU.system() != DU.SI:
+        return md
+    out = DU.convert_markdown(md)
+    lines = [ln for ln in out.split("\n") if not ln.startswith("Units: ")]
+    lines.insert(min(2, len(lines)), DU.report_note() + "\n")
     return "\n".join(lines)
 
 

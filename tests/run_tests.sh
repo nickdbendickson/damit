@@ -33,3 +33,4 @@ echo "== real QGIS, offscreen, scratch profile $QGIS_CUSTOM_CONFIG_PATH ($QPY)"
 nice -n 19 $QPY -m unittest -v tests.test_qgis_integration
 nice -n 19 $QPY damit_hazard/tests/run_tests.py qgis
 nice -n 19 $QPY -m unittest -v tests.test_qgis_new_plugins
+nice -n 19 $QPY -m unittest -v damit_finder.tests.test_core damit_finder.tests.test_finder damit_finder.tests.test_qgis

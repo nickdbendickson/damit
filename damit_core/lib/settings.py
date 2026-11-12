@@ -26,6 +26,8 @@ KEYS = {
     "roads_layer": "roads layer",
     "rail_layer": "railroads layer",
     "pfds_cache": "cache folder for NOAA Atlas 14 PFDS answers (DamIT PMP)",
+    "unit_system": "units the windows show and accept: us (default) or si (display only; "
+                   "display_units.py)",
 }
 
 

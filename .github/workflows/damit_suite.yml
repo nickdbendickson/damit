@@ -2,10 +2,10 @@ name: damit_suite
 
 on:
   push:
-    paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**",
+    paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**", "damit_finder/**",
             "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", ".github/workflows/damit_suite.yml"]
   pull_request:
-    paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**",
+    paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**", "damit_finder/**",
             "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", ".github/workflows/damit_suite.yml"]
 
 jobs:
@@ -39,3 +39,11 @@ jobs:
         run: |
           export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)" DAMIT_SETTINGS="$(mktemp -d)/s.json"
           python3 -m unittest -v tests.test_qgis_new_plugins
+      - name: DamIT Finder (synthetic terrain, GDAL runs, the three tools in real QGIS)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # the image's Python has numpy and GDAL; the Finder engine also needs scipy
+          python3 -c "import scipy" 2>/dev/null || python3 -m pip install -q "numpy<2" scipy
+          export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)"
+          python3 -m unittest -v damit_finder.tests.test_core damit_finder.tests.test_finder damit_finder.tests.test_qgis

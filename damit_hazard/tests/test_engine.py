@@ -491,3 +491,23 @@ def test_m9a_trains_lookup_is_explicit_and_flagged(tmp_path=None):
             pass
         else:
             raise AssertionError("accepted " + body)
+
+
+def test_report_free_text_follows_the_si_display_setting():
+    import os
+    res = run(preset("ND"), [home("h", depth=3.0)])
+    us = report.markdown(res, CAT)
+    old = os.environ.get("DAMIT_UNITS")
+    os.environ["DAMIT_UNITS"] = "si"
+    try:
+        si = report.markdown(res, CAT)
+        js = report.as_json(res)
+    finally:
+        if old is None:
+            os.environ.pop("DAMIT_UNITS", None)
+        else:
+            os.environ["DAMIT_UNITS"] = old
+    assert "Units: SI" in si and "Units: SI" not in us
+    assert js == report.as_json(res)            # the JSON report never changes
+    secs = dict(report.sections(res, CAT))
+    assert secs["Labels"] == dict(report.sections(res, CAT))["Labels"]

@@ -1,4 +1,4 @@
-"""Tests for the fixes to PR #46 (run digest 1.1.0 / lumo_watch 1.1.0): a missing dam record, the complete flag list,
+"""Tests for the fixes to PR #46 (run digest 1.1.0 / lumo_watch 1.1.0, now 1.2.0): a missing dam record, the complete flag list,
 Ollama timings and thinking, a busy Ollama, Lumo never competing with LISFLOOD, flushed logs and clean resources."""
 import contextlib
 import io
@@ -213,7 +213,10 @@ class TestDigestText(Base):
         run, dam = FX.make_run(self.root, dam_record=False)
         d = RD.build_digest(run, dam_folder=dam)
         lines = [l for l in d["flags_text"].splitlines() if l[:1].isdigit()]
-        self.assertIn("[INFO] DAM_RECORD_MISSING", lines[-1])
+        sev = [l.split("]")[0].split("[")[1] for l in lines]
+        self.assertIn("[INFO] DAM_RECORD_MISSING", " ".join(lines))
+        first_info = sev.index("INFO")
+        self.assertTrue(all(s == "INFO" for s in sev[first_info:]), sev)       # every INFO note comes after every other flag
 
     def test_missing_gdal_is_an_info_flag_not_a_silent_gap(self):
         run, dam = FX.make_run(self.root)
@@ -260,8 +263,8 @@ class TestDigestText(Base):
         self.assertIn("PROJ_LIB", f["detail"])
 
     def test_versions(self):
-        self.assertEqual(RD.VERSION, "1.1.0")
-        self.assertEqual(LW.VERSION, "1.1.0")
+        self.assertEqual(RD.VERSION, "1.2.0")
+        self.assertEqual(LW.VERSION, "1.2.0")
 
     def test_docs_describe_proj_and_the_no_record_case(self):
         t = slurp(os.path.join(LUMO, "knowledge", "WATCHER-DIGEST.md"))
@@ -290,12 +293,12 @@ class TestPromptWording(Base):
     def test_every_flag_stays_in_the_prompt_even_over_budget(self):
         run, dam = FX.make_run(self.root, hazard=True, unscored_roads=11, mass_nan=True, final_leak=True)
         d = RD.build_digest(run, dam_folder=dam, points_path=FX.write_points(self.root))
-        ids = {f["id"] for f in d["flags"] if f["severity"] != "INFO"}
+        ids = {f["id"] for f in d["flags"]}                       # INFO ids too (1.2.0)
         for budget in (1000, 400, 120):
             u = LW.build_user_prompt(d, "run_end", max_tokens=budget)
             for fid in ids:
                 self.assertIn(fid, u, (budget, fid))
-            self.assertIn("one bullet for each of the %d flag" % len([f for f in d["flags"] if f["severity"] != "INFO"]), u)
+            self.assertIn("one bullet for each of the %d flag" % len(d["flags"]), u)
 
     def test_invented_ids_are_found_but_real_names_are_not(self):
         t = "- WITHIN_BREACH is bad. HEIGHT_MISMATCH 39 vs 37. Use --GRID_REFINE=0 and TOP_FT. NO_RUN_FILES"
@@ -330,7 +333,7 @@ class TestCompleteFlagList(Base):
 
     def test_when_lumo_covers_everything_there_is_no_footer(self):
         r = self.make()
-        ids = sorted({f["id"] for f in r["digest"]["flags"] if f["severity"] != "INFO"})
+        ids = sorted({f["id"] for f in r["digest"]["flags"]})            # INFO ids too (1.2.0)
         self.mock([("piece", "\n".join("- %s: ok" % i for i in ids) + "\nVerdict: WATCH"), ("done",)])
         st = LW.explain(r["digest_path"], self.cfg)
         self.assertEqual(st["flags_missing"], [])
@@ -347,7 +350,7 @@ class TestCompleteFlagList(Base):
 
     def test_invented_flag_ids_are_called_out_in_the_footer_and_the_status(self):
         r = self.make()
-        ids = sorted({f["id"] for f in r["digest"]["flags"] if f["severity"] != "INFO"})
+        ids = sorted({f["id"] for f in r["digest"]["flags"]})
         self.mock([("piece", "\n".join("- %s ok" % i for i in ids) + "\n- WITHIN_BREACH weak dam\nVerdict: WATCH"), ("done",)])
         st = LW.explain(r["digest_path"], self.cfg)
         self.assertEqual(st["invented_ids"], ["WITHIN_BREACH"])
