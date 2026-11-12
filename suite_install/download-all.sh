@@ -101,7 +101,7 @@ for P in $PLATS; do
   OD="$HERE/damit_ai/offline/ollama"
   if [ -d "$OD" ]; then
     awk '!/^#/ && $2=="ollama" {n=$3; sub(/.*\//,"",n); print $5"  "n}' "$LOCKS/extra.lock" | sort -u | while read -r h n; do
-      [ -f "$OD/$n" ] && echo "$h  $n"; done > "$OD/SHA256SUMS"
+      if [ -f "$OD/$n" ]; then echo "$h  $n"; fi; done > "$OD/SHA256SUMS"
   fi
   ok "$P: $(du -sh "$HERE/offline/conda/$P" 2>/dev/null | awk '{print $1}') of conda packages"
 done
@@ -120,7 +120,7 @@ if [ "$DO_MODELS" = 1 ] && [ -n "$MODELS" ]; then
     osx-*)
       L="$(awk '!/^#/ && $1=="osx-arm64" && $2=="ollama" {print $4, $5}' "$LOCKS/extra.lock")"
       F="$T/Ollama-darwin.zip"; echo "${L%% *} $F ${L##* }" > "$T/l"; fetch_list "$T/l"
-      [ -f "$F" ] && (cd "$T" && unzip -q Ollama-darwin.zip) && OL="$(find "$T" -path '*Contents/Resources/ollama' -type f | head -1)" ;;
+      if [ -f "$F" ] && (cd "$T" && unzip -q Ollama-darwin.zip); then OL="$(find "$T" -path '*Contents/Resources/ollama' -type f | head -1)"; fi ;;
   esac
   if [ -n "$OL" ] && [ -x "$OL" ]; then
     OLLAMA_HOST=127.0.0.1:11499 OLLAMA_MODELS="$MDIR" "$OL" serve > "$T/serve.log" 2>&1 &
@@ -159,8 +159,8 @@ if [ "$PACK" = 1 ]; then
   for P in $PLATS; do
     Z="offline-$P.zip"; rm -f "$Z"
     ITEMS="offline/conda/$P"
-    for f in $(awk -v p="$P" '!/^#/ && $1==p && $2!="ollama-pull" {print $3}' "$LOCKS/extra.lock" | sort -u); do [ -f "$f" ] && ITEMS="$ITEMS $f"; done
-    [ -f damit_ai/offline/ollama/SHA256SUMS ] && ITEMS="$ITEMS damit_ai/offline/ollama/SHA256SUMS"
+    for f in $(awk -v p="$P" '!/^#/ && $1==p && $2!="ollama-pull" {print $3}' "$LOCKS/extra.lock" | sort -u); do if [ -f "$f" ]; then ITEMS="$ITEMS $f"; fi; done
+    if [ -f damit_ai/offline/ollama/SHA256SUMS ]; then ITEMS="$ITEMS damit_ai/offline/ollama/SHA256SUMS"; fi
     # shellcheck disable=SC2086
     zip -q -r -0 "$Z" $ITEMS && ok "$Z ($(du -h "$Z" | awk '{print $1}')); unzip it in this folder on the target"
   done
