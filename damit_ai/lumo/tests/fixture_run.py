@@ -49,7 +49,8 @@ def centre(row, col):
 
 POCKET = (8, 8)         # the DEM / result hole (NoData) inside the water
 WET_CELL = (6, 6)
-DRY_BESIDE_DEEP = (5, 13)    # a dry cell next to the blob's east side (cols 5..12 wet)
+DRY_BESIDE_DEEP = (5, 13)    # a cell with only a trace of water, next to the blob's east side (cols 5..12 wet)
+DRY_ZERO_BESIDE_DEEP = (5, 4)   # a cell with 0.0 depth next to the blob's west side: NoData in the Runner's own outputs
 FAR_DRY = (17, 17)
 
 
@@ -112,6 +113,7 @@ def make_run(root, report=True, passes=3, final_leak=False, mass_nan=False, verr
                         nan_row=3 if (mass_nan and n == passes) else None))
         depth = np.zeros((NROWS, NCOLS))
         depth[5:13, 5:13] = 2.0                              # a 2 m blob
+        depth[DRY_BESIDE_DEEP] = 0.02                        # a trace (0.07 ft, under the 0.1 ft wet limit) beside the blob
         if leak:
             depth[0, 10] = 0.25                              # N edge, 0.82 ft
             depth[10, 0] = 0.26                              # W edge

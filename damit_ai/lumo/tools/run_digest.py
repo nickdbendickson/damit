@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -83,7 +83,7 @@ KNOWN_FLAG_IDS = (
     "PASS_UNFINISHED", "STALL", "STOPPED_MOVING", "HEIGHT_MISMATCH", "BREACH_BOTTOM_RAISED", "DATUM",
     "START_WSE", "TOE_INFLOW", "TOE_BAND", "OUTLET_FLOW", "ENGINE_FALLBACK", "RUN_WARNINGS",
     "RECEPTOR_NODATA", "RECEPTOR_DRY_NEXT_TO_WET", "ROADS_UNSCORED", "HAZARD_REVIEW", "RAIL_TRAINS",
-    "NO_RUN_FILES", "DAM_RECORD_MISSING", "TOE_UNCHECKED", "RECEPTORS_UNCHECKED",
+    "NO_RUN_FILES", "DAM_RECORD_MISSING", "TOE_UNCHECKED", "TOE_SOURCE_RUN_REPORT", "RECEPTORS_UNCHECKED",
 )
 
 # Elevations from 300 ft up to this are taken to be in the NAVD88 range when no datum is stated (ND is ~800-3,500 ft;
@@ -157,6 +157,35 @@ class Flags(object):
         assert fid in KNOWN_FLAG_IDS, fid
         self.items.append({"id": fid, "severity": severity, "where": where, "title": title, "detail": detail,
                            "data": data})
+
+
+def dedupe_flags(items):
+    """One flag per id (1.2.0). The same id raised more than once (EDGE_OUTFLOW_EARLY in passes 1 and 2) is listed once:
+    the MOST SEVERE one is kept, the LATEST among equals. Where and what the others were is kept in the flag's data
+    (`occurrences`, `also`) and in its detail, so nothing is lost, and the verdict is unchanged (it is the highest
+    severity, which is the one kept). Order follows each id's first appearance."""
+    best, order, others = {}, [], {}
+    for f in items:
+        fid = f["id"]
+        if fid not in best:
+            best[fid], order, others[fid] = f, order + [fid], []
+        elif _RANK.get(f["severity"], 0) >= _RANK.get(best[fid]["severity"], 0):
+            others[fid].append(best[fid])
+            best[fid] = f
+        else:
+            others[fid].append(f)
+    out = []
+    for fid in order:
+        f = best[fid]
+        if others[fid]:
+            also = [{"where": o["where"], "severity": o["severity"], "title": o["title"]} for o in others[fid]]
+            places = ", ".join(str(o["where"]) for o in others[fid])
+            f = dict(f, data=dict(f.get("data") or {}, occurrences=1 + len(also), also=also),
+                     detail=((f.get("detail") or "").rstrip() + (" " if f.get("detail") else "") +
+                             "Also raised at %s (%d in all; the most severe, latest one is shown)." % (
+                                 places, 1 + len(also))))
+        out.append(f)
+    return out
 
 
 def verdict_of(flags):
@@ -688,11 +717,21 @@ def check_toe(f, report, fl, th=THRESHOLDS, run_dir=None):
     m = re.search(r"([\d.]+)\s*m from the (?:dam )?line", str(inflow.get("how") or ""))
     dist = _num(m.group(1)) if m else None
     info["distance_m"] = dist
+    line = _dam_line_found(f.get("dam_folder"), run_dir)
+    info["dam_line_found"] = line
+    if dist is not None:
+        # The distance is the Runner's own measurement (it placed the inflow with the dam line it had). It is used as it
+        # is, and the digest says where it came from; with no dam line to measure again this is an INFO note, not an
+        # "unchecked" warning (1.2.0).
+        info["distance_source"] = "run_report" if line else "run_report, no dam_line"
+        if not line:
+            fl.add("TOE_SOURCE_RUN_REPORT", INFO, "run", "toe from run_report, no dam_line",
+                   "the inflow is %.0f m from the dam line by the Runner's own report (%s); no dam_line.geojson was found, so "
+                   "the digest cannot measure it again and uses the Runner's number." % (dist, inflow.get("how") or "no text"),
+                   **info)
     if dist is None:
-        line = _dam_line_found(f.get("dam_folder"), run_dir)
         how = str(inflow.get("how") or "")
         fallback = "fallback" in how.lower()
-        info["dam_line_found"] = line
         fl.add("TOE_UNCHECKED", WATCH if fallback else INFO, "run",
                "toe inflow position not checked: the report gives no distance from the dam line",
                "%s%s. The band (5 m to H x (slope+1), 150 m cap) can still be checked; the inflow point cannot." % (
@@ -803,21 +842,33 @@ def load_points_ogr(path, grid_wkt, id_fields=("fd_id", "bid", "usastrucid"), la
     return pts
 
 
-def check_receptors(depth_grid, points, fl, th=THRESHOLDS):
+def runner_nodata(grid):
+    """The depth grid with the Runner's NoData convention, so a receptor reads the same at every hook (1.2.0). The Runner's
+    final Depth (Max).tif writes depth <= 0 as NoData (flood/model.py write_outputs), so a dry cell there IS NoData. A pass's
+    own run.max has 0.0 on dry cells; sampled as it is, the same receptor was "dry next to wet" at a pass hook and
+    "NoData next to wet" at run_end. This maps <= 0 and non-finite to NaN for every source (GeoTIFF or pass grid)."""
+    import numpy as np
+    with np.errstate(invalid="ignore"):
+        data = np.where(np.isfinite(grid.data) & (grid.data > 0), grid.data, np.nan)
+    return Grid(data, grid.x0, grid.y0, grid.cell)
+
+
+def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     if depth_grid is None or not points:
         return None
     res = receptor_check(depth_grid, points)
+    note = (" Sampled on %s." % grid_source) if grid_source else ""
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
     if nd:
         fl.add("RECEPTOR_NODATA", WATCH, "receptors", "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
                "ids: %s. The results have a hole at the receptor; Hazard reads NoData as dry (0 ft) and can miss a "
-               "real, shallow inundation. Check these by hand." % _ids("%s (neighbour %.2f ft)" % t for t in nd),
-               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd})
+               "real, shallow inundation. Check these by hand.%s" % (_ids("%s (neighbour %.2f ft)" % t for t in nd), note),
+               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd}, grid_source=grid_source)
     if dn:
         fl.add("RECEPTOR_DRY_NEXT_TO_WET", WATCH, "receptors",
                "%d structure(s) are on a dry cell beside water at least %.1f ft deep" % (len(dn), th["near_wet_ft"]),
-               "ids: %s. A coarse cell can miss a building next to deep water." % _ids(
-                   "%s (neighbour %.2f ft)" % t for t in dn), ids=[t[0] for t in dn])
+               "ids: %s. A coarse cell can miss a building next to deep water.%s" % (
+                   _ids("%s (neighbour %.2f ft)" % t for t in dn), note), ids=[t[0] for t in dn], grid_source=grid_source)
     return res
 
 
@@ -948,8 +999,11 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
         live = upto_pass is not None             # a run in progress: the pass's own results, not the final outputs
         dp = depth_path or os.path.join(run_dir, "outputs", "Depth (Max).tif")
         depth_grid = read_tif(dp) if (os.path.exists(dp) and not live) else None
+        grid_source = "outputs/Depth (Max).tif" if depth_grid is not None else None
         if depth_grid is None and final and bounds:
             depth_grid = _pass_grid(final[0], ".max", bounds, 1.0 / FT)
+            grid_source = "the %s pass grid%s" % (os.path.basename(final[0]), (" (the run is in progress; the final Depth (Max).tif "
+                                                  "can differ)" if live else ""))
         if depth_grid is not None:
             import numpy as np
             wet = np.isfinite(depth_grid.data) & (depth_grid.data >= THRESHOLDS["wet_ft"])
@@ -984,7 +1038,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                                "the structure layer %s needs the osgeo Python package (QGIS or GDAL); the other checks "
                                "are unaffected" % os.path.basename(spath))
             if pts:
-                rec = check_receptors(depth_grid, pts, fl)
+                rec = check_receptors(runner_nodata(depth_grid), pts, fl, grid_source=grid_source)
     except ImportError as e:
         fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: a Python package is missing",
                "%s. The structure layer needs GDAL/OGR (osgeo) and the grids need numpy; the other checks are "
@@ -999,7 +1053,7 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
         if hp:
             hazard = check_hazard(_load_json(hp), fl, rail_lookup)
 
-    flags = fl.items
+    flags = dedupe_flags(fl.items)
     d = {"schema": SCHEMA, "version": VERSION, "run_dir": run_dir, "phase": phase, "dam_id": facts["dam_id"],
          "name": facts["name"], "verdict": verdict_of(flags), "verdict_set_by": "code (flags only; Lumo never changes it)",
          "flags": flags, "thresholds": THRESHOLDS,
@@ -1040,8 +1094,9 @@ def render_text(d):
         _fmt(w.get("starting_wse_ft"), 2), _fmt(w.get("top_ft"), 2)))
     t = c.get("toe_inflow")
     if t:
-        L.append("Toe inflow: %s m from the dam line; band %s-%s m (H x (%s:1 + 1), cap %d m)" % (
-            _fmt(t.get("distance_m"), 0), _fmt(t.get("expected_inner_m"), 0), _fmt(t.get("expected_outer_m"), 1),
+        src = " (toe from %s)" % t["distance_source"] if t.get("distance_source") == "run_report, no dam_line" else ""
+        L.append("Toe inflow: %s m from the dam line%s; band %s-%s m (H x (%s:1 + 1), cap %d m)" % (
+            _fmt(t.get("distance_m"), 0), src, _fmt(t.get("expected_inner_m"), 0), _fmt(t.get("expected_outer_m"), 1),
             _fmt(t.get("slope"), 1), THRESHOLDS["toe_cap_m"]))
     ps = c["passes"]
     if ps:

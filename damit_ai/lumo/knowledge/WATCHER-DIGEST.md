@@ -9,9 +9,9 @@ Reference for the DamIT run watcher (`tools/run_digest.py`, `tools/lumo_watch.py
   from its flags alone: the highest severity present (INFO flags never count). It takes well under a
   second and needs no AI. The review is complete without Lumo.
 - **Lumo only explains.** It gets the 20-40 line digest text and the flag titles (about 500-1,000 tokens),
-  a pinned system prompt of Nick's rules, and writes one bullet per flag to `lumo_<event>.md`, under a
-  **complete flag list that code wrote first** (every flag, with its receptor ids, nothing capped; a footer names any flag
-  Lumo skipped or any flag-like id it invented). It never changes,
+  a pinned system prompt of Nick's rules, and writes one bullet per flag, **INFO notes included** (1.2.0), to `lumo_<event>.md`, under a
+  **complete flag list that code wrote first** (every flag of every severity, with its receptor ids, nothing capped; a footer names any flag
+  Lumo skipped, INFO ones too, or any flag-like id it invented). It never changes,
   gates or delays the verdict. If Lumo does not answer within a few seconds the review still stands, and
   whatever Lumo has streamed so far is on disk (`lumo_<event>.status.json` says done / partial / unavailable).
 - **Explainer model:** a small model (default `qwen3:4b`; `phi4-mini` is the alternative), set with
@@ -24,7 +24,9 @@ Reference for the DamIT run watcher (`tools/run_digest.py`, `tools/lumo_watch.py
   `think:false` should stop `message.thinking`; if thinking tokens arrive anyway they are kept in
   `lumo_<event>.md.thinking.txt` and the status says `thinking_despite_think_false`. The status JSON also carries
   Ollama's own timings: `prompt_eval_duration`, `load_duration`, `eval_duration`, `total_duration`, the two token counts,
-  and derived `prompt_eval_s`, `eval_tok_per_s`, `first_piece_s`.
+  and derived `prompt_eval_s`, `eval_tok_per_s`, `first_piece_s`. `first_byte_wait_s` is the **measured** wait from the request to
+  the first streamed line (the seconds actually waited if nothing streamed); the configured limit is its own field,
+  `first_token_cap_s`.
 
 ## Hooks (events)
 
@@ -82,6 +84,7 @@ file, with the Runner's formula (signed sum of the interval errors over the inje
 | `TOE_INFLOW` | PROBLEM | the breach inflow is outside the toe band |
 | `TOE_BAND` | WATCH | the Runner's band end differs from H x (slope+1) |
 | `TOE_UNCHECKED` | WATCH (INFO) | the run report gives no distance from the dam line (the Runner fell back to the lowest ground near the dam point, or there is no `dam_line.geojson`): the inflow position is not checked; the band still is |
+| `TOE_SOURCE_RUN_REPORT` | INFO | the run report DOES give the toe inflow distance (the Runner measured it) but there is no `dam_line.geojson` to measure it again: the digest uses the Runner's number and says so ("toe from run_report, no dam_line") instead of raising `TOE_UNCHECKED`. The position check (`TOE_INFLOW`) and the band check still run on it |
 | `ENGINE_FALLBACK` | WATCH | the built-in numpy engine ran, not LISFLOOD-FP |
 | `RUN_WARNINGS` | WATCH | the Runner logged warnings |
 | `RECEPTOR_NODATA` | WATCH | structure(s) on a NoData cell next to wet cells (Hazard reads NoData as dry) |
@@ -95,6 +98,18 @@ file, with the Runner's formula (signed sum of the interval errors over the inje
 
 Receptor flags (`RECEPTOR_NODATA`, `RECEPTOR_DRY_NEXT_TO_WET`) name the first 10 structure ids and a count in the digest, the
 complete flag list and the Lumo prompt; the JSON `data` has every id.
+
+**One flag per id (1.2.0).** An id raised more than once (`EDGE_OUTFLOW_EARLY` in passes 1 and 2) is listed once in the
+digest, the flag list, `latest_verdict.json` and the Lumo prompt: the most severe one is kept, the latest among equals. The others are in
+the flag's `data` (`occurrences`, `also`) and its detail ("Also raised at pass 1 ..."). The verdict is unchanged.
+`latest_verdict.json` lists the WATCH / PROBLEM ids in `flags` and the INFO ids in `info_flags`.
+
+**Receptors read the same at every hook (1.2.0).** The Runner's final `Depth (Max).tif` writes depth <= 0 as NoData, so a
+dry cell there is NoData. A pass's own `run.max` has 0.0 on dry cells. The digest now treats depth <= 0 as NoData for every
+source before sampling, so a receptor is `RECEPTOR_NODATA` at a `pass_end` hook and at `run_end` alike (it used to be
+`RECEPTOR_DRY_NEXT_TO_WET` mid-run and `RECEPTOR_NODATA` at the end). `RECEPTOR_DRY_NEXT_TO_WET` is now only a receptor on a cell
+with a trace of water (above 0, under 0.1 ft) beside water 1 ft deep or more. A pass hook samples the coarse pass grid
+(the flag says so); the final raster can be finer, so the ids can still differ between a pass hook and `run_end`.
 
 Per-edge outflow: LISFLOOD-FP's `.mass` gives one outflow total, so the digest reports the total boundary
 outflow % and the depth at each edge (N/S/W/E), and attributes the outflow to the wet edges.
@@ -114,10 +129,12 @@ Peaks are maxima over **wet cells** (depth of 0.1 ft or more), from `Depth (Max)
 
 The digest does not stop: the dam id comes from the run, the report, `damit_handoff.json` or the dam folder's name
 (`DAM_RECORD_MISSING`, INFO); the height check uses BOTTOM_FT and says so; the datum is judged from the elevation; the
-toe inflow position is skipped with `TOE_UNCHECKED`. `damit:classify` needs a **flat** dam record (top-level `dam_id`)
-as `DAM_JSON`; the dam folder's own `dam.json` nests its values under `fields`, which Hazard does not read. The watcher
-writes `dam_record_hazard.json` beside the digest for that (a copy, never a change to the dam folder). Making Hazard
-accept the nested record is a follow-up in `damit_hazard`.
+toe inflow position is skipped with `TOE_UNCHECKED` when the report has no distance; when it has one (the Runner measured it),
+it is used and the digest says "toe from run_report, no dam_line" (`TOE_SOURCE_RUN_REPORT`, INFO). The watcher writes a flat
+`dam_record_hazard.json` beside the digest (a copy, never a change to the dam folder). Since DamIT Hazard 0.2.1 `damit:classify`
+no longer needs it pointed out: `DAM_JSON` may be the nested dam folder `dam.json` as it is, and with `DAM_JSON` empty Hazard finds the
+`dam.json` above the depth raster, else this watcher copy for the run folder the raster sits in (`DAMIT_WATCH_DIR` if the watch folder
+is not `~/local-ai/watch`).
 
 ## If the receptor or raster check fails with a PROJ error
 

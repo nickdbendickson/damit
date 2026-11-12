@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lumo_watch.py 1.1.0 - Lumo as a DamIT run watcher.
+"""lumo_watch.py 1.2.0 - Lumo as a DamIT run watcher.
 
 How it fits together (the point of this tool):
 
@@ -61,7 +61,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import run_digest as RD  # noqa: E402
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 MODEL_ALIASES = {"small": "qwen3:4b", "phi": "phi4-mini", "qwen4b": "qwen3:4b", "default": "qwen3:4b"}
 DEFAULT_MODEL = "qwen3:4b"
@@ -86,7 +86,7 @@ Rules you must not contradict (Nick's standing rules):
 
 The real tools (no others exist): damit_screen:handoff, damit_run:rundam, damit:classify (also damit_lite:classify). damit_run:rundam parameters include CELL, MAX_RUNS, DURATION_HR, DURATION_MAX_HR, GRID_REFINE, TIER, METHOD, DS_SLOPE, TOP_FT, BOTTOM_FT, HEIGHT_FT, LISFLOOD_EXE, FORCE_ANUGA, DEM, DEM_Z, DAMS_FOLDER, OUTPUT_FOLDER. damit:classify takes RAIL_TRAINS_LOOKUP. To turn the automatic 10 m refine off use --GRID_REFINE=0. Never invent a tool, switch, number or flag id: the only flag ids are the ones in the FLAGS list. If something is not in the digest, say UNSURE.
 
-Write ONE short bullet (at most 30 words) for EVERY WATCH or PROBLEM flag in the FLAGS list, in the same order, each starting with its flag id, then what it means for this run and what to check. Do not stop early and do not merge or skip flags. Use only the numbers in the digest. Finish with the line "Verdict: <the verdict you were given>"."""
+Write ONE short bullet (at most 30 words) for EVERY flag in the FLAGS list, whatever its severity (PROBLEM, WATCH and INFO), in the same order, each starting with its flag id, then what it means for this run and what to check. An INFO flag is a note, not a concern: say what it tells the engineer (for example that a record or a check was not available) and what, if anything, to do; it still gets its own bullet. Do not stop early and do not merge or skip flags. Use only the numbers in the digest. Finish with the line "Verdict: <the verdict you were given>"."""
 
 
 def system_prompt():
@@ -150,8 +150,9 @@ def flag_hint(f, n=None):
     return RD.flag_ids_text(f, n)
 
 
-def flag_lines(digest, include_info=False, title_chars=None, hints=True, hint_n=None):
-    """EVERY WATCH/PROBLEM flag, one line each (INFO notes only with include_info). Nothing is dropped."""
+def flag_lines(digest, include_info=True, title_chars=None, hints=True, hint_n=None):
+    """EVERY flag, one line each, PROBLEM first and INFO notes last (include_info=False leaves the INFO notes out). Nothing
+    is dropped: since 1.2.0 the INFO flags are in the prompt too, so Lumo is asked for a bullet on them."""
     out = []
     for f in sorted(digest["flags"], key=RD.flag_sort_key):
         if f["severity"] == RD.INFO and not include_info:
@@ -165,9 +166,9 @@ def flag_lines(digest, include_info=False, title_chars=None, hints=True, hint_n=
 def build_user_prompt(digest, event=None, max_tokens=1000):
     """The user message: the event, the verdict code already set, the digest text and the flag list.
     Trimmed to max_tokens (system prompt not counted) by dropping the per-pass table, the digest's flag bullets and
-    then shortening the titles. EVERY WATCH/PROBLEM flag stays in the list: Lumo is asked for one bullet each."""
+    then shortening the titles. EVERY flag (INFO too) stays in the list: Lumo is asked for one bullet each."""
     verdict = digest["verdict"]
-    nflags = len([f for f in digest["flags"] if f["severity"] != RD.INFO])
+    nflags = len(digest["flags"])
     head = "EVENT: %s\nVERDICT (set by code, do not change): %s\n" % (event or digest.get("phase"), verdict)
     task = "\nWrite one bullet for each of the %d flag(s) above, in order, each starting with its flag id. End with: Verdict: %s" % (
         nflags, verdict)
@@ -249,7 +250,10 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
     t0 = time.time()
     st = {"status": "starting", "model": payload.get("model"), "chars": 0, "pieces": 0, "started": t0,
           "think": payload.get("think"), "elapsed_s": 0.0, "error": None, "thinking_chars": 0,
-          "thinking_despite_think_false": False, "first_piece_s": None, "first_byte_wait_s": first_token_s}
+          "thinking_despite_think_false": False, "first_piece_s": None,
+          # first_byte_wait_s: MEASURED seconds from the request to the first streamed line (None until it arrives; on a
+          # timeout, the seconds actually waited). first_token_cap_s: the configured limit (LUMO_WATCH_FIRST_TOKEN_S).
+          "first_byte_wait_s": None, "first_token_cap_s": first_token_s}
     think_out = [None]                           # <out>.thinking.txt, opened only if thinking tokens arrive
     u = urlparse(url)
     text_parts = []
@@ -263,6 +267,8 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
     conns = []
 
     def fin(status, err=None):
+        if st["first_byte_wait_s"] is None and status in ("timeout", "partial", "error"):
+            st["first_byte_wait_s"] = round(time.time() - t0, 2)        # nothing streamed: the wait that ran out
         st.update(status=status, error=err, elapsed_s=round(time.time() - t0, 2), text="".join(text_parts))
         try:
             out.flush()
@@ -321,6 +327,7 @@ def stream_chat(payload, url, out_path, status_path=None, first_token_s=600.0, i
                 break
             if first:
                 first = False
+                st["first_byte_wait_s"] = round(time.time() - t0, 2)
                 try:
                     conn.sock.settimeout(idle_s if idle_s and idle_s > 0 else None)
                 except (AttributeError, OSError):
@@ -394,6 +401,15 @@ def event_tag(event, pass_no=None):
     return "%s%s" % (event, "_p%s" % pass_no if pass_no is not None else "")
 
 
+def _unique(ids):
+    """The ids in order, each once (a digest is already one flag per id; this keeps a hand-built one honest too)."""
+    out = []
+    for i in ids:
+        if i not in out:
+            out.append(i)
+    return out
+
+
 def write_digest(out_dir, digest, event, pass_no=None):
     os.makedirs(out_dir, exist_ok=True)
     tag = event_tag(event, pass_no)
@@ -408,7 +424,8 @@ def write_digest(out_dir, digest, event, pass_no=None):
             f.write("\n" + (digest.get("flags_text") or RD.render_flag_list(digest)) + "\n")
     with open(os.path.join(out_dir, "latest_verdict.json"), "w", encoding="utf-8") as f:
         json.dump({"event": event, "pass": pass_no, "verdict": digest["verdict"],
-                   "flags": [x["id"] for x in digest["flags"] if x["severity"] != RD.INFO],
+                   "flags": _unique(x["id"] for x in digest["flags"] if x["severity"] != RD.INFO),
+                   "info_flags": _unique(x["id"] for x in digest["flags"] if x["severity"] == RD.INFO),
                    "written": time.strftime("%Y-%m-%d %H:%M:%S")}, f, indent=1)
     return jp
 
@@ -432,11 +449,12 @@ def lumo_busy(out_dir):
 
 
 def flag_coverage(text, digest):
-    """(covered, missing): which WATCH/PROBLEM flag ids the commentary mentions (by id, or id with spaces)."""
+    """(covered, missing): which flag ids, of every severity (INFO too, since 1.2.0), the commentary mentions (by id, or
+    id with spaces)."""
     low = (text or "").lower()
     ids = []
     for f in sorted(digest["flags"], key=RD.flag_sort_key):
-        if f["severity"] != RD.INFO and f["id"] not in ids:
+        if f["id"] not in ids:
             ids.append(f["id"])
     hit = [i for i in ids if i.lower() in low or i.lower().replace("_", " ") in low]
     return hit, [i for i in ids if i not in hit]
@@ -493,8 +511,10 @@ def explain(digest_path, cfg=None, out_path=None, connect=None, max_tokens=1000)
         with open(out_path, "a", encoding="utf-8") as f:
             f.write("\n\n---\n")
             if missing:
+                titles = {x["id"]: x for x in digest["flags"]}
                 f.write("Not commented on by Lumo (%s): %s. They are in the complete flag list above.\n" % (
-                    st.get("status"), ", ".join(missing)))
+                    st.get("status"), ", ".join("%s%s" % (i, " (INFO: %s)" % titles[i]["title"] if titles[i]["severity"] == RD.INFO
+                                                          else "") for i in missing)))
             if bogus:
                 f.write("Lumo named ids that are not flags of this run: %s. Ignore them; the list above is the truth.\n" % (
                     ", ".join(bogus)))

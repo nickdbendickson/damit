@@ -123,7 +123,8 @@ class TestEdges(Base):
     def test_early_pass_edge_outflow_is_flagged_as_a_watch(self):
         d = self.digest()                                   # passes 1-2 leak through N and W, 3 is clean
         early = [f for f in d["flags"] if f["id"] == "EDGE_OUTFLOW_EARLY"]
-        self.assertEqual(len(early), 2)
+        self.assertEqual(len(early), 1)                      # passes 1 and 2 leak; one flag since 1.2.0 (see test_followups)
+        self.assertEqual(early[0]["data"]["occurrences"], 2)
         self.assertTrue(all(f["severity"] == "WATCH" for f in early))
         self.assertEqual(early[0]["data"]["edges"], ["N", "W"])
         self.assertEqual(early[0]["data"]["outflow_pct"], 10.0)
@@ -148,7 +149,7 @@ class TestEdges(Base):
         self.assertGreater(p1["edge_depths_ft"]["N"], 0.7)
         self.assertAlmostEqual(p1["outflow_pct"], 10.0, places=1)           # Qout 1 / Qin 10, same duration
         self.assertNotIn("EDGE_OUTFLOW_FINAL", ids(d))                      # pass 3 is clean
-        self.assertEqual(len([f for f in d["flags"] if f["id"] == "EDGE_OUTFLOW_EARLY"]), 2)
+        self.assertEqual(len([f for f in d["flags"] if f["id"] == "EDGE_OUTFLOW_EARLY"]), 1)
 
     def test_clean_edges_are_quiet(self):
         d = self.digest({"passes": 2})
@@ -256,7 +257,9 @@ class TestOutletsAndToe(Base):
 
     def test_toe_inflow_inside_the_band_is_quiet(self):
         d = self.digest()
-        self.assertFalse([f for f in d["flags"] if f["id"].startswith("TOE")])
+        # no TOE problem or warning; the fixture has no dam_line, so the only TOE flag is the INFO source note (1.2.0)
+        self.assertEqual([(f["id"], f["severity"]) for f in d["flags"] if f["id"].startswith("TOE")],
+                         [("TOE_SOURCE_RUN_REPORT", "INFO")])
         t = d["checks"]["toe_inflow"]
         self.assertEqual((t["distance_m"], t["expected_outer_m"]), (39.0, 39.47))
 
@@ -316,6 +319,7 @@ class TestReceptors(Base):
         os.makedirs(os.path.join(run, "outputs"))
         arr = np.zeros((FX.NROWS, FX.NCOLS), dtype="float32")
         arr[5:13, 5:13] = 6.56
+        arr[FX.DRY_BESIDE_DEEP] = 0.0656          # a trace of water, as in the pass grids (0.0 would read as NoData)
         arr[FX.POCKET] = -9999
         ds = gdal.GetDriverByName("GTiff").Create(os.path.join(run, "outputs", "Depth (Max).tif"), FX.NCOLS, FX.NROWS, 1,
                                                   gdal.GDT_Float32)

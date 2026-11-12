@@ -103,6 +103,16 @@ ID under *Inputs*. Without a dam record the result is flagged `nid_none` (not ti
 is DamIT Catalog's `handoff.nid_rule` (the same one DamIT Screener and Runner apply); `engine/core.py`
 `nid_rule` only passes through to it.
 
+**Dam record shape and where it comes from (0.2.1).** `DAM_JSON` may be a flat record (as above) or the dam
+folder's own `dam.json`, which nests its values under `fields`; the nested `fields` are read as they are (over
+any top-level values), no hand-flattening. With `DAM_JSON` empty, damit:classify looks for a record (`engine/dam_record.py`):
+the `dam.json` in the depth raster's folder or up to four folders above it (the run folder's parent is the dam
+folder), else the run watcher's flat copy `~/local-ai/watch/<dam id>_<run folder>/dam_record_hazard.json` (folder
+overridable with `DAMIT_WATCH_DIR`), for the run folder the raster sits in. A record found this way must have a dam
+id; one with no usable NID ID is left out with a warning (an explicitly given file still fails, as before). The
+report's *Inputs* lists the file used, marked "found automatically". Nothing is written beside it. Give `DAM_JSON`
+to override.
+
 Attribute names are matched case-insensitively; the first of these per field is used
 (`engine/receptors.py` has the full list):
 
