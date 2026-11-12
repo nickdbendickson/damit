@@ -259,7 +259,8 @@ class TestTheGrowthPath(Base):
         run, dam = FX.make_run(self.root, report=False, layout="work", progress=True, passes=9)
         mid_run(run)
         pts = FX.write_points(self.root)
-        grow = lambda n: [0.0, 0.0, FX.BOUNDS[2], FX.BOUNDS[3]]            # noqa: E731 - the same grid, a pass-own entry
+        # a growing domain has its own origin every pass (here: moved out by up to two cells), so every pass's georeference is its own
+        grow = lambda n: [-FX.CELL * (n % 3), -FX.CELL * (n % 2), FX.BOUNDS[2], FX.BOUNDS[3]]       # noqa: E731
         det, st, out = LW.EventDetector(record_grace_s=120.0), {}, {}
         cfg = dict(self.cfg, pass_receptor_every=2)
         recorded = 0
@@ -277,9 +278,19 @@ class TestTheGrowthPath(Base):
             self.assertTrue(c["receptors"] is not None or c["receptors_skipped"], n)
             if n % 2 == 0:
                 self.assertIsNotNone(c["receptors"], "even pass %d was not sampled: %s" % (n, c["receptors_skipped"]))
+                self.assertEqual(c["receptors"]["sampled"] + c["receptors"]["outside"], 4)
             else:
                 self.assertIsNone(c["receptors"], n)
                 self.assertIn("not sampled", c["receptors_skipped"])
+
+    def test_a_hook_replayed_gives_the_same_receptors_the_grid_is_not_shared(self):
+        run, dam = FX.make_run(self.root, report=False, layout="work", progress=True, passes=2)
+        mid_run(run)
+        pts = FX.write_points(self.root)
+        a = RD.build_digest(run, "pass_end", dam_folder=dam, upto_pass=2, points_path=pts)["checks"]["receptors"]
+        b = RD.build_digest(run, "pass_end", dam_folder=dam, upto_pass=2, points_path=pts)["checks"]["receptors"]
+        self.assertEqual(a, b)
+        self.assertTrue(a["nodata_next_to_wet"])
 
     def test_the_watch_log_line_names_the_reason(self):
         run, dam = FX.make_run(self.root, report=False, layout="work", progress=True, passes=2)
