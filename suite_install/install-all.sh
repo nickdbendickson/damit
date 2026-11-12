@@ -110,7 +110,15 @@ fi
 
 mkdir -p "$PREFIX/logs"
 LOG="$PREFIX/logs/install_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "$LOG") 2>&1
+# Mirror everything to the log. Process substitution needs /dev/fd, which a few minimal
+# containers do not mount; there the redirect itself kills the shell ("/dev/fd/63: No such
+# file or directory"), so probe first and keep going without the log rather than dying for it.
+if [ -d /dev/fd ]; then
+  exec > >(tee -a "$LOG") 2>&1
+else
+  LOG="(not written: this system has no /dev/fd)"
+  warn "no /dev/fd here, so the install log cannot be written; the output below is all on screen"
+fi
 say "$STAMP on $P ($OS $ARCH).  Log: $LOG"
 
 # ---------------------------------------------------------------------------
