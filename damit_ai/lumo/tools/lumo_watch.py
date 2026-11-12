@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lumo_watch.py 1.3.0 - Lumo as a DamIT run watcher.
+"""lumo_watch.py 1.3.1 - Lumo as a DamIT run watcher.
 
 How it fits together (the point of this tool):
 
@@ -43,6 +43,11 @@ Models (env or flags):  LUMO_WATCH_MODEL (default qwen3:4b; 'small' = qwen3:4b, 
       end    = the same gate (kept so existing settings still work)
       always = whenever an event fires (old behaviour, slows the run)    never = no model
   LUMO_WATCH_STALE_S (900): a run folder nothing has written to for this long, with no lisflood process, counts as stopped
+  LUMO_WATCH_PASS_RECEPTOR_EVERY (2): a pass_end hook samples the receptors (structure layer) only on every Nth pass (2, 4, 6 ...), and
+      always at run_end (final raster) and when the run is already over; 1 = every pass, 0 = never mid-run. The layer is read and
+      reprojected once per `watch` process and sampled with numpy (no per-feature GDAL call), but a pass hook still shares the CPU
+      with the next LISFLOOD pass (DWR-2801, 88,734 structures: the 1.3.0 hooks made the Runner 493 s instead of 348 s).
+  LUMO_WATCH_PASS_NICE (19): `watch` lowers its own priority to this nice level (POSIX) so the pass hooks yield to the Runner.
   LUMO_WATCH_IDLE_GAP_S (20): no longer decides anything (1.3.0); still accepted so an old setting does not break
   LUMO_WATCH_QUEUE_WAIT_S (300): after the run ends, how long `watch` keeps waiting for a busy engine before it leaves the
       explanation queued (it prints the `explain` command to run later)
@@ -68,7 +73,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import run_digest as RD  # noqa: E402
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 MODEL_ALIASES = {"small": "qwen3:4b", "phi": "phi4-mini", "qwen4b": "qwen3:4b", "default": "qwen3:4b"}
 DEFAULT_MODEL = "qwen3:4b"
@@ -138,6 +143,8 @@ def settings(model=None, num_ctx=None, num_predict=None):
             (env("LUMO_WATCH_EXPLAIN") or "idle").strip().lower() in EXPLAIN_MODES) else "idle",
         "idle_gap_s": max(0.0, _float(env("LUMO_WATCH_IDLE_GAP_S"), 20.0)),     # 1.3.0: accepted, no longer used
         "stale_s": max(0.0, _float(env("LUMO_WATCH_STALE_S"), RD.THRESHOLDS["stall_s"])),
+        "pass_receptor_every": max(0, _int(env("LUMO_WATCH_PASS_RECEPTOR_EVERY"), 2)),
+        "pass_nice": max(0, _int(env("LUMO_WATCH_PASS_NICE"), 19)),
         "queue_wait_s": max(0.0, _float(env("LUMO_WATCH_QUEUE_WAIT_S"), 300.0)),
         "nice": max(0, _int(env("LUMO_WATCH_NICE"), 10)),
         "url": env("LUMO_WATCH_URL", "http://127.0.0.1:11434"),
@@ -728,6 +735,18 @@ def write_flat_dam_record(out_dir, digest):
     return path
 
 
+def pass_receptors_due(run_dir, pass_no, cfg=None):
+    """Should this pass_end hook sample the receptors? Every cfg pass_receptor_every-th pass (default 2), and always when the run is
+    already over (a replayed hook costs the Runner nothing). 0 = never mid-run. The final raster is sampled at run_end either way."""
+    cfg = cfg or settings()
+    every = cfg.get("pass_receptor_every", 2)
+    if pass_no is None or every == 1:
+        return True
+    if RD.run_complete(run_dir)[0]:
+        return True
+    return every > 0 and pass_no % every == 0
+
+
 def run_event(run_dir, event, out_dir=None, pass_no=None, lumo=True, cfg=None, spawn=None, probe=None, **digest_kw):
     """One hook. Returns {digest, digest_path, verdict, lumo: status or None}. The verdict is final when this
     returns; Lumo's text, if any, lands in lumo_<event>.md later. lumo.status is "queued" when LISFLOOD is busy and
@@ -737,6 +756,8 @@ def run_event(run_dir, event, out_dir=None, pass_no=None, lumo=True, cfg=None, s
         raise ValueError("event must be one of %s" % ", ".join(EVENTS))
     cfg = cfg or settings()
     phase = event
+    if event == "pass_end" and "sample_receptors" not in digest_kw:
+        digest_kw["sample_receptors"] = pass_receptors_due(run_dir, pass_no, cfg)
     d = RD.build_digest(run_dir, phase=phase, upto_pass=pass_no if event in ("pass_end", "stall") else None, **digest_kw)
     out_dir = out_dir or default_out_dir(run_dir, d)
     if _inside(out_dir, run_dir):
@@ -868,6 +889,18 @@ def watch(run_dir, out_dir=None, poll_s=2.0, until="before_hazard", lumo=True, c
 
 
 # ----------------------------------------------------------------------------- CLI
+def lower_priority(nice):
+    """Raise this process's nice level to `nice` (POSIX; never lowers it, never fails). `watch` calls it so the pass hooks (digest
+    reads, receptor sampling) yield the CPU to the Runner's LISFLOOD passes. The explain child process is niced separately."""
+    if not nice or not hasattr(os, "nice"):
+        return None
+    try:
+        cur = os.nice(0)
+        return os.nice(nice - cur) if nice > cur else cur
+    except OSError:
+        return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Lumo as a DamIT run watcher: the code sets the verdict, Lumo explains.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -878,6 +911,8 @@ def main(argv=None):
         p.add_argument("--explain-now", action="store_true", help="same as --explain always")
         p.add_argument("--num-thread", type=int, help="threads the model may use (default 2; 0 = Ollama's default)")
         p.add_argument("--idle-gap", type=float, help="no longer used (1.3.0: Lumo waits for the whole run to finish); accepted for old scripts")
+        p.add_argument("--pass-receptor-every", type=int, help="sample the receptors at every Nth pass_end hook (default 2; 1 = every "
+                       "pass; 0 = only at run_end); LUMO_WATCH_PASS_RECEPTOR_EVERY")
         p.add_argument("--out", help="where to write (never inside the run folder); default ~/local-ai/watch/<dam>_<run>/")
         p.add_argument("--dam-folder")
         p.add_argument("--structures")
@@ -952,6 +987,8 @@ def main(argv=None):
         cfg["num_thread"] = max(0, a.num_thread)
     if a.idle_gap is not None:
         cfg["idle_gap_s"] = max(0.0, a.idle_gap)
+    if a.pass_receptor_every is not None:
+        cfg["pass_receptor_every"] = max(0, a.pass_receptor_every)
     kw = dict(dam_folder=a.dam_folder, structures_path=a.structures, points_path=a.points, rail_lookup=a.rail_lookup)
     verdict = RD.OK
     if a.cmd == "digest":
@@ -971,6 +1008,7 @@ def main(argv=None):
             print("(%s) Ask later with: %s" % (r["lumo"]["error"], r["lumo"]["later"]))
         verdict = r["verdict"]
     elif a.cmd == "watch":
+        lower_priority(cfg.get("pass_nice", 19))
         rs = watch(a.run_dir, a.out, a.poll, a.until, not a.no_lumo, cfg, a.max_wait, a.once, a.stall_s, **kw)
         order = {RD.OK: 0, RD.WATCH: 1, RD.PROBLEM: 2}
         verdict = max((r["verdict"] for r in rs), key=lambda v: order[v], default=RD.OK)

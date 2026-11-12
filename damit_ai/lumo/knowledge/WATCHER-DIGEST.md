@@ -78,7 +78,7 @@ file, with the Runner's formula (signed sum of the interval errors over the inje
 | `EDGE_INFLOW` | PROBLEM | water enters through a model domain edge (negative Qout), over 2 % of injected |
 | `EDGE_OUTFLOW_EARLY` | WATCH | an early pass let water leave through a wet **model domain edge** (the border of the computation grid, not the breach and not the dam). Expected while the domain grows; it is not dam leakage; confirm the final pass is clean |
 | `EDGE_OUTFLOW_FINAL` | PROBLEM (WATCH if only a wet edge) | the FINAL pass leaks: extent and depths are not final |
-| `PASS_UNFINISHED` | PROBLEM / WATCH | a pass has no Finish line, or stopped before 99 % of its planned sim time |
+| `PASS_UNFINISHED` | PROBLEM / WATCH | a pass has no Finish line, or stopped before 99 % of its planned sim time. Not raised (1.3.1) when the last `.mass` sample is within one output interval (`massint` in `run.par`, else the gap between the last two samples) of `sim_time` and the pass log has a Finish line, or the Runner recorded the pass (`run_progress.json` / `run_report.json`), or a later pass exists: LISFLOOD-FP writes `.mass` every `massint` s, so a clean pass can end up to one interval short of `sim_time` (DWR-2801 pass 1: 24,309 s of 24,561 s, `massint` 300) |
 | `STALL` | PROBLEM | a running pass whose `.mass` has not grown for the stall time |
 | `STOPPED_MOVING` | WATCH | the run ended (clock / MAX_RUNS cap) while the flood still moved |
 | `HEIGHT_MISMATCH` | WATCH (PROBLEM over 5 ft or 15 %) | crest minus streambed differs from the inventory height (e.g. 39 vs 37 ft). With no streambed in the dam record the title says `breach bottom used as streambed (no streambed in dam record)`: BOTTOM_FT stands in for it |
@@ -115,6 +115,14 @@ CRS) does not exist until the run ends, so the 1.2.0 pass hooks could not place 
 The digest reads it, so `RECEPTOR_NODATA` / `RECEPTOR_DRY_NEXT_TO_WET` appear at `pass_end` from the structure layer (`--structures`
 or `--points`) on the pass's own grid, with the same ids as `run_end` when the grid is the same. A run from an older Runner has no
 `run_progress.json`: its pass hooks still cannot flag receptors (the run_end hook does).
+
+**Pass-hook receptor cost (1.3.1).** DWR-2801 (88,734 structures) ran 493 s with the watcher against 348 s without, pass 7 191 s against 75 s:
+the 1.3.0 hooks re-read and reprojected the whole structure layer through GDAL at every pass, while LISFLOOD-FP uses all cores.
+Now: the layer is loaded once per process (cached by path, mtime, size and CRS); receptors are numpy arrays; sampling is one vectorised
+index lookup per pass (only the points inside the wet extent's bounding box, grown by a cell, are looked up; the result and its
+order are the per-point version's); a `pass_end` hook samples only every `LUMO_WATCH_PASS_RECEPTOR_EVERY`-th pass (default 2) unless the
+run is already over, and always at `run_end`; the digest says `receptors_skipped` when it did not; `watch` lowers its own priority to
+nice `LUMO_WATCH_PASS_NICE` (19). The one-off read of the layer (about 1.1 s per 88k points) lands on the first sampled pass.
 
 **Where the dam line is looked for (1.3.0).** `dam_line.geojson` (or `dam_line_linestring.geojson`, `dam_line.gpkg`, `.shp`) in the dam folder
 and its `inputs/`; `<work>/inputs/` and `<work>/handoff/<dam id>/` beside the `dams/` and `runs/` folders; the run folder and its
