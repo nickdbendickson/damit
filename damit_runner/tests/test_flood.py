@@ -241,6 +241,7 @@ class ModelRun(unittest.TestCase):
         self.assertEqual(setup["parameters"]["manning"], 0.06)
         self.assertEqual(setup["parameters"]["method"], "piping")
         self.assertTrue(any("PMF_FT" in n for n in setup["parameter_notes"]))
+        self.assertEqual(setup["run_notes"], setup["model"]["warnings"])         # 0.3.3: the run's warnings are in the setup too
         for name in ("Depth (Max).tif", "Velocity (Max).tif", "hmax_ft.tif", "Flood Polygons (Max Depth).geojson"):
             self.assertTrue(os.path.isfile(os.path.join(dam_dir, name)), name)
         self.assertTrue(folder.startswith(os.path.join(runs, "ND00199", "run_")))

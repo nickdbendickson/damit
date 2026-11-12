@@ -88,6 +88,7 @@ file, with the Runner's formula (signed sum of the interval errors over the inje
 | `OUTLET_FLOW` | PROBLEM | a boundary source besides the breach (outlet, spillway, inflow); not a sunny day |
 | `TOE_INFLOW` | PROBLEM | the breach inflow is outside the toe band |
 | `TOE_BAND` | WATCH | the Runner's band end differs from H x (slope+1) |
+| `TOE_BAND_WIDENED` | INFO | the Runner widened the toe band (the nearer ground was the dam face) and the inflow is inside the widened band (1.3.3) |
 | `TOE_UNCHECKED` | WATCH (INFO) | the run report gives no distance from the dam line (the Runner fell back to the lowest ground near the dam point, or there is no `dam_line.geojson`): the inflow position is not checked; the band still is |
 | `TOE_SOURCE_RUN_REPORT` | INFO | the run report DOES give the toe inflow distance (the Runner measured it) but there is no `dam_line.geojson` to measure it again: the digest uses the Runner's number and says so ("toe from run_report, no dam_line") instead of raising `TOE_UNCHECKED`. The position check (`TOE_INFLOW`) and the band check still run on it |
 | `ENGINE_FALLBACK` | WATCH | the built-in numpy engine ran, not LISFLOOD-FP |
@@ -123,6 +124,46 @@ index lookup per pass (only the points inside the wet extent's bounding box, gro
 order are the per-point version's); a `pass_end` hook samples only every `LUMO_WATCH_PASS_RECEPTOR_EVERY`-th pass (default 2) unless the
 run is already over, and always at `run_end`; the digest says `receptors_skipped` when it did not; `watch` lowers its own priority to
 nice `LUMO_WATCH_PASS_NICE` (19). The one-off read of the layer (about 1.1 s per 88k points) lands on the first sampled pass.
+
+**Every pass hook says what it sampled (1.3.2).** DWR-2801 (Absaraka, 9 passes, `LUMO_WATCH_PASS_RECEPTOR_EVERY` 2): passes 4, 6 and 8 had neither
+`receptors` nor `receptors_skipped`, and no peaks. Cause: LISFLOOD-FP writes the `Finish` line, the watcher fires `pass_end`, and the Runner
+is still reading the pass's results (`G.edge_depths`, `flood_stats`); it writes the pass into `run_progress.json` (the georeference) only after
+that. A hook that fires in the gap finds no bounds for the pass, so there is no grid and nothing to sample; the 1.3.1 code recorded a skip
+reason only when it had chosen not to sample. Now: (1) `pass_end` waits until `run_progress.json` has the pass (`LUMO_WATCH_RECORD_GRACE_S`,
+default 120 s after the pass log finished, then it fires anyway); (2) whatever happens, `checks.receptors` or `checks.receptors_skipped`
+is set (not sampled at this hook, no georeference yet, no run.max, no receptor points, not enough free RAM, unreadable grid, a missing
+package), and the `watch` log line for the pass says it. Not changed: a pass folder name reused by a later grid-check / refine loop still
+resolves to the LAST progress entry of that name.
+
+**Memory (1.3.2).** A late pass's grid is the biggest thing the watcher holds. The digest read every earlier pass's `run.max` again at
+every hook just for the four edge depths (`read_asc_edges` now streams them: first / last row, first / last value of each row, cached by
+file mtime and size); a grid above 4 million cells is read as float32; the pass grid, the wet mask and the receptor grid are made in place
+(no `np.where` full-size copies) and dropped as soon as the hook is done; a mid-run hook does not read a grid that would leave less than
+`LUMO_WATCH_MIN_FREE_MB` (default 1024) of RAM free (it says so in `receptors_skipped`; `run_end` reads the final outputs unguarded).
+Ollama keeps the model `LUMO_WATCH_KEEP_ALIVE` (default 2m, was a fixed 30m) after an explain, so a model loaded for one run does not sit in
+RAM beside the next run's LISFLOOD-FP.
+
+**A widened toe band is not a TOE_INFLOW problem (1.3.3).** The Runner widens the toe band 10 m at a time (up to 60 m more) while the lowest ground in
+it is the dam's face (less than 75 % of the dam height below the top). DWR-2645: 5-27.1 m widened to 5-37 m, inflow 36 m from the line,
+24.5 ft below the crest; 1.3.2 judged that against 5-27.1 m and set the run to PROBLEM. Runner 0.3.3 records `inflow.toe_band.effective_inner_m`,
+`effective_outer_m`, `original_outer_m`, `widened` and `widening_reason` in `run_report.json`; a report without them is read from the inflow
+text ("5-37 m downstream of the dam line ... (band widened from 27 m: reason)"). The digest judges the inflow against the effective band: inside
+it and beyond the nominal band is `TOE_BAND_WIDENED` (INFO, names the reason); outside the effective band (or under the inner edge) stays
+`TOE_INFLOW` PROBLEM; a report with neither fields nor text is judged against its own band as before.
+
+**The Runner's end-of-run edge warning (1.3.3, Runner 0.3.3).** DWR-2645 ended at the 96 h clock with the S edge at 0.94 ft and 3.37 % of the
+volume gone, and the Runner said nothing: the growth loop grows the domain only for an edge deeper than `EDGE_TOL_FT` (1 ft) or an edge
+carrying 10 % of the outflow once `OUTFLOW_EXTEND_PCT` (5 %) has left, and warned only at 5 % outflow. Those are deliberate limits, not a
+bug; the Runner now warns (log, `run_report.json warnings`, `run_setup.json run_notes`) when the last pass has a wet edge (>= the arrival
+depth) with at least 1 % outflow, or a wet edge deeper than the tolerance, or 5 % outflow: it names the edges, depths and outflow %, the limit
+it stopped at, or why it did not grow. The watcher shows it as `RUN_WARNINGS`; `EDGE_OUTFLOW_FINAL` is unchanged.
+
+**The dam line file is read (1.3.2).** `dam_line_found` used to mean the file existed. The digest now opens a GeoJSON dam line: a
+LineString or a MultiLineString with at least one line of two vertices counts (`dam_line_geometry`, `dam_line_parts` say which and how many
+parts); an empty or line-less file is not a dam line (`dam_line_unusable`). The Runner (0.3.2) joins a MultiLineString's parts end to end
+and uses the longest, and says so in the run notes. When the dam line exists but the report's inflow is a fallback, `TOE_UNCHECKED` says the
+Runner placed it without the line (a Runner before 0.3.2 read a MultiLineString as nothing: DWR-2645, the inflow landed 192 m on the pool
+side).
 
 **Where the dam line is looked for (1.3.0).** `dam_line.geojson` (or `dam_line_linestring.geojson`, `dam_line.gpkg`, `.shp`) in the dam folder
 and its `inputs/`; `<work>/inputs/` and `<work>/handoff/<dam id>/` beside the `dams/` and `runs/` folders; the run folder and its

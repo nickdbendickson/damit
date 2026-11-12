@@ -87,6 +87,14 @@ trap '[[ -n "$SERVE_PID" ]] && kill $SERVE_PID 2>/dev/null' EXIT
 OLLAMA_VER=$(curl -sf http://127.0.0.1:11434/api/version | sed -E 's/.*"version": *"([^"]+)".*/\1/')
 ok "Ollama $OLLAMA_VER"
 
+# seed models from a pre-downloaded offline bundle (download-all-mac.sh), so pulls are skipped
+MODELS_DIR="${OLLAMA_MODELS:-$LOCAL_AI/models}"
+if [[ -d "$HERE/../offline/models/manifests" && ! -d "$MODELS_DIR/manifests" ]]; then
+  mkdir -p "$MODELS_DIR"
+  cp -R "$HERE/../offline/models/." "$MODELS_DIR/" 2>/dev/null \
+    && ok "seeded models from offline/models (no download needed)" || warn "could not seed offline models"
+fi
+
 # ---------------------------------------------------------------------------
 say "2/6  Models for this Mac"
 RAM_GB=$(( $(sysctl -n hw.memsize) / 1073741824 ))

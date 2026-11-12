@@ -44,7 +44,11 @@ SET_SOLVER = "NDBREACH_LISFLOOD_SOLVER"           # 3.16.0: default LISFLOOD-FP 
 SET_CREST_DEM = "NDBREACH_CREST_BURN_DEM"         # 3.15.0: the 1 m DEM (VRT) the crest burn reads
 
 METHODS = [(m, brmod.METHOD_LABELS[m]) for m in brmod.METHODS]
-from .popup_logic import HECRAS_GMSH_TIP, HECRAS_CREST_TIP   # noqa: E402  v3.10.22
+try:
+    from .popup_logic import HECRAS_GMSH_TIP, HECRAS_CREST_TIP   # noqa: E402  v3.10.22
+except ImportError:
+    HECRAS_GMSH_TIP = "Refine the HEC-RAS mesh with Gmsh points (optional)."
+    HECRAS_CREST_TIP = "The HEC-RAS dam line follows the crest (recommended)."
 TIERS = [(workflow.TIER_LISFLOOD, "LISFLOOD-FP only"),
          (workflow.TIER_BOTH, "LISFLOOD-FP for the extent, then ANUGA (final results from ANUGA)"),
          # appended (design #68): indices 0 and 1 and the default are unchanged
@@ -1674,22 +1678,25 @@ class RunDamAlgorithm(_Base):
                 continue
             g.transform(tf)
             parts = g.asMultiPolyline() if g.isMultipart() else [g.asPolyline()]
-            part = max(parts, key=lambda pl: len(pl))
-            if len(part) < 2:
+            # (0.3.2) joined end to end, then the longest by length (it was the one with most vertices, unjoined)
+            from ..flood import damfolder
+            part, part_note = damfolder.pick_dam_line([[(p.x(), p.y()) for p in pl] for pl in parts])
+            if not part:
                 continue
+            part = [QgsPointXY(x, y) for x, y in part]
             mid = _line_midpoint(part)
             d = ((mid.x() - dam_xy[0]) ** 2 + (mid.y() - dam_xy[1]) ** 2) ** 0.5
             line = [(p.x(), p.y()) for p in part]
             if best is None or d < best[0]:
-                best = (d, (mid.x(), mid.y()), line)
+                best = (d, (mid.x(), mid.y()), line, part_note)
             if sid:
                 break
         if best is None:
             return None, "", None
         if not sid and best[0] > 500:
             return None, "", None
-        return best[1], ("Crest taken from the dam line ({:.0f} m from the inventory point)."
-                         .format(best[0])), best[2]
+        return best[1], ("Crest taken from the dam line ({:.0f} m from the inventory point).{}"
+                         .format(best[0], (" " + best[3] + ".") if best[3] else "")), best[2]
 
     def dam_point(self, parameters, context, crs):
         """The dam point in `crs`: the parameter, else dam.json's point (v3.2.0)."""
@@ -2707,22 +2714,107 @@ class FinishAnugaAlgorithm(_Base):
         return out
 
 
+class DelineateAlgorithm(_Base):
+    """Delineate the watershed at a dam for PMF breach or spillway capacity checks.
+
+    Uses the USGS SS-Delineate API. Returns the basin polygon, drainage area,
+    and a suggested DEM extent (basin buffered by 1 km). Optional: only for
+    PMF inflow volume or spillway capacity calculations.
+    """
+
+    def name(self):
+        return "delineate"
+
+    def displayName(self):  # noqa: N802
+        return "Delineate watershed (PMF / spillway)"
+
+    def shortHelpString(self):  # noqa: N802
+        return ("Delineate the contributing watershed at the dam. For PMF breach "
+                "inflow volume or spillway capacity checks. Returns the basin "
+                "polygon, drainage area, and a suggested DEM extent.")
+
+    def initAlgorithm(self, config=None):  # noqa: N802
+        self.addParameter(QgsProcessingParameterPoint("POINT", "Dam location"))
+        self.addParameter(QgsProcessingParameterString("STATE", "State code (e.g. ND)", defaultValue="ND"))
+        self.addParameter(QgsProcessingParameterFile(
+            "OUTPUT", "Output folder", behavior=FILE_FOLDER))
+        self.addOutput(QgsProcessingOutputString("AREA_SQMI", "Drainage area (sq mi)"))
+        self.addOutput(QgsProcessingOutputString("DEM_EXTENT", "Suggested DEM extent (lon_min,lat_min,lon_max,lat_max)"))
+        self.addOutput(QgsProcessingOutputFile("BASIN", "Basin GeoJSON"))
+
+    def processAlgorithm(self, parameters, context, feedback):  # noqa: N802
+        import json
+        import math
+        import urllib.request
+        pt = self.parameterAsPoint(parameters, "POINT", context)
+        state = self.parameterAsString(parameters, "STATE", context).upper()
+        out_dir = self.parameterAsFile(parameters, "OUTPUT", context)
+        lon, lat = pt.x(), pt.y()
+        feedback.pushInfo("Delineating watershed at {:.5f}, {:.5f}...".format(lon, lat))
+        url = ("https://streamstats.usgs.gov/ss-delineate/v1/delineate/sshydro/{}"
+               "?lat={}&lon={}").format(state, lat, lon)
+        try:
+            with urllib.request.urlopen(url, timeout=120) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception as e:
+            raise QgsProcessingException("SS-Delineate failed: {}".format(e))
+        ws = data.get("bcrequest", {}).get("wsresp", {})
+        basin_geom = None
+        for fc in ws.get("featurecollection", []):
+            for item in fc:
+                if item.get("name") == "globalwatershed":
+                    basin_geom = item["feature"]["features"][0]["geometry"]
+                    break
+        if not basin_geom:
+            raise QgsProcessingException("No watershed polygon returned")
+        coords = basin_geom["coordinates"][0]
+        lons = [c[0] for c in coords]
+        lats = [c[1] for c in coords]
+        dlon = max(lons) - min(lons)
+        dlat = max(lats) - min(lats)
+        lat_mid = (max(lats) + min(lats)) / 2
+        area_approx = dlon * 69 * math.cos(math.radians(lat_mid)) * dlat * 69
+        buf_deg = 1000 / 111320
+        extent = "{},{},{},{}".format(min(lons) - buf_deg, min(lats) - buf_deg,
+                                      max(lons) + buf_deg, max(lats) + buf_deg)
+        basin_path = os.path.join(out_dir, "basin.geojson")
+        with open(basin_path, "w") as f:
+            json.dump({"type": "FeatureCollection", "features": [
+                {"type": "Feature", "geometry": basin_geom,
+                 "properties": {"area_sqmi_approx": round(area_approx, 1)}}
+            ]}, f)
+        feedback.pushInfo("Drainage area (approx): {:.1f} sq mi".format(area_approx))
+        feedback.pushInfo("Suggested DEM extent: {}".format(extent))
+        return {"AREA_SQMI": "{:.1f}".format(area_approx),
+                "DEM_EXTENT": extent, "BASIN": basin_path}
+
+
 CORE_ALGORITHMS = (RunDamAlgorithm, BatchAlgorithm, SensitivityAlgorithm, CascadeAlgorithm,
-                   HydrographAlgorithm, EstimateAlgorithm, CheckAlgorithm, FinishAnugaAlgorithm)
-from .algorithms_tools import TOOL_ALGORITHMS      # noqa: E402  (they build on _Base)
-from .algorithms_hydrology import HYDROLOGY_ALGORITHMS          # noqa: E402
-from .algorithms_adequacy import ADEQUACY_ALGORITHMS          # noqa: E402
-from .algorithms_consequences import CONSEQUENCE_ALGORITHMS     # noqa: E402
-from .algorithms_ndhazard import NDHAZARD_ALGORITHMS           # noqa: E402
-from .algorithms_report import REPORT_ALGORITHMS                # noqa: E402
-from .algorithms_hecras import HECRAS_ALGORITHMS                # noqa: E402
-from .algorithms_probabilistic import PROBABILISTIC_ALGORITHMS  # noqa: E402
-from .algorithms_animation import ANIMATION_ALGORITHMS          # noqa: E402
-from .algorithms_verification import VERIFICATION_ALGORITHMS    # noqa: E402
-from .algorithms_provenance import PROVENANCE_ALGORITHMS        # noqa: E402
-from .algorithms_selftest import SELFTEST_ALGORITHMS            # noqa: E402
-from .algorithms_nested import NESTED_ALGORITHMS                # noqa: E402
-from .algorithms_chain import CHAIN_ALGORITHMS                  # noqa: E402  3.10.67
+                   HydrographAlgorithm, EstimateAlgorithm, CheckAlgorithm, FinishAnugaAlgorithm,
+                   DelineateAlgorithm)
+
+def _opt(mod, name):
+    try:
+        m = __import__(f"damit_runner.algorithms.{mod}", fromlist=[name])
+        return getattr(m, name)
+    except ImportError:
+        return ()
+
+TOOL_ALGORITHMS = _opt("algorithms_tools", "TOOL_ALGORITHMS")
+HYDROLOGY_ALGORITHMS = _opt("algorithms_hydrology", "HYDROLOGY_ALGORITHMS")
+ADEQUACY_ALGORITHMS = _opt("algorithms_adequacy", "ADEQUACY_ALGORITHMS")
+CONSEQUENCE_ALGORITHMS = _opt("algorithms_consequences", "CONSEQUENCE_ALGORITHMS")
+NDHAZARD_ALGORITHMS = _opt("algorithms_ndhazard", "NDHAZARD_ALGORITHMS")
+REPORT_ALGORITHMS = _opt("algorithms_report", "REPORT_ALGORITHMS")
+HECRAS_ALGORITHMS = _opt("algorithms_hecras", "HECRAS_ALGORITHMS")
+PROBABILISTIC_ALGORITHMS = _opt("algorithms_probabilistic", "PROBABILISTIC_ALGORITHMS")
+ANIMATION_ALGORITHMS = _opt("algorithms_animation", "ANIMATION_ALGORITHMS")
+VERIFICATION_ALGORITHMS = _opt("algorithms_verification", "VERIFICATION_ALGORITHMS")
+PROVENANCE_ALGORITHMS = _opt("algorithms_provenance", "PROVENANCE_ALGORITHMS")
+SELFTEST_ALGORITHMS = _opt("algorithms_selftest", "SELFTEST_ALGORITHMS")
+NESTED_ALGORITHMS = _opt("algorithms_nested", "NESTED_ALGORITHMS")
+CHAIN_ALGORITHMS = _opt("algorithms_chain", "CHAIN_ALGORITHMS")
+
 ALGORITHMS = (CORE_ALGORITHMS + NESTED_ALGORITHMS + PROBABILISTIC_ALGORITHMS + TOOL_ALGORITHMS + HYDROLOGY_ALGORITHMS + ADEQUACY_ALGORITHMS
               + CONSEQUENCE_ALGORITHMS + NDHAZARD_ALGORITHMS + ANIMATION_ALGORITHMS + REPORT_ALGORITHMS
               + HECRAS_ALGORITHMS + PROVENANCE_ALGORITHMS + VERIFICATION_ALGORITHMS

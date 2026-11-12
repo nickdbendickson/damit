@@ -383,12 +383,14 @@ def toe_band_mask(grid, crest_line, downstream, band_m=None):
 
 
 def toe_band_inflow(grid, crest_line, downstream, dam_height_m, top_m, band_m=None, max_from_dam_m=None,
-                    dam_xy=None):
+                    dam_xy=None, info=None):
     """The lowest cell of the toe band downstream of the dam line along its full length (the side check: only
     cells on the downstream side of their nearest segment). Ties go to the cell nearest the line, then the dam
     point. When the band's lowest ground is not INFLOW_TOE_DROP of the dam height below the top of dam it is the
     dam's face and the outer edge moves out 10 m at a time (up to 60 m more, never past the cap).
-    Returns ((x, y), note) or (None, reason starting with NO_TOE)."""
+    Returns ((x, y), note) or (None, reason starting with NO_TOE). info, a dict, is filled for the caller (0.3.3): effective_inner_m,
+    effective_outer_m (the band the pick came from), original_outer_m, widened, widening_reason.
+    """
     if crest_line is None or len(crest_line) < 2:
         return None, "{}: no dam line".format(NO_TOE)
     if downstream is None:
@@ -441,9 +443,13 @@ def toe_band_inflow(grid, crest_line, downstream, dam_height_m, top_m, band_m=No
     note = ("lowest ground at the downstream toe: {:.0f}-{:.0f} m downstream of the dam line along its full length "
             "({:g} m DEM), {:.0f} m from the line, {:.1f} ft below the top of dam".format(lo, outer, grid.dx, d_line,
                                                                                          drop))
+    reason = ("the ground nearer is the dam's face, less than {:.0f} % of the dam height below its top"
+              .format(100 * INFLOW_TOE_DROP))
     if outer > hi + 1e-6:
-        note += (" (band widened from {:.0f} m: the ground nearer is the dam's face, less than {:.0f} % of the dam "
-                 "height below its top)".format(hi, 100 * INFLOW_TOE_DROP))
+        note += " (band widened from {:.0f} m: {})".format(hi, reason)
+    if info is not None:
+        info.update(effective_inner_m=float(lo), effective_outer_m=float(outer), original_outer_m=float(hi),
+                    widened=bool(outer > hi + 1e-6), widening_reason=reason if outer > hi + 1e-6 else None)
     if z[r, c] > half:
         note += "; less than half the dam height below the top of dam"
     elif z[r, c] > need:
@@ -533,9 +539,11 @@ def place_inflow(fine, dam_xy, crest_line, downstream, h_m, top_m, ds_slope_h=No
     band = {"inner_m": lo, "outer_m": hi, "rule": how, "height_known": known,
             "cap_m": INFLOW_MAX_FROM_DAM_M}
     if crest_line is not None and len(crest_line) >= 2 and downstream is not None and h_m:
+        eff = {}
         xy, note = toe_band_inflow(fine, crest_line, downstream, h_m, top_m, band_m=(lo, hi),
-                                   max_from_dam_m=min(INFLOW_MAX_FROM_DAM_M, hi + 60.0), dam_xy=dam_xy)
+                                   max_from_dam_m=min(INFLOW_MAX_FROM_DAM_M, hi + 60.0), dam_xy=dam_xy, info=eff)
         if xy is not None:
+            band.update(eff)                  # 0.3.3: the band the inflow really came from, and why it was widened
             return xy, note, band
         band["toe_band_failed"] = note
     xy, note = find_inflow_point(fine, dam_xy, h_m or 3.0, top_m, downstream=downstream, crest_line=crest_line)

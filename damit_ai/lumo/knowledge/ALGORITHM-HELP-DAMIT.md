@@ -14,7 +14,7 @@ Breach azimuth from the dam record (breach_azimuth_deg); otherwise estimated as 
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -40,7 +40,7 @@ Runs the DamSafety Screening tool-7 2D flood for each dam (the built-in finite-v
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -66,7 +66,7 @@ Writes <work>/handoff/<dam>/damit_handoff.json (schema damit.handoff v1) for dam
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -92,7 +92,7 @@ Checks the dam's own hydrograph CSV (time_hr, discharge_cfs) and records its pea
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -118,7 +118,7 @@ Checks, in seconds, what would make the screening fail or silently skip a step: 
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -147,7 +147,7 @@ The dam inventory is the USACE National Inventory of Dams (NID): every dam needs
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -173,7 +173,7 @@ Rewrites the Markdown run report from <work>/damit_screen/chain_summary.json (sc
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -199,7 +199,7 @@ Runs the preflight, then every dam (or the dam_ids in the settings) through: pre
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -227,7 +227,7 @@ Storage at the top of dam and at each selected scenario's pool (S1 normal pool, 
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -253,7 +253,7 @@ When the receptors already carry hydraulics (depth / DV / M1 chart zone), evalua
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -279,7 +279,7 @@ Records the DEM for each dam and checks it covers the dam point, in the DEM's ow
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
@@ -305,7 +305,7 @@ Feature-presence screen with catalog method M13 (no depths); recommends a detail
 
 Presets: FEMA333 = FEMA 333 baseline, USBR = USBR (ACER TM-11), BIA = BIA, NRCS = NRCS, ND = North Dakota (REG_05.2026), NE = Nebraska, NY = New York, VA = Virginia, TX = Texas, ID = Idaho, CO = Colorado, RI = Rhode Island, AZ = Arizona, CA = California, AK = Alaska, AL = Alabama, NC = North Carolina, USACE = USACE (FEMA 333 terminology), TVA = TVA (FEMA 333 tiers)
 
-Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.0 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
+Suggested classifications only; the engineer of record and the regulating agency make the determination. DamIT Screener 0.3.1 runs a 2D screening flood (the built-in engine in this process, or LISFLOOD-FP with engine2d = lisflood) and downloads larger clips from the USGS 3DEP service; it never starts ANUGA, HEC-RAS or Wine.
 
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|

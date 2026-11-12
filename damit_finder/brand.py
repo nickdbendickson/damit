@@ -31,5 +31,16 @@ IMAGE_SERVICES = [
 WATER_HELP = ("Layers: 3DHP / NHD waterbodies or the NWI as the mapped water bodies. The 'water' "
               "polygons with mapped = no are the ponds no layer has: give them to 'Find ponds and "
               "dugouts' as its water bodies to ask the LiDAR whether each is held above the ground.")
+# Build-the-water-mosaic tool: the output CRS of the per-tile count / elevation rasters. DamIT
+# builds for the whole U.S. (EPSG:5070, CONUS Albers), so tiles from any state land on one grid;
+# DamSafety builds for North Dakota (EPSG:26914).
+MOSAIC_EPSG = 5070
+MOSAIC_REGION = "the whole U.S. (CONUS Albers)"
+MOSAIC_HELP = ("Point it at a folder of classified LiDAR tiles (USGS 3DEP .las/.laz) and it writes "
+               "the water_count.vrt and water_elev.vrt that 'Find open water' reads with its "
+               "'Prebuilt class-9 water-count raster' input. Build it once per area; the open-water "
+               "tool then reads the mosaic a tile at a time, so a county or a whole state is in "
+               "reach without re-reading the raw point cloud. Tiles whose CRS is not in the file "
+               "need their EPSG. Dry land and the gaps between tiles read back as no water.")
 OSM_HELP = ("Use a Geofabrik extract of your state (https://download.geofabrik.de, <state>-latest.osm.pbf). "
             "Give the output to the other tools as a known-structure layer.")

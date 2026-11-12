@@ -633,7 +633,9 @@ def m8a(ctx):
         if a is not None:
             ca = 3 if a > P["high_above_aadt"] else (2 if a >= P["low_below_aadt"] else 1)
             why.append("AADT {:g}".format(a))
-            cls = ca if cls is None or (ca > cls and c not in P["low_classes"]) else cls
+            # The catalog takes the highest matching rule, so AADT raises a Low
+            # road class (a private road with AADT over 2,000 is High).
+            cls = ca if cls is None or ca > cls else cls
         if cls is None:
             ctx.flag(WARNING, "m8a_unknown", "road class and AADT unknown: not scored", "M8a",
                      r["id"])

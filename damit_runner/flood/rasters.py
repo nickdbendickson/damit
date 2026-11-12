@@ -244,7 +244,10 @@ def read_geojson_coords(path, kind=None):
         if t == "LineString" and kind in (None, "line"):
             return [(float(p[0]), float(p[1])) for p in c]
         if t == "MultiLineString" and kind in (None, "line"):
-            return [(float(p[0]), float(p[1])) for p in max(c, key=len)]
+            from . import damfolder
+            line, _note = damfolder.pick_dam_line([[p[:2] for p in part] for part in c], multi=True)
+            if line:
+                return line
     return None
 
 

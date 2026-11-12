@@ -9,7 +9,10 @@ suggest gives a preliminary class. Nothing here launches LISFLOOD-FP, ANUGA, HEC
 0.3.0: engine2d 'lisflood' runs the screening flood on LISFLOOD-FP instead (started only by DamIT Runner's
 flood/lisflood.py; no LISFLOOD-FP found = the built-in engine with a warning), and larger clips (larger_clips 1)
 are downloaded fresh from the USGS 3DEP service into the dam folder (flood/terrain3dep.py). ANUGA, HEC-RAS and Wine
-are never started."""
+are never started.
+
+0.3.1: a dam line that is a MultiLineString is read (DamIT Runner 0.3.2 flood/damfolder.py), and the engine2d notes say which part
+was used and why."""
 import csv
 import math
 import os
@@ -486,6 +489,8 @@ def engine2d(dam, settings=None, folder=None, hydro_step=None, receptors=None, l
          "cell_m": cell if cell > 0 else 10.0, "top_ft": top, "height_ft": h,
          "ds_slope": _num(dam.get("ds_slope_h")) or _num((info.get("fields") or {}).get("ds_slope_h"))}
     notes = []
+    if info.get("dam_line_note"):                       # a MultiLineString dam line: which part is used, and why
+        notes.append(info["dam_line_note"])
     try:
         wkt = R.model_wkt(dem, lonlat)
         csv_path = (hydro_step or {}).get("hydrograph_csv") or dam.get("hydrograph_csv")
