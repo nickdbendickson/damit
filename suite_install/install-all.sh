@@ -38,7 +38,7 @@ MINIFORGE_DIR="${DAMSUITE_MINIFORGE:-$HOME/miniforge3}"
 DS_PROFILE="${DAMSAFETY_PROFILE:-damsafety}"
 DI_PROFILE="${DAMIT_PROFILE:-damit}"
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP"
-DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp"
+DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
 DO_DS=1; DO_DI=1; DO_LUMO=1; DO_RESEARCH=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
 while [ $# -gt 0 ]; do
