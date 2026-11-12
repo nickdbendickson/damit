@@ -9,7 +9,7 @@ import shutil
 from . import catalog_bridge as CB
 from . import steps as ST
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 PROVIDER_ID = "damit_screen"
 OK, WARN, FAIL = "ok", "warn", "fail"
 MIN_FREE_MB = 200.0
