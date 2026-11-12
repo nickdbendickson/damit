@@ -1301,9 +1301,10 @@ DEFAULTS = {"side_buffer_ft": 1000.0, "end_buffer_ft": 2640.0, "cell_ft": 0.0,
             # 3.16.1: 'failure_mode' (HEC Piping, Froehlich 2008) is the default; 'match_plugin'
             # writes Overtopping for the plugin's routed (weir) methods
             "hec_breach_mode": "failure_mode",
-            # 3.16.2: Froehlich (2008) piping replaces the run's breach values ('overwrite');
-            # 'fill_missing' (opt-in) only fills what the run's method lacks
-            "breach_f2008": "overwrite",
+            # 3.16.2: 'fill_missing' (default) keeps a finished MLM / Von Thun / Froehlich
+            # 1995 opening; 'overwrite' replaces width, side slope and formation time with
+            # Froehlich (2008) piping. Overwrite published a narrower breach than Von Thun.
+            "breach_f2008": "fill_missing",
             "warmup_hold": True,                # spillway: hold the pool during the warm-up
             "tolerances": "default",            # or 'tight', or a dict (TOLERANCES keys)
             "mesh_seeds": None,                 # None: NDBREACH_HECRAS_MESH_SEEDS, else 'grid'
@@ -2706,10 +2707,11 @@ def build_model(dam_folder, out_folder=None, dem_path=None, crs=None, options=No
     notes = []
     progress(2, "reading the run")
     hy, dam, params = hecras.load_run(dam_folder)
-    # 3.16.2: Froehlich (2008) piping overwrites the run's breach values (default) or only
-    # fills what the run lacks; 3.16.4: with hec_breach_mode match_plugin and no explicit
-    # breach_f2008 option it only fills (match_plugin copies the plugin's breach; an
-    # Overtopping plan with piping widths and slopes would match neither)
+    # 3.16.2: Froehlich (2008) piping fills a breach the run's method left blank
+    # ('fill_missing', the default) or replaces the run's values ('overwrite').
+    # 3.16.4: with hec_breach_mode match_plugin and no explicit breach_f2008 option it
+    # only fills (match_plugin copies the plugin's breach; an Overtopping plan with
+    # piping widths and slopes would match neither).
     f08 = (options or {}).get("breach_f2008")
     if not f08:
         f08 = (hecras.F08_FILL if str(o.get("hec_breach_mode") or "").strip().lower()

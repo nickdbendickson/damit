@@ -12,8 +12,6 @@ import numpy as np
 
 from .geom import Grid, NODATA
 
-FT = 0.3048
-
 
 def _gdal():
     from osgeo import gdal, ogr, osr      # GDAL ships with QGIS
@@ -56,7 +54,11 @@ def dem_info(path):
         gt = ds.GetGeoTransform()
         wkt = ds.GetProjection()
         band = ds.GetRasterBand(1)
-        unit = (band.GetUnitType() or "").lower()
+        unit = (band.GetUnitType() or "").strip().lower()
+        vert = ""
+        if not unit:
+            from ..core import dem_zunit as ZU
+            vert = ZU.vertical_unit(ds) or ""
         nx, ny = ds.RasterXSize, ds.RasterYSize
         ds = None
     s = srs_from(wkt) if wkt else None
@@ -64,7 +66,7 @@ def dem_info(path):
     xs = (gt[0], gt[0] + nx * gt[1])
     ys = (gt[3], gt[3] + ny * gt[5])
     return {"wkt": wkt, "bounds": (min(xs), min(ys), max(xs), max(ys)), "cell": abs(gt[1]), "metric": metric,
-            "z_unit": unit, "size": (nx, ny)}
+            "z_unit": unit, "z_vert": vert, "size": (nx, ny)}
 
 
 def model_wkt(dem_path, lonlat):
@@ -74,17 +76,37 @@ def model_wkt(dem_path, lonlat):
     return utm_wkt(*lonlat)
 
 
+class DemZError(ValueError):
+    """The DEM records no elevation unit that can be trusted. Reading it as metres publishes a depth of 0."""
+
+
 def z_scale(info, z_units="auto"):
-    """Metres per DEM z unit: z_units 'm' / 'ft' / 'us_ft', or 'auto' from the band's unit type (metres when
-    it says nothing)."""
-    u = (z_units or "auto").lower()
-    if u == "auto":
-        u = info.get("z_unit") or "m"
-    if u in ("ft", "foot", "feet", "international foot"):
-        return FT
-    if u in ("us_ft", "us survey foot", "us-ft", "ftus", "foot_us"):
-        return 1200.0 / 3937.0
-    return 1.0
+    """Metres per DEM elevation unit.
+
+    z_units 'm' / 'ft' / 'us_ft' (and the other names dem_zunit.unit_choice accepts), or 'auto'
+    from the band unit, else a compound CRS vertical unit. Auto with nothing recorded raises
+    DemZError. A blank band unit is not metres: that is what zeroed a feet DEM (ground 1600
+    read as 1600 m, pool at the top of dam in real metres, depth clipped to 0).
+    """
+    from ..core import dem_zunit as ZU
+    u = (z_units or "auto").strip().lower()
+    if u != "auto":
+        choice = ZU.US_FEET if u == "us_feet" else ZU.unit_choice(u)
+        if not choice:
+            raise DemZError("Z_UNITS {!r} is not metres, feet, or US survey feet".format(z_units))
+        return ZU.TO_M[choice]
+    raw = (info.get("z_unit") or "").strip()
+    if raw:
+        choice = ZU.unit_choice(raw)
+        if not choice:
+            raise DemZError("the DEM's band unit {!r} is not feet or metres. Set Z_UNITS to "
+                            "m, ft, or us_ft.".format(raw))
+        return ZU.TO_M[choice]
+    choice = info.get("z_vert") or ""
+    if choice in ZU.TO_M:
+        return ZU.TO_M[choice]
+    raise DemZError("no elevation unit is recorded on the DEM (no band unit, no vertical CRS). "
+                    "Set Z_UNITS to m, ft, or us_ft. A blank unit is not read as metres.")
 
 
 def transform_points(points, src, dst):
