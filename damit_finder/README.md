@@ -16,7 +16,7 @@ Install: needs DamIT Core. Processing Toolbox → DamIT Finder → Find structur
 | Tool | Input | Finds |
 |---|---|---|
 | `damit_find:embankments` Find fills across streams and draws | bare-earth DEM; stream lines (3DHP / NHD flowlines, optional); roads and railroads (optional) | Every fill that blocks a valley a stream line **or a draw traced from the DEM** crosses: **dam** (holds water), **dry embankment** (a dry / detention dam, a levee, an unmapped crossing), **road fill (ponding)** (a road that holds water: the culvert is missing in the DEM, small or blocked), **road fill**; where each pool gets out (**spillways**); **dug pits** anywhere; **raised ridges** (levees, dikes) on request; a **score** with a model from the sixth tool |
-| `damit_find:ponds` Find ponds and dugouts | water-body polygons (3DHP / NHD waterbodies, NWI, your own), DEM | **embankment pond**, **dugout** (natural depressions on request) - the pond engine of DamSafety Screening's pond tool |
+| `damit_find:ponds` Find ponds and dugouts | water-body polygons (3DHP / NHD waterbodies, NWI, your own), DEM | **embankment pond**, **dugout** (natural depressions on request) - the suite's screening pond engine (`core/ponds.py`) |
 | `damit_find:crossings` Find road and rail crossings of streams | roads, railroads, stream lines; the first tool's fills, a DEM (optional) | Every crossing - the places a culvert or a bridge must be - with the fill there and, with a DEM, the drainage area and the round pipe the rational method asks for |
 | `damit_find:water` Find open water in aerial imagery | 4-band or colour-infrared imagery: USGS NAIP Plus, your own GeoTIFF / VRT, or any ArcGIS ImageServer address (a state's 4-band or colour-infrared service); mapped water bodies (optional) | Open-water outlines (one year, or the water of most of several years), each marked **mapped** or not: the pond outlines for the second tool when no layer has them |
 | `damit_find:osm` Extract dams, dikes and culverts from OpenStreetMap | an OpenStreetMap file (.osm.pbf, the Geofabrik extract) | `waterway=dam / weir`, `man_made=dyke / embankment`, `tunnel=culvert`, `ford=yes` as points: one more known-structure layer |
@@ -77,8 +77,20 @@ probability. Learn it with the sixth tool from runs over areas with many listed 
 cross-validated AUC it reports says how well it ranks dams it has not seen.
 
 Fills closer than 60 m are one. The DEM is read in 5 km tiles with a pad, so a county runs in
-bounded memory. The elevation unit comes from the raster (feet are scaled); the warp reads the
-full-resolution cells and keeps the values as stored (`core/warp_opts.py`, the DamSafety rule).
+bounded memory. The elevation unit is what the raster records (its band unit or a vertical CRS;
+USGS 3DEP files, `USGS_*`, are metres); a DEM that records none is refused until you choose Metres
+or Feet (feet read as metres made every fill 3.28 times too high). The log says which unit was
+used and warns when the ground it reads is outside North Dakota's 229-1070 m. The warp reads the
+full-resolution cells and keeps the values as stored (`core/warp_opts.py`).
+
+**What the output is.** A list to review, not a set of dams. In the review of 2026-11-11 none of
+5 "new dam" candidates checked on aerial photos was a dam (farm and road-ditch fills, a rail
+curve), and dikes beside a channel (lagoon and pond dikes) are not fills across it: turn on the
+raised-ridge search for those. Sort by the score and check each candidate on imagery.
+
+**Cancel** stops within the tile and the tool fails with "Cancelled" (the GeoPackage holds only
+the part done). Every output GeoPackage has a `run_info` table: the tool, the Finder version,
+GDAL, the time and every setting and input.
 
 What it cannot find: a fill the DEM has been hydro-enforced through (a culvert cut through it), a
 breached dam (correctly: it no longer blocks the valley), a pond with no polygon (draw it from imagery with the fourth tool).
@@ -127,7 +139,8 @@ work grid is CONUS Albers (EPSG:5070): Alaska, Hawaii and the territories are no
 * `embankments` / `ponds` / `crossings`: every candidate, new first, with `status`, `known_id`,
   `known_layer`, `known_ft`, heights in feet, storage in acre-feet, areas in acres, `confidence`
   and `notes`.
-* `screening_dams` / `screening_ponds`: the not-listed candidates that could release water, as
+* `screening_dams` / `screening_ponds`: the not-listed candidates that could release water
+  (dams, dry embankments, levees; never a road fill, which screening cuts to open its culvert), as
   dam records (`structure_id` = FIND-… / POND-…, `dam_name`, `max_dam_height` ft,
   `max_pool_vol` ac-ft, `max_pool_area` ac, `status` = Candidate) to send to the state or to screen
   once they are listed.
@@ -143,8 +156,8 @@ work grid is CONUS Albers (EPSG:5070): Alaska, Hawaii and the territories are no
 
 `core/embankments.py`, `core/listed.py`, `core/crossings.py`, `core/water.py`, `core/terrain.py`, `core/ridges.py`, `core/score.py` (new), `core/ponds.py`,
 `core/storage.py`, `core/warp_opts.py` (the DamSafety Screening engine files, the same bytes
-as in dAmIt_Plugins but for warp_opts' docstring), `finder.py` (the runs on files: GDAL / OGR, no QGIS), `plugin.py`
-(the Processing tools), `brand.py` (what differs from DamSafety Finder in dAmIt_Plugins).
+as in DWR_Plugins but for warp_opts' docstring), `finder.py` (the runs on files: GDAL / OGR, no QGIS), `plugin.py`
+(the Processing tools), `brand.py` (what differs from DamSafety Finder in DWR_Plugins).
 
 Tests: `python -m unittest damit_finder.tests.test_core damit_finder.tests.test_finder
 damit_finder.tests.test_qgis` (synthetic terrain and imagery, a mocked image service; the QGIS tests skip without QGIS).

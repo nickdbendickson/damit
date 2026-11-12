@@ -15,7 +15,7 @@ EMB_HELP = ("Layers: a bare-earth DEM (USGS 3DEP 1 m or 1/3 arc-second, a file o
             "review hillshade lit from all round. A candidate has no NID ID: DamIT Screener refuses it "
             "as a dam record (the NID-only rule) until the state or the NID lists it - report the new "
             "ones to the state dam-safety office.")
-POND_HELP = ("The pond engine is the one DamSafety Screening uses for its pond tool. Every pond is "
+POND_HELP = ("The pond engine is the suite's screening pond engine (core/ponds.py). Every pond is "
              "checked against the known structures: 'screening_ponds' holds the not-listed ponds that "
              "could release water.")
 CROSS_HELP = ("Known structures for crossings: NBI bridges (DamIT Data), state DOT culvert "
