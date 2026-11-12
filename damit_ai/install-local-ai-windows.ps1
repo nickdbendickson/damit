@@ -1,24 +1,24 @@
 <#
 =============================================================================
-install-local-ai-windows.ps1 — install BOTH local AIs (Lumo code-triage +
+install-local-ai-windows.ps1 — install BOTH local AIs (Pierre code-triage +
 dam-research literature) on Windows 10/11. The Windows counterpart of
-damit_ai/lumo/setup-local-lumo.sh and research/setup-dam-research.zsh.
+damit_ai/pierre/setup-local-pierre.sh and research/setup-dam-research.zsh.
 
   powershell -ExecutionPolicy Bypass -File .\install-local-ai-windows.ps1
-  .\install-local-ai-windows.ps1 -NoLumo          # dam-research only
-  .\install-local-ai-windows.ps1 -NoResearch      # Lumo only
+  .\install-local-ai-windows.ps1 -NoPierre          # dam-research only
+  .\install-local-ai-windows.ps1 -NoResearch      # Pierre only
   .\install-local-ai-windows.ps1 -Ocr             # dam-research with OCR (ocrmypdf + tesseract)
   .\install-local-ai-windows.ps1 -Small           # force the small chat model
   .\install-local-ai-windows.ps1 -NoIndex         # skip indexing the knowledge pack / engine docs
   .\install-local-ai-windows.ps1 -WatchModel phi4-mini   # the SMALL run-watcher explainer (default qwen3:4b);
-                                                         # -NoWatchModel skips pulling it. lumo (Q&A) keeps the big model.
+                                                         # -NoWatchModel skips pulling it. pierre (Q&A) keeps the big model.
 
   If 'ollama pull' fails (a proxy that breaks the registry redirect) the model's official GGUF is fetched from
   Hugging Face with curl.exe (https_proxy / $env:HF_ENDPOINT honoured), sha256-checked and loaded with 'ollama create'
-  under the same tag. $env:LUMO_NO_HF_FALLBACK = 1 turns that off.
+  under the same tag. $env:PIERRE_NO_HF_FALLBACK = 1 turns that off.
 
-By default, when Lumo is installed the Lumo knowledge pack (lumo\knowledge) and, if present,
-the dam-research engine docs are indexed into the RAG so Lumo comes up already knowing the
+By default, when Pierre is installed the Pierre knowledge pack (pierre\knowledge) and, if present,
+the dam-research engine docs are indexed into the RAG so Pierre comes up already knowing the
 suite's behaviours, findings and tool contracts. Pass -NoIndex to skip that.
 
 Policy (same as the Mac/Linux installers): NO download-then-run. Ollama,
@@ -34,13 +34,13 @@ If PowerShell blocks the script, start it with:
 #>
 [CmdletBinding()]
 param(
-  [switch]$NoLumo,
+  [switch]$NoPierre,
   [switch]$NoResearch,
   [switch]$Ocr,
   [switch]$Small,
   [switch]$IndexKnowledge,   # on by default; kept for compatibility
   [switch]$NoIndex,
-  [string]$WatchModel = $(if ($env:LUMO_WATCH_MODEL) { $env:LUMO_WATCH_MODEL } else { 'qwen3:4b' }),
+  [string]$WatchModel = $(if ($env:PIERRE_WATCH_MODEL) { $env:PIERRE_WATCH_MODEL } else { 'qwen3:4b' }),
   [switch]$NoWatchModel
 )
 $ErrorActionPreference = 'Stop'
@@ -52,9 +52,9 @@ $ResearchDir= Join-Path $LocalAI 'research'
 $RHome      = if ($env:DAMRESEARCH_HOME) { $env:DAMRESEARCH_HOME } else { Join-Path $env:USERPROFILE 'DamResearch' }
 $Downloads  = Join-Path $env:USERPROFILE 'Downloads'
 $Offline    = Join-Path $Here 'offline'
-$LumoEnv    = 'ndlumo'; $ResearchEnv = 'ndresearch'
+$PierreEnv    = 'ndpierre'; $ResearchEnv = 'ndresearch'
 $OllamaUrl  = 'http://127.0.0.1:11434'
-$DoLumo     = -not $NoLumo
+$DoPierre     = -not $NoPierre
 $DoResearch = -not $NoResearch
 
 function Say ($m) { Write-Host "`n== $m" -ForegroundColor White }
@@ -192,10 +192,10 @@ Ok "RAM $RamGB GB -> chat model $ChatModel (num_ctx $NumCtx)"
 # >>> hf_gguf_fallback (Windows copy of the bash block in install-local-ai-linux.sh; the table must match, a test checks it)
 # `ollama pull` can fail behind a proxy. Fallback: fetch the model's official GGUF from Hugging Face (curl.exe honours
 # https_proxy; $env:HF_ENDPOINT can point at a mirror), check its sha256, `ollama create` the SAME tag, delete the GGUF.
-# $env:LUMO_GGUF_SPEC = "repo file sha256 bytes" overrides the table; $env:LUMO_GGUF_DIR = scratch dir;
-# $env:LUMO_NO_HF_FALLBACK = 1 turns the fallback off.
+# $env:PIERRE_GGUF_SPEC = "repo file sha256 bytes" overrides the table; $env:PIERRE_GGUF_DIR = scratch dir;
+# $env:PIERRE_NO_HF_FALLBACK = 1 turns the fallback off.
 function Get-HfGgufSpec ($tag) {
-  if ($env:LUMO_GGUF_SPEC) { return ($env:LUMO_GGUF_SPEC -split '\s+') }
+  if ($env:PIERRE_GGUF_SPEC) { return ($env:PIERRE_GGUF_SPEC -split '\s+') }
   switch -Regex ($tag) {
     '^qwen3:4b$'          { return @('Qwen/Qwen3-4B-GGUF','Qwen3-4B-Q4_K_M.gguf','7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5','2497280256') }
     '^qwen3:8b$'          { return @('Qwen/Qwen3-8B-GGUF','Qwen3-8B-Q4_K_M.gguf','d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785','5027783488') }
@@ -208,14 +208,14 @@ function Get-HfGgufSpec ($tag) {
 }
 function New-OllamaFromHf ($tag) {
   $spec = Get-HfGgufSpec $tag
-  if (-not $spec) { Warn "no Hugging Face GGUF is known for $tag (set LUMO_GGUF_SPEC=`"repo file sha256 bytes`")"; return $false }
+  if (-not $spec) { Warn "no Hugging Face GGUF is known for $tag (set PIERRE_GGUF_SPEC=`"repo file sha256 bytes`")"; return $false }
   $repo, $file, $sha, $size = $spec; $size = [int64]$size
-  if ($env:LUMO_NO_HF_FALLBACK -eq '1') { Warn "LUMO_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return $false }
+  if ($env:PIERRE_NO_HF_FALLBACK -eq '1') { Warn "PIERRE_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return $false }
   if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { Warn "curl.exe not found: cannot fetch the GGUF for $tag"; return $false }
-  $dir = if ($env:LUMO_GGUF_DIR) { $env:LUMO_GGUF_DIR } else { Join-Path $env:TEMP 'lumo-gguf' }
+  $dir = if ($env:PIERRE_GGUF_DIR) { $env:PIERRE_GGUF_DIR } else { Join-Path $env:TEMP 'pierre-gguf' }
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $free = (Get-PSDrive -Name ((Resolve-Path $dir).Drive.Name)).Free
-  if ($free -lt ($size + [int64]($size / 10))) { Warn "not enough free space in $dir for the $([int]($size / 1MB)) MB GGUF (set LUMO_GGUF_DIR to a bigger disk)"; return $false }
+  if ($free -lt ($size + [int64]($size / 10))) { Warn "not enough free space in $dir for the $([int]($size / 1MB)) MB GGUF (set PIERRE_GGUF_DIR to a bigger disk)"; return $false }
   $ep = if ($env:HF_ENDPOINT) { $env:HF_ENDPOINT } else { 'https://huggingface.co' }
   $gguf = Join-Path $dir $file
   $have = if (Test-Path $gguf) { (Get-Item $gguf).Length } else { 0 }
@@ -249,8 +249,8 @@ function Pull ($m) {
 }
 
 # ===========================================================================
-if ($DoLumo) {
-  Say 'Lumo - code triage'
+if ($DoPierre) {
+  Say 'Pierre - code triage'
   Pull $ChatModel; Pull 'nomic-embed-text'
   # the run-watcher's explainer: a SMALL model. Stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs, so an
   # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
@@ -260,37 +260,37 @@ if ($DoLumo) {
       Ok "pulling $WatchModel (the small watcher model)"
       & $Ollama pull $WatchModel
       if ($LASTEXITCODE -ne 0) { if ([bool](@(New-OllamaFromHf $WatchModel))[-1]) { $global:LASTEXITCODE = 0 } }
-      if ($LASTEXITCODE -ne 0) { Warn "could not pull the watcher model $WatchModel (lumo-watch still gives the digest and verdict)" }
+      if ($LASTEXITCODE -ne 0) { Warn "could not pull the watcher model $WatchModel (pierre-watch still gives the digest and verdict)" }
     }
   }
-  $mf = Join-Path $LocalAI 'Modelfile.lumo'
+  $mf = Join-Path $LocalAI 'Modelfile.pierre'
 @"
 FROM $ChatModel
 PARAMETER num_ctx $NumCtx
 PARAMETER temperature 0.6
 PARAMETER top_p 0.95
 PARAMETER top_k 20
-SYSTEM """You are Lumo-Lite, a fully local assistant for dam-safety engineering work on this machine.
+SYSTEM """You are Pierre-Lite, a fully local assistant for dam-safety engineering work on this machine.
 - QGIS plugins of the ND dam suite and the DamSafety fork; QGIS 3.34 / Python 3.12 from conda-forge; CI also runs QGIS 4 / Qt6.
 - Crest: a TypeScript desk-screening app (screening, not hazard classification).
 - Dam hazard classification per USBR ACER TM-11 and ND state standards; depth/velocity/arrival rasters (EPSG:26914), LISFLOOD-FP and ANUGA outputs.
 Be precise about code, filenames, paths and units (ft vs m, cfs vs m3/s, NAVD88 vs local datum). Show the complete corrected function, never fragments. Never call sys.exit()/os._exit() in code that runs inside QGIS. Guard None before string ops. Only report a defect you can point to by line number in code you were shown. When uncertain, say UNSURE. Never recommend destructive operations without a backup and a dry-run."""
 "@ | Set-Content -Path $mf -Encoding UTF8
-  & $Ollama create lumo -f $mf | Out-Null
-  if ($LASTEXITCODE -ne 0) { Die 'lumo persona creation failed' }
-  Ok "'lumo' persona created"
-  $PyL = Make-Env $LumoEnv 'python=3.12 pymupdf pypdf numpy'
-  Ok "lumo python: $PyL"
-  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_lumo.py','run_digest.py','lumo_watch.py')) {
-    $src = Join-Path $Here "lumo\tools\$t"
+  & $Ollama create pierre -f $mf | Out-Null
+  if ($LASTEXITCODE -ne 0) { Die 'pierre persona creation failed' }
+  Ok "'pierre' persona created"
+  $PyL = Make-Env $PierreEnv 'python=3.12 pymupdf pypdf numpy'
+  Ok "pierre python: $PyL"
+  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_pierre.py','run_digest.py','pierre_watch.py')) {
+    $src = Join-Path $Here "pierre\tools\$t"
     if (Test-Path $src) { Copy-Item $src (Join-Path $LocalAI $t) -Force }
   }
-  $evalL = Join-Path $Here 'lumo\eval'
+  $evalL = Join-Path $Here 'pierre\eval'
   if (Test-Path $evalL) { Copy-Item $evalL (Join-Path $LocalAI 'eval') -Recurse -Force }   # code-triage eval set
-  # .cmd launchers so lumo/damchain work from cmd.exe too
-  "@echo off`r`n`"$PyL`" `"$LocalAI\rag_query.py`" %*" | Set-Content (Join-Path $LocalAI 'lumo.cmd') -Encoding ASCII
+  # .cmd launchers so pierre/damchain work from cmd.exe too
+  "@echo off`r`n`"$PyL`" `"$LocalAI\rag_query.py`" %*" | Set-Content (Join-Path $LocalAI 'pierre.cmd') -Encoding ASCII
   "@echo off`r`n`"$PyL`" `"$LocalAI\dam_chain.py`" %*" | Set-Content (Join-Path $LocalAI 'damchain.cmd') -Encoding ASCII
-  Ok "lumo tools -> $LocalAI"
+  Ok "pierre tools -> $LocalAI"
 }
 
 # ===========================================================================
@@ -327,9 +327,9 @@ SYSTEM """You are a research assistant for dam-safety engineers in North Dakota:
 
 # ===========================================================================
 $DoIndex = (-not $NoIndex)
-if ($DoIndex -and $DoLumo -and (Test-Path (Join-Path $Here 'lumo\knowledge'))) {
-  Say 'Indexing the Lumo knowledge pack'
-  & $PyL (Join-Path $LocalAI 'rag_index.py') -c lumo_knowledge (Join-Path $Here 'lumo\knowledge')
+if ($DoIndex -and $DoPierre -and (Test-Path (Join-Path $Here 'pierre\knowledge'))) {
+  Say 'Indexing the Pierre knowledge pack'
+  & $PyL (Join-Path $LocalAI 'rag_index.py') -c pierre_knowledge (Join-Path $Here 'pierre\knowledge')
   if ($LASTEXITCODE -ne 0) { Warn 'knowledge index failed' }
   $edocs = Join-Path $RHome 'library\references\software'
   if (Test-Path $edocs) {
@@ -340,7 +340,7 @@ if ($DoIndex -and $DoLumo -and (Test-Path (Join-Path $Here 'lumo\knowledge'))) {
 
 # ---------------------------------------------------------------------------
 Say "Step 5 - PowerShell profile ($PROFILE)"
-$mark = '# >>> dam local AI (lumo + dam-research) >>>'
+$mark = '# >>> dam local AI (pierre + dam-research) >>>'
 $profExists = Test-Path $PROFILE
 if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -Quiet)) {
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $PROFILE) | Out-Null
@@ -349,13 +349,13 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
     "`$env:OLLAMA_MODELS = '$ModelsDir'",
     "`$env:OLLAMA_FLASH_ATTENTION = '1'",
     "`$env:OLLAMA_KV_CACHE_TYPE = 'q8_0'")
-  if ($DoLumo) {
-    $lines += "`$env:LUMO_NUM_CTX = '$NumCtx'"
-    $lines += "function lumo     { & '$PyL' '$LocalAI\rag_query.py' @args }"
+  if ($DoPierre) {
+    $lines += "`$env:PIERRE_NUM_CTX = '$NumCtx'"
+    $lines += "function pierre     { & '$PyL' '$LocalAI\rag_query.py' @args }"
     $lines += "function damchain { & '$PyL' '$LocalAI\dam_chain.py' @args }"
-    $lines += "`$env:LUMO_WATCH_MODEL = '$WatchModel'"
-    $lines += "function lumo-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
-    $lines += "function lumo-watch  { & '$PyL' '$LocalAI\lumo_watch.py' @args }"
+    $lines += "`$env:PIERRE_WATCH_MODEL = '$WatchModel'"
+    $lines += "function pierre-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
+    $lines += "function pierre-watch  { & '$PyL' '$LocalAI\pierre_watch.py' @args }"
   }
   if ($DoResearch) {
     $lines += "`$env:DAMRESEARCH_HOME = '$RHome'"
@@ -371,7 +371,7 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
 # ---------------------------------------------------------------------------
 Say 'Done'
 Write-Host "  Open a new PowerShell (the profile loads automatically), then:"
-if ($DoLumo)     { Write-Host '    lumo "where is the breach width computed"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits' }
+if ($DoPierre)     { Write-Host '    pierre "where is the breach width computed"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits' }
 if ($DoResearch) { Write-Host "    damresearch ingest    # after dropping PDFs in $RHome\library (or run research\fetch_asdso.py --catalog)" }
-Write-Host "  .cmd launchers for cmd.exe are in $LocalAI (lumo.cmd, damchain.cmd) and $ResearchDir (damresearch.cmd)."
+Write-Host "  .cmd launchers for cmd.exe are in $LocalAI (pierre.cmd, damchain.cmd) and $ResearchDir (damresearch.cmd)."
 Write-Host '  The local AIs need no admin rights and no GPU; a discrete GPU only makes them faster.'

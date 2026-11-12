@@ -5,17 +5,25 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.2.3
+version=0.2.6
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
 tracker=https://github.com/nickdbendickson/damit/issues
 homepage=https://github.com/nickdbendickson/damit
+license=GPL-3.0-or-later
 experimental=True
 hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.2.6 - 2026-11-12
+      * Neighbourhood fill of a NoData receptor applies only on a depth grid coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m (strictly greater than; larger cell side, converted to metres from feet or other CRS units). At 20 m or finer, a NoData cell next to water is still scored dry (sampling=centre_nodata_dry) and flagged for review (nodata_dry_review). Coarser grids keep sampling=neighbourhood and nodata_neighbourhood. The report records the path, the threshold and the cell size. A dry (finite 0) cell is still scored dry.
+    0.2.5 - 2026-11-12
+      * When a structure sits on a NoData cell next to water, classify takes the peak depth and velocity over the wet cells in the 3x3 neighbourhood (and the footprint, if there is one), records sampling=neighbourhood, and flags the structure for review (nodata_neighbourhood). A dry (finite 0) cell is still scored dry. DWR-2659: three houses on NoData next to 1.5-3.0 ft water were scored dry. No change to habitability rules.
+    0.2.4 - 2026-11-12
+      * The window title reads the plugin version from metadata.txt (it still said 0.1.2 after 0.2.2).
+      * The jurisdiction preset note wraps instead of being clipped in the 760x720 window; the default size is 840x800.
     0.2.3 - 2026-11-12
       * M8a: a road whose class is Low (a private road) is no longer kept Low when its AADT is in a higher band. AADT over 2,000 is High and AADT of 500 to 2,000 is Significant, including a private road. A private road with AADT under 500 stays Low. This raises a published class; it does not lower one. The catalog already takes the highest matching rule.
     0.2.2 - 2026-11-11

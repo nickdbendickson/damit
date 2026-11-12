@@ -1,10 +1,13 @@
 """The only module in damit_pmp that starts a process, and only on an explicit request.
 
-Two optional jobs, both in the ANUGA Python the user names (damit_pmp never guesses an interpreter):
+Three optional jobs. Two run in the ANUGA Python the user names (damit_pmp never guesses an interpreter):
   * run_mesher: the runner's gmsh_mesher.py on the mesh spec, as anuga_model.make_gmsh_mesh does
     (clean environment, wall-clock timeout, SIGTERM then SIGKILL via the runner's wallclock.run);
   * run_script: the generated run_anuga_rain.py. damit_pmp:anugarain never calls it unless RUN_ANUGA
     is switched on (default off); the dry check (`run_anuga_rain.py --dry`) is the way to test a job.
+The third, run_lisflood, starts the LISFLOOD-FP executable on a prepared .par (damit_pmp:lisfloodrain, RUN_LISFLOOD,
+off by default), as the runner does (`lisflood -v <par>` in the job folder, OMP_NUM_THREADS), with the same
+wall-clock timeout and process-group stop.
 No shell is used; the command is always an argument list. tests/test_metadata_suite.py allows
 process launching in this one file and nowhere else in damit_pmp.
 """
@@ -83,3 +86,21 @@ def run_script(python, script, args=(), timeout_s=None, log=None):
     py = check_python(python)
     return wallclock.run([py, script] + [str(a) for a in args], cwd=os.path.dirname(os.path.abspath(script)),
                          env=clean_env(), timeout=timeout_s, grace=15.0, what="anuga", log=log)
+
+
+def run_lisflood(exe, par, threads=0, timeout_s=None, log=None):
+    """Run `exe -v <par>` in the .par's folder, as damit_runner's lisflood._run does (OMP_NUM_THREADS from
+    `threads`, 0 = the solver's own), with a wall-clock timeout. The output goes to lisflood.log next to the .par.
+    Returns the CompletedProcess; raises AR.JobError when the executable is not a file."""
+    exe = os.path.realpath(os.path.expanduser(str(exe or "")))
+    if not exe or not os.path.isfile(exe) or not os.access(exe, os.X_OK):
+        raise AR.JobError("the LISFLOOD-FP executable {!r} is not an executable file".format(exe))
+    env = dict(os.environ)
+    if threads:
+        env["OMP_NUM_THREADS"] = str(int(threads))
+    folder = os.path.dirname(os.path.abspath(par))
+    out = wallclock.run([exe, "-v", os.path.basename(par)], cwd=folder, env=env, timeout=timeout_s, grace=15.0,
+                        what="lisflood", log=log)
+    with open(os.path.join(folder, "lisflood.log"), "w", encoding="utf-8") as fh:
+        fh.write((out.stdout or "") + (out.stderr or ""))
+    return out

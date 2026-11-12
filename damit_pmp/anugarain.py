@@ -226,14 +226,19 @@ def domain_region(grid, polygon_rings):
     return m
 
 
-def outer_ring(grid, region, buffer_m=0.0, start_xy=None):
+def outer_ring(grid, region, buffer_m=0.0, start_xy=None, simplify_m=None):
     """The outer mesh ring of the domain: the runner's anuga_model.mesh_polygons rule for `outer`
     (the region kept a tolerance away from the DEM edge and no-data, the largest piece, outline
-    simplified by tol = max(min(buffer / 10, 3 dx), dx)). Returns (ring (N, 2), info)."""
+    simplified by tol = max(min(buffer / 10, 3 dx), dx), or by ``simplify_m`` when given: a jagged basin outline at a few
+    metres needs a coarser outline to pass the mesher's 20 degree gate). Returns (ring (N, 2), info)."""
     region = np.asarray(region, bool) & grid.valid()
     if buffer_m > 0:
         region = terrain.dilate(region, buffer_m, grid.dx)
     tol = max(min(buffer_m / 10.0, 3.0 * grid.dx), grid.dx)
+    if simplify_m is not None:
+        if simplify_m < grid.dx:
+            raise JobError("the outline simplification {:g} m is below the cell size {:g} m".format(simplify_m, grid.dx))
+        tol = float(simplify_m)
     valid_pad = np.pad(grid.valid(), 1, constant_values=False)
     near_bad = terrain.dilate(~valid_pad, tol + grid.dx, grid.dx)[1:-1, 1:-1]
     region = region & ~near_bad
@@ -315,7 +320,21 @@ def rain_depth_m(t, r):
 
 
 # ------------------------------------------------------------------ files
-def write_job(folder, grid, t, r, settings, sim_time_s, factor=None, fine=None):
+def orient_gauge(gauge, start_xy):
+    """The discharge section's two ends ordered so the flow through it is POSITIVE when it runs away from `start_xy`
+    (the flow-path start, i.e. downstream). ANUGA's Cross_section counts flow as positive to the RIGHT of the
+    polyline direction a -> b (checked with a uniform eastward flow: a north -> south line reads -Q, south -> north +Q),
+    i.e. along the normal (dy, -dx). LISFLOOD-FP's gauge in damit_pmp:lisfloodrain is positive away from the same
+    point, so the two series then have the same sign. Without a start the ends are left as given."""
+    if gauge is None or start_xy is None:
+        return gauge
+    (ax, ay), (bx, by) = gauge
+    nx, ny = by - ay, -(bx - ax)                                  # the positive normal of a -> b
+    away = nx * ((ax + bx) / 2.0 - start_xy[0]) + ny * ((ay + by) / 2.0 - start_xy[1])
+    return [(bx, by), (ax, ay)] if away < 0 else [(ax, ay), (bx, by)]
+
+
+def write_job(folder, grid, t, r, settings, sim_time_s, factor=None, fine=None, gauge=None):
     """anuga_rain_job.npz (model DEM, rain, run settings; the keys the runner's worker reads where
     it has them: dem, dem_x0, dem_y0, dem_dx, algorithm, threads, manning_n, edge_bc, sim_time,
     yieldstep, elev_fine_*) plus anuga_rain_settings.json. Returns the npz path."""
@@ -328,6 +347,8 @@ def write_job(folder, grid, t, r, settings, sim_time_s, factor=None, fine=None):
         job["factor"] = np.where(np.isfinite(factor), factor, 1.0)
     if fine:
         job.update(fine)
+    if gauge is not None:                         # two points (x, y) in the DEM CRS: a discharge section
+        job["gauge"] = np.asarray(gauge, float).reshape(2, 2)
     p = os.path.join(folder, JOB_NAME)
     np.savez(p, **job)
     return p

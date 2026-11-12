@@ -24,6 +24,25 @@ def _params(p):
     return json.dumps(p, sort_keys=True, ensure_ascii=False)
 
 
+def _nodata_sampling_lines(result):
+    """One Inputs line per run: depth-grid cell size, the 20 m threshold, and which NoData path applies."""
+    out = []
+    for p in result.get("nodata_sampling") or []:
+        cell = p.get("cell_m")
+        min_m = p.get("nodata_neighbourhood_min_cell_m", 20.0)
+        allowed = p.get("neighbourhood_allowed")
+        cell_s = "{:g} m".format(cell) if cell is not None else "unknown"
+        path = ("neighbourhood fill (sampling=neighbourhood, flag nodata_neighbourhood)"
+                if allowed else
+                "NoData scored dry (sampling=centre_nodata_dry, flag nodata_dry_review)")
+        who = p.get("scenario") or p.get("label") or "run"
+        out.append("NoData receptors ({}): depth-grid cell {} (larger side, converted to metres); "
+                   "neighbourhood fill only when the cell is coarser than "
+                   "NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m (strictly greater than). This run: {}."
+                   .format(who, cell_s, min_m, path))
+    return out
+
+
 def _dam_line(result):
     """The Inputs line for the dam record, in words (0.2.2). It used to print the record as JSON, so a run with no dam
     record file showed only {"name": "..."} (the DAM_NAME input) as if that were the record."""
@@ -124,6 +143,7 @@ def sections(result, cat):
     if result.get("nid_id"):
         lines.append("NID ID: {} (USACE National Inventory of Dams)".format(result["nid_id"]))
     lines.append(_dam_line(result))
+    lines.extend(_nodata_sampling_lines(result))
     out.append(("Inputs (R10: re-run when these change)", lines or ["-"]))
     cites = []
     if cfg["mode"] == "preset":

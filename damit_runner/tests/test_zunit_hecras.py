@@ -46,6 +46,33 @@ class ZScale(unittest.TestCase):
             ground_m = 1600.0 * R.z_scale({"z_unit": ""})
             (1650.0 * FT - ground_m) / FT
 
+    def test_3dep_source_is_metres_when_no_band_unit(self):
+        info = {"z_unit": "", "z_vert": "",
+                "z_source": "USGS 3DEP ImageServer (elevation.nationalmap.gov)",
+                "z_source_units": "metres", "path": "terrain_10m_epsg5070.tif"}
+        self.assertEqual(R.z_scale(info), 1.0)
+        factor, how = R.resolve_z(dict(info), "auto")
+        self.assertEqual(factor, 1.0)
+        self.assertTrue(how.startswith("assumed metres"))
+        self.assertIn("USGS 3DEP", how)
+
+    def test_usgs_star_filename_is_metres(self):
+        info = {"z_unit": "", "z_vert": "", "path": "/tmp/USGS_13_n46w098_20240613.tif",
+                "files": ["/tmp/USGS_13_n46w098_20240613.tif"]}
+        self.assertEqual(R.z_scale(info), 1.0)
+
+    def test_3dep_in_the_name_is_metres(self):
+        self.assertEqual(R.z_scale({"z_unit": "", "path": "clip_3dep_10m.tif"}), 1.0)
+
+    def test_explicit_feet_wins_over_a_3dep_cue(self):
+        info = {"z_unit": "", "z_source": "USGS 3DEP ImageServer (elevation.nationalmap.gov)",
+                "z_source_units": "metres"}
+        self.assertAlmostEqual(R.z_scale(info, "ft"), FT, places=9)
+
+    def test_unitless_without_a_3dep_cue_still_stops(self):
+        with self.assertRaises(R.DemZError):
+            R.z_scale({"z_unit": "", "z_vert": "", "path": "terrain_10m_epsg5070.tif"})
+
 
 class FeetDem(unittest.TestCase):
     def test_read_window_scales_us_survey_feet(self):
@@ -79,6 +106,16 @@ class FeetDem(unittest.TestCase):
             ds = None
             with self.assertRaises(R.DemZError):
                 R.read_window(path, (500000.0, 5199960.0, 500040.0, 5200000.0), 10.0, wkt)
+            # the same blank-unit file, tagged as USGS 3DEP, is read as metres (DWR-2659)
+            ds = gdal.Open(path, gdal.GA_Update)
+            ds.SetMetadataItem("SOURCE", "USGS 3DEP ImageServer (elevation.nationalmap.gov)")
+            ds.SetMetadataItem("UNITS", "metres")
+            ds = None
+            g = R.read_window(path, (500000.0, 5199960.0, 500040.0, 5200000.0), 10.0, wkt)
+            self.assertTrue(getattr(g, "z_how", "").startswith("assumed metres"))
+            self.assertAlmostEqual(float(g.z_to_m), 1.0)
+            # 1600 is now 1600 m, not 1600 ft: this only checks the assumption is applied
+            self.assertAlmostEqual(float(__import__("numpy").nanmean(g.data)), 1600.0, delta=0.1)
         finally:
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)

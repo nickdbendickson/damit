@@ -198,6 +198,10 @@ def simulate(p, hydro_t_s, hydro_q_cms, site, wkt, log=print, cancel=None, engin
         if radius in clips:
             terrain = clips[radius]
         grid = R.read_window(terrain["path"], b, cell, wkt, terrain.get("z_units"))
+        z_how = getattr(grid, "z_how", "") or ""
+        if z_how.startswith("assumed") and z_how not in notes:
+            notes.append(z_how)
+            log(z_how)
         dem = np.where(np.isfinite(grid.data), grid.data, NODATA)
         valid0 = dem > NODATA + 1
         nvalid = int(valid0.sum())

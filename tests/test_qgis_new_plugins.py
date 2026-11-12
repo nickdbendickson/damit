@@ -409,7 +409,7 @@ class PMP(unittest.TestCase):
 @unittest.skipUnless(QH.HAVE_QGIS, "qgis not importable")
 @mock.patch.object(subprocess, "Popen", _no_process)
 class PMPGrids(unittest.TestCase):
-    """damit_pmp 0.3.0: fetchgrid, gridbasin (fetch route) and raingrid with a fake PFDS and a fake NOAA download."""
+    """damit_pmp 0.3.0 tools: fetchgrid, gridbasin (fetch route) and raingrid with a fake PFDS and a fake NOAA download."""
 
     @classmethod
     def setUpClass(cls):
@@ -728,6 +728,250 @@ class PMPGrids(unittest.TestCase):
         with self.assertRaises(QgsProcessingException) as cm:
             processing.run("damit_pmp:raingrid", dict(args, SCALE_GRID=g2["OUTPUT"], SCALE_POINT="-96.985,46.915 [EPSG:4326]"))
         self.assertIn("scale grid is for the 6-hr duration", str(cm.exception))
+
+
+@unittest.skipUnless(QH.HAVE_QGIS, "qgis not importable")
+@mock.patch.object(subprocess, "Popen", _no_process)
+class PMPPatternsLossesWatershedLisflood(unittest.TestCase):
+    """damit_pmp 0.4.0: temporal patterns and losses in hyetograph / raingrid, damit_pmp:watershed and
+    damit_pmp:lisfloodrain, with a fake PFDS, a fake HDSC download and a fake 3DEP service. Nothing is launched."""
+
+    @classmethod
+    def setUpClass(cls):
+        from damit_pmp.provider import DamitPmpProvider
+        from damit_pmp.algorithms import pf_algs
+        QH.add_provider(DamitPmpProvider())
+        pf_algs._Base.pause_s = 0
+        cls.tmp = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        from damit_pmp.algorithms import pf_algs
+        from damit_pmp import demfetch
+        pf_algs._Base.http_client = None
+        pf_algs._Base.temporal_downloader = None
+        demfetch.OPENER = None
+        shutil.rmtree(cls.tmp)
+
+    def setUp(self):
+        import processing
+        from damit_pmp.algorithms import pf_algs
+        pf_algs._Base.http_client = FakePFDS("pfds_pds_english_fargo_nd.txt")
+        self.urls = []
+
+        def dl(url, dest):
+            self.urls.append(url)
+            shutil.copyfile(os.path.join(FIX_PMP, "mw_2_24h_temporal.csv"), dest)
+        pf_algs._Base.temporal_downloader = dl
+        self.cache = tempfile.mkdtemp(dir=self.tmp)
+        self.pt = processing.run("damit_pmp:pointpf", {"POINT": "-96.985,46.915 [EPSG:4326]", "CACHE_DIR": self.cache,
+                                                       "OUTPUT_CSV": os.path.join(self.cache, "p.csv"),
+                                                       "OUTPUT_JSON": os.path.join(self.cache, "p.json")})
+
+    def hyeto(self, name, **kw):
+        import processing
+        out = os.path.join(self.cache, name + ".csv")
+        args = {"INPUT_JSON": self.pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": 9, "STEP_MIN": 60, "OUTPUT_CSV": out,
+                "CACHE_DIR": os.path.join(self.cache, "tc")}
+        args.update(kw)
+        r = processing.run("damit_pmp:hyetograph", args)
+        with open(out) as fh:
+            return r, fh.read()
+
+    def test_default_hyetograph_has_no_loss_columns(self):
+        r, txt = self.hyeto("d0")
+        self.assertEqual(r["TOTAL"], r["EXCESS"])
+        self.assertNotIn("loss_", txt)
+        self.assertEqual(self.urls, [])
+
+    def test_nrcs_type_ii_keeps_the_atlas_14_depth(self):
+        r0, _ = self.hyeto("a0")
+        r, txt = self.hyeto("n2", PATTERN=4, OUTPUT_JSON=os.path.join(self.cache, "n2.json"))
+        self.assertAlmostEqual(r["TOTAL"], r0["TOTAL"], places=3)
+        with open(os.path.join(self.cache, "n2.json")) as fh:
+            j = json.load(fh)
+        self.assertEqual(j["pattern"], "nrcs2")
+        self.assertIn("shape option only", json.dumps(j))
+        self.assertEqual(self.urls, [])                                     # NRCS needs no download
+
+    def test_atlas_14_temporal_distribution_is_fetched_cited_and_recorded(self):
+        r, txt = self.hyeto("t1", PATTERN=1, TDA=2, OUTPUT_JSON=os.path.join(self.cache, "t1.json"))
+        self.assertEqual(self.urls, ["https://hdsc.nws.noaa.gov/pub/hdsc/data/mw/mw_2_24h_temporal.csv"])
+        with open(os.path.join(self.cache, "t1.json")) as fh:
+            j = json.load(fh)
+        rec = j["temporal"] if "temporal" in j else j["record"]
+        self.assertEqual((rec["area"], rec["quartile"], rec["percent_of_occurrence"]), (2, "second", 50))
+        self.assertEqual(len(rec["file"]["sha256"]), 64)
+        self.assertIn("Shape only", rec["note"])
+        self.assertIn("hdsc.nws.noaa.gov", txt)
+        r2, _ = self.hyeto("t2", PATTERN=1, TDA=2, OFFLINE=True)             # now from the cache
+        self.assertEqual(len(self.urls), 1)
+        self.assertAlmostEqual(r2["TOTAL"], r["TOTAL"])
+
+    def test_pattern_that_does_not_fit_the_storm_says_why(self):
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.hyeto("bad1", STORM=6, PATTERN=1, TDA=2)                    # 3-hr
+        self.assertIn("6-, 12-, 24- and 96-hour", str(cm.exception))
+        with self.assertRaises(QgsProcessingException) as cm:
+            self.hyeto("bad2", STORM=7, PATTERN=4)                           # 6-hr, NRCS 24 h
+        self.assertIn("24-hour curve", str(cm.exception))
+
+    def test_losses_in_inches_and_mm(self):
+        r0, _ = self.hyeto("l0")
+        r, txt = self.hyeto("l1", INITIAL_LOSS=0.5, CONSTANT_LOSS=0.05, LOSS_UNITS=0)
+        self.assertAlmostEqual(r["TOTAL"], r0["TOTAL"], places=3)
+        self.assertLess(r["EXCESS"], r0["TOTAL"] - 0.5)                    # at least the initial loss
+        self.assertGreater(r["EXCESS"], r0["TOTAL"] - 0.5 - 0.05 * 24)     # at most the constant loss every hour
+        self.assertIn("excess_in", txt)
+        rm, txtm = self.hyeto("l2", INITIAL_LOSS=12.7, CONSTANT_LOSS=1.27, LOSS_UNITS=1)
+        self.assertAlmostEqual(rm["EXCESS"], r["EXCESS"], delta=0.02)                      # the same losses given in mm
+        self.assertIn("excess_in", txtm)                                                    # the table stays in the Atlas 14 unit
+
+    def test_raingrid_pattern_and_losses_feed_both_solvers(self):
+        import processing
+        out = os.path.join(self.cache, "rg")
+        args = {"INPUT_JSON": self.pt["OUTPUT_JSON"], "FREQUENCY": 100, "STORM": 9, "STEP_MIN": 30, "PATTERN": 4,
+                "INITIAL_LOSS": 10, "CONSTANT_LOSS": 1, "LOSS_UNITS": 1, "OUTPUT_RAIN": out + ".rain",
+                "OUTPUT_ANUGA": out + "_a.csv", "OUTPUT_JSON": out + ".json"}
+        r = processing.run("damit_pmp:raingrid", args)
+        self.assertGreater(r["GROSS_MM"], r["TOTAL_MM"])
+        with open(out + ".json") as fh:
+            j = json.load(fh)
+        self.assertEqual(j["temporal_pattern"]["pattern"], "nrcs2")
+        self.assertIn("losses", j)
+        import numpy as np
+        t, rate = np.loadtxt(out + "_a.csv", delimiter=",", skiprows=1, unpack=True)
+        vol = float(getattr(np, "trapezoid", None) and np.trapezoid(rate, t) or np.trapz(rate, t)) * 1000.0
+        self.assertAlmostEqual(vol, r["TOTAL_MM"], delta=0.05 * r["TOTAL_MM"])
+        with self.assertRaises(QgsProcessingException):                     # nothing silently ignored: bad pattern for 3-hr
+            processing.run("damit_pmp:raingrid", dict(args, STORM=6, OUTPUT_RAIN=out + "x.rain", OUTPUT_ANUGA=out + "x_a.csv",
+                                                      OUTPUT_JSON=out + "x.json"))
+
+    # ---- damit_pmp:watershed ----
+    def _valley_dem(self, name, nx=90, ny=70, cell=30.0):
+        import numpy as np
+        rows, cols = np.indices((ny, nx))
+        z = 300.0 + 0.9 * np.abs(rows - ny // 2) + 0.15 * cols
+        path = os.path.join(self.cache, name)
+        write_tif(path, z, 500000.0, 5200000.0, cell, 26914)
+        return path, ny // 2, cell
+
+    def test_watershed_from_a_dem(self):
+        import processing
+        from qgis.core import QgsVectorLayer
+        from damit_pmp import demfetch
+        dem, rc, cell = self._valley_dem("v.tif")
+        demfetch.OPENER = lambda *a, **k: (_ for _ in ()).throw(AssertionError("the network must not be used with a DEM"))
+        x, y = 500000.0 + 4.5 * cell, 5200000.0 - (rc + 0.5) * cell
+        out = os.path.join(self.cache, "ws")
+        os.makedirs(out)
+        r = processing.run("damit_pmp:watershed", {"POINT": "{},{} [EPSG:26914]".format(x, y + 40), "DEM": dem, "SNAP_M": 120,
+                                                   "NID_AREA_SQMI": 1.5, "OUTPUT_BASIN": os.path.join(out, "b.gpkg"),
+                                                   "OUTPUT_POUR": os.path.join(out, "p.gpkg"),
+                                                   "OUTPUT_MASK": os.path.join(out, "m.tif"),
+                                                   "OUTPUT_JSON": os.path.join(out, "w.json")})
+        with open(os.path.join(out, "w.json")) as fh:
+            j = json.load(fh)
+        self.assertEqual(j["schema"], "damit.pmp.watershed")
+        self.assertAlmostEqual(r["AREA_SQMI"], j["area"]["sqmi"], places=3)
+        self.assertGreater(r["AREA_SQMI"], 0.5)
+        self.assertAlmostEqual(j["ratio_to_nid"], r["AREA_SQMI"] / 1.5, places=2)
+        self.assertEqual((j["nid_area_sqmi"], j["touches_dem_edge"]), (1.5, True))                  # the valley runs off the east edge: flagged
+        lyr = QgsVectorLayer(os.path.join(out, "b.gpkg"), "b", "ogr")
+        self.assertEqual(lyr.featureCount(), 1)
+        self.assertAlmostEqual(next(lyr.getFeatures()).geometry().area() / 2589988.110336, r["AREA_SQMI"], delta=0.01)
+        pour = next(QgsVectorLayer(os.path.join(out, "p.gpkg"), "p", "ogr").getFeatures()).geometry().asPoint()
+        self.assertAlmostEqual(pour.y(), y, delta=cell)                     # snapped onto the channel row
+        self.assertTrue(os.path.exists(os.path.join(out, "m.tif")))
+
+    def test_watershed_fetches_3dep_and_widens_when_the_basin_touches_the_edge(self):
+        import processing
+        import numpy as np
+        from urllib.parse import parse_qs, urlparse
+        from damit_pmp import demfetch
+        from damit_pmp.tests.test_watershed import tiff_bytes, _Resp
+        calls = []
+
+        def opener(url, timeout=None):
+            q = parse_qs(urlparse(url).query)
+            calls.append(url)
+            w, h = (int(v) for v in q["size"][0].split(","))
+            bbox = tuple(float(v) for v in q["bbox"][0].split(","))
+            return _Resp(tiff_bytes(w, h, bbox, 5070, 300.0))
+        demfetch.OPENER = opener
+        out = os.path.join(self.cache, "wf")
+        os.makedirs(out)
+        r = processing.run("damit_pmp:watershed", {"POINT": "-97.3911392,46.9833779 [EPSG:4326]", "FETCH_RADIUS_KM": 1.0,
+                                                   "FETCH_CELL_M": 30, "SNAP_M": 60, "WORK_DIR": out,
+                                                   "OUTPUT_BASIN": os.path.join(out, "b.gpkg"),
+                                                   "OUTPUT_JSON": os.path.join(out, "w.json")})
+        self.assertTrue(calls)
+        self.assertTrue(all("elevation.nationalmap.gov" in u for u in calls))
+        with open(os.path.join(out, "w.json")) as fh:
+            j = json.load(fh)
+        self.assertIn("3DEP", j["dem"]["source"])
+        self.assertIn("touches_dem_edge", j)
+        self.assertIn("3D Elevation Program", j["dem"]["citation"])
+        self.assertTrue(os.path.basename(j["dem"]["path"]).startswith("dem_3dep_30m_5070"))
+        self.assertTrue(os.path.exists(j["dem"]["path"]))
+        self.assertTrue(os.path.abspath(j["dem"]["path"]).startswith(os.path.abspath(out)))
+
+    # ---- damit_pmp:lisfloodrain: writes the job, launches nothing by default ----
+    def _lisflood_job(self, name, **kw):
+        import processing
+        from damit_pmp.tests.test_anuga_rain import make_dem
+        d = os.path.join(self.cache, name)
+        os.makedirs(d)
+        dem = os.path.join(d, "dem.tif")
+        make_dem(dem)
+        rate = os.path.join(d, "rate.csv")
+        with open(rate, "w") as fh:
+            fh.write("time_s,rate_m_per_s\n0,2.0e-7\n3599,2.0e-7\n3600,0\n7200,0\n")
+        args = {"DEM": dem, "EXTENT": "501000,503000,5196800,5198800 [EPSG:26914]", "RATE_CSV": rate, "CELL_M": 30,
+                "SIM_TIME_H": 3, "GAUGE_A": "502000,5197700 [EPSG:26914]", "GAUGE_B": "502000,5197500 [EPSG:26914]",
+                "FLOW_PATH_START": "501500,5198300 [EPSG:26914]", "OUTPUT_DIR": os.path.join(d, "job")}
+        args.update(kw)
+        return processing.run("damit_pmp:lisfloodrain", args), os.path.join(d, "job")
+
+    def test_lisfloodrain_writes_the_job_and_launches_nothing(self):
+        from qgis.core import QgsApplication
+        p = QgsApplication.processingRegistry().algorithmById("damit_pmp:lisfloodrain").parameterDefinition("RUN_LISFLOOD")
+        self.assertFalse(p.defaultValue())
+        r, out = self._lisflood_job("lf1")
+        for f in ("Model Terrain (LISFLOOD).tif", "rain.dem.asc", "rain.bci", "rain.rain", "rain.par", "rain.gauge",
+                  "rain_rate_m_per_s.csv", "run_manifest.json"):
+            self.assertTrue(os.path.exists(os.path.join(out, f)), f)
+        self.assertFalse(os.path.exists(os.path.join(out, "results")))
+        with open(os.path.join(out, "run_manifest.json")) as fh:
+            m = json.load(fh)
+        self.assertFalse(m["lisflood"]["launched"])
+        self.assertIsNone(m["results"])
+        self.assertEqual(m["settings"]["solver"], "acceleration")
+        self.assertIn("rainfall rain.rain", m["settings"]["par_lines"])
+        self.assertAlmostEqual(m["rain"]["depth_mm"], 2.0e-7 * 3599.5 * 1000, places=3)
+        from damit_pmp import lisfloodrain as LR
+        self.assertEqual(m["runner_shared_sha256"], LR.runner_sources())
+        self.assertEqual(r["CELLS"], m["domain"]["valid_cells"])
+        with open(os.path.join(out, "rain.par")) as fh:
+            par = fh.read()
+        self.assertIn("sim_time 10800", par)
+        self.assertIn("acceleration", par)
+
+    def test_lisfloodrain_fv2_is_written_with_the_cuda_warning(self):
+        r, out = self._lisflood_job("lf2", SOLVER=1)
+        with open(os.path.join(out, "run_manifest.json")) as fh:
+            m = json.load(fh)
+        self.assertEqual(m["settings"]["solver"], "fv2")
+        self.assertIn("limitslopes", m["settings"]["par_lines"])
+        self.assertIn("CUDA", m["settings"]["cuda_note"])
+
+    def test_lisfloodrain_run_needs_an_executable(self):
+        with self.assertRaises(QgsProcessingException) as cm:
+            self._lisflood_job("lf3", RUN_LISFLOOD=True, LISFLOOD_EXE=os.path.join(self.cache, "nope"))
+        self.assertIn("not a file", str(cm.exception))
+        with self.assertRaises(QgsProcessingException) as cm:
+            self._lisflood_job("lf4", GAUGE_B="")
+        self.assertIn("both GAUGE_A and GAUGE_B", str(cm.exception))
 
 
 if __name__ == "__main__":

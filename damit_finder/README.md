@@ -9,7 +9,7 @@ Screening aid. The LiDAR is not a survey: check every candidate against an aeria
 candidate is new to the lists you gave, not necessarily to the state dam-safety office. A new dam has no NID ID, so DamIT Screener
 refuses it as a dam record (the NID-only rule) until the state or the NID lists it.
 
-Install: needs DamIT Core. Processing Toolbox → DamIT Finder → Find structures.
+Install: Processing Toolbox → DamIT Finder → Find structures.
 
 ## The tools
 
