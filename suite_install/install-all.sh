@@ -12,7 +12,7 @@
 #   * QGIS 3.34 (conda env ndqgis), ANUGA 4.1 + gmsh 4.15 (env ndanuga)
 #   * LISFLOOD-FP 8.3 with the Runner patch: shipped binary on Linux; built from the
 #     official source with conda's clang on macOS (needs Apple's Command Line Tools)
-#   * the local AIs from damit_ai: Lumo (code triage) and dam-research (literature),
+#   * the local AIs from damit_ai: Pierre (code triage) and dam-research (literature),
 #     with Ollama, their conda env, the models and the reference library
 #   * one launcher per profile, and the Absaraka Dam (DWR-2801) run folder
 #
@@ -25,7 +25,7 @@
 #   bash install-all.sh                  # everything
 #   bash install-all.sh --offline        # refuse to download anything
 #   bash install-all.sh --check          # report what is installed
-#   options: --no-damsafety --no-damit --no-ai --no-lumo --no-research --skip-lisflood
+#   options: --no-damsafety --no-damit --no-ai --no-pierre --no-research --skip-lisflood
 #
 # It never touches your data folders (~/ND_Suite_Data, DamIT data), offline packs, or
 # any QGIS profile other than "damsafety" and "damit".
@@ -40,11 +40,11 @@ DI_PROFILE="${DAMIT_PROFILE:-damit}"
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
-DO_DS=1; DO_DI=1; DO_LUMO=1; DO_RESEARCH=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
+DO_DS=1; DO_DI=1; DO_PIERRE=1; DO_RESEARCH=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;
-    --no-ai) DO_LUMO=0; DO_RESEARCH=0 ;;  --no-lumo) DO_LUMO=0 ;;  --no-research) DO_RESEARCH=0 ;;
+    --no-ai) DO_PIERRE=0; DO_RESEARCH=0 ;;  --no-pierre) DO_PIERRE=0 ;;  --no-research) DO_RESEARCH=0 ;;
     --skip-lisflood) SKIP_LISFLOOD=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
     -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -95,7 +95,7 @@ env_prefix() { echo "$CONDA_BASE/envs/$1"; }
 if [ "$MODE" = check ]; then
   say "dam suite on $P"
   if [ -n "$CONDA_EXE" ]; then CONDA_BASE="$("$CONDA_EXE" info --base)"; echo "  conda: $CONDA_EXE"
-    for e in ndqgis ndanuga ndresearch ndlumo ndbuild; do
+    for e in ndqgis ndanuga ndresearch ndpierre ndbuild; do
       echo "    env $e: $( [ -d "$CONDA_BASE/envs/$e/conda-meta" ] && echo present || echo missing)"; done
   else echo "  conda: not found"; fi
   L="$PREFIX/bin/lisflood"
@@ -116,7 +116,7 @@ say "$STAMP on $P ($OS $ARCH).  Log: $LOG"
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
 ROLES="ndqgis ndanuga"
-[ $((DO_LUMO + DO_RESEARCH)) -gt 0 ] && ROLES="$ROLES ndresearch"
+[ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ] && ROLES="$ROLES ndresearch"
 # a locked package's local copy: offline/conda/<P>/<channel subdir>/<file> (noarch kept apart,
 # so conda reads each package's own subdir from the file:// URL)
 pkg_path() { local u="${1%/*}"; echo "$CONDA_PKGS/${u##*/}/${1##*/}"; }
@@ -320,11 +320,11 @@ if [ "$DO_DI" = 1 ]; then
 # 6. the local AIs (damit_ai's own installers; envs + Ollama + models from offline/)
 # ---------------------------------------------------------------------------
 AI_OK=""
-if [ $((DO_LUMO + DO_RESEARCH)) -gt 0 ]; then
-  say "Local AIs (Lumo $( [ "$DO_LUMO" = 1 ] && echo on || echo off), dam-research $( [ "$DO_RESEARCH" = 1 ] && echo on || echo off))"
+if [ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ]; then
+  say "Local AIs (Pierre $( [ "$DO_PIERRE" = 1 ] && echo on || echo off), dam-research $( [ "$DO_RESEARCH" = 1 ] && echo on || echo off))"
   # both AIs reuse these envs when they exist, so they come from the locked local packages
   [ "$DO_RESEARCH" = 1 ] && { make_env ndresearch ndresearch || warn "ndresearch env not built from offline/ (the AI installer will try conda-forge)"; }
-  [ "$DO_LUMO" = 1 ] && { make_env ndlumo ndresearch || warn "ndlumo env not built from offline/ (the AI installer will try conda-forge)"; }
+  [ "$DO_PIERRE" = 1 ] && { make_env ndpierre ndresearch || warn "ndpierre env not built from offline/ (the AI installer will try conda-forge)"; }
   if [ -d "$HERE/damit_ai/offline/models/manifests" ]; then
     mkdir -p "$HOME/local-ai/models"
     cp -R -n "$HERE/damit_ai/offline/models/." "$HOME/local-ai/models/" 2>/dev/null || true
@@ -337,15 +337,15 @@ if [ $((DO_LUMO + DO_RESEARCH)) -gt 0 ]; then
   fi
   export CONDA_EXE
   if [ "$OS" = Linux ]; then
-    AIF=""; [ "$DO_LUMO" = 1 ] || AIF="--no-lumo"; [ "$DO_RESEARCH" = 1 ] || AIF="--no-research"
+    AIF=""; [ "$DO_PIERRE" = 1 ] || AIF="--no-pierre"; [ "$DO_RESEARCH" = 1 ] || AIF="--no-research"
     # shellcheck disable=SC2086
     if PATH="$CONDA_BASE/bin:$PATH" bash "$HERE/damit_ai/install-local-ai-linux.sh" $AIF; then AI_OK=yes
     else warn "local AI setup failed (the plugin sets are installed anyway); re-run: bash damit_ai/install-local-ai-linux.sh"; fi
   else
     command -v zsh >/dev/null 2>&1 || die "zsh is needed for the macOS AI installers"
     AI_OK=yes
-    [ "$DO_LUMO" = 1 ] && { PATH="$CONDA_BASE/bin:$PATH" zsh "$HERE/damit_ai/lumo/setup-local-lumo.sh" \
-      || { AI_OK=""; warn "Lumo setup failed; re-run: zsh damit_ai/lumo/setup-local-lumo.sh"; }; }
+    [ "$DO_PIERRE" = 1 ] && { PATH="$CONDA_BASE/bin:$PATH" zsh "$HERE/damit_ai/pierre/setup-local-pierre.sh" \
+      || { AI_OK=""; warn "Pierre setup failed; re-run: zsh damit_ai/pierre/setup-local-pierre.sh"; }; }
     [ "$DO_RESEARCH" = 1 ] && { PATH="$CONDA_BASE/bin:$PATH" zsh "$HERE/damit_ai/research/setup-dam-research.zsh" \
       || { AI_OK=""; warn "dam-research setup failed; re-run: zsh damit_ai/research/setup-dam-research.zsh"; }; }
   fi
@@ -367,7 +367,7 @@ chk() { local dir="$1" p; shift; for p in "$@"; do
 [ "$DO_DS" = 1 ] && chk "$DS_DIR" $DS_PLUGINS
 # shellcheck disable=SC2086
 [ "$DO_DI" = 1 ] && chk "$DI_DIR" $DI_PLUGINS
-if [ $((DO_LUMO + DO_RESEARCH)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs installed" || FAIL=1; fi
+if [ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs installed" || FAIL=1; fi
 
 { echo "Installed by $STAMP on $(date)"
   [ -f "$HERE/plugins/VERSIONS.md" ] && grep -E '^Source|^- ' "$HERE/plugins/VERSIONS.md" | head -4

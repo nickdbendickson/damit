@@ -8,7 +8,7 @@ hand-flatten it:
     load(path)      the flat record: the nested "fields" on top of any top-level values; a flat file is unchanged
     discover(paths) with no DAM_JSON given: the nearest dam.json above the result rasters (up to 4 folders up), else
                     the run watcher's flat copy ~/local-ai/watch/<dam id>_<run folder>/dam_record_hazard.json that
-                    Lumo's run watcher (lumo_watch) writes beside its digest (never into the dam or run folder)
+                    Pierre's run watcher (pierre_watch) writes beside its digest (never into the dam or run folder)
 
 A record found this way is NOT trusted blindly: the caller did not ask for it, so a record that has no usable dam id
 is skipped (the classify run still goes on without it), and the report names the file that was used. Pure Python and

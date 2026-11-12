@@ -5,11 +5,11 @@ off the machine. They are kept apart: separate Ollama models, separate databases
 
 | Folder | Assistant | What it does | Ollama model | Data |
 |---|---|---|---|---|
-| [`lumo/`](lumo/) | **Lumo**, code triage | Audits plugin code (static pass + model pass), runs the plugin test suites, drives the plugin chain headless (`damchain`), explains failed runs | `lumo` | `~/local-ai/knowledge.db` |
+| [`pierre/`](pierre/) | **Pierre**, code triage | Audits plugin code (static pass + model pass), runs the plugin test suites, drives the plugin chain headless (`damchain`), explains failed runs | `pierre` | `~/local-ai/knowledge.db` |
 | [`research/`](research/) | **dam-research**, literature | Answers questions from your library of dam-safety / dam-design / flood-hazard publications, citing document and page; deep-research briefs with every quote checked against its page | `dam-research` | `~/DamResearch/research.db` |
 
 > **Both are assistants, not engineers.** A local model misreads code and papers often enough that
-> every Lumo finding must be confirmed against the live code with a failing test, and every
+> every Pierre finding must be confirmed against the live code with a failing test, and every
 > dam-research statement checked against the cited page of the source, before anything is
 > changed or relied on in a dam-safety decision.
 
@@ -24,14 +24,14 @@ plugin zip or CI job.
 
 ## Install
 
-1. **Lumo (installs Ollama too):**
+1. **Pierre (installs Ollama too):**
    ```zsh
-   cd damit_ai/lumo
-   zsh setup-local-lumo.sh                     # --small for a 16 GB Mac, --model TAG for any model
+   cd damit_ai/pierre
+   zsh setup-local-pierre.sh                     # --small for a 16 GB Mac, --model TAG for any model
    source ~/.zshrc
    ```
-   Commands: `lumo-start` (Ollama server, in its own tab), `lumo-chat`, `lumo-index`, `lumo-query`,
-   `lumo-audit`, `lumo-digest`, `lumo-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
+   Commands: `pierre-start` (Ollama server, in its own tab), `pierre-chat`, `pierre-index`, `pierre-query`,
+   `pierre-audit`, `pierre-digest`, `pierre-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
 
    **Repo audit:** `damchain audit --repo ~/path/to/DWR_Plugins` writes one report to
    `~/local-ai/reports/audit_<repo>_<time>.md` (and `.json`). It checks:
@@ -43,7 +43,7 @@ plugin zip or CI job.
       (never installed by the audit);
    3. network: every host the code names, written to `hosts_<repo>.txt` for IT; with
       `--allow-hosts FILE` any host not in the file is flagged;
-   4. `--lumo`: the local model reviews the diff against `origin/main`. Its findings are marked
+   4. `--pierre`: the local model reviews the diff against `origin/main`. Its findings are marked
       UNVERIFIED (triage only; confirm each with a failing test);
    5. golden runs: `damchain audit --golden-record --results ~/DamSafety/Dams --ids DWR-2801,DWR-4031`
       saves those dams' run_report.json numbers as a baseline, and after a plugin update rerun the
@@ -72,9 +72,9 @@ plugin zip or CI job.
    Full guide, model and memory trade-offs: [`research/INSTALL.md`](research/INSTALL.md).
    Starter reading list: [`research/READING-LIST.md`](research/READING-LIST.md).
 
-## Run watcher: Lumo reviews a DamIT run
+## Run watcher: Pierre reviews a DamIT run
 
-Lumo can watch a DamIT Runner run, but the review does not depend on the model. Two parts:
+Pierre can watch a DamIT Runner run, but the review does not depend on the model. Two parts:
 
 1. **`run_digest.py`, deterministic, no AI.** After each Runner pass it reads what the Runner already wrote (the
    per-pass record in `run_report.json`, the per-pass results, the dam folder, the Hazard report) and checks: `.mass`
@@ -84,48 +84,48 @@ Lumo can watch a DamIT Runner run, but the review does not depend on the model. 
    spillway flow; receptors on NoData or dry cells next to wet cells; unscored roads; Hazard drivers that need a person
    (e.g. BNSF KO = 15 trains/day). It prints a 20-40 line summary and machine flags (JSON), and **the code sets the
    verdict, OK / WATCH / PROBLEM, from the flags alone.**
-2. **`lumo_watch.py`, Lumo explains.** A 500-1,000 token prompt (the digest and flag titles, plus a pinned system
+2. **`pierre_watch.py`, Pierre explains.** A 500-1,000 token prompt (the digest and flag titles, plus a pinned system
    prompt of Nick's rules and the real tool names) goes to a **small model** (default `qwen3:4b`; `phi4-mini` is the
-   alternative; `LUMO_WATCH_MODEL` or `--model`), through Ollama `/api/chat` with `think:false`, `num_ctx` about 4k and
+   alternative; `PIERRE_WATCH_MODEL` or `--model`), through Ollama `/api/chat` with `think:false`, `num_ctx` about 4k and
    `stream:true`. Every streamed piece is saved at once, so a slow box leaves partial text; there is no hard timeout that
-   throws it away. Lumo never changes or gates the verdict, and if it does not answer in a few seconds the review stands.
+   throws it away. Pierre never changes or gates the verdict, and if it does not answer in a few seconds the review stands.
    The **complete flag list** (every flag, receptor ids capped at 10 plus a count) is written by code at the top of
-   `lumo_<event>.md`; Lumo's one-line comments go below it, and a footer names any flag it skipped or any flag-like id it
+   `pierre_<event>.md`; Pierre's one-line comments go below it, and a footer names any flag it skipped or any flag-like id it
    invented. Timing (`prompt_eval_duration`, `eval_duration`, tokens/s ...) and any `message.thinking` that arrived despite
    `think:false` are kept in the status JSON.
-   **Lumo does not compete with the Runner for the CPU.** `LUMO_WATCH_EXPLAIN=idle` (default) queues the explanation until the
+   **Pierre does not compete with the Runner for the CPU.** `PIERRE_WATCH_EXPLAIN=idle` (default) queues the explanation until the
    Runner's whole pipeline has finished (`run_progress.json` complete, `run_report.json`, or `run_setup.json` finished / failed)
-   and no `lisflood` process runs; a pass hook only queues. (1.2.0 waited for a quiet gap between passes and started Lumo 2 s
+   and no `lisflood` process runs; a pass hook only queues. (1.2.0 waited for a quiet gap between passes and started Pierre 2 s
    after pass 6 of DWR-2824, which slowed pass 7 from 26 s to 71 s: the Runner works in Python between passes.) A Runner that
-   died is treated as over after `LUMO_WATCH_STALE_S` (900 s) with nothing written to the run folder and no `lisflood` process.
+   died is treated as over after `PIERRE_WATCH_STALE_S` (900 s) with nothing written to the run folder and no `lisflood` process.
    `end` is the same gate, `always` is the old behaviour, `never` writes the digest only.
    **Pass hooks are cheap (1.3.1).** The structure layer is read and reprojected once per `watch` process and sampled with numpy
-   (one array lookup for all points); a `pass_end` hook samples receptors only on every Nth pass (`LUMO_WATCH_PASS_RECEPTOR_EVERY`,
-   default 2; 1 = every pass; 0 = only at `run_end`) and `watch` runs at nice 19 (`LUMO_WATCH_PASS_NICE`). `run_end` always samples the
+   (one array lookup for all points); a `pass_end` hook samples receptors only on every Nth pass (`PIERRE_WATCH_PASS_RECEPTOR_EVERY`,
+   default 2; 1 = every pass; 0 = only at `run_end`) and `watch` runs at nice 19 (`PIERRE_WATCH_PASS_NICE`). `run_end` always samples the
    final raster. `PASS_UNFINISHED` tolerates one `.mass` output interval (`massint`) when the log or the Runner agrees the pass ended. Ollama gets
-   `num_thread` 2 (`LUMO_WATCH_NUM_THREAD`, 0 = Ollama's default) and the explain process is niced. A busy shared Ollama is
-   waited for (`LUMO_WATCH_FIRST_TOKEN_S`, default 600; 0 = no limit): it ends as status `timeout`, not a partial reply.
+   `num_thread` 2 (`PIERRE_WATCH_NUM_THREAD`, 0 = Ollama's default) and the explain process is niced. A busy shared Ollama is
+   waited for (`PIERRE_WATCH_FIRST_TOKEN_S`, default 600; 0 = no limit): it ends as status `timeout`, not a partial reply.
    **1.3.2 (DWR-2645, DWR-2801).** Every `pass_end` digest carries receptors or `checks.receptors_skipped` with the reason (never a blank),
    and the hook waits for the Runner to write the finished pass into `run_progress.json` (its georeference; at most
-   `LUMO_WATCH_RECORD_GRACE_S`, 120 s). A mid-run hook does not read a pass grid that would leave under `LUMO_WATCH_MIN_FREE_MB` (1024) of RAM free,
+   `PIERRE_WATCH_RECORD_GRACE_S`, 120 s). A mid-run hook does not read a pass grid that would leave under `PIERRE_WATCH_MIN_FREE_MB` (1024) of RAM free,
    late-pass grids are read leaner (float32 above 4 M cells, edges streamed, no full-size copies), and Ollama keeps the model
-   `LUMO_WATCH_KEEP_ALIVE` (2m; it was 30m) after an explain. The dam line check reads the file: a MultiLineString counts, with its parts.
+   `PIERRE_WATCH_KEEP_ALIVE` (2m; it was 30m) after an explain. The dam line check reads the file: a MultiLineString counts, with its parts.
    **1.3.3 (DWR-2645).** A toe band the Runner widened (Runner 0.3.3 records the effective band and why) is judged by its effective
    band: an inflow inside it is the INFO note `TOE_BAND_WIDENED`, not a `TOE_INFLOW` problem. The Runner now warns when a run ends with a wet edge.
-   Interactive Q&A (`lumo`, `lumo-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
+   Interactive Q&A (`pierre`, `pierre-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
 
 Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
 
 ```
-lumo-digest RUN_DIR                       # the digest, no AI (add --json for the machine flags)
-lumo-watch watch RUN_DIR                  # follow a run; one digest per hook, Lumo explains the newest
-lumo-watch event run_end RUN_DIR          # one hook now (pass_end | stall | before_hazard | after_hazard | run_end)
+pierre-digest RUN_DIR                       # the digest, no AI (add --json for the machine flags)
+pierre-watch watch RUN_DIR                  # follow a run; one digest per hook, Pierre explains the newest
+pierre-watch event run_end RUN_DIR          # one hook now (pass_end | stall | before_hazard | after_hazard | run_end)
 ```
 
 Output goes to `~/local-ai/watch/<dam>_<run>/`, never into the run folder. Details, every flag id and the thresholds:
-[`lumo/knowledge/WATCHER-DIGEST.md`](lumo/knowledge/WATCHER-DIGEST.md). The real algorithm ids and parameters Lumo cites come
-from [`lumo/knowledge/ALGORITHM-HELP-DAMIT.md`](lumo/knowledge/ALGORITHM-HELP-DAMIT.md), generated from the plugin code by
-`lumo/tools/dump_damit_algorithm_help.py` in an offscreen QGIS (CI checks it is current).
+[`pierre/knowledge/WATCHER-DIGEST.md`](pierre/knowledge/WATCHER-DIGEST.md). The real algorithm ids and parameters Pierre cites come
+from [`pierre/knowledge/ALGORITHM-HELP-DAMIT.md`](pierre/knowledge/ALGORITHM-HELP-DAMIT.md), generated from the plugin code by
+`pierre/tools/dump_damit_algorithm_help.py` in an offscreen QGIS (CI checks it is current).
 
 No `dam.json` in the dam folder? The digest says so (`DAM_RECORD_MISSING`, info), does not raise a datum alarm for elevations in
 the NAVD88 range, takes the dam id from the run setup, the handoff or the folder name, and writes a flat
@@ -139,7 +139,7 @@ the NAVD88 range, takes the dam id from the run setup, the handoff or the folder
 
 ## Offline folder (nothing downloaded by the installers)
 
-The `damit_ai-offline` download adds `damit_ai/offline/` next to `lumo/` and `research/`:
+The `damit_ai-offline` download adds `damit_ai/offline/` next to `pierre/` and `research/`:
 
 - `offline/ollama/Ollama-darwin.zip` + `SHA256SUMS`: Ollama for Mac, checked against Ollama's
   published hash. Both installers use it, after checking the hash, instead of downloading Ollama.
@@ -150,27 +150,27 @@ The `damit_ai-offline` download adds `damit_ai/offline/` next to `lumo/` and `re
 
 Models still come from Ollama's registry (`ollama pull`, 17 to 24 GB each). They are too big to bundle. If `ollama pull` fails
 (for example behind a proxy), the Linux, Mac and Windows installers fall back to the model's Hugging Face GGUF (sha256 checked,
-resumable) and `ollama create` it under the same tag. `HF_ENDPOINT` points at a mirror, `LUMO_GGUF_SPEC` overrides the table,
-`LUMO_NO_HF_FALLBACK=1` turns the fallback off.
+resumable) and `ollama create` it under the same tag. `HF_ENDPOINT` points at a mirror, `PIERRE_GGUF_SPEC` overrides the table,
+`PIERRE_NO_HF_FALLBACK=1` turns the fallback off.
 
 ## Models by Mac
 
-| Mac | Lumo | dam-research |
+| Mac | Pierre | dam-research |
 |---|---|---|
 | Apple Silicon 48 GB+ | `qwen3:30b-a3b` | `qwen3.6:35b-a3b` (falls back to `qwen3:30b-a3b`) |
-| Apple Silicon 32 GB | `qwen3:30b-a3b` | `qwen3:30b-a3b`, sharing Lumo's download. `--model qwen3.6:27b` trades speed for quality |
+| Apple Silicon 32 GB | `qwen3:30b-a3b` | `qwen3:30b-a3b`, sharing Pierre's download. `--model qwen3.6:27b` trades speed for quality |
 | Apple Silicon 16-24 GB | `qwen3:14b` | `qwen3:14b` / `qwen3:8b` |
 | Intel Mac (CPU only) | `qwen3:30b-a3b` at 32 GB+, else `qwen3:8b` | `qwen3.6:35b-a3b` at 48 GB+, `qwen3:30b-a3b` at 32 GB |
 
-Embeddings: Lumo uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6b`.
+Embeddings: Pierre uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6b`.
 
 ## Status
 
-- `lumo/knowledge/` is a knowledge pack to index into Lumo's RAG beyond the source code (known behaviours /
+- `pierre/knowledge/` is a knowledge pack to index into Pierre's RAG beyond the source code (known behaviours /
   conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
-  it); see `lumo/knowledge/README.md` and `index-knowledge.zsh`.
-- `lumo/` is setup-local-lumo.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
-  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.3 and lumo_watch 1.3.3; `lumo-chat` shows the
+  it); see `pierre/knowledge/README.md` and `index-knowledge.zsh`.
+- `pierre/` is setup-local-pierre.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
+  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.3 and pierre_watch 1.3.3; `pierre-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.

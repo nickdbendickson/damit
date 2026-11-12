@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 # ============================================================================
-# install-local-ai-linux.sh — install BOTH local AIs (Lumo code-triage +
+# install-local-ai-linux.sh — install BOTH local AIs (Pierre code-triage +
 # dam-research literature) on Linux, tested for openSUSE (Tumbleweed/Leap) and
-# usable on any x86_64 Linux. The Linux counterpart of damit_ai/lumo/setup-local-lumo.sh
+# usable on any x86_64 Linux. The Linux counterpart of damit_ai/pierre/setup-local-pierre.sh
 # and research/setup-dam-research.zsh.
 #
 #   ./install-local-ai-linux.sh                 # both AIs
-#   ./install-local-ai-linux.sh --no-lumo        # dam-research only
-#   ./install-local-ai-linux.sh --no-research     # Lumo only
+#   ./install-local-ai-linux.sh --no-pierre        # dam-research only
+#   ./install-local-ai-linux.sh --no-research     # Pierre only
 #   ./install-local-ai-linux.sh --ocr             # dam-research with OCR (ocrmypdf + tesseract)
 #   ./install-local-ai-linux.sh --small           # force the small chat model
 #   ./install-local-ai-linux.sh --no-index        # skip indexing the knowledge pack / engine docs
 #   ./install-local-ai-linux.sh --watch-model=TAG # the SMALL run-watcher explainer (default qwen3:4b; phi4-mini is the
-#                                                 # alternative); --no-watch-model skips pulling it. lumo (Q&A) keeps the big model.
+#                                                 # alternative); --no-watch-model skips pulling it. pierre (Q&A) keeps the big model.
 #
 # If `ollama pull` fails (a proxy that breaks the registry redirect), the model's official GGUF is fetched from
 # Hugging Face (https_proxy / HF_ENDPOINT honoured), sha256-checked and loaded with `ollama create` under the
-# same tag (qwen3 4b/8b/14b/30b-a3b, phi4-mini, nomic-embed-text). LUMO_NO_HF_FALLBACK=1 turns that off.
+# same tag (qwen3 4b/8b/14b/30b-a3b, phi4-mini, nomic-embed-text). PIERRE_NO_HF_FALLBACK=1 turns that off.
 #
-# By default, when Lumo is installed the Lumo knowledge pack (lumo/knowledge) and, if present,
-# the dam-research engine docs are indexed into the RAG so Lumo comes up already knowing the
+# By default, when Pierre is installed the Pierre knowledge pack (pierre/knowledge) and, if present,
+# the dam-research engine docs are indexed into the RAG so Pierre comes up already knowing the
 # suite's behaviours, findings and tool contracts. Pass --no-index to skip that.
 #
 # Policy (same as the Mac installer): NO download-then-run. Ollama and Miniforge
@@ -33,19 +33,19 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_AI="$HOME/local-ai"
 MODELS_DIR="$LOCAL_AI/models"
-LUMO_TOOLS="$LOCAL_AI"                      # lumo tools live directly in ~/local-ai (match the Mac layout)
+PIERRE_TOOLS="$LOCAL_AI"                      # pierre tools live directly in ~/local-ai (match the Mac layout)
 RESEARCH_DIR="$LOCAL_AI/research"
 RHOME="${DAMRESEARCH_HOME:-$HOME/DamResearch}"
 DOWNLOADS="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"
 OFFLINE="$HERE/offline"
 RC="$HOME/.bashrc"; [[ -n "${ZSH_VERSION:-}" || -f "$HOME/.zshrc" ]] && RC="$HOME/.zshrc"
-LUMO_ENV="ndlumo"; RESEARCH_ENV="ndresearch"
+PIERRE_ENV="ndpierre"; RESEARCH_ENV="ndresearch"
 OLLAMA_HOST_URL="http://127.0.0.1:11434"
-DO_LUMO=1; DO_RESEARCH=1; OCR=0; SMALL=0; INDEX_KN=1
-WATCH_MODEL="${LUMO_WATCH_MODEL:-qwen3:4b}"
+DO_PIERRE=1; DO_RESEARCH=1; OCR=0; SMALL=0; INDEX_KN=1
+WATCH_MODEL="${PIERRE_WATCH_MODEL:-qwen3:4b}"
 
 for a in "$@"; do case "$a" in
-  --no-lumo) DO_LUMO=0 ;;
+  --no-pierre) DO_PIERRE=0 ;;
   --no-research) DO_RESEARCH=0 ;;
   --ocr) OCR=1 ;;
   --small) SMALL=1 ;;
@@ -162,13 +162,13 @@ elif (( RAM_GB >= 16 )); then CHAT_MODEL="qwen3:14b"
 else CHAT_MODEL="qwen3:8b"; fi
 NUM_CTX=16384; (( RAM_GB < 32 )) && NUM_CTX=12288
 ok "RAM ${RAM_GB} GB -> chat model $CHAT_MODEL (num_ctx $NUM_CTX)"
-# >>> hf_gguf_fallback (the same block is in install-local-ai-linux.sh and lumo/setup-local-lumo.sh; a test keeps them equal)
+# >>> hf_gguf_fallback (the same block is in install-local-ai-linux.sh and pierre/setup-local-pierre.sh; a test keeps them equal)
 # `ollama pull` can fail behind a proxy (the registry's manifest / redirect never completes). Fallback: fetch the model's
 # official GGUF from Hugging Face (curl honours https_proxy; HF_ENDPOINT can point at a mirror), check its sha256, write a
 # Modelfile and `ollama create` the SAME tag, then delete the GGUF (Ollama keeps its own copy).
-# LUMO_GGUF_SPEC="repo file sha256 bytes" overrides the table (another quant, or a mirror's file); LUMO_GGUF_DIR = scratch dir.
+# PIERRE_GGUF_SPEC="repo file sha256 bytes" overrides the table (another quant, or a mirror's file); PIERRE_GGUF_DIR = scratch dir.
 hf_gguf_spec(){
-  if [[ -n "${LUMO_GGUF_SPEC:-}" ]]; then echo "$LUMO_GGUF_SPEC"; return 0; fi
+  if [[ -n "${PIERRE_GGUF_SPEC:-}" ]]; then echo "$PIERRE_GGUF_SPEC"; return 0; fi
   case "$1" in
     qwen3:4b)       echo "Qwen/Qwen3-4B-GGUF Qwen3-4B-Q4_K_M.gguf 7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5 2497280256" ;;
     qwen3:8b)       echo "Qwen/Qwen3-8B-GGUF Qwen3-8B-Q4_K_M.gguf d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785 5027783488" ;;
@@ -181,14 +181,14 @@ hf_gguf_spec(){
 }
 hf_gguf_create(){
   local tag="$1" spec repo file sha size dir url got avail have
-  spec="$(hf_gguf_spec "$tag")" || { warn "no Hugging Face GGUF is known for $tag (set LUMO_GGUF_SPEC=\"repo file sha256 bytes\")"; return 1; }
+  spec="$(hf_gguf_spec "$tag")" || { warn "no Hugging Face GGUF is known for $tag (set PIERRE_GGUF_SPEC=\"repo file sha256 bytes\")"; return 1; }
   read -r repo file sha size <<< "$spec"
-  if [[ "${LUMO_NO_HF_FALLBACK:-0}" == 1 ]]; then warn "LUMO_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return 1; fi
+  if [[ "${PIERRE_NO_HF_FALLBACK:-0}" == 1 ]]; then warn "PIERRE_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return 1; fi
   command -v curl >/dev/null 2>&1 || { warn "curl not found: cannot fetch the GGUF for $tag"; return 1; }
-  dir="${LUMO_GGUF_DIR:-${TMPDIR:-/tmp}/lumo-gguf}"; mkdir -p "$dir" || return 1
+  dir="${PIERRE_GGUF_DIR:-${TMPDIR:-/tmp}/pierre-gguf}"; mkdir -p "$dir" || return 1
   avail=$(df -Pk "$dir" 2>/dev/null | awk 'NR==2{print $4*1024}')
   if [[ -n "$avail" ]] && (( avail < size + size / 10 )); then
-    warn "not enough free space in $dir for the $((size / 1048576)) MB GGUF (set LUMO_GGUF_DIR to a bigger disk)"; return 1
+    warn "not enough free space in $dir for the $((size / 1048576)) MB GGUF (set PIERRE_GGUF_DIR to a bigger disk)"; return 1
   fi
   url="${HF_ENDPOINT:-https://huggingface.co}/$repo/resolve/main/$file"
   have=$(wc -c < "$dir/$file" 2>/dev/null || echo 0); have="${have//[[:space:]]/}"
@@ -210,38 +210,38 @@ hf_gguf_create(){
 pull(){ "$OLLAMA" list 2>/dev/null | grep -q "^$1" || { ok "pulling $1 (first time, large)"; "$OLLAMA" pull "$1" || hf_gguf_create "$1" || die "pull failed: $1"; }; }
 
 # ===========================================================================
-if [[ "$DO_LUMO" == 1 ]]; then
-  say "Lumo — code triage"
+if [[ "$DO_PIERRE" == 1 ]]; then
+  say "Pierre — code triage"
   pull "$CHAT_MODEL"; pull "nomic-embed-text"
   # the run-watcher's explainer: a SMALL model. Stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs, so an
   # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
   case "$WATCH_MODEL" in phi) WATCH_MODEL="phi4-mini" ;; small) WATCH_MODEL="qwen3:4b" ;; esac
   if [[ -n "$WATCH_MODEL" ]]; then
     "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" || hf_gguf_create "$WATCH_MODEL" \
-      || warn "could not pull the watcher model $WATCH_MODEL (lumo-watch still gives the digest and verdict)"
+      || warn "could not pull the watcher model $WATCH_MODEL (pierre-watch still gives the digest and verdict)"
   fi
-  cat > "$LOCAL_AI/Modelfile.lumo" <<EOF
+  cat > "$LOCAL_AI/Modelfile.pierre" <<EOF
 FROM $CHAT_MODEL
 PARAMETER num_ctx $NUM_CTX
 PARAMETER temperature 0.6
 PARAMETER top_p 0.95
 PARAMETER top_k 20
-SYSTEM """You are Lumo-Lite, a fully local assistant for dam-safety engineering work on this machine.
+SYSTEM """You are Pierre-Lite, a fully local assistant for dam-safety engineering work on this machine.
 - QGIS plugins of the ND dam suite and the DamSafety fork; QGIS 3.34 / Python 3.12 from conda-forge; CI also runs QGIS 4 / Qt6.
 - Crest: a TypeScript desk-screening app (screening, not hazard classification).
 - Dam hazard classification per USBR ACER TM-11 and ND state standards; depth/velocity/arrival rasters (EPSG:26914), LISFLOOD-FP and ANUGA outputs.
 Be precise about code, filenames, paths and units (ft vs m, cfs vs m3/s, NAVD88 vs local datum). Show the complete corrected function, never fragments. Never call sys.exit()/os._exit() in code that runs inside QGIS. Guard None before string ops. Only report a defect you can point to by line number in code you were shown. When uncertain, say UNSURE. Never recommend destructive operations without a backup and a dry-run."""
 EOF
-  "$OLLAMA" create lumo -f "$LOCAL_AI/Modelfile.lumo" >/dev/null || die "lumo persona creation failed"
-  ok "'lumo' persona created"
-  PYL="$(make_env "$LUMO_ENV" "python=3.12 pymupdf pypdf numpy")"
-  ok "lumo python: $PYL"
-  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_lumo.py run_digest.py lumo_watch.py; do
-    [[ -f "$HERE/lumo/tools/$t" ]] && cp "$HERE/lumo/tools/$t" "$LUMO_TOOLS/$t"
+  "$OLLAMA" create pierre -f "$LOCAL_AI/Modelfile.pierre" >/dev/null || die "pierre persona creation failed"
+  ok "'pierre' persona created"
+  PYL="$(make_env "$PIERRE_ENV" "python=3.12 pymupdf pypdf numpy")"
+  ok "pierre python: $PYL"
+  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_pierre.py run_digest.py pierre_watch.py; do
+    [[ -f "$HERE/pierre/tools/$t" ]] && cp "$HERE/pierre/tools/$t" "$PIERRE_TOOLS/$t"
   done
-  [[ -d "$HERE/lumo/eval" ]] && cp -r "$HERE/lumo/eval" "$LUMO_TOOLS/eval"   # code-triage eval set (eval_lumo.py)
+  [[ -d "$HERE/pierre/eval" ]] && cp -r "$HERE/pierre/eval" "$PIERRE_TOOLS/eval"   # code-triage eval set (eval_pierre.py)
   printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$PYL" > "$LOCAL_AI/python"; chmod +x "$LOCAL_AI/python"
-  ok "lumo tools -> $LOCAL_AI"
+  ok "pierre tools -> $LOCAL_AI"
 fi
 
 # ===========================================================================
@@ -271,20 +271,20 @@ EOF
 fi
 
 # ===========================================================================
-if [[ "$INDEX_KN" == 1 && "$DO_LUMO" == 1 && -d "$HERE/lumo/knowledge" ]]; then
-  say "Indexing the Lumo knowledge pack"
-  "$PYL" "$LUMO_TOOLS/rag_index.py" -c lumo_knowledge "$HERE/lumo/knowledge" || warn "knowledge index failed"
+if [[ "$INDEX_KN" == 1 && "$DO_PIERRE" == 1 && -d "$HERE/pierre/knowledge" ]]; then
+  say "Indexing the Pierre knowledge pack"
+  "$PYL" "$PIERRE_TOOLS/rag_index.py" -c pierre_knowledge "$HERE/pierre/knowledge" || warn "knowledge index failed"
   # engine docs, if the dam-research library has them downloaded
   EDOCS="$RHOME/library/references/software"
   if [[ -d "$EDOCS" ]]; then
-    "$PYL" "$LUMO_TOOLS/rag_index.py" -c engine_docs "$EDOCS" || warn "engine-docs index failed"
+    "$PYL" "$PIERRE_TOOLS/rag_index.py" -c engine_docs "$EDOCS" || warn "engine-docs index failed"
     ok "indexed engine docs from $EDOCS"
   fi
 fi
 
 # ---------------------------------------------------------------------------
 say "Step 5 — shell config ($RC)"
-MARK="# >>> dam local AI (lumo + dam-research) >>>"
+MARK="# >>> dam local AI (pierre + dam-research) >>>"
 if ! grep -qF "$MARK" "$RC" 2>/dev/null; then
   cp "$RC" "$RC.bak-localai" 2>/dev/null || true
   {
@@ -293,12 +293,12 @@ if ! grep -qF "$MARK" "$RC" 2>/dev/null; then
     echo "export OLLAMA_MODELS=\"$MODELS_DIR\""
     echo "export OLLAMA_FLASH_ATTENTION=1"
     echo "export OLLAMA_KV_CACHE_TYPE=q8_0"
-    [[ "$DO_LUMO" == 1 ]] && echo "export LUMO_NUM_CTX=$NUM_CTX"
-    [[ "$DO_LUMO" == 1 ]] && echo "alias lumo='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\"'"
-    [[ "$DO_LUMO" == 1 ]] && echo "alias damchain='\"$LOCAL_AI/python\" \"$LOCAL_AI/dam_chain.py\"'"
-    [[ "$DO_LUMO" == 1 ]] && echo "export LUMO_WATCH_MODEL=\"${WATCH_MODEL:-qwen3:4b}\""
-    [[ "$DO_LUMO" == 1 ]] && echo "alias lumo-digest='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_digest.py\"'"
-    [[ "$DO_LUMO" == 1 ]] && echo "alias lumo-watch='\"$LOCAL_AI/python\" \"$LOCAL_AI/lumo_watch.py\"'"
+    [[ "$DO_PIERRE" == 1 ]] && echo "export PIERRE_NUM_CTX=$NUM_CTX"
+    [[ "$DO_PIERRE" == 1 ]] && echo "alias pierre='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\"'"
+    [[ "$DO_PIERRE" == 1 ]] && echo "alias damchain='\"$LOCAL_AI/python\" \"$LOCAL_AI/dam_chain.py\"'"
+    [[ "$DO_PIERRE" == 1 ]] && echo "export PIERRE_WATCH_MODEL=\"${WATCH_MODEL:-qwen3:4b}\""
+    [[ "$DO_PIERRE" == 1 ]] && echo "alias pierre-digest='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_digest.py\"'"
+    [[ "$DO_PIERRE" == 1 ]] && echo "alias pierre-watch='\"$LOCAL_AI/python\" \"$LOCAL_AI/pierre_watch.py\"'"
     [[ "$DO_RESEARCH" == 1 ]] && echo "export DAMRESEARCH_HOME=\"$RHOME\""
     [[ "$DO_RESEARCH" == 1 ]] && echo "alias damresearch='\"$RESEARCH_DIR/python\" \"$RESEARCH_DIR/damresearch.py\"'"
     echo "# <<< dam local AI <<<"
@@ -313,7 +313,7 @@ say "Done"
 cat <<EOF
   Open a new shell (or: source $RC), then:
 EOF
-[[ "$DO_LUMO" == 1 ]] && echo "    lumo \"where is the breach width computed\"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits"
+[[ "$DO_PIERRE" == 1 ]] && echo "    pierre \"where is the breach width computed\"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits"
 [[ "$DO_RESEARCH" == 1 ]] && echo "    damresearch ingest    # after dropping PDFs in $RHOME/library (or run research/fetch_asdso.py --catalog)"
 cat <<EOF
   openSUSE GUI-QGIS note (only if you also run the plugins here): a conda QGIS may need system

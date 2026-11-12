@@ -47,17 +47,17 @@ Full details of every tool, setting and file: [docs/REFERENCE.md](docs/REFERENCE
 ## Models used, and where they come from
 
 **Local AI helpers** (optional, run on your own computer through [Ollama](https://ollama.com); nothing leaves the machine).
-*Lumo* helps triage plugin code and failed runs; *dam-research* answers questions from dam-safety papers
+*Pierre* helps triage plugin code and failed runs; *dam-research* answers questions from dam-safety papers
 with page citations. Both are assistants, not engineers. The installer picks the model by your computer's memory.
 
 | Model (Ollama tag) | Used by | Made by | Downloaded from | License |
 |---|---|---|---|---|
-| `qwen3:30b-a3b`, `qwen3:14b`, `qwen3:8b` | Lumo, dam-research (chat) | Alibaba Qwen | Ollama library; fallback Hugging Face [`Qwen/Qwen3-*-GGUF`](https://huggingface.co/Qwen) | Apache-2.0 |
-| `qwen3:4b` | Lumo run-watcher | Alibaba Qwen | Ollama library; fallback [`Qwen/Qwen3-4B-GGUF`](https://huggingface.co/Qwen/Qwen3-4B-GGUF) | Apache-2.0 |
+| `qwen3:30b-a3b`, `qwen3:14b`, `qwen3:8b` | Pierre, dam-research (chat) | Alibaba Qwen | Ollama library; fallback Hugging Face [`Qwen/Qwen3-*-GGUF`](https://huggingface.co/Qwen) | Apache-2.0 |
+| `qwen3:4b` | Pierre run-watcher | Alibaba Qwen | Ollama library; fallback [`Qwen/Qwen3-4B-GGUF`](https://huggingface.co/Qwen/Qwen3-4B-GGUF) | Apache-2.0 |
 | `qwen3.6:35b-a3b`, `qwen3.6:27b` | dam-research on 32–48 GB+ machines | Alibaba Qwen | Ollama library ([Qwen3.6 on Hugging Face](https://huggingface.co/Qwen)) | Apache-2.0 |
-| `phi4-mini` (alternative) | Lumo run-watcher | Microsoft | Ollama library; fallback [`unsloth/Phi-4-mini-instruct-GGUF`](https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF) | MIT |
+| `phi4-mini` (alternative) | Pierre run-watcher | Microsoft | Ollama library; fallback [`unsloth/Phi-4-mini-instruct-GGUF`](https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF) | MIT |
 | `qwen3-embedding:0.6b` | dam-research (search index) | Alibaba Qwen | Ollama library | Apache-2.0 |
-| `nomic-embed-text` (v1.5) | Lumo (search index); dam-research fallback | Nomic AI | Ollama library; fallback [`nomic-ai/nomic-embed-text-v1.5-GGUF`](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF) | Apache-2.0 |
+| `nomic-embed-text` (v1.5) | Pierre (search index); dam-research fallback | Nomic AI | Ollama library; fallback [`nomic-ai/nomic-embed-text-v1.5-GGUF`](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF) | Apache-2.0 |
 
 Hugging Face fallbacks are checked against a pinned SHA-256. No model weights are stored in this repository.
 

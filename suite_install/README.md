@@ -10,7 +10,7 @@ and macOS (Apple Silicon or Intel, macOS 13+):
 | **QGIS 3.34** | conda env `ndqgis` |
 | **ANUGA 4.1 + gmsh 4.15** (the Runners mesh with gmsh) | conda env `ndanuga` |
 | **LISFLOOD-FP 8.3** with the Runner patch (`inittm_depth`) | `~/dam-suite/bin` (Windows/Linux: shipped binary; macOS: built at install) |
-| **Local AIs**: Lumo (code triage) and dam-research (literature), with Ollama, models and library | `~/local-ai`, `~/DamResearch` (damit_ai's own installers) |
+| **Local AIs**: Pierre (code triage) and dam-research (literature), with Ollama, models and library | `~/local-ai`, `~/DamResearch` (damit_ai's own installers) |
 | A launcher per profile, and the Absaraka Dam (DWR-2801) run folder | `~/dam-suite` |
 
 Everything installs for you only: **no sudo or admin, no pip, no system packages.** Your data
@@ -55,9 +55,9 @@ deleted, and nothing downloaded is piped into a shell.
 | macOS | `bash install-all.sh` (keep the folder in your home folder, not Downloads) |
 | Windows | double-click `install-all-windows.cmd` |
 
-Options: `--no-damsafety`, `--no-damit`, `--no-ai`, `--no-lumo`, `--no-research`,
+Options: `--no-damsafety`, `--no-damit`, `--no-ai`, `--no-pierre`, `--no-research`,
 `--skip-lisflood`, `--offline` (never download), `--check` (report what's installed).
-On Windows the options are `-NoDamSafety`, `-NoDamIT`, `-NoAI`, `-NoLumo`, `-NoResearch`,
+On Windows the options are `-NoDamSafety`, `-NoDamIT`, `-NoAI`, `-NoPierre`, `-NoResearch`,
 `-SkipLisflood`, `-Offline`, `-Check` and `-NoShortcuts`.
 
 - **macOS never downloads from the installer**, the same as the earlier Mac packages. If the
