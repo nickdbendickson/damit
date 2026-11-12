@@ -45,6 +45,12 @@
 #   zsh setup-local-pierre.sh --watch-model TAG   # the SMALL run-watcher explainer (default qwen3:4b; phi4-mini is the
 #                                               # alternative); --no-watch-model skips pulling it. Interactive
 #                                               # Q&A (pierre-chat) keeps the big model chosen above.
+#   zsh setup-local-pierre.sh --no-index-knowledge  # don't index pierre/knowledge into the RAG
+#
+# v3.9: the knowledge pack is indexed into collection 'pierre_knowledge' (Step 7).
+#   install-local-ai-linux.sh and install-local-ai-windows.ps1 have always done this;
+#   this script never did, so on a Mac the collection stayed empty and
+#   `eval_pierre.py` skipped all 16 questions with "Index is empty".
 # ============================================================================
 
 set -u
@@ -59,7 +65,7 @@ ZSHRC="$HOME/.zshrc"
 MARKER="# ---- Local AI (no-sudo install) ----"
 PIERRE_ENV="ndpierre"
 
-SMALL_MODEL=0; REWRITE_SCRIPTS=1; FORCE_MODEL=""
+SMALL_MODEL=0; REWRITE_SCRIPTS=1; FORCE_MODEL=""; INDEX_KN=1
 WATCH_MODEL="${PIERRE_WATCH_MODEL:-qwen3:4b}"
 while (( $# )); do
   case "$1" in
@@ -68,6 +74,8 @@ while (( $# )); do
     --model) shift; FORCE_MODEL="${1:-}" ;;
     --watch-model) shift; WATCH_MODEL="${1:-qwen3:4b}" ;;
     --no-watch-model) WATCH_MODEL="" ;;
+    --index-knowledge) INDEX_KN=1 ;;      # on by default; accepted for parity with the Linux installer
+    --no-index-knowledge) INDEX_KN=0 ;;
   esac
   shift
 done
@@ -91,12 +99,12 @@ is_zip()  { file -b "$1" | grep -qi "zip archive" ; }
 is_html() { file -b "$1" | grep -qiE "html|ascii text" && head -c 200 "$1" | grep -qi "<" ; }
 
 # ===========================================================================
-say "Step 1/9 — Directory skeleton"
+say "Step 1/10 — Directory skeleton"
 mkdir -p "$LOCAL_AI" "$OLLAMA_BIN_DIR" "$MODELS_DIR" "$PYLIBS_DIR" "$LOCAL_AI/reports"
 ok "~/local-ai ready"
 
 # ===========================================================================
-say "Step 2/9 — Ollama (install, no sudo)"
+say "Step 2/10 — Ollama (install, no sudo)"
 if [[ -x "$OLLAMA_EXE" ]]; then
   ok "Ollama already installed"
 else
@@ -160,7 +168,7 @@ export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_KV_CACHE_TYPE=q8_0
 
 # ===========================================================================
-say "Step 3/9 — Models"
+say "Step 3/10 — Models"
 SERVE_LOG="$LOCAL_AI/serve-setup.log"
 if pgrep -qf "ollama serve" 2>/dev/null; then
   warn "an ollama server is already running — models go wherever THAT server stores them"
@@ -280,7 +288,7 @@ fi
 ok "nomic-embed-text present"
 
 # ===========================================================================
-say "Step 4/9 — 'pierre' persona"
+say "Step 4/10 — 'pierre' persona"
 cat > "$LOCAL_AI/Modelfile" << EOF
 FROM $CHAT_MODEL
 PARAMETER num_ctx $NUM_CTX
@@ -322,7 +330,7 @@ EOF
 ok "'pierre' persona created (num_ctx $NUM_CTX)"
 
 # ===========================================================================
-say "Step 5/9 — Python for the tools (conda env '$PIERRE_ENV' preferred)"
+say "Step 5/10 — Python for the tools (conda env '$PIERRE_ENV' preferred)"
 CONDA=""
 for c in "${CONDA_EXE:-}" "$(command -v conda 2>/dev/null)" "$HOME/miniconda3/bin/conda" "$HOME/miniconda/bin/conda" "$HOME/miniforge3/bin/conda"; do
   [[ -n "$c" && -x "$c" ]] && { CONDA="$c"; break; }
@@ -382,7 +390,7 @@ else
 fi
 
 # ===========================================================================
-say "Step 6/9 — Python tools (written to ~/local-ai)"
+say "Step 6/10 — Python tools (written to ~/local-ai)"
 if [[ $REWRITE_SCRIPTS -eq 1 ]]; then
   cat > "$LOCAL_AI/rag_index.py" << 'SCRIPT_EOF_RAG_INDEX'
 #!/usr/bin/env python3
@@ -3215,7 +3223,44 @@ else
 fi
 
 # ===========================================================================
-say "Step 7/9 — Shell config (~/.zshrc)"
+# Without this step the RAG database has no 'pierre_knowledge' collection, so
+# `pierre`/rag_query cite nothing and eval_pierre.py skips every question with
+# "Index is empty". install-local-ai-linux.sh (Step: Indexing the Pierre
+# knowledge pack) and install-local-ai-windows.ps1 both do this; the Mac path
+# did not, which is the bug this step fixes.
+say "Step 7/10 — Knowledge pack (RAG index)"
+KN_DIR="${0:A:h}/knowledge"
+if (( ! INDEX_KN )); then
+  ok "knowledge index skipped (--no-index-knowledge)"
+elif [[ ! -f "$LOCAL_AI/rag_index.py" ]]; then
+  warn "rag_index.py is not in $LOCAL_AI: run without --skip-scripts, then 'pierre-index -c pierre_knowledge $KN_DIR'"
+elif [[ ! -d "$KN_DIR" ]]; then
+  warn "no knowledge pack next to this script ($KN_DIR): nothing to index"
+else
+  # mirror the alias: pylibs only matters when we fell back to the system python
+  if (( USE_PYLIBS )); then
+    RAG_RUN=(env "PYTHONPATH=$PYLIBS_DIR" "$PIERRE_PY")
+  else
+    RAG_RUN=("$PIERRE_PY")
+  fi
+  if "${RAG_RUN[@]}" "$LOCAL_AI/rag_index.py" -c pierre_knowledge "$KN_DIR"; then
+    ok "knowledge pack indexed -> collection 'pierre_knowledge'"
+  else
+    warn "knowledge index failed; retry by hand: pierre-index -c pierre_knowledge $KN_DIR"
+  fi
+  # the dam-research engine docs, if that library has been downloaded already
+  EDOCS="${DAMRESEARCH_HOME:-$HOME/DamResearch}/library/references/software"
+  if [[ -d "$EDOCS" ]]; then
+    if "${RAG_RUN[@]}" "$LOCAL_AI/rag_index.py" -c engine_docs "$EDOCS"; then
+      ok "engine docs indexed from $EDOCS -> collection 'engine_docs'"
+    else
+      warn "engine-docs index failed (the knowledge pack above is still indexed)"
+    fi
+  fi
+fi
+
+# ===========================================================================
+say "Step 8/10 — Shell config (~/.zshrc)"
 if grep -qF "$MARKER" "$ZSHRC" 2>/dev/null; then
   cp "$ZSHRC" "$ZSHRC.bak-pierre"
   /usr/bin/sed -i '' "/^$MARKER\$/,/^# ---- end local AI ----\$/d" "$ZSHRC"
@@ -3254,7 +3299,7 @@ EOF
 ok "aliases written (run: source ~/.zshrc, then edit ND_REPO/DWR_REPO/CREST_REPO/STD_PDFS)"
 
 # ===========================================================================
-say "Step 8/9 — Housekeeping"
+say "Step 9/10 — Housekeeping"
 rm -rf "$TMPDIR_L"
 if [[ -n "${SERVE_PID:-}" ]]; then
   warn "the setup-time server is still running (PID $SERVE_PID, log $SERVE_LOG)."
@@ -3262,7 +3307,7 @@ if [[ -n "${SERVE_PID:-}" ]]; then
 fi
 
 # ===========================================================================
-say "Step 9/9 — Verification"
+say "Step 10/10 — Verification"
 PASS=0; TOTAL=0
 check(){ TOTAL=$((TOTAL+1)); if eval "$2" >/dev/null 2>&1; then PASS=$((PASS+1)); ok "$1"; else fail "$1"; fi }
 check "Ollama binary"              "[[ -x '$OLLAMA_EXE' ]]"
@@ -3276,6 +3321,10 @@ check "audit_plugin.py on disk"    "[[ -f '$LOCAL_AI/audit_plugin.py' ]]"
 check "suite_check.py on disk"     "[[ -f '$LOCAL_AI/suite_check.py' ]]"
 check "dam_chain.py on disk"       "[[ -f '$LOCAL_AI/dam_chain.py' ]]"
 check "zshrc block"                "grep -qF '$MARKER' '$ZSHRC'"
+# An empty 'pierre_knowledge' is why eval_pierre.py reports "0/0 passed (16 skipped)".
+if (( INDEX_KN )); then
+  check "knowledge pack indexed"   "'$PIERRE_PY' '$LOCAL_AI/rag_index.py' --list-collections | grep -q pierre_knowledge"
+fi
 # PDF support is optional: report it, don't fail on it.
 if PYTHONPATH="$PYLIBS_DIR" "$PIERRE_PY" -c 'import pymupdf' 2>/dev/null; then ok "PDF text: PyMuPDF"
 elif PYTHONPATH="$PYLIBS_DIR" "$PIERRE_PY" -c 'import pypdf' 2>/dev/null; then ok "PDF text: pypdf (slower, fine)"

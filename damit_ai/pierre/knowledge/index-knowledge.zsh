@@ -10,11 +10,20 @@ set -e
 HERE=${0:A:h}                         # .../damit_ai/pierre/knowledge
 PY=${PYTHON:-python3}
 
-# find rag_index.py
+# find rag_index.py.
+# These used to be `[[ -f "$c" ]] && RAG="$c" && break`: under `set -e` a miss on the
+# FIRST candidate made the loop body return non-zero and killed the script with no
+# message, even though a later candidate existed.
 for c in "$HERE/../tools/rag_index.py" "$HOME/local-ai/rag_index.py" "$HOME/local-ai/tools/rag_index.py"; do
-  [[ -f "$c" ]] && RAG="$c" && break
+  if [[ -f "$c" ]]; then
+    RAG="$c"
+    break
+  fi
 done
-[[ -z "${RAG:-}" ]] && { echo "rag_index.py not found (looked next to pierre/tools and ~/local-ai)"; exit 1; }
+if [[ -z "${RAG:-}" ]]; then
+  echo "rag_index.py not found (looked next to pierre/tools and ~/local-ai)"
+  exit 1
+fi
 
 echo "Indexing knowledge pack: $HERE"
 $PY "$RAG" -c pierre_knowledge "$HERE"
