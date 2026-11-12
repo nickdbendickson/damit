@@ -133,6 +133,42 @@ class Derived(unittest.TestCase):
         with self.assertRaises(A.Atlas14Error):
             A.alternating_block(pf, 100, 1440, 7)
 
+    def test_one_duration_list_everywhere(self):
+        from damit_pmp import gisgrid as G
+        self.assertIs(G.DURATION_LABELS, A.DURATION_LABELS)                 # one constant, not copies
+        self.assertEqual(len(A.DURATION_LABELS), 19)
+        self.assertEqual(A.DURATION_LABELS[A.DEFAULT_DURATION_INDEX], "24-hr")
+        self.assertEqual(A.DEFAULT_DURATION_INDEX, 9)
+        self.assertEqual(A.DURATION_LABELS, [d for d, _ in A.DURATIONS])
+        self.assertEqual((A.duration_minutes("5-min"), A.duration_minutes("24-hr"), A.duration_minutes("60-day")),
+                         (5, 1440, 86400))
+
+    def test_every_duration_builds_or_says_why(self):
+        pf = A.parse(FARGO)
+        for label, minutes in A.DURATIONS:
+            with self.assertRaises(A.Atlas14Error) as cm:                   # a 90-min step never fits the short ones
+                A.alternating_block(pf, 100, minutes, 90 if minutes % 90 else minutes * 2)
+            self.assertTrue(any(w in str(cm.exception) for w in ("shorter than the time step", "whole number")), label)
+            step = 5 if minutes < 60 else 60
+            rows = A.alternating_block(pf, 100, minutes, step)
+            self.assertEqual(len(rows), minutes // step, label)
+            self.assertAlmostEqual(rows[-1][2], A.depth_at(pf, minutes, 100), places=3, msg=label)
+
+    def test_check_storm_messages(self):
+        with self.assertRaises(A.Atlas14Error) as cm:
+            A.check_storm(5, 60, "5-min")
+        self.assertIn("5-min (5 min) is shorter than the time step of 60 min", str(cm.exception))
+        self.assertIn("5 min or less", str(cm.exception))
+        with self.assertRaises(A.Atlas14Error) as cm:
+            A.check_storm(1440, 7, "24-hr")
+        self.assertIn("divides 1440 min", str(cm.exception))
+        with self.assertRaises(A.Atlas14Error) as cm:
+            A.check_storm(86400, 5, "60-day")                               # 17280 blocks is fine ...
+            A.check_storm(86400 * 2, 5)                                     # ... 34560 is not
+        self.assertIn("at most 20000", str(cm.exception))
+        with self.assertRaises(A.Atlas14Error):
+            A.check_storm(60, 2)
+
     def test_combine(self):
         a, b = A.parse(FARGO), A.parse(FARGO)
         b = dict(b, quantiles=[[v * 2 for v in row] for row in b["quantiles"]])
