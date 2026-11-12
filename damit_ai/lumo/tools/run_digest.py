@@ -603,7 +603,7 @@ def check_height(f, fl, th=THRESHOLDS):
     info = {"top_ft": top, "bed_ft": bed, "bed_label": label, "bed_source": "dam record" if used == "streambed" else "BOTTOM_FT", "crest_minus_bed_ft": round(top - bed, 2),
             "inventory_height_ft": h, "diff_ft": round(diff, 2)}
     if abs(diff) >= th["height_watch_ft"]:
-        sev = PROBLEM if abs(diff) >= max(th["height_problem_ft"], th["height_problem_frac"] * h) else WATCH
+        sev = PROBLEM if abs(diff) >= min(th["height_problem_ft"], th["height_problem_frac"] * h) else WATCH
         if used == "streambed":
             what = "crest minus streambed is %.1f ft" % (top - bed)
         else:

@@ -203,6 +203,14 @@ class TestHeightDatumStart(Base):
         os.makedirs(self.root)
         self.assertIn("HEIGHT_MISMATCH", ids(self.digest({"streambed_ft": 1440.0}), "PROBLEM"))
 
+    def test_over_5ft_is_a_problem_even_when_under_15pct(self):
+        # Spec: HEIGHT_MISMATCH is PROBLEM when the gap is over 5 ft OR over 15%, not both.
+        # Tall dam (50 ft), 6 ft gap: over the 5 ft bar but under 15% (7.5 ft) -> must be PROBLEM.
+        d = self.digest({"top_ft": 1500.0, "streambed_ft": 1444.0, "height_ft": 50.0})
+        f = [x for x in d["flags"] if x["id"] == "HEIGHT_MISMATCH"][0]
+        self.assertEqual(f["severity"], "PROBLEM")
+        self.assertEqual(f["data"]["diff_ft"], 6.0)
+
     def test_breach_bottom_is_the_fallback_for_the_streambed(self):
         run, dam = FX.make_run(self.root)
         os.remove(os.path.join(dam, "dam.json"))
