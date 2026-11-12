@@ -89,7 +89,14 @@ def terrain_info(path):
     return {"crs": lyr.crs().authid(), "extent": (e.xMinimum(), e.yMinimum(), e.xMaximum(), e.yMaximum())}
 
 
-class DamitAlgorithm(QgsProcessingAlgorithm):
+try:            # DamIT Core 0.3.0: number inputs in the chosen display unit system (SI or US)
+    from damit_core.lib.unit_widgets import UnitParamsMixin as _UnitParams
+except Exception:                                                 # noqa - no / older DamIT Core
+    class _UnitParams(object):
+        pass
+
+
+class DamitAlgorithm(_UnitParams, QgsProcessingAlgorithm):
     """Base: the common inputs of every damit_screen tool."""
     _name = ""
     _display = ""

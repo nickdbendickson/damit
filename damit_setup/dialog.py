@@ -11,6 +11,12 @@ from damit_core.lib import catalog_access, plugins, settings, states
 CUSTOM = "(custom mode - pick methods in DamIT Screener)"
 
 
+UNITS_TIP = ("What the DamIT tool windows show and accept. SI shows metres, hectares, cubic "
+             "metres and m\u00b3/s and converts what you type back to the tool's own units (feet, "
+             "acres, acre-feet, cfs) when it runs: files, reports, logs and saved models do not "
+             "change, and no datum changes. Tool windows opened after Save use it.")
+
+
 class SetupDialog(QDialog):
     def __init__(self, parent=None, suite_rows=None, open_algorithm=None):
         super(SetupDialog, self).__init__(parent)
@@ -43,6 +49,19 @@ class SetupDialog(QDialog):
         form.addRow("State", self.state)
         form.addRow("Preset", self.preset)
         form.addRow("", self.catalog_note)
+        # DamIT Core 0.3.0: the unit system the DamIT windows show and accept (display only)
+        self.units = None
+        try:
+            from damit_core.lib import display_units as DU
+        except Exception:                                        # noqa: BLE001 - older DamIT Core
+            DU = None
+        if DU is not None:
+            self.units = QComboBox()
+            for code in DU.SYSTEMS:
+                self.units.addItem(DU.LABELS[code], code)
+            self._select(self.units, DU.system())
+            self.units.setToolTip(UNITS_TIP)
+            form.addRow("Units shown in windows", self.units)
         lay.addLayout(form)
         self.scan_label = QLabel("")
         self.scan_label.setWordWrap(True)
@@ -130,6 +149,10 @@ class SetupDialog(QDialog):
         if self.preset.currentData() and settings.get("preset") != self.preset.currentData():
             settings.set("preset", self.preset.currentData())      # an explicit choice in this window
             written.append("preset")
+        if self.units is not None and "unit_system" in settings.KEYS \
+                and settings.get("unit_system") != self.units.currentData():
+            settings.set("unit_system", self.units.currentData())
+            written.append("unit_system")
         return written
 
     def handoff(self, field_names=None):

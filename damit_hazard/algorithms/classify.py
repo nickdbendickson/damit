@@ -73,7 +73,14 @@ class _Style(QgsProcessingLayerPostProcessorInterface):
         styles.apply(layer, self.labels)
 
 
-class Classify(QgsProcessingAlgorithm):
+try:            # DamIT Core 0.3.0: number inputs in the chosen display unit system (SI or US)
+    from damit_core.lib.unit_widgets import UnitParamsMixin as _UnitParams
+except Exception:                                                 # noqa - no / older DamIT Core
+    class _UnitParams(object):
+        pass
+
+
+class Classify(_UnitParams, QgsProcessingAlgorithm):
     def name(self):
         return "classify"
 
