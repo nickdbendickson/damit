@@ -47,7 +47,7 @@ jobs:
       - name: Install numpy (core modules) and pytest (the smoke-test runner)
         run: pip install numpy pytest
       - name: Run smoke tests
-        run: python3 -I -m pytest damit_runner/tests/test_engine_imports.py -v
+        run: PYTHONPATH=. python3 -m unittest damit_runner.tests.test_engine_imports -v
 
   no-damsuite:
     name: Zero damsuite imports

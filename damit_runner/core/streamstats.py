@@ -27,7 +27,7 @@ import urllib.request
 LOG = logging.getLogger(__name__)
 
 BASE = "https://streamstats.usgs.gov"
-SS_API = BASE + "/streamstatsservices"
+SS_API = BASE + "/ss-delineate/v1"  # new API (legacy streamstatsservices decommissioned 2026-01-30)
 TIMEOUT = 180  # basin delineation can be slow
 
 
@@ -43,51 +43,44 @@ def _get(url, timeout=TIMEOUT):
 
 def supported_states():
     """List of state codes StreamStats supports (2-letter postal codes)."""
-    try:
-        data = _get(SS_API + "/stateservices.json", timeout=30)
-        return sorted(s["code"].upper() for s in data if isinstance(s, dict) and s.get("code"))
-    except Exception as e:
-        LOG.warning("StreamStats: could not fetch supported states: %s", e)
-        # Known supported states as of 2025
-        return ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-                "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-                "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-                "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-                "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+    # Legacy stateservices.json is decommissioned; return known list.
+    return ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+            "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+            "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+            "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+            "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
 
 
 def delineate(lon, lat, state=None, crs=4326):
-    """Delineate the watershed at a pour point.
+    """Delineate the watershed at a pour point using the SS-Delineate API.
 
-    Returns the full StreamStats watershed response (dict) including the
-    delineated polygon and workspace ID for subsequent calls. This can take
-    30-120 seconds.
+    Returns a dict with 'featurecollection' (basin polygon) and 'parameters'.
+    The legacy watershed.json endpoint was decommissioned 2026-01-30.
 
     Parameters
     ----------
     lon, lat : float
         Pour point in decimal degrees (WGS84).
-    state : str, optional
-        Two-letter state code. If None, StreamStats determines it.
+    state : str
+        Two-letter state code (required for the new API).
     crs : int
         EPSG code of the coordinates (default 4326 = WGS84).
     """
-    params = {
-        "xlocation": str(lon),
-        "ylocation": str(lat),
-        "crs": str(crs),
-        "includeparameters": "true",
-        "includefeatures": "true",
-        "simplify": "true",
-    }
-    if state:
-        params["rcode"] = state.upper()
-    url = SS_API + "/watershed.json?" + urllib.parse.urlencode(params)
-    LOG.info("StreamStats delineation: %s, %s (state=%s)", lon, lat, state)
+    if not state:
+        raise ValueError("state is required for SS-Delineate")
+    url = "{}/delineate/sshydro/{}?lat={}&lon={}".format(SS_API, state.upper(), lat, lon)
+    LOG.info("SS-Delineate: %s, %s (state=%s)", lon, lat, state)
     t0 = time.time()
-    result = _get(url, timeout=TIMEOUT)
-    LOG.info("StreamStats delineation: %.0f s", time.time() - t0)
-    return result
+    raw = _get(url, timeout=TIMEOUT)
+    LOG.info("SS-Delineate: %.0f s", time.time() - t0)
+    # Normalize to the legacy response shape for callers.
+    ws = raw.get("bcrequest", {}).get("wsresp", {})
+    return {
+        "workspaceID": ws.get("workspace_id", ""),
+        "featurecollection": ws.get("featurecollection", []),
+        "parameters": ws.get("parameters", []),
+        "_raw": raw,
+    }
 
 
 def basin_characteristics(workspace_id, state):
@@ -169,7 +162,94 @@ def quick_estimate(lon, lat, state, return_intervals=(100, 500)):
     """One-call convenience: delineate + flood frequency.
 
     Returns {Q100: cfs, Q500: cfs, area_sqmi: float, ...} or raises on failure.
+    Note: flood frequency uses the legacy endpoint which may be unavailable;
+    use pmf_inflow for a volume-based estimate from Atlas 14 instead.
     """
     basin = delineate(lon, lat, state=state)
     flows = flood_frequency(basin, state=state)
     return {k: v for k, v in flows.items() if k != "_raw"}
+
+
+def basin_area_sqmi(basin_result):
+    """Approximate drainage area (sq mi) from a delineation result.
+
+    Uses the bounding box of the watershed polygon. The true polygon area
+    is smaller; this is a conservative overestimate for DEM sizing.
+    """
+    import math
+    feats = basin_result.get("featurecollection") or []
+    for fc in feats:
+        for item in fc if isinstance(fc, list) else [fc]:
+            if item.get("name") == "globalwatershed":
+                geom = item.get("feature", {}).get("features", [{}])[0].get("geometry", {})
+                coords = (geom.get("coordinates") or [[]])[0]
+                if coords:
+                    lons = [c[0] for c in coords]
+                    lats = [c[1] for c in coords]
+                    dlon = max(lons) - min(lons)
+                    dlat = max(lats) - min(lats)
+                    lat_mid = (max(lats) + min(lats)) / 2
+                    return dlon * 69 * math.cos(math.radians(lat_mid)) * dlat * 69
+    return None
+
+
+def pmf_inflow(area_sqmi, depth_in, duration_hr=24.0, runoff_ratio=1.0):
+    """PMF inflow volume and a triangular hydrograph from drainage area and depth.
+
+    For PMF breach or spillway capacity checks. Does not replace a full
+    hydrologic model; gives a volume and a simple peak for screening.
+
+    Parameters
+    ----------
+    area_sqmi : float
+        Drainage area in square miles.
+    depth_in : float
+        Storm depth in inches (e.g. Atlas 14 1000-yr or a PMP estimate).
+    duration_hr : float
+        Storm duration in hours (default 24).
+    runoff_ratio : float
+        Fraction of rainfall that becomes runoff (default 1.0 = no losses).
+
+    Returns
+    -------
+    dict with volume_acft, peak_cfs, duration_hr, time_to_peak_hr.
+    """
+    # 1 inch over 1 sq mi = 53.33 acre-ft
+    volume_acft = area_sqmi * depth_in * 53.33 * runoff_ratio
+    # Triangular hydrograph: peak at duration/2, base = duration
+    # Volume = 0.5 * peak * duration * 3600 (cfs-seconds) / 43560 (ac-ft)
+    # peak_cfs = volume_acft * 43560 / (0.5 * duration_hr * 3600)
+    peak_cfs = volume_acft * 43560 / (0.5 * duration_hr * 3600)
+    return {
+        "volume_acft": round(volume_acft, 1),
+        "peak_cfs": round(peak_cfs, 0),
+        "duration_hr": duration_hr,
+        "time_to_peak_hr": duration_hr / 2,
+        "area_sqmi": area_sqmi,
+        "depth_in": depth_in,
+        "runoff_ratio": runoff_ratio,
+    }
+
+
+def dem_covers_basin(dem_extent, basin_extent, buffer_m=1000):
+    """Check if a DEM extent covers a basin extent (with buffer).
+
+    Both extents are (lon_min, lat_min, lon_max, lat_max) in WGS84.
+    Returns (covers: bool, message: str).
+    """
+    import math
+    dem_lon0, dem_lat0, dem_lon1, dem_lat1 = dem_extent
+    bas_lon0, bas_lat0, bas_lon1, bas_lat1 = basin_extent
+    buf_deg = buffer_m / 111320
+    need_lon0 = bas_lon0 - buf_deg
+    need_lat0 = bas_lat0 - buf_deg
+    need_lon1 = bas_lon1 + buf_deg
+    need_lat1 = bas_lat1 + buf_deg
+    covers = (dem_lon0 <= need_lon0 and dem_lat0 <= need_lat0 and
+              dem_lon1 >= need_lon1 and dem_lat1 >= need_lat1)
+    if covers:
+        msg = "DEM covers the basin with {:.0f} m buffer".format(buffer_m)
+    else:
+        msg = ("DEM does not cover the basin. Need at least "
+               "{:.4f},{:.4f},{:.4f},{:.4f}").format(need_lon0, need_lat0, need_lon1, need_lat1)
+    return covers, msg

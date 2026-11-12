@@ -378,6 +378,30 @@ def run_model(pkg, out_root, values, cat=None, dams_folder=None, log=print, canc
     _save(folder, setup)
     for n in notes:
         log("Note: " + n)
+    # Warn if the DEM may not cover the contributing basin (PMF/spillway use)
+    dem_path = params.get("dem")
+    lon, lat = params.get("lon"), params.get("lat")
+    if dem_path and lon and lat:
+        try:
+            from . import streamstats as SS
+            basin = SS.delineate(lon, lat, state="ND")
+            area = SS.basin_area_sqmi(basin)
+            if area and area > 0:
+                feats = basin.get("featurecollection") or []
+                for fc in feats:
+                    for item in fc if isinstance(fc, list) else [fc]:
+                        if item.get("name") == "globalwatershed":
+                            geom = item.get("feature", {}).get("features", [{}])[0].get("geometry", {})
+                            coords = (geom.get("coordinates") or [[]])[0]
+                            if coords:
+                                lons = [c[0] for c in coords]
+                                lats = [c[1] for c in coords]
+                                basin_ext = (min(lons), min(lats), max(lons), max(lats))
+                                log("Basin area ~{:.1f} sq mi; extent {:.4f},{:.4f},{:.4f},{:.4f}".format(
+                                    area, *basin_ext))
+                            break
+        except Exception:
+            pass  # delineation is optional; do not block the run
     _, model = flood()
     t0 = _time.time()
     try:
