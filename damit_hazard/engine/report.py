@@ -24,6 +24,30 @@ def _params(p):
     return json.dumps(p, sort_keys=True, ensure_ascii=False)
 
 
+def _dam_line(result):
+    """The Inputs line for the dam record, in words (0.2.2). It used to print the record as JSON, so a run with no dam
+    record file showed only {"name": "..."} (the DAM_NAME input) as if that were the record."""
+    dam = {k: v for k, v in (result.get("dam") or {}).items() if v not in (None, "")}
+    name = dam.pop("name", None)
+    from_file = any(L.get("role") == "dam record" for L in result.get("layers") or [])
+    searched = [L for L in result.get("layers") or [] if L.get("role") == "dam record search"]
+    if not from_file:
+        txt = "Dam record: none given or found" + (" ({})".format(searched[0].get("note")) if searched else "")
+        if name:
+            txt += "; only the name was given: {}".format(name)
+        if dam:
+            txt += "; other values set: " + ", ".join("{} = {}".format(k, _scalar(dam[k])) for k in sorted(dam))
+        return txt
+    txt = "Dam record: " + (name if name else "(no name)")
+    if dam:
+        txt += " (" + ", ".join("{} = {}".format(k, _scalar(dam[k])) for k in sorted(dam)) + ")"
+    return txt
+
+
+def _scalar(v):
+    return json.dumps(v, sort_keys=True, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
+
+
 def sections(result, cat):
     """[(title, [lines] | ("table", header, rows))] - one structure for every format."""
     cfg = result["config"]
@@ -92,13 +116,14 @@ def sections(result, cat):
     out.append(("Labels", ["{} = {}".format(k, v) for k, v in sorted(lab.items())]))
     lines = []
     for L in result.get("layers") or []:
+        if L.get("role") == "dam record search":          # said in the "Dam record:" line below
+            continue
         lines.append("{}: {} (modified {}, {} bytes{})".format(
             L.get("role"), L.get("source"), L.get("modified"), L.get("size"),
             ", " + L["note"] if L.get("note") else ""))
     if result.get("nid_id"):
         lines.append("NID ID: {} (USACE National Inventory of Dams)".format(result["nid_id"]))
-    if result.get("dam"):
-        lines.append("Dam record: " + _params(result["dam"]))
+    lines.append(_dam_line(result))
     out.append(("Inputs (R10: re-run when these change)", lines or ["-"]))
     cites = []
     if cfg["mode"] == "preset":

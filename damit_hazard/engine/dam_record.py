@@ -78,9 +78,12 @@ def discover(raster_paths, base=None):
 
     1. dam.json in the rasters' folder or up to 4 folders above it (the dam folder, or the run folder's parent) with
        a dam id (nested or flat);
-    2. the watcher's flat copy: <base>/<dam id>_<folder name>/dam_record_hazard.json, where <folder name> is one of
-       those folders (the run folder) and <dam id> is the copy's own dam_id, so another dam's run of the same name is
-       never used. The newest copy wins."""
+    2. the watcher's flat copy, tried in this order (the newest wins within a step):
+       a. <base>/<dam id>_<folder name>/dam_record_hazard.json for one of those folders (the run folder), where <dam id>
+          is the copy's own dam_id, so another dam's run of the same name is never used;
+       b. (0.2.2) <base>/<dam id>_run_<timestamp>/dam_record_hazard.json, the watcher's real folder name, for a folder
+          above the raster that IS the dam id: the normal path is <Dams>/<dam id>/Depth (Max).tif, which has no run
+          folder in it. The copy's own dam_id must equal that folder name (case-insensitive); the newest copy wins."""
     dirs = _dirs_above(raster_paths)
     for d in dirs:
         p = os.path.join(d, "dam.json")
@@ -108,4 +111,23 @@ def discover(raster_paths, base=None):
                     hits.append((os.path.getmtime(p), p))
         if hits:
             return max(hits)[1], "run watcher copy ({})".format(WATCH_FLAT_NAME)
+        # the dam folder's raster (<Dams>/<dam id>/Depth (Max).tif): the folder name is the dam id, the watcher's folder is
+        # <dam id>_run_<timestamp>; the newest copy for that dam id (names compared in lower case)
+        names = {os.path.basename(d).lower() for d in dirs if os.path.basename(d)}
+        for p in glob.glob(os.path.join(glob.escape(wb), "*_run_*", WATCH_FLAT_NAME)):
+            folder = os.path.basename(os.path.dirname(p))
+            prefix = folder.split("_run_")[0].lower()
+            if prefix not in names:
+                continue
+            try:
+                rec, _n = load(p)
+            except (OSError, ValueError):
+                continue
+            dam = str(rec.get("dam_id") or rec.get("nid_id") or "").strip()
+            if dam.lower() == prefix:
+                hits.append((os.path.getmtime(p), p))
+        if hits:
+            best = max(hits)[1]
+            return best, "run watcher copy for dam {} ({})".format(
+                os.path.basename(os.path.dirname(best)).split("_run_")[0], WATCH_FLAT_NAME)
     return None, None

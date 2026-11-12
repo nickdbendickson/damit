@@ -305,8 +305,16 @@ class Ctx(object):
     def need(self, mid, kinds):
         rs = self.of(*kinds)
         if not rs:
-            self.flag(WARNING, "no_layer", "no {} receptors supplied: {} not scored".format(
-                "/".join(kinds), mid), mid)
+            given = [r for r in self.run.get("receptors") or [] if r["kind"] in kinds]
+            if not given:
+                self.flag(WARNING, "no_layer", "no {} receptors supplied: {} not scored".format(
+                    "/".join(kinds), mid), mid)
+            else:
+                # (0.2.2) the layer WAS supplied and sampled; none of its features is in the scored set
+                out = sum(1 for r in given if r.get("in_domain") is False)
+                self.flag(INFO, "layer_none_scored", "{} {} receptor(s) were supplied and sampled, but none is in the scored set "
+                          "({} outside the routed domain, {} left out by the scenario / development / cutoff filters): "
+                          "{} has nothing to score".format(len(given), "/".join(kinds), out, len(given) - out, mid), mid)
         return rs
 
 

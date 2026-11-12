@@ -36,6 +36,11 @@ class StrictCase(unittest.TestCase):
 
     def setUp(self):
         super(StrictCase, self).setUp()
+        # hermetic: another run's lisflood process on the machine running the tests must not decide a test's outcome
+        old = os.environ.get("LUMO_WATCH_PROC_SCAN")
+        os.environ["LUMO_WATCH_PROC_SCAN"] = "0"
+        self.addCleanup(lambda: os.environ.pop("LUMO_WATCH_PROC_SCAN", None) if old is None
+                        else os.environ.__setitem__("LUMO_WATCH_PROC_SCAN", old))
         ctx = warnings.catch_warnings(record=True)
         log = ctx.__enter__()
         warnings.simplefilter("always")

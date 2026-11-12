@@ -103,15 +103,24 @@ ID under *Inputs*. Without a dam record the result is flagged `nid_none` (not ti
 is DamIT Catalog's `handoff.nid_rule` (the same one DamIT Screener and Runner apply); `engine/core.py`
 `nid_rule` only passes through to it.
 
-**Dam record shape and where it comes from (0.2.1).** `DAM_JSON` may be a flat record (as above) or the dam
+**Dam record shape and where it comes from (0.2.1, 0.2.2).** `DAM_JSON` may be a flat record (as above) or the dam
 folder's own `dam.json`, which nests its values under `fields`; the nested `fields` are read as they are (over
 any top-level values), no hand-flattening. With `DAM_JSON` empty, damit:classify looks for a record (`engine/dam_record.py`):
 the `dam.json` in the depth raster's folder or up to four folders above it (the run folder's parent is the dam
 folder), else the run watcher's flat copy `~/local-ai/watch/<dam id>_<run folder>/dam_record_hazard.json` (folder
-overridable with `DAMIT_WATCH_DIR`), for the run folder the raster sits in. A record found this way must have a dam
+overridable with `DAMIT_WATCH_DIR`), for the run folder the raster sits in. 0.2.2: the normal raster path is
+`<Dams>/<dam id>/Depth (Max).tif`, with no run folder in it, so the search also matches the watcher's real folder name
+`<dam id>_run_<timestamp>/` for a folder above the raster that is the dam id (the copy's own `dam_id` must agree,
+case-insensitive; the newest copy wins). A record found this way must have a dam
 id; one with no usable NID ID is left out with a warning (an explicitly given file still fails, as before). The
 report's *Inputs* lists the file used, marked "found automatically". Nothing is written beside it. Give `DAM_JSON`
 to override.
+
+**Inputs line and empty layers (0.2.2).** The report's *Inputs* section says what the dam record was: the file used and its
+values, or "none given or found (...); only the name was given: <DAM_NAME>" (it used to print the name as a bare `{"name": ...}`).
+A method that needs a layer kind (M9a rail, M11a lifelines, M8a/M8b roads) reports `no_layer` (warning) only when no receptor of that kind
+was supplied. When some were supplied and sampled but none is in the scored set (every one outside the routed domain, or
+dropped by the scenario, development and cutoff filters), it reports `layer_none_scored` (info) with the counts instead.
 
 Attribute names are matched case-insensitively; the first of these per field is used
 (`engine/receptors.py` has the full list):

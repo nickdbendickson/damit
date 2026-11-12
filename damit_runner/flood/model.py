@@ -172,6 +172,39 @@ def _hydrograph_record(hy, dam):
 
 
 # ------------------------------------------------------------------------------------------------- runs --
+PROGRESS_FILE = "run_progress.json"
+
+
+def write_progress(workdir, **fields):
+    """run_progress.json in the run folder (0.3.1): what a watcher needs while the run is still going - the model CRS, each
+    pass's folder and bounds - and the one completion marker. `complete` is True only after run_report.json is written
+    (every loop, the ANUGA tier and the outputs are done). It is a progress note: a failure to write it never stops the
+    run, and it is only written for a run folder's own model/ directory (growth_loop's tests use throw-away folders)."""
+    if os.path.basename(os.path.normpath(workdir)) != "model":
+        return None
+    path = os.path.join(os.path.dirname(os.path.normpath(workdir)), PROGRESS_FILE)
+    try:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            state = {"version": 1, "passes": [], "growth_loops_done": 0, "complete": False}
+        add = fields.pop("add_pass", None)
+        if add:
+            state["passes"].append(add)
+        if fields.pop("loop_done", False):
+            state["growth_loops_done"] = int(state.get("growth_loops_done") or 0) + 1
+        state.update(fields)
+        state["updated"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, indent=1, default=str)
+        os.replace(tmp, path)
+        return path
+    except OSError:
+        return None
+
+
 def one_run(p, wkt, s, hy, bounds, cell, sim_s, workdir, log, cancel, wall_s):
     dem = R.read_window(p["dem"], bounds, cell, wkt, p.get("z_units"))
     if not np.isfinite(dem.data).any():
@@ -189,6 +222,43 @@ def flood_stats(dem, depth, arrival_m):
     med = float(np.median(depth[wet]) / FT) if wet.any() else 0.0
     return {"flooded_acres": round(ac, 1), "median_depth_ft": round(med, 2),
             "max_depth_ft": round(float(np.nanmax(depth)) / FT, 2) if wet.any() else 0.0}
+
+
+EDGE_WARN_PCT = 1.0          # 0.3.3: with a wet edge, warn when at least this share of the volume left the model (the watcher's edge flag)
+
+
+def final_edge_note(rec, p, stop, sim_s, cap_s):
+    """The warning for the end of a growth loop (None when there is nothing to say): the last pass still has a wet edge with
+    EDGE_WARN_PCT of the breach volume gone, or OUTFLOW_WARN_PCT of it gone whatever the edges. It names the edges, their depths and
+    the outflow, and says why the domain did not grow: the loop grows only for an edge deeper than EDGE_TOL_FT or an edge carrying
+    OUTFLOW_EDGE_SHARE of the outflow once OUTFLOW_EXTEND_PCT has left (deliberate limits), or it stopped at a limit (named).
+    DWR-2645: 0.94 ft on the S edge and 3.37 % outflow at the 96 h cap are under both, and the run said nothing (0.3.2)."""
+    pct = rec.get("boundary_outflow_pct")
+    arr = float(p.get("arrival_ft") or 0.1)
+    tol = float(p.get("edge_tol_ft") or 0.0)
+    ext = float(p.get("outflow_extend_pct") or 0.0)
+    depths = rec.get("edge_depths_ft") or {}
+    wet = [(e, float(depths[e])) for e in ("N", "S", "E", "W") if (depths.get(e) or 0.0) >= arr]
+    big = pct is not None and pct >= OUTFLOW_WARN_PCT
+    if not big and not (wet and (pct is not None and pct >= EDGE_WARN_PCT or any(d > tol for _, d in wet))):
+        return None
+    txt = "{}% of the breach volume left the model through its edges in the last run".format(
+        "{:.1f}".format(pct) if pct is not None else "an unmeasured share")
+    txt += ("; edge(s) still wet at the end: " + ", ".join("{} {:.2f} ft".format(e, d) for e, d in wet)) if wet else \
+        "; no edge is wet at the end"
+    txt += "; the flood area and the downstream consequences are minimums."
+    at_cap = cap_s and sim_s >= float(cap_s) - 1.0
+    if stop:
+        txt += " The run stopped at the {}{}.".format(stop, " ({:.0f} h)".format(sim_s / 3600.0) if stop == "duration cap" else "")
+    else:
+        txt += (" The domain was not grown further: it grows only for an edge deeper than {:g} ft (EDGE_TOL_FT) or an edge carrying "
+                "at least {:.0f}% of the outflow once {:g}% of the volume has left (OUTFLOW_EXTEND_PCT), and the last pass was "
+                "under those limits (deepest wet edge {:.2f} ft, outflow {}%).".format(
+                    p.get("edge_tol_ft") or 0.0, OUTFLOW_EDGE_SHARE * 100.0, ext, max([d for _, d in wet] or [0.0]),
+                    "{:.1f}".format(pct) if pct is not None else "n/a"))
+    if at_cap and stop != "duration cap":
+        txt += " The clock was already at the {:.0f} h duration cap, so the last clock extension was the final one.".format(sim_s / 3600.0)
+    return txt
 
 
 def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
@@ -249,6 +319,8 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
                "wall_limit_s": info["wall_limit_s"]}
         rec.update(flood_stats(dem, depth, arr_m))
         passes.append(rec)
+        write_progress(workdir, crs_wkt=wkt, add_pass={"pass": rec["pass"], "dir": os.path.basename(wd),
+                                                       "bounds": rec["bounds"], "cell_m": cell, "wall_s": rec["wall_s"]})
         log("Pass {} (domain run {}): {:.1f} x {:.1f} mi, {:g} m, {:.1f} h simulated; edges over {:g} ft: {}; "
             "{}".format(rec["pass"], it, (bounds[2] - bounds[0]) / MILE, (bounds[3] - bounds[1]) / MILE, cell,
                         sim_s / 3600.0, p["edge_tol_ft"], ", ".join(over) or "none",
@@ -301,10 +373,11 @@ def growth_loop(p, wkt, s, hy, bounds, cell, workdir, log, cancel, fixed=None):
         if over:
             bounds = new_bounds
             it += 1
-    last = passes[-1].get("boundary_outflow_pct") if passes else None
-    if not fixed and last is not None and last >= OUTFLOW_WARN_PCT:
-        warnings.append("{:.1f}% of the breach volume left the model through its edges in the last run; the flood "
-                        "area and the downstream consequences are minimums.".format(last))
+    if not fixed and passes:
+        note = final_edge_note(passes[-1], p, stop, sim_s, cap_s)
+        if note:
+            warnings.append(note)
+    write_progress(workdir, loop_done=True)
     return {"dem": dem, "out": out, "bounds": bounds, "sim_s": sim_s, "passes": passes, "warnings": warnings,
             "stop": stop, "info": info}
 
@@ -428,8 +501,11 @@ def run_breach(p, out_dir, log=print, cancel=None):
         record["dem_z_to_m"] = R.z_scale({}, zu)
         record["dem_elevation_units"] = {"m": "metres", "ft": "feet", "us_ft": "us survey feet",
                                          "us_feet": "us survey feet"}.get(zu, zu)
+    for w in record["warnings"]:
+        log("Warning: " + str(w))                    # 0.3.3: the report's warnings were never in the log
     with open(os.path.join(out_dir, "run_report.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=1, default=str)
+    write_progress(model_dir, complete=True)       # after run_report.json: the whole breach pipeline is done
     return record
 
 
