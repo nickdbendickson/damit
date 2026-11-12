@@ -12,6 +12,7 @@ import os
 
 MAX_IDS = 12
 DV_SECTION = "Depth-velocity chart (habitable structures)"
+HAB_SECTION = "Habitability (ND 911 points and engineer review)"
 
 
 def _ids(ids):
@@ -71,21 +72,52 @@ def _scalar(v):
 
 def _dv_lines(charts):
     """The report lines for the depth-velocity charts (one block per flood result charted)."""
-    lines = ["Wet habitable structures on the TM-11 depth-velocity chart, by Hazard's own habitability rule "
-             "(no type = presumed a home; the `type_unknown` flag lists them)."]
+    lines = ["Wet habitable structures on the TM-11 depth-velocity chart: ONLY ND 911 address points and structures "
+             "an engineer reviewed habitable in Hazard. Other wet structures are unverified: counted, not plotted."]
     for c in charts:
         lines.append("**{}**".format(c.get("title") or c.get("source") or "chart"))
-        lines.append("{}{}".format(c.get("text") or "",
-                                   " (type unknown, presumed habitable: {})".format(c["counts"]["unknown_type"])
-                                   if (c.get("counts") or {}).get("unknown_type") else ""))
+        cn = c.get("counts") or {}
+        lines.append("{} ({} ND 911 address point(s), {} reviewed habitable)".format(
+            c.get("text") or "", cn.get("n_911", 0), cn.get("n_reviewed", 0)))
         files = ["Chart: {}".format(c["png"]) if c.get("png") else "Chart: not drawn",
                  "Points (CSV): {}".format(c["csv"])]
+        if c.get("unverified_csv"):
+            files.append("Unverified worklist (CSV): {}".format(c["unverified_csv"]))
         lines.append(" · ".join(files))
+        u = c.get("unverified") or {}
+        if u.get("total"):
+            lines.append("Unverified wet structures, not plotted: {} (NSI suggests habitable {}, not habitable {}, no "
+                         "suggestion {}; no USA Structures footprint {}, USA class differs from NSI {})".format(
+                             u["total"], u["nsi_suggests_habitable"], u["nsi_suggests_not_habitable"],
+                             u["no_suggestion"], u["usa_no_footprint"], u["usa_class_differs"]))
         if c.get("note"):
             lines.append("Note: " + c["note"])
         lo = {k: v for k, v in (c.get("left_out") or {}).items() if v}
         if lo:
             lines.append("Not charted: " + ", ".join("{} {}".format(v, k.replace("_", " ")) for k, v in lo.items()))
+    return lines
+
+
+def _habitability_lines(h):
+    t = h["tally"]
+    rule = ("only ND 911 address points and structures an engineer reviewed habitable"
+            if h["rule_applied"] == "reviewed" else "Hazard's rule so far (no type = presumed habitable)")
+    lines = ["Rule M6 and the class follow: " + rule,
+             "{} wet structure(s): 911 / reviewed rule - habitable {}, unverified {}, not habitable {}; legacy rule - "
+             "habitable {}; the two rules differ on {}".format(
+                 t["wet_structures"], t["yes"], t["unverified"], t["no"], t["legacy_habitable"], t["differs"]),
+             "Review file: {} ({} review(s))".format(h.get("review_file") or "none found", h.get("reviews_in_file", 0))]
+    if t.get("usa_checked"):
+        lines.append("USA Structures check of the wet structures: {} checked, {} with no footprint (possible phantom), "
+                     "{} occupancy class(es) differ from the NSI occtype. Advisory: it feeds the engineer's review and "
+                     "never makes a structure habitable".format(t["usa_checked"], t["usa_no_footprint"],
+                                                                t["usa_class_differs"]))
+    c = h.get("comparison")
+    if c:
+        lines.append("Under the {} rule instead: M6 would count {} receptor(s) (now {}) and the suggested class would be "
+                     "{} (now {}){}".format(
+                         c["other"], c["m6_receptors"]["other"], c["m6_receptors"]["applied"], c["class"]["other"],
+                         c["class"]["applied"], " - THE CLASS WOULD CHANGE" if c["class_changes"] else " - no change"))
     return lines
 
 
@@ -116,6 +148,8 @@ def sections(result, cat):
           _ids(h["receptors"]), h["reason"]] for h in result["driving"]])))
     if result.get("dv_charts"):
         out.append((DV_SECTION, _dv_lines(result["dv_charts"])))
+    if result.get("habitability"):
+        out.append((HAB_SECTION, _habitability_lines(result["habitability"])))
     out.append(("Advisory results", ("table", ["Method", "Class", "Scenario", "Receptors", "Why"],
         [[h["method"], lab.get(h["class"]), h.get("scenario") or "-", _ids(h["receptors"]),
           h["reason"]] for h in result["advisory"]])))
@@ -199,7 +233,7 @@ def sections(result, cat):
 
 
 _FREE_TEXT_COLUMNS = ("Why", "Message", "Condition")
-_KEEP_SECTIONS = ("Labels", "Inputs (R10: re-run when these change)", "Citations", DV_SECTION)
+_KEEP_SECTIONS = ("Labels", "Inputs (R10: re-run when these change)", "Citations", DV_SECTION, HAB_SECTION)
 
 
 def _display_units(out):

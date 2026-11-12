@@ -101,6 +101,34 @@ def habitable_basis(r, habitable_types):
     return False, None
 
 
+# The 911 / reviewed rule (0.4.0), the habitability the depth-velocity chart plots, and (HABITABLE_RULE = reviewed) the
+# rule the methods can follow. Same words as DamSafety Hazard: yes / unverified / no.
+RULE_LEGACY, RULE_REVIEWED = "legacy", "reviewed"
+STATUS_YES, STATUS_UNVERIFIED, STATUS_NO = "yes", "unverified", "no"
+BASIS_911, BASIS_REVIEWED = "911_address", "reviewed_habitable"
+BASIS_REVIEWED_NOT, BASIS_911_NOT = "reviewed_not_habitable", "911_not_habitable"
+BASIS_UNREVIEWED = "unreviewed_not_911"
+
+
+def reviewed_status(r, habitable_types):
+    """(status, basis) of a structure under the E911 / reviewed rule. ONLY an ND E911 address point is habitable by
+    itself; every other structure is "unverified" until an engineer reviews it in Hazard (reviewed_habitable true /
+    false, set only by habitable_review.sign_off). The review wins over everything. An NSI occtype, a USA Structures
+    footprint, a type or an occupancy never make a non-E911 structure habitable. An E911 point is habitable unless it
+    is marked habitable = false, or has a type that is not habitable (the Hazard type rule)."""
+    rv = r.get("reviewed_habitable")
+    if rv is not None:
+        return (STATUS_YES, BASIS_REVIEWED) if rv else (STATUS_NO, BASIS_REVIEWED_NOT)
+    if not r.get("is_911"):
+        return STATUS_UNVERIFIED, BASIS_UNREVIEWED
+    if r.get("habitable") is False:
+        return STATUS_NO, BASIS_911_NOT
+    if r.get("habitable") is True or r.get("type") is None:
+        return STATUS_YES, BASIS_911
+    ok = r["type"] in habitable_types or r.get("occupancy") in OCCUPANCY_HABITABLE
+    return (STATUS_YES, BASIS_911) if ok else (STATUS_NO, BASIS_911_NOT)
+
+
 def is_occupied(r, habitable_types):
     """R2 without the flag: habitable and not occasional / unoccupied / vacant."""
     if r.get("occupancy") in OCCUPANCY_NOT_OCCUPIED:
@@ -121,9 +149,10 @@ def _f(x, nd=2):
 class Ctx(object):
     """One run (scenario) being evaluated."""
 
-    def __init__(self, cat, cfg, charts, run, dam, flags):
+    def __init__(self, cat, cfg, charts, run, dam, flags, rule=RULE_LEGACY):
         self.cat, self.cfg, self.charts, self.run, self.dam, self.flags = \
             cat, cfg, charts, run, dam or {}, flags
+        self.rule = rule
         self.scenario = run.get("scenario")
         dim = (run.get("model_dim") or "").strip().upper() or None
         self.dim = dim if dim in ("1D", "2D") else None
@@ -181,6 +210,8 @@ class Ctx(object):
         return None
 
     def habitable(self, r):
+        if self.rule == RULE_REVIEWED and r.get("kind") == "structure":
+            return reviewed_status(r, self.cat["habitable_types"])[0] == STATUS_YES
         ok, basis = habitable_basis(r, self.cat["habitable_types"])
         if basis == BASIS_UNKNOWN:
             self.flag(WARNING, "type_unknown", "structure type unknown: treated as habitable "
@@ -1304,7 +1335,9 @@ def _flag_nodata_neighbourhood(ctx):
                  .format(len(dry), cell_s, min_m), None, dry)
 
 
-def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
+
+
+def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None, habitable_rule=RULE_LEGACY):
     dam = dict(dam or {})
     charts = charts or tm11.load()
     flags, notes = Flags(), []
@@ -1319,7 +1352,7 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
     if not order:
         flags.add(ERROR, "no_methods", "no consequence method is enabled")
     for run in runs:
-        ctx = Ctx(cat, cfg, charts, run, dam, flags)
+        ctx = Ctx(cat, cfg, charts, run, dam, flags, habitable_rule)
         _flag_nodata_neighbourhood(ctx)
         ctx.receptors = _prefilter(ctx, notes)
         for mid in order:
@@ -1369,7 +1402,7 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None):
         "generic_label": C.GENERIC_LABELS[cls], "rule_class": rule_cls,
         "class_with_advisory": adv_cls, "advisory_applied": apply_adv,
         "driving": driving, "advisory": advisory, "hits": all_hits, "flags": flags.items,
-        "per_scenario": per, "modifier_notes": notes, "per_receptor": per_rec,
+        "habitable_rule": habitable_rule, "per_scenario": per, "modifier_notes": notes, "per_receptor": per_rec,
         "receptor_flags": flag_rec, "config": cfg, "dam": dam, "nid_id": nid, "layers": layers or [],
         "run_date": run_date or datetime.datetime.now().astimezone().isoformat(
             timespec="seconds"),

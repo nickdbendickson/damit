@@ -21,3 +21,5 @@ class Provider(QgsProcessingProvider):
     def loadAlgorithms(self):
         from .algorithms.classify import Classify
         self.addAlgorithm(Classify())
+        from .algorithms.reviewhabitable import ReviewHabitable
+        self.addAlgorithm(ReviewHabitable())

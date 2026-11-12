@@ -13,13 +13,14 @@ from qgis.core import (QgsCoordinateTransform, QgsFeature, QgsFeatureRequest, Qg
                        QgsProcessingLayerPostProcessorInterface, QgsProcessingOutputNumber,
                        QgsProcessingOutputString, QgsProcessingParameterBoolean,
                        QgsProcessingParameterEnum, QgsProcessingParameterFeatureSource,
-                       QgsProcessingParameterFile, QgsProcessingParameterFolderDestination,
+                       QgsProcessingParameterFile, QgsProcessingParameterFolderDestination, QgsProcessingParameterNumber,
                        QgsProcessingParameterRasterLayer, QgsProcessingParameterString,
                        QgsProject, QgsRasterLayer, QgsVectorFileWriter, QgsVectorLayer,
                        QgsProcessingOutputFile)
 
 from .. import compat, styles
-from ..engine import catalog as C, core, dam_record, dvchart, rail_lookup, receptors as R, report, tm11
+from ..engine import (catalog as C, core, dam_record, dvchart, habitability, habitable_review, rail_lookup,
+                      receptors as R, report, tm11, usa_structures)
 from ..sampling import rasters as S
 
 SCENARIO_IDS = ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
@@ -184,6 +185,22 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
             "RAIL_TRAINS_LOOKUP", "Rail trains per day lookup (CSV: field, value, trains_per_day, source; "
             "no default; values used are flagged as needing a ruling)", behavior=compat.FILE_FILE,
             extension="csv", optional=True))
+        self.addParameter(QgsProcessingParameterFeatureSource(
+            "USA_STRUCTURES", "USA Structures building footprints (FEMA / ORNL; optional): each structure point is "
+            "checked against them (inside / near / none, OCC_CLS vs the NSI occtype). Advisory: it feeds the "
+            "engineer's review and never makes a structure habitable", [compat.SRC_POLYGON], optional=True))
+        self.addParameter(QgsProcessingParameterNumber(
+            "USA_TOLERANCE_M", "USA Structures: a point within this distance (m) of a footprint is 'near'",
+            type=QgsProcessingParameterNumber.Double, defaultValue=12.0, minValue=0.0, maxValue=100.0))
+        self.addParameter(QgsProcessingParameterFile(
+            "HABITABLE_REVIEW", "Engineer's habitability review (habitable_review.json; empty = the one in the "
+            "depth raster's folder or up to two folders above it). Written only by damit:reviewhabitable, never by "
+            "this tool", behavior=compat.FILE_FILE, extension="json", optional=True))
+        self.addParameter(QgsProcessingParameterEnum(
+            "HABITABLE_RULE", "Which structures M6 and the class count as habitable", options=[
+                "Hazard's rule so far (a structure with no type is presumed habitable)",
+                "Only ND 911 address points and structures an engineer reviewed habitable"],
+            defaultValue=0))
         self.addParameter(QgsProcessingParameterString("DAM_NAME", "Dam name", optional=True))
         self.addParameter(QgsProcessingParameterString(
             "SOURCE_LABEL", "Source of the rasters, for the depth-velocity chart title (e.g. DSS-WISE; empty = "
@@ -236,6 +253,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         edge, prad, step = g["edge_ring_ft"] * f2m, g["point_radius_ft"] * f2m, \
             g["line_step_ft"] * f2m
         out, geoms = [], {}
+        self._xy = {}                      # structure rid -> (x, y) centroid in the raster CRS (USA Structures check)
         for key, kind, src in sources:
             xf = QgsCoordinateTransform(src.sourceCrs(), crs, context.transformContext())
             names = [f.name() for f in src.fields()]
@@ -267,6 +285,8 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                     c = gm.centroid().asPoint()
                     areas[rid] = (bytes(gm.asWkb()), (c.x(), c.y()), None)
             hyd = {}
+            if kind == "structure":
+                self._xy.update({rid: v[1] for rid, v in areas.items()})
             if areas:
                 hyd.update(S.sample_structures(areas, rs, edge, prad))
             if lines:
@@ -301,6 +321,88 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         # call, qgis_run.classify_env).
         with S.no_pam():
             return self._process(p, context, feedback)
+
+    def _reviews(self, p, context, run_specs, layers_info, feedback):
+        """The engineer's habitability review (HABITABLE_REVIEW, else the one beside the depth raster): read only."""
+        path = self.parameterAsFile(p, "HABITABLE_REVIEW", context)
+        found = None
+        if not path:
+            path = found = habitable_review.find([run_specs[0].get("depth")] if run_specs[0].get("depth") else [])
+        if not path:
+            return {}, None
+        reviews, probs = habitable_review.load(path)
+        layers_info.append(_stat(path, "habitability review", "{} structure review(s){}".format(
+            len(reviews), "; found automatically" if found else "")))
+        for pr in probs:
+            feedback.pushWarning("Habitability review: " + pr)
+        if reviews:
+            feedback.pushInfo("Habitability review {}: {} structure(s) reviewed.".format(path, len(reviews)))
+        return reviews, path
+
+    def _usa_check(self, usa_src, tol_m, recs, crs, context, feedback, layers_info):
+        """Check each structure point against the USA Structures footprints (advisory; fills usa_* on the receptors)."""
+        if usa_src is None or not getattr(self, "_xy", None):
+            return
+        f2m = compat.feet_to_map_units(crs)
+        unit_m = 0.3048 / f2m if f2m else 1.0              # metres per map unit
+        xs = [v[0] for v in self._xy.values()]
+        ys = [v[1] for v in self._xy.values()]
+        pad = tol_m / unit_m + 5.0 / unit_m
+        xf = QgsCoordinateTransform(crs, usa_src.sourceCrs(), context.transformContext())
+        back = QgsCoordinateTransform(usa_src.sourceCrs(), crs, context.transformContext())
+        from qgis.core import QgsRectangle
+        rect = xf.transformBoundingBox(QgsRectangle(min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad))
+        names = {n.lower(): n for n in usa_src.fields().names()}
+        fps = []
+        for feat in usa_src.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+            if feedback.isCanceled():
+                raise QgsProcessingException("Cancelled")
+            gm = QgsGeometry(feat.geometry())
+            if gm.isNull() or gm.isEmpty():
+                continue
+            gm.transform(back)
+            parts = gm.asMultiPolygon() if gm.isMultipart() else [gm.asPolygon()]
+            parts = [[[(q.x(), q.y()) for q in ring] for ring in part] for part in parts if part]
+            if not parts:
+                continue
+            g = lambda k: feat[names[k]] if k in names else None            # noqa: E731
+            fps.append(usa_structures.footprint(feat.id(), parts, g("occ_cls"), g("prim_occ"), g("build_id")))
+        pts = {}
+        for r in recs:
+            if r["kind"] == "structure" and r["id"] in self._xy:
+                x, y = self._xy[r["id"]]
+                pts[r["id"]] = (x, y, R.nsi_class(r.get("occtype")))
+        got = usa_structures.cross_check(pts, fps, tol_m, unit_m)
+        by = {r["id"]: r for r in recs}
+        for rid, e in got.items():
+            by[rid].update(e)
+        n = {k: sum(1 for e in got.values() if e["usa_struct_match"] == k) for k in ("inside", "near", "none")}
+        n_diff = sum(1 for e in got.values() if e["usa_occ_check"] == "differs")
+        feedback.pushInfo("USA Structures check ({} footprint(s) near the structures, {} m): {} inside, {} near, {} with "
+                          "no footprint, {} occupancy class(es) differ from the NSI occtype.".format(
+                              len(fps), tol_m, n["inside"], n["near"], n["none"], n_diff))
+        if layers_info is not None:
+            layers_info.append({"role": "usa structures", "source": usa_src.sourceName(), "modified": None, "size": None,
+                                "note": "{} footprint(s) read, tolerance {} m: {} inside, {} near, {} none".format(
+                                    len(fps), tol_m, n["inside"], n["near"], n["none"])})
+
+    def _habitability(self, res, cat, cfg, runs, charts, dam, layers_info, best, rule, rv_path, reviews, feedback):
+        """res["habitability"]: the wet structures under the 911 / reviewed rule against the rule M6 follows, the review
+        file used, and (when the two rules disagree) what the other rule would give. Never changes the suggestion."""
+        wet_min = float(cfg["general"].get("wet_min_depth_ft", 0.0))
+        t = habitability.tally(list(best.values()), cat["habitable_types"], wet_min)
+        cmp = None
+        if t["differs"] and not any(f["level"] == "error" for f in res["flags"] if f["code"] == "no_methods"):
+            try:
+                cmp = habitability.compare(cat, cfg, runs, charts, dam, layers_info, rule, res)
+            except Exception as e:                                   # noqa: BLE001 - a comparison never fails the run
+                feedback.pushWarning("Habitability rule comparison skipped: {}: {}".format(type(e).__name__, e))
+        res["habitability"] = {"rule_applied": rule, "tally": t, "comparison": cmp, "review_file": rv_path,
+                               "reviews_in_file": len(reviews)}
+        msg = habitability.flag_text(t, cmp)
+        if msg:
+            res["flags"].append({"level": "warning", "code": "habitable_rule_differs", "message": msg, "method": "M6",
+                                 "scenario": None, "receptors": []})
 
     def _dv_charts(self, chart_runs, charts, cat, cfg, dam, label, out_dir, feedback):
         """One habitable-structures depth-velocity chart (PNG + CSV) per run, in the output folder. A chart problem
@@ -345,6 +447,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
 
     def _process(self, p, context, feedback):
         cat = _cat()
+        self._ht = list(cat["habitable_types"])
         cfg = self._config(cat, p, context)
         out_dir = self.parameterAsString(p, "OUTPUT", context)
         os.makedirs(out_dir, exist_ok=True)
@@ -438,6 +541,10 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 raise QgsProcessingException(str(e))
             layers_info.append(_stat(trains_path, "rail trains lookup", "{} row(s)".format(len(trains_rows))))
         dom_src = self.parameterAsSource(p, "DOMAIN", context)
+        reviews, rv_path = self._reviews(p, context, run_specs, layers_info, feedback)
+        usa_src = self.parameterAsSource(p, "USA_STRUCTURES", context)
+        usa_tol = self.parameterAsDouble(p, "USA_TOLERANCE_M", context)
+        rule = (core.RULE_LEGACY, core.RULE_REVIEWED)[self.parameterAsEnum(p, "HABITABLE_RULE", context)]
         runs, geoms, best, chart_runs = [], {}, {}, []
         for i, spec in enumerate(run_specs):
             paths = {role: spec.get(role) for _k, role, _l, _o in RASTERS}
@@ -461,6 +568,8 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
             feedback.pushInfo("Run {} ({}, {}): sampling".format(
                 i + 1, spec.get("scenario") or "?", spec.get("model_dim") or "?"))
             recs, g = self._receptors(sources, rs, crs, cfg, context, feedback, domain)
+            habitable_review.apply(recs, reviews)
+            self._usa_check(usa_src, usa_tol, recs, crs, context, feedback, layers_info if i == 0 else None)
             filled = rail_lookup.apply(recs, trains_rows)
             if filled:
                 feedback.pushWarning("{} rail receptor(s) took trains per day from RAIL_TRAINS_LOOKUP: {}".format(
@@ -478,7 +587,8 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                          "receptors": recs,
                          "nodata_sampling": S.nodata_policy(rs["depth"])})
             feedback.setProgress(10 + 60.0 * (i + 1) / len(run_specs))
-        res = core.classify(cat, cfg, runs, dam=dam, charts=charts, layers=layers_info)
+        res = core.classify(cat, cfg, runs, dam=dam, charts=charts, layers=layers_info, habitable_rule=rule)
+        self._habitability(res, cat, cfg, runs, charts, dam, layers_info, best, rule, rv_path, reviews, feedback)
         res["dv_charts"] = self._dv_charts(chart_runs, charts, cat, cfg, dam,
                                            self.parameterAsString(p, "SOURCE_LABEL", context), out_dir, feedback)
         # reports
@@ -523,7 +633,14 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                      ("adv_class", compat.FT_INT), ("methods", compat.FT_STRING),
                      ("depth_ft", compat.FT_DOUBLE), ("vel_fps", compat.FT_DOUBLE),
                      ("dv_ft2s", compat.FT_DOUBLE), ("rise_ft", compat.FT_DOUBLE),
-                     ("flags", compat.FT_STRING), ("sampling", compat.FT_STRING)):
+                     ("flags", compat.FT_STRING), ("sampling", compat.FT_STRING),
+                     ("occtype", compat.FT_STRING), ("suggested_type", compat.FT_STRING),
+                     ("struct_key", compat.FT_STRING), ("is_911", compat.FT_INT),
+                     ("reviewed_habitable", compat.FT_INT), ("habitable_status", compat.FT_STRING),
+                     ("habitable_basis", compat.FT_STRING), ("usa_struct_match", compat.FT_STRING),
+                     ("usa_struct_dist_m", compat.FT_DOUBLE), ("usa_struct_id", compat.FT_STRING),
+                     ("usa_occ_cls", compat.FT_STRING), ("usa_prim_occ", compat.FT_STRING),
+                     ("usa_occ_check", compat.FT_STRING)):
             fields.append(QgsField(n, t))
         labels = res["config"]["labels"]
         written, first = set(), True
@@ -542,6 +659,8 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 r = best.get(rid, {})
                 pr = res["per_receptor"].get(rid, {})
                 cls = pr.get("rule") if pr.get("rule") is not None else -1
+                hstat, hbasis = (core.reviewed_status(r, self._ht)
+                                 if kind == "structure" and r else ("", ""))
                 f = QgsFeature(mem.fields())
                 f.setGeometry(geom)
                 f.setAttributes([rid, int(rid.split(":")[1]), kind, r.get("type"), cls,
@@ -549,7 +668,13 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                                  ",".join(sorted(pr.get("methods", []))), r.get("depth_ft"),
                                  r.get("velocity_fps"), r.get("dv_ft2s"), r.get("rise_ft"),
                                  ",".join(sorted(set(res["receptor_flags"].get(rid, [])))),
-                                 r.get("sampling")])
+                                 r.get("sampling"),
+                                 r.get("occtype"), r.get("suggested_type"), r.get("struct_key"),
+                                 None if r.get("is_911") is None else int(bool(r.get("is_911"))),
+                                 None if r.get("reviewed_habitable") is None else int(bool(r["reviewed_habitable"])),
+                                 hstat, hbasis, r.get("usa_struct_match"), r.get("usa_struct_dist_m"),
+                                 r.get("usa_struct_id"), r.get("usa_occ_cls"), r.get("usa_prim_occ"),
+                                 r.get("usa_occ_check")])
                 feats.append(f)
             prov.addFeatures(feats)
             opts = QgsVectorFileWriter.SaveVectorOptions()

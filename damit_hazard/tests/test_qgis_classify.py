@@ -50,15 +50,17 @@ def _tif(path, arr, nodata=-9999.0):
 
 def _layers(d):
     from qgis.core import QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY
-    s = QgsVectorLayer("Polygon?crs=EPSG:32614&field=type:string&field=occupants:integer",
+    s = QgsVectorLayer("Polygon?crs=EPSG:32614&field=type:string&field=occupants:integer&field=source:string"
+                       "&field=occtype:string&field=bid:string",
                        "structures", "memory")
     feats = []
-    for x0, t, occ in ((500010.0, "home", 3), (500040.0, "home", 2), (500070.0, "barn", 0)):
+    for x0, t, occ, src, ot, bid in ((500010.0, "home", 3, "nd911", None, "h1"), (500040.0, "home", 2, "nd911", None, "h2"),
+                                     (500070.0, "barn", 0, "nd911", None, "b1")):
         f = QgsFeature(s.fields())
         f.setGeometry(QgsGeometry.fromWkt(
             "POLYGON(({0} 5200050,{1} 5200050,{1} 5200060,{0} 5200060,{0} 5200050))".format(
                 x0, x0 + 10)))
-        f.setAttributes([t, occ])
+        f.setAttributes([t, occ, src, ot, bid])
         feats.append(f)
     s.dataProvider().addFeatures(feats)
     p = QgsVectorLayer("Point?crs=EPSG:32614&field=type:string", "points", "memory")
@@ -124,10 +126,11 @@ def test_nd_preset_headless():
     assert classes[-1] == 3, classes
     assert os.path.isfile(os.path.join(out, "damit_hazard_report.html"))
     # 0.3.0: the depth-velocity chart of the wet habitable structures: PNG + CSV in the output folder, linked in the
-    # md, embedded in the html, named for the imported raster ("depth.tif" is neither a Runner nor a Screener name)
+    # md, embedded in the html, named for the imported raster ("depth.tif" is neither a Runner nor a Screener name).
+    # 0.4.0: the structures here are ND 911 address points (source = nd911), so they are the habitable ones
     import csv
     pts = list(csv.DictReader(open(os.path.join(out, "damit_hazard_dv_habitable.csv"), encoding="utf-8")))
-    assert sorted(p["label"] for p in pts) == ["1", "2"], pts       # the two wet homes; the barn is not habitable
+    assert sorted(p["label"] for p in pts) == ["1", "2"], pts       # the two wet 911 homes; the barn is not habitable
     assert {p["source"] for p in pts} == {"Imported raster: depth.tif"}
     assert rep["dv_charts"][0]["counts"]["total"] == 2 and rep["dv_charts"][0]["source"] == "Imported raster: depth.tif"
     assert "damit_hazard_dv_habitable.png" in md
@@ -169,6 +172,126 @@ def test_chart_source_label_and_runner_names():
               "STRUCTURES": s, "OUTPUT": out3, "DAM_NAME": "smoke"})
     rep3 = json.load(open(os.path.join(out3, "damit_hazard_report.json"), encoding="utf-8"))
     assert rep3["dv_charts"] == [] and not os.path.exists(os.path.join(out3, "damit_hazard_dv_habitable.png"))
+
+
+def _nsi_layer(d):
+    """The synthetic structures with house 2 and the barn NOT 911 address points (NSI occtype RES1-1SWB and AGR1)."""
+    s, p, r = _layers(d)
+    ix = {n: s.fields().indexFromName(n) for n in ("source", "occtype")}
+    s.startEditing()
+    feats = {f["bid"]: f.id() for f in s.getFeatures()}
+    for bid, src, ot in (("h2", "nsi", "RES1-1SWB"), ("b1", "nsi", "AGR1")):
+        s.changeAttributeValue(feats[bid], ix["source"], src)
+        s.changeAttributeValue(feats[bid], ix["occtype"], ot)
+    assert s.commitChanges()
+    return s
+
+
+def _usa_layer(d):
+    """Synthetic USA Structures footprints: one over house 1, one 8 m from the centre of house 2 (a different class), none at the barn."""
+    from qgis.core import QgsFeature, QgsGeometry, QgsVectorLayer
+    u = QgsVectorLayer("Polygon?crs=EPSG:32614&field=OCC_CLS:string&field=PRIM_OCC:string&field=BUILD_ID:string", "usa",
+                       "memory")
+    feats = []
+    for wkt, cls, prim, bid in (
+            ("POLYGON((500009 5200049,500021 5200049,500021 5200061,500009 5200061,500009 5200049))", "Residential",
+             "Single Family Dwelling", "u1"),
+            ("POLYGON((500053 5200053,500057 5200053,500057 5200057,500053 5200057,500053 5200053))", "Industrial",
+             "Factory", "u2")):
+        f = QgsFeature(u.fields())
+        f.setGeometry(QgsGeometry.fromWkt(wkt))
+        f.setAttributes([cls, prim, bid])
+        feats.append(f)
+    u.dataProvider().addFeatures(feats)
+    return u
+
+
+def test_only_911_points_are_habitable_until_reviewed_and_classification_is_unchanged():
+    """0.4.0: non-911 structures (NSI) are unverified: not on the chart, only a count and a worklist; NSI occtype and a
+    USA Structures footprint only suggest; the review action (damit:reviewhabitable) makes a structure habitable;
+    the class is the legacy rule's unless HABITABLE_RULE says otherwise, and the difference is reported."""
+    import csv
+    import hashlib
+    _app()
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    dep, vel = _rasters(d)
+    s_all, p, r = _layers(d)
+    s = _nsi_layer(d)
+    from damit_hazard.engine import catalog as C
+    nd = [None] + list(C.load()["presets"])
+    base = {"PRESET": nd.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "VELOCITY": vel, "METRES": True,
+            "DAM_NAME": "smoke"}
+    ref = _alg_run(dict(base, STRUCTURES=s_all, OUTPUT=os.path.join(d, "o_all")))
+    out = os.path.join(d, "o_nsi")
+    res = _alg_run(dict(base, STRUCTURES=s, OUTPUT=out))
+    rep = json.load(open(os.path.join(out, "damit_hazard_report.json"), encoding="utf-8"))
+    ref_rep = json.load(open(os.path.join(d, "o_all", "damit_hazard_report.json"), encoding="utf-8"))
+    assert res["CLASS"] == ref["CLASS"] and rep["hits"] == ref_rep["hits"]              # the legacy rule: unchanged
+    assert rep["habitable_rule"] == "legacy"
+    pts = list(csv.DictReader(open(os.path.join(out, "damit_hazard_dv_habitable.csv"), encoding="utf-8")))
+    assert [x["label"] for x in pts] == ["1"] and pts[0]["habitable_basis"] == "911_address", pts
+    wl = list(csv.DictReader(open(os.path.join(out, "damit_hazard_dv_habitable_unverified.csv"), encoding="utf-8")))
+    assert [(w["struct_key"], w["occtype"], w["suggested_type"], w["nsi_suggests"]) for w in wl] == [
+        ("bid:h2", "RES1-1SWB", "home", "habitable")], wl
+    h = rep["habitability"]
+    assert h["tally"]["yes"] == 1 and h["tally"]["unverified"] == 1 and h["tally"]["legacy_habitable"] == 2, h
+    assert h["tally"]["differs"] == 1 and h["rule_applied"] == "legacy" and h["review_file"] is None
+    assert "reviewed_habitable" not in os.listdir(out) and not [f for f in os.listdir(out) if f.endswith(".json") and "review" in f and "report" not in f]
+    # the receptors GeoPackage records the occtype and the basis
+    from qgis.core import QgsVectorLayer
+    lyr = QgsVectorLayer(res["GPKG"] + "|layername=structures", "s", "ogr")
+    rows = {f["struct_key"]: f for f in lyr.getFeatures()}
+    assert rows["bid:h2"]["occtype"] == "RES1-1SWB" and rows["bid:h2"]["suggested_type"] == "home"
+    assert rows["bid:h2"]["habitable_status"] == "unverified" and rows["bid:h1"]["habitable_basis"] == "911_address"
+    # the engineer's review: only this action writes habitable_review.json; classify reads it
+    folder = os.path.join(d, "dam")
+    os.makedirs(folder)
+    rv = _alg_run_id("damit:reviewhabitable", {"FOLDER": folder, "KEYS": "bid:h2", "DECISION": 0,
+                                               "REVIEWER": "A. Engineer", "NOTE": "aerial photo"})
+    review = rv["REVIEW_FILE"]
+    assert os.path.basename(review) == "habitable_review.json" and os.path.isfile(review)
+    digest = hashlib.sha256(open(review, "rb").read()).hexdigest()
+    out2 = os.path.join(d, "o_rev")
+    _alg_run(dict(base, STRUCTURES=s, OUTPUT=out2, HABITABLE_REVIEW=review))
+    pts2 = list(csv.DictReader(open(os.path.join(out2, "damit_hazard_dv_habitable.csv"), encoding="utf-8")))
+    assert sorted(x["label"] for x in pts2) == ["1", "2"]
+    assert {x["habitable_basis"] for x in pts2 if x["label"] == "2"} == {"reviewed_habitable"}
+    assert hashlib.sha256(open(review, "rb").read()).hexdigest() == digest              # classify never writes the review
+    assert not os.path.exists(os.path.join(out2, "habitable_review.json"))
+    # the opt-in rule: only 911 points and reviewed structures drive M6 and the class; the difference is reported
+    out3 = os.path.join(d, "o_rule")
+    _alg_run(dict(base, STRUCTURES=s, OUTPUT=out3, HABITABLE_RULE=1))
+    rep3 = json.load(open(os.path.join(out3, "damit_hazard_report.json"), encoding="utf-8"))
+    assert rep3["habitable_rule"] == "reviewed" and rep3["habitability"]["rule_applied"] == "reviewed"
+    assert rep3["habitability"]["comparison"]["other"] == "legacy"
+    # USA Structures: advisory only (a footprint match or a class that differs never makes a structure habitable)
+    out4 = os.path.join(d, "o_usa")
+    _alg_run(dict(base, STRUCTURES=s, OUTPUT=out4, USA_STRUCTURES=_usa_layer(d), USA_TOLERANCE_M=12.0))
+    rep4 = json.load(open(os.path.join(out4, "damit_hazard_report.json"), encoding="utf-8"))
+    assert rep4["hits"] == ref_rep["hits"] and rep4["habitability"]["tally"]["yes"] == 1
+    wl4 = list(csv.DictReader(open(os.path.join(out4, "damit_hazard_dv_habitable_unverified.csv"), encoding="utf-8")))
+    assert wl4[0]["usa_struct_match"] == "near" and wl4[0]["usa_occ_cls"] == "Industrial"
+    assert wl4[0]["usa_occ_check"] == "differs", wl4
+    pts4 = list(csv.DictReader(open(os.path.join(out4, "damit_hazard_dv_habitable.csv"), encoding="utf-8")))
+    assert [x["label"] for x in pts4] == ["1"] and pts4[0]["usa_struct_match"] == "inside"
+    lyr4 = QgsVectorLayer(rep4_gpkg(out4) + "|layername=structures", "s", "ogr")
+    m = {f["struct_key"]: f["usa_struct_match"] for f in lyr4.getFeatures()}
+    assert m == {"bid:h1": "inside", "bid:h2": "near", "bid:b1": "none"}, m
+
+
+def rep4_gpkg(out):
+    return [os.path.join(out, f) for f in os.listdir(out) if f.endswith(".gpkg")][0]
+
+
+def _alg_run_id(alg_id, params):
+    from qgis.core import QgsProcessingContext, QgsProcessingFeedback, QgsProject
+    alg = QgsApplication.processingRegistry().algorithmById(alg_id)
+    assert alg is not None, alg_id + " not registered"
+    ctx = QgsProcessingContext()
+    ctx.setProject(QgsProject.instance())
+    res, ok = alg.run(params, ctx, QgsProcessingFeedback())
+    assert ok, "algorithm failed"
+    return res
 
 
 def test_classify_writes_nothing_beside_its_input_rasters():
