@@ -29,7 +29,10 @@ LOCKS = os.path.join(os.path.dirname(HERE), "locks")
 ROLES = {
     # QGIS 3.34 LTR is built against NumPy 1.x
     # draco 1.5.7: QGIS 3.34.6 links libdraco.so.9, which newer draco builds no longer provide
-    "ndqgis": ["python=3.12", "qgis=3.34", "numpy<2", "scipy", "h5py", "matplotlib-base", "draco=1.5.7"],
+    # laspy + lazrs: the Finder's open-water tool reads water from a classified LiDAR point cloud
+    # (.las/.laz, ASPRS class 9); laspy reads LAS and, with the lazrs backend, LAZ
+    "ndqgis": ["python=3.12", "qgis=3.34", "numpy<2", "scipy", "h5py", "matplotlib-base",
+               "draco=1.5.7", "laspy", "lazrs"],
     # ANUGA 4.1 + gmsh (the DamSafety / DamIT Runners mesh with gmsh) + NetCDF I/O
     "ndanuga": ["python=3.12", "anuga=4.1", "gmsh=4.15", "python-gmsh", "numpy", "scipy", "gdal",
                 "netcdf4", "matplotlib-base"],
