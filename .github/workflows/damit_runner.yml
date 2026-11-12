@@ -47,7 +47,7 @@ jobs:
       - name: Install numpy (the one non-stdlib dep the core modules need)
         run: pip install numpy
       - name: Run smoke tests
-        run: PYTHONPATH=. python3 -I -m unittest damit_runner.tests.test_engine_imports -v
+        run: PYTHONPATH=. python3 -m unittest damit_runner.tests.test_engine_imports -v
 
   no-damsuite:
     name: Zero damsuite imports
