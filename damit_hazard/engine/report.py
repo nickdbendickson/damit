@@ -8,8 +8,10 @@ sources appear in the Citations section so an engineer can trace each rule (Appe
 """
 import html
 import json
+import os
 
 MAX_IDS = 12
+DV_SECTION = "Depth-velocity chart (habitable structures)"
 
 
 def _ids(ids):
@@ -67,6 +69,26 @@ def _scalar(v):
     return json.dumps(v, sort_keys=True, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
 
 
+def _dv_lines(charts):
+    """The report lines for the depth-velocity charts (one block per flood result charted)."""
+    lines = ["Wet habitable structures on the TM-11 depth-velocity chart, by Hazard's own habitability rule "
+             "(no type = presumed a home; the `type_unknown` flag lists them)."]
+    for c in charts:
+        lines.append("**{}**".format(c.get("title") or c.get("source") or "chart"))
+        lines.append("{}{}".format(c.get("text") or "",
+                                   " (type unknown, presumed habitable: {})".format(c["counts"]["unknown_type"])
+                                   if (c.get("counts") or {}).get("unknown_type") else ""))
+        files = ["Chart: {}".format(c["png"]) if c.get("png") else "Chart: not drawn",
+                 "Points (CSV): {}".format(c["csv"])]
+        lines.append(" · ".join(files))
+        if c.get("note"):
+            lines.append("Note: " + c["note"])
+        lo = {k: v for k, v in (c.get("left_out") or {}).items() if v}
+        if lo:
+            lines.append("Not charted: " + ", ".join("{} {}".format(v, k.replace("_", " ")) for k, v in lo.items()))
+    return lines
+
+
 def sections(result, cat):
     """[(title, [lines] | ("table", header, rows))] - one structure for every format."""
     cfg = result["config"]
@@ -92,6 +114,8 @@ def sections(result, cat):
                                                              "Scenario", "Receptors", "Why"],
         [[h["method"], lab.get(h["class"]), h["strength"], h.get("scenario") or "-",
           _ids(h["receptors"]), h["reason"]] for h in result["driving"]])))
+    if result.get("dv_charts"):
+        out.append((DV_SECTION, _dv_lines(result["dv_charts"])))
     out.append(("Advisory results", ("table", ["Method", "Class", "Scenario", "Receptors", "Why"],
         [[h["method"], lab.get(h["class"]), h.get("scenario") or "-", _ids(h["receptors"]),
           h["reason"]] for h in result["advisory"]])))
@@ -175,7 +199,7 @@ def sections(result, cat):
 
 
 _FREE_TEXT_COLUMNS = ("Why", "Message", "Condition")
-_KEEP_SECTIONS = ("Labels", "Inputs (R10: re-run when these change)", "Citations")
+_KEEP_SECTIONS = ("Labels", "Inputs (R10: re-run when these change)", "Citations", DV_SECTION)
 
 
 def _display_units(out):
@@ -226,10 +250,16 @@ def markdown(result, cat, title="DamIT Hazard run report"):
             out += ["- " + x if name in ("Citations", "Modifier notes", "Inputs (R10: re-run "
                                          "when these change)", "Labels") else x
                     for x in body] + [""]
+            if name == DV_SECTION:
+                for c in result.get("dv_charts") or []:
+                    if c.get("png"):
+                        out += ["![{}]({})".format(c.get("title") or "depth-velocity chart", c["png"].replace(" ", "%20")), ""]
     return "\n".join(out)
 
 
-def html_report(result, cat, title="DamIT Hazard run report"):
+def html_report(result, cat, title="DamIT Hazard run report", base_dir=None):
+    """base_dir: the folder the chart PNGs are in; each chart is embedded as a data: URI (the file stays
+    self-contained), else linked by name."""
     e = html.escape
     out = ["<!DOCTYPE html><html><head><meta charset='utf-8'><title>{}</title>".format(e(title)),
            "<style>body{font-family:sans-serif;max-width:70em;margin:1em auto}"
@@ -251,6 +281,16 @@ def html_report(result, cat, title="DamIT Hazard run report"):
         else:
             out.append("<ul>" + "".join("<li>{}</li>".format(e(x).replace("**", ""))
                                         for x in body) + "</ul>")
+            if name == DV_SECTION:
+                for c in result.get("dv_charts") or []:
+                    if not c.get("png"):
+                        continue
+                    src = None
+                    if base_dir:
+                        from . import dvchart
+                        src = dvchart.png_data_uri(os.path.join(base_dir, c["png"]))
+                    out.append("<p><img alt='{}' style='max-width:100%' src='{}'></p>".format(
+                        e(c.get("title") or "depth-velocity chart", quote=True), e(src or c["png"], quote=True)))
     out.append("</body></html>")
     return "\n".join(out)
 

@@ -275,6 +275,8 @@ def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None,
     rjson = None
     if recs:
         rjson = _write_json(os.path.join(folder, "receptors.json"), recs)
+    if "receptors_sampled" in res["engine2d"]:
+        res["dv_chart"] = ST.dv_chart(dam, recs, folder, log)
     _write_json(os.path.join(folder, "steps.json"), res)
     pkg = build_handoff(cat, config, dam, res, settings, rjson)
     errs = HO.validate(pkg, cat)
@@ -364,6 +366,10 @@ def write_report(work, summary, cat, config):
         lines.append("- {}: {} {}".format(did, (e.get("status") or "-").upper(), e.get("detail") or ""))
         for n in e.get("notes") or []:
             lines.append("  - {}".format(n))
+        dv = r.get("dv_chart") or {}
+        if dv.get("png") or dv.get("csv"):
+            lines.append("  - Depth-velocity chart of the wet habitable structures: {} ({})".format(
+                dv.get("png") or "PNG not drawn", dv.get("detail") or ""))
     lines += ["", "## Parameters", ""]
     for k, m in config["methods"].items():
         lines.append("- {} {}: {}".format(k, m["name"], json.dumps(m.get("params", {}), sort_keys=True)))

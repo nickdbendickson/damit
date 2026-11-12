@@ -123,6 +123,52 @@ def test_nd_preset_headless():
     classes = sorted(f["class"] for f in lyr.getFeatures())
     assert classes[-1] == 3, classes
     assert os.path.isfile(os.path.join(out, "damit_hazard_report.html"))
+    # 0.3.0: the depth-velocity chart of the wet habitable structures: PNG + CSV in the output folder, linked in the
+    # md, embedded in the html, named for the imported raster ("depth.tif" is neither a Runner nor a Screener name)
+    import csv
+    pts = list(csv.DictReader(open(os.path.join(out, "damit_hazard_dv_habitable.csv"), encoding="utf-8")))
+    assert sorted(p["label"] for p in pts) == ["1", "2"], pts       # the two wet homes; the barn is not habitable
+    assert {p["source"] for p in pts} == {"Imported raster: depth.tif"}
+    assert rep["dv_charts"][0]["counts"]["total"] == 2 and rep["dv_charts"][0]["source"] == "Imported raster: depth.tif"
+    assert "damit_hazard_dv_habitable.png" in md
+    try:
+        import matplotlib.pyplot  # noqa: F401
+        have_mpl = True
+    except Exception:
+        have_mpl = False
+    if have_mpl:
+        assert os.path.getsize(os.path.join(out, "damit_hazard_dv_habitable.png")) > 5000
+        assert "data:image/png;base64," in open(os.path.join(out, "damit_hazard_report.html"), encoding="utf-8").read()
+
+
+def test_chart_source_label_and_runner_names():
+    """SOURCE_LABEL names the source (DSS-WISE); a model run's 'Depth (Max).tif' is the Runner's."""
+    _app()
+    d = tempfile.mkdtemp(prefix="damit_smoke_")
+    dep, vel = _rasters(d)
+    s, p, r = _layers(d)
+    out = os.path.join(d, "out_label")
+    res = _alg_run({"PRESET": 0, "METHODS": "M1", "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "VELOCITY": vel,
+                    "METRES": True, "STRUCTURES": s, "OUTPUT": out, "DAM_NAME": "smoke", "SOURCE_LABEL": "DSS-WISE"})
+    rep = json.load(open(os.path.join(out, "damit_hazard_report.json"), encoding="utf-8"))
+    assert rep["dv_charts"][0]["source"] == "DSS-WISE", rep["dv_charts"]
+    run_dir = os.path.join(d, "dam")
+    os.makedirs(run_dir)
+    import shutil
+    shutil.copy(dep, os.path.join(run_dir, "Depth (Max).tif"))
+    shutil.copy(vel, os.path.join(run_dir, "Velocity (Max).tif"))
+    out2 = os.path.join(d, "out_runner")
+    _alg_run({"PRESET": 0, "METHODS": "M1", "RUN_SCENARIO": 3, "MODEL_DIM": 0,
+              "DEPTH": os.path.join(run_dir, "Depth (Max).tif"), "VELOCITY": os.path.join(run_dir, "Velocity (Max).tif"),
+              "METRES": True, "STRUCTURES": s, "OUTPUT": out2, "DAM_NAME": "smoke"})
+    rep2 = json.load(open(os.path.join(out2, "damit_hazard_report.json"), encoding="utf-8"))
+    assert rep2["dv_charts"][0]["source"] == "Runner", rep2["dv_charts"]
+    # no velocity raster: no chart, a warning, and the classification still ran
+    out3 = os.path.join(d, "out_novel")
+    _alg_run({"PRESET": 0, "METHODS": "M6", "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "METRES": True,
+              "STRUCTURES": s, "OUTPUT": out3, "DAM_NAME": "smoke"})
+    rep3 = json.load(open(os.path.join(out3, "damit_hazard_report.json"), encoding="utf-8"))
+    assert rep3["dv_charts"] == [] and not os.path.exists(os.path.join(out3, "damit_hazard_dv_habitable.png"))
 
 
 def test_classify_writes_nothing_beside_its_input_rasters():

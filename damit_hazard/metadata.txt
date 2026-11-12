@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.2.6
+version=0.3.0
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -17,6 +17,11 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.3.0 - 2026-11-12
+      * New: a depth-velocity chart of the HABITABLE structures a flood result inundates, written for every classify run beside the report: damit_hazard_dv_habitable.png and .csv (the plotted points) in the output folder, linked in the Markdown report and embedded in the HTML report. One point per wet habitable structure at its peak depth and peak velocity over its wet cells, on the ND REG_05.2026 Fig. 5.1 house chart (with a 0-4 ft/s, 0-3.5 ft zoom panel) and, only when there are any, the Fig. 5.2 mobile-home chart. The structure ID is written beside each point in the high and judgment zones; the title gives the dam ID and name, the source, the run date and the counts in high, MEDIUM (judgment) and low. A run with no wet habitable structure still gets the chart, with an empty-state note.
+      * Which structures: Hazard's own habitability rule, the one M6 uses (a type in the catalog's habitable_types, or a habitable occupancy; no type = presumed a home, drawn hollow and counted in the title note). It now lives in one function (core.habitable_basis) that the engine and the chart both call; classification results are unchanged and type_unknown is still flagged. Structures only (facilities are not charted).
+      * Source: Runner for a model run's 'Depth (Max).tif', Screener for a 'Screening Depth (Max).tif', otherwise the depth raster's file name (a DSS-WISE or other imported raster). New optional input SOURCE_LABEL names it (e.g. DSS-WISE). The raster inputs are the existing DEPTH, VELOCITY (needed for the chart) and METRES; with EXTRA_RUNS each run gets its own chart (damit_hazard_dv_habitable_run<N>_<scenario>).
+      * matplotlib (Agg, no GUI) draws the PNG; if it is missing or fails the PNG is skipped with a warning and the CSV is still written. A chart problem never fails the classification.
     0.2.6 - 2026-11-12
       * Neighbourhood fill of a NoData receptor applies only on a depth grid coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m (strictly greater than; larger cell side, converted to metres from feet or other CRS units). At 20 m or finer, a NoData cell next to water is still scored dry (sampling=centre_nodata_dry) and flagged for review (nodata_dry_review). Coarser grids keep sampling=neighbourhood and nodata_neighbourhood. The report records the path, the threshold and the cell size. A dry (finite 0) cell is still scored dry.
     0.2.5 - 2026-11-12
