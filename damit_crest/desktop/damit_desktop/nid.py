@@ -180,6 +180,17 @@ def _download(url: str, timeout: float = 120) -> str:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:  # noqa: S310 - fixed https NID host
             data = res.read(MAX_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read(400).decode("utf-8", "replace").strip()
+        except Exception:
+            body = ""
+        hint = f" Body: {body[:200]}" if body and "<" not in body[:40].lower() else ""
+        raise NidError(
+            f"the NID returned HTTP {exc.code} {exc.reason} for this state's extract. "
+            f"Try again in a few minutes.{hint}"
+        ) from exc
     except (urllib.error.URLError, OSError) as exc:
         raise NidError(f"the NID download failed ({exc})") from exc
     if len(data) > MAX_BYTES:
