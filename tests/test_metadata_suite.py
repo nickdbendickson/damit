@@ -35,12 +35,24 @@ def code_of(path):
         return "\n".join(ln.split("#")[0] for ln in fh.read().splitlines())
 
 
+def _finder_version():
+    with open(os.path.join(ROOT, "damit_finder", "finder.py"), encoding="utf-8") as fh:
+        for ln in fh:
+            if ln.startswith("VERSION = "):
+                return ln.split("=", 1)[1].strip().strip('"')
+
+
+FINDER_VERSION = _finder_version()
+
+
 class Metadata(unittest.TestCase):
     def test_metadata(self):
         for folder, (name, provider, dep, _) in PLUGINS.items():
             m = meta(folder)
             self.assertEqual(m["name"], name)
-            self.assertEqual(m["version"], "0.2.0")
+            # the Finder engine is shared with DamSafety Finder and versioned with it (its
+            # run_info records finder.VERSION); the rest are versioned with the DamIT suite
+            self.assertEqual(m["version"], FINDER_VERSION if folder == "damit_finder" else "0.2.0")
             self.assertEqual(m["qgisMinimumVersion"], "3.28")
             self.assertEqual(m["qgisMaximumVersion"], "4.99")
             self.assertEqual(m["supportsQt6"], "True")
