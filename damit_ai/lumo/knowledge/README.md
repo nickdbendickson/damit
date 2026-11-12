@@ -9,6 +9,8 @@ RAG already indexes the repos' code and markdown; this folder adds the knowledge
 | `KNOWN-BEHAVIOURS.md` | Standing conventions, durable known behaviours/bugs, cross-plugin hand-off contracts, and Processing-provider gotchas. |
 | `MODELING-FINDINGS.md` | Empirical run findings (grid convergence, solver comparison, velocity sensitivity, mass balance) — the "why" behind results-changing fixes. |
 | `OPEN-ISSUES.md` | Snapshot of open GitHub issues (regenerate with `refresh-open-issues.zsh`). |
+| `ALGORITHM-HELP-DAMIT.md` | The REAL DamIT Processing algorithm ids, parameters and defaults, generated from the plugin code by `tools/dump_damit_algorithm_help.py` (offscreen QGIS; CI checks it is current). Lumo cites ids from here. |
+| `WATCHER-DIGEST.md` | The run watcher: what the deterministic digest checks, every flag id, the hooks, and who decides the verdict (code, never Lumo). |
 | `ALGORITHM-HELP.md` | Every Processing tool's parameters/help (generate on a QGIS box with `dump-algorithm-help.zsh`). |
 
 There is also a **code-triage eval** in [`../eval/questions.json`](../eval/questions.json), run with
@@ -32,6 +34,9 @@ automatically. Ask e.g. `lumo "what does REFINE_NEAR do and why is it off by def
 `lumo "has the 2801 over-spread been attributed to the solver or the terrain"`.
 
 ## Keep it current
+
+- `python3 ../tools/dump_damit_algorithm_help.py` (QGIS Python, `QT_QPA_PLATFORM=offscreen`) regenerates
+  `ALGORITHM-HELP-DAMIT.md`; add `--check` to see whether it is stale. Run it whenever an algorithm or parameter changes.
 
 - `refresh-open-issues.zsh [owner/repo ...]` — re-snapshot open issues (needs `gh`).
 - `dump-algorithm-help.zsh [profile]` — re-dump tool help (run on a machine with the
