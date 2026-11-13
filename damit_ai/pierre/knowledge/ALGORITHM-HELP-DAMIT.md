@@ -351,12 +351,16 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `F_POOL` | Normal pool elevation field (ft), flood scenario (empty = match by name) | field | - | optional |
 | `F_DATUM` | Vertical datum field of the elevations (text, e.g. NGVD29 / NAVD88; 3.12.0) (empty = match by name) | field | - | optional |
 | `METHOD` | Breach (ND 5.1.1(d)) | enum | 0 | options: 0=Piping failure, Froehlich (2008) parameters, routed; 1=Piping failure with a pipe (orifice) phase, Froehlich (2008) size and time; 2=Overtopping failure, Froehlich (2008) parameters, routed; 3=Piping failure, Froehlich (1995) parameters, routed; 4=Overtopping failure, Froehlich (1995) parameters, routed; 5=MacDonald & Langridge-Monopolis (1984) earthfill parameters, routed; 6=Von Thun & Gillette (1990) parameters, routed; 7=NRCS TR-60 peak breach discharge, triangular hydrograph; 8=NRCS TR-60 peak breach discharge, curvilinear hydrograph; 9=My own hydrograph (CSV: time hr, discharge cfs) |
-| `SCENARIO` | Scenario | enum | 0 | options: 0=Sunny day: no inflow, breach at the top of dam (ND 5.1.1); 1=Flood: PMF inflow, with the breach and without it (incremental damage, ND 6.4); 2=Per dam: flood if its folder has inputs/pmf_inflow.csv, else sunny day |
+| `SCENARIO` | Scenario | enum | 0 | options: 0=Sunny day: no inflow, breach at the top of dam (ND 5.1.1); 1=Flood: PMF inflow, with the breach and without it (incremental damage, ND 6.4); 2=Per dam: flood if its folder has inputs/pmf_inflow.csv, else sunny day; 3=Flood, NO breach: PMF inflow through the spillways and outlets and over the crest; the dam stands |
+| `START_POOL` | Sunny day: the pool when the breach starts | enum | 0 | options: 0=Top of dam (ND 5.1.1; the default); 1=Normal pool (the normal pool elevation field) |
 | `INFLOW_CSV` | Flood scenario: PMF inflow CSV for dams without their own inputs/pmf_inflow.csv | file | - | optional |
 | `SPILLWAY_CSV` | Flood scenario: spillway rating CSV for dams without their own | file | - | optional |
 | `TRIGGER` | Flood scenario: the dam fails | enum | 0 | options: 0=at the highest pool level; 1=at a set time (hours after the inflow starts); 2=when the pool reaches an elevation (ft) |
 | `TRIGGER_VALUE` | Flood scenario: failure time (hr) or pool elevation (ft) | number | - | optional |
 | `BASELINE` | Flood scenario: also run without the breach | boolean | True | - |
+| `AUX_CREST_FT` | Flood scenario: auxiliary spillway crest elevation (ft; datum as the top of dam; empty = none) | number | - | optional |
+| `AUX_LENGTH_FT` | Flood scenario: auxiliary spillway crest length (ft) | number | - | optional |
+| `AUX_C` | Flood scenario: auxiliary spillway weir coefficient C in Q = C L H^1.5 (US units; starting value 2.6 is the engineer's) | number | 2.6 | advanced |
 | `INCR_FT` | Incremental depth thresholds (ft; starting values 1, 2, 3 are the engineer's) | string | 1, 2, 3 | optional; advanced |
 | `ELEV_DATUM` | Vertical datum of the dam elevations (top of dam, pools, spillway, breach bottom; the DEM is NAVD88) | enum | 0 | options: 0=Auto: as stated in dam.json / the inventory (NGVD29 when not stated, with a warning; a local datum such as a 100 ft top is detected and taken from the DEM); 1=NAVD88 (the DEM's datum): used as given; 2=NGVD29: converted to NAVD88 with VERTCON at the dam; 3=Local (use DEM): top of dam from the DEM, the other elevations kept relative to it |
 | `RECEPTOR_POINTS` | Structures (points, e.g. NSI, or building footprint polygons): decide how far downstream to model and are reported when flooded; polygons also serve the 'Buildings' option below | source | - | optional |
@@ -670,10 +674,15 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `PIPE_DIA_FT` | Pipe phase: starting pipe diameter (ft; starting value 0.5 is the engineer's, a screening value you choose) | number | 0.5 | advanced |
 | `VTG_ERODIBLE` | Von Thun & Gillette: erodible embankment (else resistant) | boolean | True | advanced |
 | `PARTIAL_DEPTH` | Partial breach: breach depth as a share of the dam height (0.1-1; empty = full depth) | number | - | optional; advanced |
-| `SCENARIO` | Scenario | enum | 0 | options: 0=Sunny day: no inflow, breach at the top of dam (ND 5.1.1); 1=Flood: PMF inflow, with the breach and without it (incremental damage, ND 6.4) |
+| `SCENARIO` | Scenario | enum | 0 | options: 0=Sunny day: no inflow, breach at the top of dam (ND 5.1.1); 1=Flood: PMF inflow, with the breach and without it (incremental damage, ND 6.4); 2=Flood, NO breach: PMF inflow through the spillways and outlets and over the crest; the dam stands |
+| `START_POOL` | Sunny day: the pool when the breach starts | enum | 0 | options: 0=Top of dam (ND 5.1.1; the default); 1=Normal pool (give the normal pool elevation); 2=An elevation I state (give it below) |
+| `START_WSE_FT` | Sunny day: starting pool elevation (ft; datum as the top of dam), for 'An elevation I state' | number | - | optional |
 | `INFLOW_CSV` | Flood scenario: PMF inflow hydrograph CSV (time hr, discharge cfs) | file | - | optional |
 | `SPILLWAY_CSV` | Flood scenario: spillway rating CSV (elevation ft, discharge cfs; empty = no spillway) | file | - | optional |
-| `NORMAL_POOL_FT` | Flood scenario: normal pool elevation (ft; datum as the top of dam) | number | - | optional |
+| `NORMAL_POOL_FT` | Normal pool elevation (ft; datum as the top of dam): the flood scenarios start there, and a sunny day from the normal pool | number | - | optional |
+| `AUX_CREST_FT` | Flood scenario: auxiliary spillway crest elevation (ft; datum as the top of dam; empty = none) | number | - | optional |
+| `AUX_LENGTH_FT` | Flood scenario: auxiliary spillway crest length (ft) | number | - | optional |
+| `AUX_C` | Flood scenario: auxiliary spillway weir coefficient C in Q = C L H^1.5 (US units; starting value 2.6 is the engineer's) | number | 2.6 | advanced |
 | `TRIGGER` | Flood scenario: the dam fails | enum | 0 | options: 0=at the highest pool level; 1=at a set time (hours after the inflow starts); 2=when the pool reaches an elevation (ft) |
 | `TRIGGER_VALUE` | Flood scenario: failure time (hr) or pool elevation (ft) | number | - | optional |
 | `BASELINE_CSV` | Flood scenario, own hydrographs: outflow without the breach CSV | file | - | optional; advanced |
@@ -830,6 +839,7 @@ Computes the ND 5.1.1 breach hydrograph without running a flood model, for check
 | `AREA_AC` | Surface area at the top of dam (ac) | number | - | optional |
 | `PMF_FT` | Maximum reservoir level in the PMF (ft) | number | - | optional |
 | `BOTTOM_FT` | Breach bottom elevation (ft) | number | - | optional |
+| `START_WSE_FT` | Starting pool elevation (ft; empty = top of dam, ND 5.1.1) | number | - | optional |
 | `METHOD` | Breach (ND 5.1.1(d)) | enum | 0 | options: 0=Piping failure, Froehlich (2008) parameters, routed; 1=Piping failure with a pipe (orifice) phase, Froehlich (2008) size and time; 2=Overtopping failure, Froehlich (2008) parameters, routed; 3=Piping failure, Froehlich (1995) parameters, routed; 4=Overtopping failure, Froehlich (1995) parameters, routed; 5=MacDonald & Langridge-Monopolis (1984) earthfill parameters, routed; 6=Von Thun & Gillette (1990) parameters, routed; 7=NRCS TR-60 peak breach discharge, triangular hydrograph; 8=NRCS TR-60 peak breach discharge, curvilinear hydrograph; 9=My own hydrograph (CSV: time hr, discharge cfs) |
 | `USER_CSV` | Hydrograph CSV (for 'my own hydrograph') | file | - | optional |
 | `CREST_WIDTH` | Crest width (ft): TR-60, MacDonald & Langridge-Monopolis | number | - | optional |
@@ -852,7 +862,7 @@ Outputs: `OUTPUT`
 
 Group: DamIT breach runs
 
-Dam breach flood for one dam, the DamSafety Runner's rundam for the DamIT presets. Sunny day: no inflow and no outlet or spillway flow, the reservoir starting at the top of dam. The breach hydrograph comes from METHOD (Froehlich 2008 piping by default, TR-60, the other DamSafety methods, or your CSV). The breach inflow goes in at the lowest ground of the downstream toe band, 5 m to H x (downstream slope + 1) out from the dam line (3:1 when the slope is not known), never more than 150 m from it. LISFLOOD-FP runs on the DEM and the domain grows until the flood no longer leaves it deeper than the edge tolerance (MAX_RUNS, MAX_EXTENT_MI, DURATION_MAX_HR and the wall-clock limits stop it); a coarse wide, shallow flood is run again at 10 m (GRID_REFINE); Models = ANUGA (or FORCE_ANUGA) re-runs the extent on a mesh and its maxima are the results.
+Dam breach flood for one dam, the DamSafety Runner's rundam for the DamIT presets. The preset is a sunny day: no inflow and no outlet or spillway flow, the reservoir starting at the top of dam, a piping breach. START_POOL starts the sunny day at the normal pool or an elevation you state instead. SCENARIO = flood routes a PMP/PMF inflow hydrograph (INFLOW_CSV) through the reservoir, the spillway rating, an auxiliary spillway weir and over the crest, and either breaches the dam (TRIGGER: at the highest pool, at a time, at a pool elevation) or, with the no-breach scenario, models that outflow with the dam standing. The breach hydrograph comes from METHOD (Froehlich 2008 piping by default, overtopping, TR-60, the other DamSafety methods, or your CSV). The breach inflow goes in at the lowest ground of the downstream toe band, 5 m to H x (downstream slope + 1) out from the dam line (3:1 when the slope is not known), never more than 150 m from it. LISFLOOD-FP runs on the DEM and the domain grows until the flood no longer leaves it deeper than the edge tolerance (MAX_RUNS, MAX_EXTENT_MI, DURATION_MAX_HR and the wall-clock limits stop it); a coarse wide, shallow flood is run again at 10 m (GRID_REFINE); Models = ANUGA (or FORCE_ANUGA) re-runs the extent on a mesh and its maxima are the results.
 
 LISFLOOD_EXE: empty = an installed LISFLOOD-FP (the provider setting, NDBREACH_LISFLOOD, lisflood on PATH or a usual install place); when none is found the built-in numpy engine runs instead, with a WARNING in the log, run_report.json and ENGINE_FALLBACK / ENGINE_NOTE (as the old ND Breach Runner did); 'builtin' = the built-in engine on request (a screening approximation, NOT LISFLOOD-FP). A path that does not exist is an error, not a fallback. HEC-RAS 2D is not run by DamIT (choosing it is refused). DamIT never starts HEC-RAS or Wine, and never calls the ND suite's breach runner or batch tools.
 
@@ -887,10 +897,21 @@ DEM_Z 'Detect from the raster' reads the band unit or vertical CRS; if neither i
 | `DEM_Z` | DEM elevation units | enum | 0 | options: 0=Detect from the raster; 1=Feet; 2=US survey feet; 3=Meters |
 | `TOP_FT` | Top of dam elevation (ft, the DEM's datum; empty = dam.json) | number | - | optional |
 | `AREA_AC` | Surface area at the top of dam (ac; empty = dam.json) | number | - | optional |
-| `PMF_FT` | Maximum reservoir level in the PMF (ft; recorded only: the sunny day starts at the top of dam) | number | - | optional |
+| `PMF_FT` | Maximum reservoir level in the PMF (ft; recorded only: choose the starting pool and the scenario below) | number | - | optional |
 | `BOTTOM_FT` | Breach bottom elevation (ft; empty = top of dam - height) | number | - | optional |
 | `INFLOW_POINT` | Breach inflow point below the dam (empty = the toe band) | point | - | optional |
 | `METHOD` | Breach (ND 5.1.1(d)) | enum | 0 | options: 0=Piping failure, Froehlich (2008) parameters, routed; 1=Piping failure with a pipe (orifice) phase, Froehlich (2008) size and time; 2=Overtopping failure, Froehlich (2008) parameters, routed; 3=Piping failure, Froehlich (1995) parameters, routed; 4=Overtopping failure, Froehlich (1995) parameters, routed; 5=MacDonald & Langridge-Monopolis (1984) earthfill parameters, routed; 6=Von Thun & Gillette (1990) parameters, routed; 7=NRCS TR-60 peak breach discharge, triangular hydrograph; 8=NRCS TR-60 peak breach discharge, curvilinear hydrograph; 9=My own hydrograph (CSV: time hr, discharge cfs) |
+| `SCENARIO` | Scenario | enum | 0 | options: 0=Sunny day: no inflow; the breach starts at the top of dam unless you choose another pool; 1=Flood (PMP/PMF inflow) with a breach; 2=Flood (PMP/PMF inflow), NO breach: through the spillways and over the crest |
+| `START_POOL` | Sunny day: the pool when the breach starts | enum | 0 | options: 0=Top of dam (the preset); 1=Normal pool (NORMAL_POOL_FT); 2=An elevation I state (START_WSE_FT) |
+| `START_WSE_FT` | Sunny day: starting pool elevation (ft; datum as the top of dam), for 'An elevation I state' | number | - | optional |
+| `NORMAL_POOL_FT` | Normal pool elevation (ft; datum as the top of dam; empty = dam.json): the flood scenarios start there, and a sunny day from the normal pool | number | - | optional |
+| `INFLOW_CSV` | Flood scenario: PMP/PMF inflow hydrograph CSV (time hr, discharge cfs) | file | - | optional |
+| `SPILLWAY_CSV` | Flood scenario: spillway rating CSV (elevation ft, discharge cfs; empty = no rating) | file | - | optional |
+| `AUX_CREST_FT` | Flood scenario: auxiliary spillway crest elevation (ft; datum as the top of dam; empty = none) | number | - | optional |
+| `AUX_LENGTH_FT` | Flood scenario: auxiliary spillway crest length (ft) | number | - | optional |
+| `AUX_C` | Flood scenario: auxiliary spillway weir coefficient C in Q = C L H^1.5 (US units; 2.6 when empty) | number | - | optional; advanced |
+| `TRIGGER` | Flood scenario with a breach: the dam fails | enum | 0 | options: 0=at the highest pool level; 1=at a set time (hours after the inflow starts); 2=when the pool reaches an elevation (ft) |
+| `TRIGGER_VALUE` | Flood scenario with a breach: failure time (hr) or pool elevation (ft) | number | - | optional |
 | `USER_CSV` | Hydrograph CSV (for 'my own hydrograph') | file | - | optional |
 | `CREST_WIDTH` | Crest width (ft): TR-60, MacDonald & Langridge-Monopolis | number | - | optional |
 | `US_SLOPE` | Upstream slope, H in H:1V (TR-60, MacDonald) | number | - | optional |
@@ -970,10 +991,15 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `PIPE_DIA_FT` | Pipe phase: starting pipe diameter (ft; starting value 0.5 is the engineer's, a screening value you choose) | number | 0.5 | advanced |
 | `VTG_ERODIBLE` | Von Thun & Gillette: erodible embankment (else resistant) | boolean | True | advanced |
 | `PARTIAL_DEPTH` | Partial breach: breach depth as a share of the dam height (0.1-1; empty = full depth) | number | - | optional; advanced |
-| `SCENARIO` | Scenario | enum | 0 | options: 0=Sunny day: no inflow, breach at the top of dam (ND 5.1.1); 1=Flood: PMF inflow, with the breach and without it (incremental damage, ND 6.4) |
+| `SCENARIO` | Scenario | enum | 0 | options: 0=Sunny day: no inflow, breach at the top of dam (ND 5.1.1); 1=Flood: PMF inflow, with the breach and without it (incremental damage, ND 6.4); 2=Flood, NO breach: PMF inflow through the spillways and outlets and over the crest; the dam stands |
+| `START_POOL` | Sunny day: the pool when the breach starts | enum | 0 | options: 0=Top of dam (ND 5.1.1; the default); 1=Normal pool (give the normal pool elevation); 2=An elevation I state (give it below) |
+| `START_WSE_FT` | Sunny day: starting pool elevation (ft; datum as the top of dam), for 'An elevation I state' | number | - | optional |
 | `INFLOW_CSV` | Flood scenario: PMF inflow hydrograph CSV (time hr, discharge cfs) | file | - | optional |
 | `SPILLWAY_CSV` | Flood scenario: spillway rating CSV (elevation ft, discharge cfs; empty = no spillway) | file | - | optional |
-| `NORMAL_POOL_FT` | Flood scenario: normal pool elevation (ft; datum as the top of dam) | number | - | optional |
+| `NORMAL_POOL_FT` | Normal pool elevation (ft; datum as the top of dam): the flood scenarios start there, and a sunny day from the normal pool | number | - | optional |
+| `AUX_CREST_FT` | Flood scenario: auxiliary spillway crest elevation (ft; datum as the top of dam; empty = none) | number | - | optional |
+| `AUX_LENGTH_FT` | Flood scenario: auxiliary spillway crest length (ft) | number | - | optional |
+| `AUX_C` | Flood scenario: auxiliary spillway weir coefficient C in Q = C L H^1.5 (US units; starting value 2.6 is the engineer's) | number | 2.6 | advanced |
 | `TRIGGER` | Flood scenario: the dam fails | enum | 0 | options: 0=at the highest pool level; 1=at a set time (hours after the inflow starts); 2=when the pool reaches an elevation (ft) |
 | `TRIGGER_VALUE` | Flood scenario: failure time (hr) or pool elevation (ft) | number | - | optional |
 | `BASELINE_CSV` | Flood scenario, own hydrographs: outflow without the breach CSV | file | - | optional; advanced |
