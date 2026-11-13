@@ -94,9 +94,10 @@ and it seeds the models from `offline/models` so nothing is pulled). Flags: `--n
 - **Periodic library refresh** — `vor/refresh-library.zsh` (macOS/Linux) and
   `vor/refresh-library.ps1` (Windows) download any new catalog/ASDSO files and re-index them.
   Each script's header has the launchd / cron / Task Scheduler line to run it weekly.
-- **ALGORITHM-HELP** — the one piece that needs a live QGIS box: run
-  `heim/knowledge/dump-algorithm-help.zsh` once where the plugins are installed in a QGIS profile,
-  commit the generated `ALGORITHM-HELP.md`, and the next install (or `index-knowledge.zsh`) picks it up.
+- **ALGORITHM-HELP** — the DamSafety tool help (`heim/knowledge/ALGORITHM-HELP.md` and one page per tool
+  in `heim/knowledge/algorithm-help/`) is committed, so an install indexes it with the rest of the pack.
+  It needs a QGIS with the plugins only to REGENERATE it, after a tool's parameters change:
+  `heim/knowledge/dump-algorithm-help.zsh <profile>`, then commit what changed.
 
 ## openSUSE GUI-QGIS note
 

@@ -136,6 +136,45 @@ also pinned in the Q&A persona's SYSTEM prompt (`prompts/persona_rules.txt`, cop
   non-edge side, and every 50th call (`WINDOW_SELF_CHECK`); a mismatch returns the
   full-grid answer and logs `window_mismatch`. Golden baseline unchanged.
 
+## Terrain swaps: a wrong result with no error
+
+Pointing a run at a different DEM (a local statewide VRT in place of downloaded 3DEP
+tiles, a 1 m file in place of a 5 m one) changes more than the file path. None of these
+raises an error; each gives a plausible-looking result. `tools/mac/use_local_terrain.sh`
+(DamSafety repo) handles the last two and warns about the first three.
+
+- **The model grid takes the DEM's CRS.** Both Runners do
+  `if dem_crs.isValid() and not dem_crs.isGeographic() and dem_unit == 1.0: work = dem_crs`.
+  `WORK_CRS` is read **only** when the DEM is not projected in metres, so any metre DEM
+  overrides it, including the EPSG:5070 the review runs set. Deliberate: reprojecting results
+  back from a UTM model grid left nodata triangles on every raster edge, and the Hazard
+  extent check then saw no wet edge cells. The run log prints `Model CRS <authid>` every
+  run; it never says that `WORK_CRS` was overridden. A DEM swap can therefore move a run's
+  output CRS without anyone asking. To see what a DEM will impose: `gdalsrsinfo -o epsg <dem>`.
+- **A VRT reads a missing source as nodata.** A VRT whose source file is absent still opens,
+  and the missing tile comes back as nodata, which the Runner treats as high ground. The
+  flood stops at a straight tile edge and nothing is logged. Check every `SourceFilename`
+  of a VRT resolves before a long run (`gdalinfo` lists them; a relative path is relative to
+  the VRT when `relativeToVRT="1"`).
+- **A composite DEM is not the same terrain as its finest layer.** The DWR-2801 review DEM is
+  a composite: native 1 m over the dam with a 5 m DEM underneath outside the 1 m tiles. A
+  pure 1 m statewide VRT has no underlay, so the area the composite filled at 5 m is nodata.
+  `use_local_terrain.sh absaraka-kit` keeps the composite and only redirects its 1 m tile
+  paths; it refuses a tile whose size or cell does not match what the composite says.
+- **Most review dams are 5 m, not 1 m.** The default review DEM is 3DEP 1 m **averaged to
+  5 m** (874 `*_avg5m.tif` rows against 36 native 1 m, all 36 for DWR-2801). Moving those
+  dams to true 1 m changes source resolution, run time and results for every one of them.
+- **`record` uses the DEM but is not re-run when the DEM changes** (`nickreview_mac.py`).
+  The stage table says `READS["record"] = ()`, yet the stage passes the DEM into the
+  Screening 7b record. Re-running `rundam` on new terrain with an old `record.ok` models the
+  new DEM against a `dam.json` derived from the old one. Use `--redo` (it covers `record`)
+  or a fresh `--out`.
+- **Get data keeps a DEM it already recorded.** `damdata.exists(role)` is true for a role
+  already in `dam.json` unless `OVERWRITE` is set, so a dam folder from an earlier run keeps
+  its old `data/dem.vrt` and models the old terrain for hours while the log prints
+  `get data: ok`. `--redo` does **not** fix this (it re-runs the chain, not Get data). Pass
+  `--getdata-param OVERWRITE=true`.
+
 ## Cross-plugin hand-off contracts (`damsuite/versions.py`)
 
 `REQUIRES[(A, B)] = (hard_min, soft_min, reason)` — what plugin A needs of plugin B when

@@ -3380,9 +3380,16 @@ else
   else
     warn "knowledge index failed; retry by hand: heim-index -c heim_knowledge $KN_DIR"
   fi
-  # the vor engine docs, if that library has been downloaded already
-  EDOCS="${VOR_HOME:-$HOME/Vor}/library/references/software"
-  if [[ -d "$EDOCS" ]]; then
+  # the vor engine docs, if that library has been downloaded already. It may still be under
+  # its pre-rename name (~/DamResearch) when Vor's own installer has not been re-run yet.
+  EDOCS=""
+  for d in "${VOR_HOME:-$HOME/Vor}" "${DAMRESEARCH_HOME:-$HOME/DamResearch}"; do
+    if [[ -d "$d/library/references/software" ]]; then
+      EDOCS="$d/library/references/software"
+      break
+    fi
+  done
+  if [[ -n "$EDOCS" ]]; then
     if "${RAG_RUN[@]}" "$LOCAL_AI/rag_index.py" -c engine_docs "$EDOCS"; then
       ok "engine docs indexed from $EDOCS -> collection 'engine_docs'"
     else

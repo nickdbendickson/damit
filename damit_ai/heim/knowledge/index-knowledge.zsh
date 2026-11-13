@@ -29,7 +29,14 @@ echo "Indexing knowledge pack: $HERE"
 $PY "$RAG" -c heim_knowledge "$HERE"
 
 if [[ "${1:-}" == "--with-engine-docs" ]]; then
+  # the library may still be under its pre-rename name when Vor's installer has not been re-run
   DOCS="${VOR_HOME:-$HOME/Vor}/library/references/software"
+  for d in "${VOR_HOME:-$HOME/Vor}" "${DAMRESEARCH_HOME:-$HOME/DamResearch}"; do
+    if [[ -d "$d/library/references/software" ]]; then
+      DOCS="$d/library/references/software"
+      break
+    fi
+  done
   if [[ -d "$DOCS" ]]; then
     echo "Indexing engine docs: $DOCS"
     $PY "$RAG" -c engine_docs "$DOCS"

@@ -90,6 +90,38 @@
     {"id": "heim-slows-lisflood",
      "q": "Why does the run watcher not ask Heim to explain while LISFLOOD is running, and how is that set?",
      "doc": "WATCHER-DIGEST",
-     "facts": ["HEIM_WATCH_EXPLAIN", "idle", "slower|share the cores|CPU"]}
+     "facts": ["HEIM_WATCH_EXPLAIN", "idle", "slower|share the cores|CPU"]},
+    {
+      "id": "dem-overrides-work-crs",
+      "q": "I set WORK_CRS to EPSG:5070 but the run log says Model CRS is a UTM zone. Why?",
+      "doc": "KNOWN-BEHAVIOURS",
+      "facts": ["DEM", "metre|meter|projected", "WORK_CRS"],
+      "forbid": ["WORK_CRS (always )?(wins|takes precedence|overrides the DEM)"]
+    },
+    {
+      "id": "getdata-keeps-old-dem",
+      "q": "I changed the DEM and re-ran with --redo, but the results are identical to the old run. What kept the old terrain?",
+      "doc": "KNOWN-BEHAVIOURS|FAILURE-CASEBOOK|FILE-CONTRACTS",
+      "facts": ["OVERWRITE", "dam\\.json|Get data|get data"]
+    },
+    {
+      "id": "batch-ok-but-failed",
+      "q": "A batch says every dam is ok but the dam folders have no results. What should I read to see what really happened?",
+      "doc": "FAILURE-CASEBOOK|FILE-CONTRACTS|RUN-RECIPES",
+      "facts": ["state\\.json", "exit"]
+    },
+    {
+      "id": "empty-collection-not-error",
+      "q": "eval_heim.py reports 0/0 passed with every question skipped. What is wrong and how do I check?",
+      "doc": "FAILURE-CASEBOOK|FILE-CONTRACTS",
+      "facts": ["heim_knowledge", "list-collections|not listed|empty"]
+    },
+    {
+      "id": "no-invented-flags",
+      "q": "What flag makes heim-index add a single file instead of a folder?",
+      "doc": "CLI-HELP",
+      "facts": ["--add"],
+      "forbid": ["--file\\b", "--single\\b", "--input\\b"]
+    }
   ]
 }
