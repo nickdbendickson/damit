@@ -2,7 +2,7 @@
   "app": "damit-crest",
   "builtBy": "npm run build:desktop",
   "sources": {
-    "src/components/crest/BatchScreen.tsx": "a367b0634c17189cc8bdf07cbe3bffb46aa985ba4768d08912abd232ddd0a74c",
+    "src/components/crest/BatchScreen.tsx": "a054ecad84fc0f7272d78794d57521beca028e9a79b2467cf7ae476195886b78",
     "src/components/crest/BatchTable.tsx": "4f0f3aaf071360a1674c71c5b9a10f50e2528877ea6fc722fbb5afa9193b2608",
     "src/components/crest/BreachAdvanced.tsx": "090d6bf558eb3ac9fb34e0274fbbe771d7bde2d046f88eb7f43e88704d9cc569",
     "src/components/crest/charts.tsx": "bc2bd7cf68397388dd90cf1a3408a283bad6f49778cd6b4dbe4b791eb54bd70c",
@@ -31,7 +31,8 @@
     "src/lib/crest/acer.ts": "28fc318c29bc48e2608dd44a8bb107d4f1b1ed972b0b7b0bd23c7febc1f970c8",
     "src/lib/crest/aoi.ts": "724bb00049ce932ad689228a664ee2f879620673bc77031af73b1e644ce3d604",
     "src/lib/crest/basemap.ts": "906546631c8a05c597943dad7a6c90b26e647802db65e4c283dd17fb6032afda",
-    "src/lib/crest/batch-store.ts": "cf74afbfce0d471a2b39f21978fe66d130e88e83766f8e5c0d453129d38ddc4f",
+    "src/lib/crest/batch-job.ts": "64cc5b9524e12e2ce6b1928c0e82ec892ea60683850ba878b9a563d9ff8ad212",
+    "src/lib/crest/batch-store.ts": "06b1baf58002beddd4db4c5d8433397f13828f7ed9d692c73086f22e17dc2b46",
     "src/lib/crest/batch.ts": "05f3715c834ca41a8d7bdc036e3990baaa8ff7269217dac074807f04e42d742a",
     "src/lib/crest/breach-point.ts": "5fa15fdc2991aae2d59ece829d4a5117c7f1ab609c053563b0e2c8e2583d0d40",
     "src/lib/crest/breach.ts": "ee4a3fca420c0639128ac031ab5d219e7541c8be2421a0b2c98de68b17aea0e7",
