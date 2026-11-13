@@ -20,6 +20,8 @@ jobs:
       - run: python3 -m pip install numpy
       - name: Pierre tests (synthetic fixtures only; Ollama is a local mock)
         run: python3 -W error -m unittest discover -v -s damit_ai/pierre/tests
+      - name: dam-research tests (retrieval only; embeddings are stubbed, no Ollama)
+        run: python3 -W error -m unittest discover -v -s damit_ai/research/tests
       - name: Installer scripts parse
         run: |
           bash -n damit_ai/install-local-ai-linux.sh
