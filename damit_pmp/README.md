@@ -1,4 +1,4 @@
-# DamIT PMP 0.4.1 – NOAA Atlas 14 only
+# DamIT PMP 0.4.2 – NOAA Atlas 14 only
 
 Processing provider `damit_pmp`. Depends on DamIT Core. **The only data source is NOAA Atlas 14**,
 read from the NOAA/NWS Precipitation Frequency Data Server (PFDS, https://hdsc.nws.noaa.gov/pfds/), or

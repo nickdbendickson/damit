@@ -333,6 +333,8 @@ Runs 'Run breach model for one dam' for every dam point in a layer (or the selec
 
 For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: pmf_inflow.csv, spillway_rating.csv (optional), baseline_outflow.csv and breach_hydrograph.csv (own-hydrograph method only). A dam that fails is reported and skipped. With Models = LISFLOOD-FP then HEC-RAS 2D every dam also gets the HEC-RAS 2D stage (_hecras/); a dam whose HEC-RAS run fails is listed as failed (its LISFLOOD-FP results stay in its folder) and the batch goes on. A flagged structure (docs/Flagged_structures.md, e.g. a road fill over backwater) is not run: Status 'flagged' with the reason, Structure_Flag and Hazard_Of_Record (ALLOW_FLAGGED_STRUCTURE=1 in the environment runs it anyway). With 'classify afterwards' the ND hazard batch classification is run on the dams folder and its result is merged into Batch_Breach_Runs.csv.
 
+'Dams run at the same time' above 1 runs that many dams side by side, each in its own qgis_process worker with an equal share of the cores (or your own Threads value each). One dam gains little from more threads, so this is what shortens a long batch. Each worker's log and one-row summary are kept in <Dams folder>/_batch_workers/. It needs qgis_process (set NDBREACH_QGIS_PROCESS to its full path if it is not found) and layers that are files; when workers cannot be used the log says why and the dams run one after another.
+
 | Parameter | Label | Type | Default | Notes |
 |---|---|---|---|---|
 | `DAMS` | Dams (points) | source | - | - |
@@ -463,11 +465,15 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `ANIM_FRAMES` | Animation: about this many frames | number | 24 | advanced |
 | `DAMS_FOLDER` | Dams folder (each dam gets a folder named after its ID) | file | - | - |
 | `SKIP_DONE` | Skip dams whose folder already holds a finished run | boolean | True | - |
+| `WORKERS` | Dams run at the same time (1 = one after another; more = each dam in its own worker process, the cores shared between them) | number | 1 | - |
+| `WORKER_TIMEOUT_MIN` | Workers: stop a dam's worker after this many minutes (0 = no limit) | number | 0 | advanced |
+| `ONLY_IDS` | Only these dam IDs (comma separated; empty = every dam; the workers use it) | string | - | optional; advanced |
+| `SUMMARY_FILE` | Write the summary to this CSV instead of Batch_Breach_Runs.csv (the workers use it) | string | - | optional; advanced |
 | `CLASSIFY` | Classify afterwards with the ND hazard plugin's batch tool and merge the result | boolean | False | - |
 | `CLASS_ALG` | Classification batch algorithm ID (empty = ndhazard:batch) | string | - | optional; advanced |
 | `CLASS_MAP` | Classification parameters, JSON (see the README) | string | - | optional; advanced |
 
-Outputs: `SUMMARY`, `COUNTS`
+Outputs: `SUMMARY`, `COUNTS`, `MODE`
 
 ### `damit_run:cascade` - Cascade failure of dams in a chain
 

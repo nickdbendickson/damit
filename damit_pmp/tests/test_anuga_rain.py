@@ -279,6 +279,26 @@ class Files(unittest.TestCase):
         src = AR.runner_sources()
         self.assertEqual(sorted(src), sorted(AR.RUNNER_FILES))
 
+    def test_the_script_folder_holds_every_module_the_worker_imports(self):
+        # The generated script runs beside copies of SCRIPT_FILES, outside any package. A runner
+        # module that one of them imports and that is not copied ends the run at "import"
+        # (ckpt_sign.py, which the worker imports since DamSafety Runner 3.20.3, was left out once).
+        import ast
+        shared = os.path.join(AR.HERE, "runner_shared")
+        have = {f[:-3] for f in os.listdir(shared) if f.endswith(".py")}
+        for f in AR.SCRIPT_FILES:
+            self.assertIn(f, AR.RUNNER_FILES, f + " is copied but its sha is not recorded")
+            tree = ast.parse(open(os.path.join(shared, f), encoding="utf-8").read())
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [a.name.split(".")[0] for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [a.name for a in node.names] if node.level and not node.module else [(node.module or "").split(".")[0]]
+                for n in names:
+                    if n in have:
+                        self.assertIn(n + ".py", AR.SCRIPT_FILES, "{} imports {} and it is not in SCRIPT_FILES".format(f, n))
+
 
 STUB_OK = textwrap.dedent('''
     import json, sys

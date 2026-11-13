@@ -147,6 +147,62 @@ class Integration(unittest.TestCase):
             rows = [ln for ln in fh.read().splitlines() if ln.strip()]
         self.assertGreater(len(rows), 10)
 
+    def test_runner_batch_can_hand_dams_to_workers(self):
+        # Runner 0.6.0 (DamSafety Runner 3.20.0): damit_run:batch runs several dams at the same time, each in a
+        # qgis_process worker. The children are doubles here: nothing is started.
+        from qgis.core import QgsProcessingContext, QgsProcessingFeedback
+        from damit_runner.algorithms import engine as E
+        a = QgsApplication.processingRegistry().algorithmById("damit_run:batch").create()
+        for name in ("WORKERS", "WORKER_TIMEOUT_MIN", "ONLY_IDS", "SUMMARY_FILE"):
+            self.assertIsNotNone(a.parameterDefinition(name), name)
+        self.assertEqual(a.parameterDefinition("WORKERS").defaultValue(), 1)
+        self.assertIn("MODE", [o.name() for o in a.outputDefinitions()])
+        self.assertEqual(E.project_only_settings(), [])          # DamIT has no per-project suite settings
+        ctx, fb = QgsProcessingContext(), QgsProcessingFeedback()
+        self.assertEqual(E.worker_layer_source("/data/dams.gpkg|layername=dams", ctx),
+                         ("/data/dams.gpkg|layername=dams", ""))
+        text, why = E.worker_layer_source(self._dams(), ctx)
+        self.assertIsNone(text)
+        self.assertIn("temporary layer", why)
+        parent = os.path.join(self.tmp, "batch_workers")
+        os.makedirs(parent, exist_ok=True)
+        ran, started = [], {}
+        queue = [(i, None, d, os.path.join(parent, d), dict.fromkeys(E.BATCH_FIELDS, ""), None)
+                 for i, d in enumerate(("A1", "A2"))]
+
+        def run_one(i, feat, dam_id, folder, row, fb_):
+            ran.append(dam_id)
+            return False
+
+        def children(jobs, workers, **kw):
+            started["jobs"], started["workers"] = jobs, workers
+            return {j["key"]: (1, "ended with code 1: boom") for j in jobs}
+        with mock.patch.object(E.bworkers, "find_qgis_process", lambda *x, **k: ("/usr/bin/qgis_process", "")), \
+                mock.patch.object(E.bworkers, "probe", lambda *x, **k: None), \
+                mock.patch.object(E.bworkers, "run_children", children):
+            # a temporary layer cannot be opened by a worker: said so, and the dams run here in order
+            mode = a.run_queue({"DAMS": self._dams(), "DAMS_FOLDER": parent, "F_ID": "ID"}, ctx, fb, parent,
+                               queue, 2, run_one)
+            self.assertTrue(mode.startswith("one dam after another"), mode)
+            self.assertIn("temporary layer", mode)
+            self.assertEqual(ran, ["A1", "A2"])
+            self.assertNotIn("jobs", started)
+            # a file layer: one worker per dam, started as `qgis_process run damit_run:batch -`
+            del ran[:]
+            mode = a.run_queue({"DAMS": "/data/dams.gpkg|layername=dams", "DAMS_FOLDER": parent, "F_ID": "ID",
+                                "LISFLOOD_EXE": sys.executable}, ctx, fb, parent, queue, 2, run_one)
+        self.assertTrue(mode.startswith("in worker processes, 2 dam(s) at a time"), mode)
+        self.assertEqual(ran, [])
+        self.assertEqual([j["name"] for j in started["jobs"]], ["A1", "A2"])
+        self.assertEqual(started["jobs"][0]["cmd"], ["/usr/bin/qgis_process", "run", "damit_run:batch", "-"])
+        sent = json.loads(started["jobs"][1]["stdin"].decode("utf-8"))["inputs"]
+        self.assertEqual((sent["ONLY_IDS"], sent["WORKERS"], sent["DAMS"]),
+                         ("A2", 1, "/data/dams.gpkg|layername=dams"))
+        self.assertEqual(os.path.dirname(sent["SUMMARY_FILE"]), os.path.join(parent, E.bworkers.WORK_FOLDER))
+        # a worker that fails is a failed row naming its log, not a lost dam
+        self.assertEqual([q[4]["Status"] for q in queue], ["failed", "failed"])
+        self.assertIn("boom", queue[0][4]["Message"])
+
     def test_no_flagged_structures_shipped(self):
         from damit_runner.compat import structure_flags as F, suite_config as SC
         self.assertEqual(F.FLAGS, ())

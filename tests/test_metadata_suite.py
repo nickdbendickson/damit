@@ -64,7 +64,7 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.4.1"           # DamIT PMP 0.4.0: watershed, temporal patterns, losses, lisfloodrain (the others are 0.2.0)
+PMP_VERSION = "0.4.2"           # DamIT PMP 0.4.0: watershed, temporal patterns, losses, lisfloodrain (the others are 0.2.0)
 CORE_VERSION = "0.3.0"          # DamIT Core 0.3.0: the shared defaults file (lib/shared_defaults.py)
 
 
