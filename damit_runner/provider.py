@@ -70,7 +70,7 @@ class DamitRunProvider(QgsProcessingProvider):
         return "DamIT Runner"
 
     def longName(self):  # noqa: N802
-        return "DamIT Runner 0.4.1"
+        return "DamIT Runner 0.5.0"
 
     def icon(self):
         return QIcon(os.path.join(os.path.dirname(__file__), "icon.svg"))

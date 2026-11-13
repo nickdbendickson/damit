@@ -36,6 +36,11 @@ grow). The report's warnings are now in the log ("Warning: ...") and in run_setu
 0.4.1: the ported DamSafety engine (core/, algorithms/engine.py) is brought up to DamSafety Runner 3.17.13 and its tools are
 registered (they failed to import until now); scripts/check_engine_parity.py keeps the ported files in step with DamSafety.
 No change to this module's run or its numbers.
+
+0.5.0: the scenario. The preset is as before (sunny day, top of dam, piping). START_POOL starts the sunny day at the normal pool or
+a stated elevation; SCENARIO = flood routes an inflow hydrograph (INFLOW_CSV) through the reservoir, the spillway rating, an auxiliary
+spillway weir (AUX_*) and over the crest, with a breach (TRIGGER) or with none (flood/model.py scenario_hydrograph; the routing is the
+ported engine's core/flood.py). PMF_FT stays recorded only.
 """
 import datetime
 import json
@@ -43,7 +48,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -236,7 +241,14 @@ MODEL_PARAMS = {
     "PRODUCTS": ("products", True), "CONTOURS_HR": ("contours_hr", "0.25, 0.5, 1, 2, 4, 8"),
     "PIPE_FRACTION": ("pipe_fraction", 0.5), "PIPE_DIA_FT": ("pipe_dia_ft", 0.5),
     "DEM_Z": ("z_units", 0),
+    # 0.5.0: the scenario. Index 0 of each is the preset (sunny day, top of dam; METHOD 0 is piping).
+    "SCENARIO": ("scenario", 0), "START_POOL": ("start_pool", 0), "TRIGGER": ("trigger", 0),
 }
+# 0.5.0: values with no default (None = not given)
+SCENARIO_VALUES = {"START_WSE_FT": "start_wse_ft", "NORMAL_POOL_FT": "normal_pool_ft",
+                   "TRIGGER_VALUE": "trigger_value", "AUX_CREST_FT": "aux_crest_ft",
+                   "AUX_LENGTH_FT": "aux_length_ft", "AUX_C": "aux_c"}
+SCENARIO_FILES = {"INFLOW_CSV": "inflow_csv", "SPILLWAY_CSV": "spillway_csv"}
 DEM_Z_UNITS = ["auto", "ft", "us_ft", "m"]
 DEM_Z_LABELS = ["Detect from the raster", "Feet", "US survey feet", "Meters"]
 
@@ -250,6 +262,12 @@ def flood():
 def method_labels():
     br, _ = flood()
     return [br.METHOD_LABELS[m] for m in br.METHODS]
+
+
+def scenario_labels():
+    _, m = flood()
+    return ([m.SCENARIO_LABELS[k] for k in m.SCENARIOS], [m.START_POOL_LABELS[k] for k in m.START_POOLS],
+            [m.TRIGGER_LABELS[k] for k in m.TRIGGERS])
 
 
 def _f(v):
@@ -280,6 +298,17 @@ def model_params(values, pkg, dam_dir_info=None):
         p[key] = default if val in (None, "") else val
     p["method"] = br.METHODS[int(p["method"])] if not isinstance(p["method"], str) else p["method"]
     p["z_units"] = DEM_Z_UNITS[int(p["z_units"])] if not isinstance(p["z_units"], str) else p["z_units"]
+    _, model = flood()
+    for key, ids in (("scenario", model.SCENARIOS), ("start_pool", model.START_POOLS), ("trigger", model.TRIGGERS)):
+        p[key] = ids[int(p[key])] if not isinstance(p[key], str) else p[key]
+        if p[key] not in ids:
+            raise RunError("{} must be one of {} (got {!r})".format(key, ", ".join(ids), p[key]))
+    for name, key in SCENARIO_VALUES.items():
+        p[key] = _f(v.get(name))
+    for name, key in SCENARIO_FILES.items():
+        p[key] = v.get(name) or None
+    if p["scenario"] != model.SCENARIO_SUNNY and not p["inflow_csv"]:
+        p["inflow_csv"] = ((pkg or {}).get("inputs") or {}).get("inflow_csv") or None
     p["contours_hr"] = tuple(float(x) for x in str(p["contours_hr"]).replace(";", ",").split(",") if x.strip())
     for k in ("cell_m", "manning", "arrival_ft", "edge_tol_ft", "outflow_extend_pct", "length_mi", "half_width_mi",
               "step_mi", "max_extent_mi", "max_wall_s", "max_total_wall_s", "duration_hr", "duration_max_hr",
@@ -310,8 +339,16 @@ def model_params(values, pkg, dam_dir_info=None):
     p["us_slope"] = pick("US_SLOPE")
     p["ds_slope"] = pick("DS_SLOPE", rec.get("ds_slope_h"), rec.get("downstream_slope_h"))
     p["crest_length_ft"] = pick("CREST_LENGTH", rec.get("dam_length_ft"))
+    if p["normal_pool_ft"] is None:
+        p["normal_pool_ft"] = pick("NORMAL_POOL_FT", dam.get("normal_pool_elev_ft"), dam.get("normal_pool_ft"),
+                                   rec.get("normal_pool_ft"), rec.get("normal_pool_elev_ft"))
     if v.get("PMF_FT") not in (None, ""):
-        notes.append("PMF_FT is recorded but not used: the sunny-day breach starts at the top of dam (Nick's rule)")
+        notes.append("PMF_FT is recorded but not used as a starting pool: the sunny-day breach starts at the top of "
+                     "dam unless START_POOL says the normal pool or a stated elevation; a PMF is run with "
+                     "SCENARIO = flood and its inflow hydrograph")
+    if p["scenario"] == model.SCENARIO_SUNNY and p["start_pool"] != "top":
+        notes.append("the sunny-day breach starts at the {} (START_POOL), not at the top of dam".format(
+            "normal pool" if p["start_pool"] == "normal" else "elevation given"))
     p["user_csv"] = v.get("USER_CSV") or None
     if p["method"] == br.METHOD_USER and not p["user_csv"]:
         p["user_csv"] = v.get("HYDROGRAPH") or ((pkg or {}).get("inputs") or {}).get("hydrograph_csv")
