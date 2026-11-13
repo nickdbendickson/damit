@@ -202,8 +202,17 @@ names and defaults: `METHOD` (Froehlich 2008 piping by default; TR-60, MacDonald
 `LISFLOOD_MAX_TOTAL_WALL_S` 0, `DURATION_HR` 0 (automatic), `DURATION_MAX_HR` 96, `ANUGA_FINE` 100 m²,
 `ANUGA_COARSE` 1000 m², `ANUGA_NEAR_MI` 1, `ANUGA_BUFFER` 500 m, `THREADS` 0, `LISFLOOD_EXE` (empty = `lisflood` on
 PATH; `builtin` = the built-in numpy engine, never chosen by itself), `ANUGA_PYTHON`, `KEEP_FILES`, `PRODUCTS`,
-`CONTOURS_HR` "0.25, 0.5, 1, 2, 4, 8", `PIPE_FRACTION` 0.5, `PIPE_DIA_FT` 0.5, `DEM_Z`. Sunny day: no outlet or
-spillway flow, the reservoir starts at the top of dam (`PMF_FT` is recorded only). The inflow is the toe band rule
+`CONTOURS_HR` "0.25, 0.5, 1, 2, 4, 8", `PIPE_FRACTION` 0.5, `PIPE_DIA_FT` 0.5, `DEM_Z`. The preset is a sunny day:
+no outlet or spillway flow, the reservoir starts at the top of dam, a piping breach (`PMF_FT` is recorded only).
+Since 0.4.0 the scenario can be changed: `START_POOL` (top of dam / normal pool, `NORMAL_POOL_FT` or dam.json /
+a stated elevation, `START_WSE_FT`) moves the sunny-day pool, held as its depth below the top of dam, and the breach
+equations then use the storage at that pool; `SCENARIO` = flood routes a PMP/PMF inflow hydrograph (`INFLOW_CSV`,
+hours and cfs) through the reservoir, the spillway rating (`SPILLWAY_CSV`), an auxiliary spillway weir
+(`AUX_CREST_FT`, `AUX_LENGTH_FT`, `AUX_C` 2.6) and over the crest, and breaches the dam at the highest pool, at a
+time or at a pool elevation (`TRIGGER`, `TRIGGER_VALUE`; arrival times count from breach initiation); `SCENARIO` =
+flood with no breach models that routed outflow with the dam standing, and `run_report.json` then says
+`breach_occurs: false`. The flood run with a breach models the with-breach outflow only; `damit_run:batch` and the
+other ported tools run the baseline and the incremental rasters too. The inflow is the toe band rule
 above. Outputs (US units) in `<run>/outputs/` and the dam folder: `Depth (Max).tif`, `Velocity (Max).tif`,
 `WSE (Max).tif`, `Arrival Time.tif`, `hmax_ft.tif` (+ `vmax_fps`, `arr_hr`, `wsemax_ft`), `Flood Polygons (Max
 Depth).geojson`, `Flood Extent.geojson`, `Arrival Zones.geojson`, `breach_hydrograph.csv`. It never starts HEC-RAS,

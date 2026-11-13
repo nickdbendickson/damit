@@ -57,10 +57,15 @@ class RunDam(_Base):
         return "Run breach model for one dam"
 
     def shortHelpString(self):  # noqa: N802
-        return ("Dam breach flood for one dam, the DamSafety Runner's rundam for the DamIT presets. Sunny day: no "
-                "inflow and no outlet or spillway flow, the reservoir starting at the top of dam. The breach "
-                "hydrograph comes from METHOD (Froehlich 2008 piping by default, TR-60, the other DamSafety methods, "
-                "or your CSV). The breach inflow goes in at the lowest ground of the downstream toe band, 5 m to "
+        return ("Dam breach flood for one dam, the DamSafety Runner's rundam for the DamIT presets. The preset is a "
+                "sunny day: no inflow and no outlet or spillway flow, the reservoir starting at the top of dam, a "
+                "piping breach. START_POOL starts the sunny day at the normal pool or an elevation you state "
+                "instead. SCENARIO = flood routes a PMP/PMF inflow hydrograph (INFLOW_CSV) through the reservoir, "
+                "the spillway rating, an auxiliary spillway weir and over the crest, and either breaches the dam "
+                "(TRIGGER: at the highest pool, at a time, at a pool elevation) or, with the no-breach scenario, "
+                "models that outflow with the dam standing. The breach "
+                "hydrograph comes from METHOD (Froehlich 2008 piping by default, overtopping, TR-60, the other "
+                "DamSafety methods, or your CSV). The breach inflow goes in at the lowest ground of the downstream toe band, 5 m to "
                 "H x (downstream slope + 1) out from the dam line (3:1 when the slope is not known), never more "
                 "than 150 m from it. LISFLOOD-FP runs on the DEM and the domain grows until the flood no longer "
                 "leaves it deeper than the edge tolerance (MAX_RUNS, MAX_EXTENT_MI, DURATION_MAX_HR and the "
@@ -129,13 +134,39 @@ class RunDam(_Base):
                                        type=_DOUBLE, optional=True))
         P(QgsProcessingParameterNumber("AREA_AC", "Surface area at the top of dam (ac; empty = dam.json)",
                                        type=_DOUBLE, optional=True))
-        P(QgsProcessingParameterNumber("PMF_FT", "Maximum reservoir level in the PMF (ft; recorded only: the sunny "
-                                       "day starts at the top of dam)", type=_DOUBLE, optional=True))
+        P(QgsProcessingParameterNumber("PMF_FT", "Maximum reservoir level in the PMF (ft; recorded only: choose "
+                                       "the starting pool and the scenario below)", type=_DOUBLE, optional=True))
         P(QgsProcessingParameterNumber("BOTTOM_FT", "Breach bottom elevation (ft; empty = top of dam - height)",
                                        type=_DOUBLE, optional=True))
         P(QgsProcessingParameterPoint("INFLOW_POINT", "Breach inflow point below the dam (empty = the toe band)",
                                       optional=True))
         P(QgsProcessingParameterEnum("METHOD", "Breach (ND 5.1.1(d))", RD.method_labels(), defaultValue=0))
+        # 0.4.0: the scenario. The presets (index 0) are the sunny day from the top of dam with a piping breach.
+        scen, pools, trigs = RD.scenario_labels()
+        P(QgsProcessingParameterEnum("SCENARIO", "Scenario", scen, defaultValue=0))
+        P(QgsProcessingParameterEnum("START_POOL", "Sunny day: the pool when the breach starts", pools,
+                                     defaultValue=0))
+        P(QgsProcessingParameterNumber("START_WSE_FT", "Sunny day: starting pool elevation (ft; datum as the top of "
+                                       "dam), for 'An elevation I state'", type=_DOUBLE, optional=True))
+        P(QgsProcessingParameterNumber("NORMAL_POOL_FT", "Normal pool elevation (ft; datum as the top of dam; empty "
+                                       "= dam.json): the flood scenarios start there, and a sunny day from the "
+                                       "normal pool", type=_DOUBLE, optional=True))
+        P(QgsProcessingParameterFile("INFLOW_CSV", "Flood scenario: PMP/PMF inflow hydrograph CSV (time hr, "
+                                     "discharge cfs)", behavior=FILE_FILE, fileFilter="CSV (*.csv)", optional=True))
+        P(QgsProcessingParameterFile("SPILLWAY_CSV", "Flood scenario: spillway rating CSV (elevation ft, discharge "
+                                     "cfs; empty = no rating)", behavior=FILE_FILE, fileFilter="CSV (*.csv)",
+                                     optional=True))
+        P(QgsProcessingParameterNumber("AUX_CREST_FT", "Flood scenario: auxiliary spillway crest elevation (ft; "
+                                       "datum as the top of dam; empty = none)", type=_DOUBLE, optional=True))
+        P(QgsProcessingParameterNumber("AUX_LENGTH_FT", "Flood scenario: auxiliary spillway crest length (ft)",
+                                       type=_DOUBLE, optional=True, minValue=0))
+        P(_adv(QgsProcessingParameterNumber("AUX_C", "Flood scenario: auxiliary spillway weir coefficient C in "
+                                            "Q = C L H^1.5 (US units; 2.6 when empty)", type=_DOUBLE, optional=True,
+                                            minValue=0.1, maxValue=4.5)))
+        P(QgsProcessingParameterEnum("TRIGGER", "Flood scenario with a breach: the dam fails", trigs,
+                                     defaultValue=0))
+        P(QgsProcessingParameterNumber("TRIGGER_VALUE", "Flood scenario with a breach: failure time (hr) or pool "
+                                       "elevation (ft)", type=_DOUBLE, optional=True))
         P(QgsProcessingParameterFile("USER_CSV", "Hydrograph CSV (for 'my own hydrograph')", behavior=FILE_FILE,
                                      fileFilter="CSV (*.csv)", optional=True))
         for name, label in (("CREST_WIDTH", "Crest width (ft): TR-60, MacDonald & Langridge-Monopolis"),
@@ -301,19 +332,20 @@ class RunDam(_Base):
                "US_SLOPE", "DS_SLOPE", "CREST_LENGTH", "PIPE_FRACTION", "PIPE_DIA_FT", "CELL", "GRID_CHECK_CELL",
                "MANNING", "ARRIVAL_FT", "EDGE_TOL_FT", "OUTFLOW_EXTEND_PCT", "LENGTH_MI", "HALF_WIDTH_MI", "STEP_MI",
                "MAX_EXTENT_MI", "LISFLOOD_MAX_WALL_S", "LISFLOOD_MAX_TOTAL_WALL_S", "DURATION_HR",
-               "DURATION_MAX_HR", "ANUGA_FINE", "ANUGA_COARSE", "ANUGA_NEAR_MI", "ANUGA_BUFFER")
+               "DURATION_MAX_HR", "ANUGA_FINE", "ANUGA_COARSE", "ANUGA_NEAR_MI", "ANUGA_BUFFER",
+               "START_WSE_FT", "NORMAL_POOL_FT", "AUX_CREST_FT", "AUX_LENGTH_FT", "AUX_C", "TRIGGER_VALUE")
         for n in num:
             if params.get(n) not in (None, ""):
                 v[n] = self.parameterAsDouble(params, n, context)
         for n in ("MAX_RUNS", "THREADS"):
             v[n] = self.parameterAsInt(params, n, context)
-        for n in ("METHOD", "TIER", "DEM_Z", "ENGINE"):
+        for n in ("METHOD", "TIER", "DEM_Z", "ENGINE", "SCENARIO", "START_POOL", "TRIGGER"):
             v[n] = self.parameterAsEnum(params, n, context)
         for n in ("FORCE_ANUGA", "GRID_REFINE", "KEEP_FILES", "PRODUCTS"):
             v[n] = self.parameterAsBool(params, n, context)
         for n in ("LISFLOOD_EXE", "ANUGA_PYTHON", "CONTOURS_HR", "CRS", "DAM_ID"):
             v[n] = self.parameterAsString(params, n, context).strip() or None
-        for n in ("DEM", "TERRAIN", "USER_CSV", "HYDROGRAPH"):
+        for n in ("DEM", "TERRAIN", "USER_CSV", "HYDROGRAPH", "INFLOW_CSV", "SPILLWAY_CSV"):
             v[n] = self.parameterAsFile(params, n, context) or None
         if params.get("INFLOW_POINT") not in (None, ""):
             pt = self.parameterAsPoint(params, "INFLOW_POINT", context)
