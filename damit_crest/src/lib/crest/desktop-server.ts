@@ -9,3 +9,12 @@ export function crestApiHeaders(json = false): Record<string, string> {
       : (document.querySelector('meta[name="damit-token"]')?.getAttribute("content") ?? "");
   return { ...(json ? { "Content-Type": "application/json" } : {}), "X-DamIT-Token": token };
 }
+
+/**
+ * True when the page came from the desktop server (it carries the token). DamIT.html opened from disk has no server:
+ * a call to /api/ there can only fail, and its Content-Security-Policy reports it, so callers that run by themselves
+ * (not on a button) ask this first.
+ */
+export function hasDesktopServer(): boolean {
+  return typeof document !== "undefined" && document.querySelector('meta[name="damit-token"]') !== null;
+}

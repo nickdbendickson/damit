@@ -13,7 +13,7 @@
  * location is known. The sync path (vertconShiftFt) uses the ND grid only (for the engine's
  * synchronous analyze() call, which cannot await).
  */
-import { crestApiHeaders } from "./desktop-server.ts";
+import { crestApiHeaders, hasDesktopServer } from "./desktop-server.ts";
 import { vertconShiftFt as ndShiftFt, vertconShiftM as ndShiftM } from "./vertcon_nd.ts";
 
 export { vertconShiftFt, vertconShiftM } from "./vertcon_nd.ts";
@@ -36,6 +36,7 @@ export async function fetchVertconShiftFt(lon: number, lat: number): Promise<num
 
   // Try the desktop server (pyproj, full CONUS)
   try {
+    if (!hasDesktopServer()) throw new Error("no desktop server");
     const res = await fetch(`/api/vertcon?lat=${lat}&lon=${lon}`, { headers: crestApiHeaders() });
     if (res.ok) {
       const data = await res.json();
@@ -61,6 +62,7 @@ export async function fetchVertconShiftM(lon: number, lat: number): Promise<numb
   if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
   // Try server first
   try {
+    if (!hasDesktopServer()) throw new Error("no desktop server");
     const res = await fetch(`/api/vertcon?lat=${lat}&lon=${lon}`, { headers: crestApiHeaders() });
     if (res.ok) {
       const data = await res.json();
