@@ -13,7 +13,7 @@
 #   zsh setup-dam-research.zsh               # pick the model from this Mac's memory
 #   zsh setup-dam-research.zsh --big         # try qwen3.6:35b-a3b even on a 32 GB Mac
 #   zsh setup-dam-research.zsh --small       # a small model (16 GB Macs, or for speed)
-#   zsh setup-dam-research.zsh --model TAG   # any Ollama model tag
+#   zsh setup-dam-research.zsh --model qwen3.6:27b   # any Ollama model tag, written out in full
 #   zsh setup-dam-research.zsh --ocr         # also install OCR for scanned PDFs
 # Re-running is safe: it only redoes what changed.
 set -u
@@ -39,6 +39,18 @@ while (( $# )); do
   esac
   shift
 done
+
+# A placeholder is not a model tag. The line first-run.zsh used to print ended "--model TAG",
+# and on 2026-11-13 that was typed literally: Ollama tried to pull a model called TAG and the
+# run died at step 2/6 with "pull model manifest: file does not exist". Catch it here and name
+# a real tag, rather than letting the registry give the answer.
+case "$FORCE_MODEL" in
+  TAG|MODEL|NAME|tag|model|"<tag>"|"<model>")
+    print -u2 -r -- "--model $FORCE_MODEL looks like a placeholder, not an Ollama tag."
+    print -u2 -r -- "Write the tag out in full, e.g.:  zsh setup-dam-research.zsh --model qwen3.6:27b"
+    print -u2 -r -- "Installed tags:  ollama list"
+    exit 2 ;;
+esac
 
 say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[1;32mOK\033[0m  %s\n' "$*"; }
