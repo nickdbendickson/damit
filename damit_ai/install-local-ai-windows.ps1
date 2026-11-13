@@ -400,9 +400,34 @@ if ($DoIndex -and $DoHeim -and (Test-Path (Join-Path $Here 'heim\knowledge'))) {
 Say "Step 5 - PowerShell profile ($PROFILE)"
 $mark = '# >>> dam local AI (heim + vor) >>>'
 $profExists = Test-Path $PROFILE
-if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -Quiet)) {
+# The block is REPLACED on every full install, not written once. It used to be skipped when
+# its first line was already there, so a machine installed once never received a command
+# added later (heim-add, heim-chat). Blocks written under the earlier names go too. A block
+# with no closing line is left as it is, and so is the block when only one AI is installed.
+$writeBlock = $true
+if ($profExists -and (Select-String -Path $PROFILE -Pattern '^# >>> dam local AI \(.*\) >>>$' -Quiet)) {
+  if ($DoHeim -and $DoVor) {
+    Copy-Item $PROFILE "$PROFILE.bak-localai" -Force
+    $kept = New-Object System.Collections.Generic.List[string]
+    $buf = New-Object System.Collections.Generic.List[string]
+    $inBlock = $false
+    foreach ($ln in (Get-Content -Path $PROFILE)) {
+      if ($inBlock) {
+        $buf.Add($ln)
+        if ($ln -match '^# <<< dam local AI <<<$') { $inBlock = $false; $buf.Clear() }
+      } elseif ($ln -match '^# >>> dam local AI \(.*\) >>>$') {
+        $inBlock = $true; $buf.Clear(); $buf.Add($ln)
+      } else { $kept.Add($ln) }
+    }
+    if ($inBlock) { $kept.AddRange($buf) }
+    Set-Content -Path $PROFILE -Value $kept
+  } elseif (Select-String -Path $PROFILE -SimpleMatch $mark -Quiet) {
+    $writeBlock = $false
+  }
+}
+if ($writeBlock) {
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $PROFILE) | Out-Null
-  if ($profExists) { Copy-Item $PROFILE "$PROFILE.bak-localai" -Force }
+  if ($profExists -and -not (Test-Path "$PROFILE.bak-localai")) { Copy-Item $PROFILE "$PROFILE.bak-localai" -Force }
   $lines = @('', $mark,
     "`$env:OLLAMA_MODELS = '$ModelsDir'",
     "`$env:OLLAMA_FLASH_ATTENTION = '1'",
@@ -411,6 +436,7 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
     $lines += "`$env:HEIM_NUM_CTX = '$NumCtx'"
     $lines += "function heim     { & '$PyL' '$LocalAI\rag_query.py' @args }"
     $lines += "function damchain { & '$PyL' '$LocalAI\dam_chain.py' @args }"
+    $lines += "function heim-chat { & '$PyL' '$LocalAI\rag_query.py' --chat @args }"
     $lines += "function heim-add { & '$PyL' '$LocalAI\rag_index.py' --add @args }"
     $lines += "`$env:HEIM_WATCH_MODEL = '$WatchModel'"
     $lines += "function heim-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
@@ -424,7 +450,7 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
   Add-Content -Path $PROFILE -Value $lines
   Ok "functions written to $PROFILE$(if($profExists){' (backup: '+$PROFILE+'.bak-localai)'})"
 } else {
-  Ok "profile block already present in $PROFILE"
+  Warn "profile block in $PROFILE left as it is: this run installs only one of the two AIs. Run without -NoHeim / -NoVor to refresh it."
 }
 
 # ---------------------------------------------------------------------------

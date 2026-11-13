@@ -27,6 +27,8 @@ EXTERNAL_FLAGS = {
     # run_lisflood_44.py / run_anuga_culverts_44.py / run_county.py
     "--only", "--parallel", "--dem", "--cell", "--watch", "--triage", "--county", "--list",
     "--limit", "--kind", "--mode", "--status",
+    # the heim-chat shell function the Mac installer writes (test_heim_chat checks it is there)
+    "--bare",
 }
 
 # Named in a page precisely to say it does NOT exist (KNOWN-BEHAVIOURS: "There is no ...

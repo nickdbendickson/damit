@@ -52,7 +52,8 @@ owns the one real copy; each plugin's `damsuite/` is a shim).
 These are Nick's standing rules, pinned in the watcher's system prompt (`heim_watch.py`) and checked by the
 digest (`run_digest.py`). A local model once reversed the first one. The sunny-day, Vw and real-tool-name rules are
 also pinned in the Q&A persona's SYSTEM prompt (`prompts/persona_rules.txt`, copied into every installer), because
-`heim-chat` asks the model directly and never reads this pack; `eval_heim.py --no-context` scores that path.
+the model can be asked directly, with nothing looked up (`heim-chat --bare`, or `heim-chat` when nothing is indexed);
+`eval_heim.py --no-context` scores that path. `heim-chat` itself looks every question up in this pack first (rag_query 2.3).
 
 - **Sunny day = no inflow, outlets empty, no outlet or spillway flow.** The reservoir starts at the **top of dam,
   which is the DWR max pool**. The only water is the breach. (Never "inflow equal to the reservoir's capacity" or

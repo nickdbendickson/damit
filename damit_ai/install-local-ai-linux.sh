@@ -354,10 +354,34 @@ fi
 # ---------------------------------------------------------------------------
 say "Step 5 — shell config ($RC)"
 MARK="# >>> dam local AI (heim + vor) >>>"
-if ! grep -qF "$MARK" "$RC" 2>/dev/null; then
-  cp "$RC" "$RC.bak-localai" 2>/dev/null || true
+# The block is REPLACED on every full install, not written once. It used to be skipped when
+# its first line was already there, so a machine that had been installed once never received
+# a command added later (heim-add, heim-chat): the installer said "already present" and the
+# new command did not exist. Blocks written under the earlier names (pierre + dam-research)
+# go too. A block with no closing line is left exactly as it is: someone edited it.
+# A run that installs only one of the two AIs leaves an existing block alone, because
+# rewriting it would drop the other AI's commands.
+strip_ai_blocks() {
+  awk '
+    inb { buf = buf $0 "\n"; if ($0 ~ /^# <<< dam local AI <<<$/) { inb = 0; buf = "" }; next }
+    /^# >>> dam local AI \(.*\) >>>$/ { inb = 1; buf = $0 "\n"; next }
+    { print }
+    END { if (inb) printf "%s", buf }' "$1"
+}
+WRITE_BLOCK=1
+if grep -q '^# >>> dam local AI (.*) >>>$' "$RC" 2>/dev/null; then
+  if [[ "$DO_HEIM" == 1 && "$DO_VOR" == 1 ]]; then
+    cp "$RC" "$RC.bak-localai"
+    strip_ai_blocks "$RC.bak-localai" > "$RC.tmp-localai" && cat "$RC.tmp-localai" > "$RC"
+    rm -f "$RC.tmp-localai"
+  elif grep -qF "$MARK" "$RC"; then
+    WRITE_BLOCK=0
+  fi
+fi
+if [[ "$WRITE_BLOCK" == 1 ]]; then
+  [[ -f "$RC.bak-localai" ]] || cp "$RC" "$RC.bak-localai" 2>/dev/null || true
   {
-    echo ""
+    [[ -s "$RC" && -n "$(tail -n 1 "$RC")" ]] && echo ""
     echo "$MARK"
     echo "export OLLAMA_MODELS=\"$MODELS_DIR\""
     echo "export OLLAMA_FLASH_ATTENTION=1"
@@ -365,6 +389,7 @@ if ! grep -qF "$MARK" "$RC" 2>/dev/null; then
     [[ "$DO_HEIM" == 1 ]] && echo "export HEIM_NUM_CTX=$NUM_CTX"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias damchain='\"$LOCAL_AI/python\" \"$LOCAL_AI/dam_chain.py\"'"
+    [[ "$DO_HEIM" == 1 ]] && echo "alias heim-chat='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\" --chat'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-add='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_index.py\" --add'"
     [[ "$DO_HEIM" == 1 ]] && echo "export HEIM_WATCH_MODEL=\"${WATCH_MODEL:-qwen3:4b}\""
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-digest='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_digest.py\"'"
@@ -375,7 +400,7 @@ if ! grep -qF "$MARK" "$RC" 2>/dev/null; then
   } >> "$RC"
   ok "aliases written to $RC (backup: $RC.bak-localai)"
 else
-  ok "shell block already present in $RC"
+  warn "shell block in $RC left as it is: this run installs only one of the two AIs. Run without --no-heim / --no-vor to refresh it."
 fi
 
 # ---------------------------------------------------------------------------

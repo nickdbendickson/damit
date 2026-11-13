@@ -7,7 +7,7 @@
 #   python3 eval_heim.py --only solver-choices,crest-burn
 #   python3 eval_heim.py --list                 # questions + whether their source is indexed
 #   python3 eval_heim.py -c all                 # search every collection, not just heim_knowledge
-#   python3 eval_heim.py --no-context           # the persona alone, no retrieval: what `heim-chat` answers
+#   python3 eval_heim.py --no-context           # the persona alone, no retrieval: what `heim-chat --bare` answers
 #
 # Each question (eval/questions.json) names the source file (regex), and the facts (regexes)
 # that must be in the answer. A question passes when
@@ -15,7 +15,7 @@
 #   2. facts:    every "facts" regex appears in the answer, and
 #   3. clean:    no "forbid" regex (if any) appears in the answer, and no "forbid_unless_negated" regex appears in a
 #                sentence that does not negate it ("there is no --no-refine" is fine, "use --no-refine" is not).
-# With --no-context nothing is retrieved and the question goes to the persona as it is (the `heim-chat` path), so
+# With --no-context nothing is retrieved and the question goes to the persona as it is (the `heim-chat --bare` path), so
 # step 1 is skipped: this is what the 11 Nov 2026 test asked when the 8B model reversed the sunny-day rule and invented
 # tool names. v1.1 adds --no-context and forbid_unless_negated.
 # Questions whose source is not indexed are skipped (reported as SKIP), so the score reflects
@@ -66,7 +66,7 @@ def main():
     ap.add_argument("-k", "--top-k", type=int, default=10, help="passages retrieved per question")
     ap.add_argument("--list", action="store_true", help="list questions and whether their source is indexed")
     ap.add_argument("--no-context", action="store_true",
-                    help="no retrieval: ask the persona the bare question, as `heim-chat` does")
+                    help="no retrieval: ask the persona the bare question, as `heim-chat --bare` does")
     a = ap.parse_args()
     if a.model:
         os.environ["HEIM_MODEL"] = a.model          # read by rag_query at import

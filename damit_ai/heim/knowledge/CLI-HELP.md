@@ -137,17 +137,20 @@ Index folders (text+PDFs) into a named collection.
 
 ---
 
-## rag_query.py 2.2
+## rag_query.py 2.3
 
-Installed command: `heim  /  heim-query`. Ask Heim a question answered from the index.
+Installed command: `heim  /  heim-query  /  heim-chat (with --chat)`. Ask Heim a question, or hold a conversation, answered from the index.
 
 ### `rag_query.py`
 
+Ask Heim a question, answered from the indexed documents.
+
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
-| `question` | QUESTION [QUESTION ...] |  |  |
-| `-c`, `--collection` | COLLECTION | `all` |  |
-| `-k`, `--top-k` | TOP_K | `10` |  |
+| `question` | [QUESTION ...] |  |  |
+| `-c`, `--collection` | COLLECTION | `all` | read one collection only (default: all of them) |
+| `-k`, `--top-k` | TOP_K | `10` | passages handed to the model per question |
+| `--chat` |  |  | a conversation: each question is looked up first, and a dragged file is indexed |
 
 ---
 
@@ -363,7 +366,7 @@ Score Heim answers against known answers.
 | `-c`, `--collection` | COLLECTION |  | override the collection to search |
 | `-k`, `--top-k` | TOP_K | `10` | passages retrieved per question |
 | `--list` |  |  | list questions and whether their source is indexed |
-| `--no-context` |  |  | no retrieval: ask the persona the bare question, as `heim-chat` does |
+| `--no-context` |  |  | no retrieval: ask the persona the bare question, as `heim-chat --bare` does |
 
 ---
 

@@ -27,7 +27,7 @@ OUT = os.path.join(HEIM, "knowledge", "CLI-HELP.md")
 TOOLS = [
     (os.path.join(HERE, "dam_chain.py"), "damchain", "run the plugin chains headless; also `damchain vor ...` and `damchain audit ...`"),
     (os.path.join(HERE, "rag_index.py"), "heim-index  (and heim-add = --add)", "build Heim's document index"),
-    (os.path.join(HERE, "rag_query.py"), "heim  /  heim-query", "ask Heim a question answered from the index"),
+    (os.path.join(HERE, "rag_query.py"), "heim  /  heim-query  /  heim-chat (with --chat)", "ask Heim a question, or hold a conversation, answered from the index"),
     (os.path.join(HERE, "run_digest.py"), "heim-digest", "the deterministic run checks and the verdict (no model)"),
     (os.path.join(HERE, "heim_watch.py"), "heim-watch", "run the digest at each pass end and at run end"),
     (os.path.join(HERE, "audit_plugin.py"), "heim-audit", "ask Heim to review one plugin's code"),

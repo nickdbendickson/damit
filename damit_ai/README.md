@@ -38,7 +38,8 @@ plugin zip or CI job.
    zsh setup-local-heim.sh                     # --small for a 16 GB Mac, --model TAG for any model
    source ~/.zshrc
    ```
-   Commands: `heim-start` (Ollama server, in its own tab), `heim-chat`, `heim-index`, `heim-query`,
+   Commands: `heim-start` (Ollama server, in its own tab), `heim "question"`, `heim-chat` (a conversation; every
+   question is looked up in the indexed documents first, `--bare` for the model on its own), `heim-add <file>`, `heim-index`, `heim-query`,
    `heim-audit`, `heim-digest`, `heim-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
 
    **Repo audit:** `damchain audit --repo ~/path/to/DWR_Plugins` writes one report to
