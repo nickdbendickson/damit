@@ -192,6 +192,26 @@ variable to set. The log is on the Report step. Environment: `QGIS_PROCESS` (pat
 `DAMIT_CLI`, `DAMIT_HANDOFF_CONFIG`, `DAMIT_PYTHON`, `DAMIT_DATA`, `DAMIT_DEM`, `DAMIT_WORK`, `DAMIT_WORK_ROOTS`,
 `DAMIT_SCREENING_TIMEOUT_S`.
 
+## Security
+
+The desk runs under a Content-Security-Policy built in one place, `src/lib/crest/csp.ts` (the same policy as Crest):
+
+- **Scripts** run only from the app itself. The desktop app's local server sends the policy with every response
+  from `web/security-headers.json`; `DamIT.html` carries it in a `<meta>` tag with the SHA-256 of its one inline
+  script. No `unsafe-inline` or `unsafe-eval` for scripts. The per-launch token is a `<meta>` tag, not a script.
+- **Network** from the page is limited to USGS basemap tiles and OpenStreetMap, USGS 3DEP, the ND GIS Hub 911 points
+  and the BLM PLSS service (plus a tile server set with `VITE_CREST_TILE_URL` at build time). The NID state download
+  is made by the Python server, not the page. A new service has to be added to `csp.ts`; `csp.test.ts` fails when
+  the source names a host the policy does not.
+- **Subresource Integrity**: the bundle's `index.html` carries a `sha384` hash for its script, preloads and
+  stylesheet, so the window refuses a bundle file that does not match. The repo's `.gitattributes` stops git
+  converting line endings in the bundle, which would break the hashes on Windows.
+- Also sent: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` / `frame-ancestors 'none'`, `Referrer-Policy`,
+  `Cross-Origin-Opener-Policy`, `Permissions-Policy`.
+
+If a desktop webview ever needs something the policy blocks, start the app with `DAMIT_NO_CSP=1` to drop the policy
+(the other headers stay) and report what was blocked.
+
 ## Develop
 
 ```

@@ -64,6 +64,41 @@ class LocalApiTests(unittest.TestCase):
     def test_token_is_random_and_long(self):
         self.assertGreaterEqual(len(m.API_TOKEN), 32)
 
+    def test_security_headers_on_every_response(self):
+        # A bundle without security-headers.json (this test's) gets the built-in policy; pages, files, API answers
+        # and refusals all carry it.
+        for path in ("/index.html", "/api/job?id=x", "/nope.js"):
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            conn.request("GET", path, headers={"Host": f"127.0.0.1:{self.port}", m.TOKEN_HEADER: m.API_TOKEN})
+            r = conn.getresponse()
+            r.read()
+            got = {k.lower(): v for (k, v) in r.getheaders()}
+            conn.close()
+            self.assertIn("script-src 'self'", got.get("content-security-policy", ""), path)
+            script = [d for d in got["content-security-policy"].split(";") if d.strip().startswith("script-src")][0]
+            self.assertNotIn("unsafe", script, path)
+            self.assertEqual(got.get("x-content-type-options"), "nosniff", path)
+
+    def test_token_is_not_an_inline_script(self):
+        # The per-launch token reaches the page as a <meta>; the policy would refuse an inline script.
+        status, data = self.req("GET", "/index.html")
+        self.assertEqual(status, 200)
+        self.assertNotRegex(data.decode("utf-8"), r"<script(?![^>]*\bsrc=)[^>]*>")
+
+    def test_security_headers_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(m.load_security_headers(root), m._FALLBACK_SECURITY_HEADERS)
+            (root / "security-headers.json").write_text(
+                json.dumps({"Content-Security-Policy": "default-src 'self'", "X-Test": "1", "X-Bad": "a\r\nSet-Cookie: x=1"})
+            )
+            got = m.load_security_headers(root)
+            self.assertEqual(got, {"Content-Security-Policy": "default-src 'self'", "X-Test": "1"})
+            with mock.patch.dict(os.environ, {"DAMIT_NO_CSP": "1"}):
+                self.assertEqual(m.load_security_headers(root), {"X-Test": "1"})
+            (root / "security-headers.json").write_text("not json")
+            self.assertEqual(m.load_security_headers(root), m._FALLBACK_SECURITY_HEADERS)
+
     def test_single_cache_control_header(self):
         # Cache-Control: no-store is added by the end_headers() override; _send must not also emit it,
         # or every API/static response carries the header twice.

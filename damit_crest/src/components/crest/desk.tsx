@@ -5,7 +5,7 @@ import { datumFlags, floodFlags, warningKey, type Warning } from "@/lib/crest/wa
 import { locationProblem } from "@/lib/crest/guided";
 import { DEFAULT_ALGORITHMS, handoffDam } from "@/lib/crest/handoff";
 import { choiceKey, choiceText, classifyReceptors, receptorKey, reportLead } from "@/lib/crest/classify-receptors";
-import { crestApiHeaders } from "@/lib/crest/desktop-server";
+import { crestApiHeaders, hasDesktopServer } from "@/lib/crest/desktop-server";
 import { ClassificationPanel } from "@/components/crest/ClassificationPanel";
 import { lookupPads, padPoints, padsToRetry, resetFailedPads } from "@/lib/crest/nd911-pads";
 import { exportDamJson, exportHydrographCsv, generateLisfloodPackage } from "@/lib/crest/export";
@@ -1538,7 +1538,7 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
     return () => window.clearInterval(id);
   }, []);
   useEffect(() => {
-    if (handoffInfo) return;
+    if (handoffInfo || !hasDesktopServer()) return;
     let live = true;
     fetch("/api/handoff", { headers: crestApiHeaders() })
       .then((r) => (r.ok ? r.json() : null))
