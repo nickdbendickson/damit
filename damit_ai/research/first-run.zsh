@@ -159,7 +159,31 @@ else
   for j in "$OUT"/eval_*.json(N); do
     "$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print("  %-22s %2d / %2d passed  %5.1f min" % (d["model"], d["passed"], d["scored"], d["minutes"]))' "$j"
   done
-  echo "  To use the better model:  zsh setup-dam-research.zsh --model TAG   (rebuilds the dam-research persona)"
+  # Name the winning tag instead of printing a literal "TAG". On 2026-11-13 Nick read that
+  # line as the command and ran `--model TAG`, which Ollama dutifully tried to pull
+  # ("pull model manifest: file does not exist"). Best = most passed, ties broken by the
+  # shorter run.
+  BEST=$("$PY" - "$OUT"/eval_*.json(N) <<'PY'
+import json, sys
+best = None
+for p in sys.argv[1:]:
+    try:
+        d = json.load(open(p))
+    except Exception:
+        continue
+    if not d.get("scored"):
+        continue
+    k = (d["passed"], -d["minutes"])
+    if best is None or k > best[0]:
+        best = (k, d["model"])
+print(best[1] if best else "")
+PY
+)
+  if [[ -n "$BEST" ]]; then
+    echo "  To use the better model:  zsh setup-dam-research.zsh --model $BEST   (rebuilds the dam-research persona)"
+  else
+    echo "  To use a model:  zsh setup-dam-research.zsh --model <a tag from the table above>   (rebuilds the dam-research persona)"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
