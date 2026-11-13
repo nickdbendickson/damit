@@ -38,6 +38,25 @@ except Exception:                                                 # noqa - no / 
         pass
 
 
+def _shared_start():
+    """(METHOD index, Manning's n) the tool opens with: the shared defaults file
+    (damit_core.lib.shared_defaults, DamIT Core 0.3.0) when DamIT Core is installed, else
+    (0 = piping Froehlich 2008, 0.06). A run dialog still changes either for one run."""
+    method_i, n = 0, 0.06
+    try:
+        from damit_core.lib import shared_defaults as SD
+        vals = SD.load().values
+        rid = SD.runner_method(vals)
+        br, _ = RD.flood()
+        if rid in br.METHODS:
+            method_i = list(br.METHODS).index(rid)
+        if vals.get("manning_n") is not None:
+            n = float(vals["manning_n"])
+    except Exception:                                             # noqa - no / older DamIT Core
+        pass
+    return method_i, n
+
+
 class _Base(_UnitParams, QgsProcessingAlgorithm):
     def group(self):
         return "DamIT breach runs"
@@ -135,7 +154,8 @@ class RunDam(_Base):
                                        type=_DOUBLE, optional=True))
         P(QgsProcessingParameterPoint("INFLOW_POINT", "Breach inflow point below the dam (empty = the toe band)",
                                       optional=True))
-        P(QgsProcessingParameterEnum("METHOD", "Breach (ND 5.1.1(d))", RD.method_labels(), defaultValue=0))
+        method_i, manning = _shared_start()
+        P(QgsProcessingParameterEnum("METHOD", "Breach (ND 5.1.1(d))", RD.method_labels(), defaultValue=method_i))
         P(QgsProcessingParameterFile("USER_CSV", "Hydrograph CSV (for 'my own hydrograph')", behavior=FILE_FILE,
                                      fileFilter="CSV (*.csv)", optional=True))
         for name, label in (("CREST_WIDTH", "Crest width (ft): TR-60, MacDonald & Langridge-Monopolis"),
@@ -156,7 +176,7 @@ class RunDam(_Base):
                                              "default)", defaultValue=True)))
         P(_adv(QgsProcessingParameterNumber("GRID_CHECK_CELL", "Finer grid: check run cell (m; 0 = off)",
                                             type=_DOUBLE, defaultValue=0.0, minValue=0.0)))
-        P(QgsProcessingParameterNumber("MANNING", "Manning's n", type=_DOUBLE, defaultValue=0.06, minValue=0.005,
+        P(QgsProcessingParameterNumber("MANNING", "Manning's n", type=_DOUBLE, defaultValue=manning, minValue=0.005,
                                        maxValue=1.0))
         P(QgsProcessingParameterNumber("ARRIVAL_FT", "Arrival depth (ft)", type=_DOUBLE, defaultValue=0.1,
                                        minValue=0.01))
