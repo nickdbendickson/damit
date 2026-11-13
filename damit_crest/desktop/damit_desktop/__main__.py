@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from damit_desktop import WEB_DIR_NAME
+from damit_desktop import defaults
 from damit_desktop import localdem
 from damit_desktop import nid
 from damit_desktop import qgis_run
@@ -523,6 +524,14 @@ class Api:
         if self._settings_file:
             localdem.write_dem_path(self._settings_file, None)
         return {"path": None, "gdalwarp": localdem.find_gdalwarp()}
+
+    def get_defaults(self) -> dict:
+        """Your shared defaults file (defaults.py): its path and text, text None when you have none yet."""
+        return defaults.read_user()
+
+    def save_defaults(self, text: str) -> dict:
+        """Write your shared defaults file, the one the DamIT plugins read too."""
+        return defaults.write_user(text)
 
     def save_file(self, name: str, text: str) -> dict:
         import webview

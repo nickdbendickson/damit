@@ -21,11 +21,24 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      # An engine change lands as a pair of PRs, one in each repo, on branches with the same name. A PR is compared
+      # with crest's branch of that name when there is one (so the pair is green together), with crest main otherwise.
+      - name: Pick the crest branch to compare with
+        id: other
+        env:
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          ref=main
+          if [ -n "$HEAD_REF" ] && git ls-remote --exit-code --heads https://github.com/nickdbendickson/crest.git "refs/heads/$HEAD_REF" >/dev/null 2>&1; then
+            ref="$HEAD_REF"
+          fi
+          echo "Comparing with crest $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - name: Check out crest (engine only)
         uses: actions/checkout@v4
         with:
           repository: nickdbendickson/crest
-          ref: main
+          ref: ${{ steps.other.outputs.ref }}
           path: .crest
           sparse-checkout: src/lib/crest
           persist-credentials: false
