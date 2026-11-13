@@ -200,6 +200,7 @@ class LevelWithItsFolderTest(Base):
 
 
 class ThisRepoTest(Base):
+    @unittest.skipUnless(os.path.isdir(KN), "this copy of damit_ai ships no knowledge pack (the DamSafety one)")
     def test_the_shipped_knowledge_pack_indexes_clean(self):
         """The real pack, through the real indexer: nothing over the limit, nothing left out."""
         self.index("heim_knowledge", KN)
