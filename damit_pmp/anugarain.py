@@ -25,9 +25,12 @@ from .runner_shared import grid as gridmod
 from .runner_shared import terrain
 
 RUNNER_FILES = ("gmsh_mesher.py", "grid.py", "terrain.py", "anuga_worker.py", "omp_probe.py",
-                "anuga_dtdiag.py", "anuga_fine_maxima.py", "wallclock.py")
-# beside the script (anuga_fine_maxima.py: the worker imports it at the top since DamSafety Runner 3.17.9)
-SCRIPT_FILES = ("gmsh_mesher.py", "anuga_worker.py", "omp_probe.py", "anuga_dtdiag.py", "anuga_fine_maxima.py")
+                "anuga_dtdiag.py", "anuga_fine_maxima.py", "wallclock.py", "ckpt_sign.py")
+# beside the script: every module the worker imports at its top when it is run as a script
+# (anuga_fine_maxima.py since DamSafety Runner 3.17.9, ckpt_sign.py since 3.20.3). A module left
+# out here ends the run at "import" (tests: test_the_script_folder_holds_every_module_the_worker_imports)
+SCRIPT_FILES = ("gmsh_mesher.py", "anuga_worker.py", "omp_probe.py", "anuga_dtdiag.py", "anuga_fine_maxima.py",
+                "ckpt_sign.py")
 SCRIPT_TEMPLATE = os.path.join("templates", "run_anuga_rain.py")
 SCRIPT_NAME = "run_anuga_rain.py"
 JOB_NAME = "anuga_rain_job.npz"
