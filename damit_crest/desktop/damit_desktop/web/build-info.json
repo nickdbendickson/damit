@@ -10,7 +10,8 @@
     "src/components/crest/ClientOnly.tsx": "07f2a891b51d428f39f0d4e48f1a74a96935deaccdadeb39724951d37c3ddb57",
     "src/components/crest/Dashboard.tsx": "5a38b33add40e474f1c8b82678141b65a0c86d1dcec425a7518a0f6b3ef2463c",
     "src/components/crest/DashboardMap.tsx": "06d107ab94c336a1e68f11654cfd25782d138e483ddd435d51cfc503bda716a6",
-    "src/components/crest/desk.tsx": "6ace1637e762f66d91bbe9ae2acacd8e591561eb0ce9d58925baa25dc8f2735d",
+    "src/components/crest/desk.tsx": "c9efcb63bbe70c50e603e8419676644fd6559a812e94837c76aadf09d8f1fc03",
+    "src/components/crest/DeskFiles.tsx": "ba98af6c2419976320aae8a010c69f0df8844524937d309cc199c9c1075a9d72",
     "src/components/crest/extent-layer.ts": "0828cda7c95bde8ad517d0ec571aefaa8876f64e7064a999edac1d73f10081cc",
     "src/components/crest/flood-layer.ts": "55d2cf777a9e5628643bacc8dacd357569ac4b8bd7c0698029ee8949ae47f691",
     "src/components/crest/HybridSetup.tsx": "7caa0a463822bf4439eefa70684b34baf3e927526b0d4241a629f7aa856c3626",
@@ -45,9 +46,10 @@
     "src/lib/crest/data/nid_ND.json": "8841dce422ee0917bf7372c33665a2b150d980422130a06f40bccd12dd49f731",
     "src/lib/crest/data/packed.ts": "2ef48e9471f32d408ef65af86805824abbf7018b8cfeee1d5f3903878f97bdbd",
     "src/lib/crest/dem-source.ts": "e242c986c4b26b6cbf1d4f3c4ff6b984ca7281305829c914217a4bd73c7a0b0d",
+    "src/lib/crest/desk-file.ts": "8e576c36e3219960369ba1e171ffb07ea517f93f9df8ab23375b0ce6bad75a59",
     "src/lib/crest/desktop-server.ts": "3932ddc610f5b880c8c5a963eb8ba47829e7789ed37ed18f29585b97becd1307",
     "src/lib/crest/engine.ts": "915acd51efbda824dca3d7e3f8a87dccf4e4d7ec5721c1035430b192d07a75e0",
-    "src/lib/crest/export.ts": "1e6a2bd72339efe333a5be94e5d43be4376cd6efa08888ed166577f2347e7d1e",
+    "src/lib/crest/export.ts": "76300413199a0f3c40799d41ef4b24a695ff82dbe3359396de52e3ef2360e94c",
     "src/lib/crest/extent.ts": "8a57eab56a21317c63717c75e0c065056922c6aeca3b483adb63da7e311e95e4",
     "src/lib/crest/fill.ts": "e5a5a1318b78ad099951dbe74e634339248c29af5b22fb8ebef93759243b8773",
     "src/lib/crest/floodstrip.ts": "960e7b6f9f055c6ba5b554c84013bbed73bed5f4888cbc252c0b332606df923b",
@@ -86,13 +88,13 @@
     "src/lib/crest/settings-store.ts": "21c9158c866b793fcbc44268d9be44b771de3922980dee4acbefce1fcb1e1e3a",
     "src/lib/crest/settings.ts": "f738b33be3e4cbb32e4e13a33b10c2c13aec819790149428332b7feca0f83e04",
     "src/lib/crest/spread.ts": "409ff08b548d39afddf1ad898224a39bb5fae0c37d0d5e5d90271839ce343dd8",
-    "src/lib/crest/store.ts": "af578e1d7ad56abbfa0c515de293f71dc1859fd436b0ba8b8bfa8e39c49eabf6",
+    "src/lib/crest/store.ts": "c9c5ec0ea9102e2ef29badd94a8d0e59b99386bd765a8be081fa9be9becda6d2",
     "src/lib/crest/triage.ts": "fe88c723a1b99f97f436972cf514771b4e54c6788a83c2654fc3a68f88c830e5",
     "src/lib/crest/version.ts": "e8bbb3d8d35acc9321eea0bd8765c206f3ae8608c06606e757a28989e2b9266d",
     "src/lib/crest/vertcon_nd.ts": "dbf7a01da0a7727e44d46198c68ed701a967b58c4970732fbad947cc438c468d",
     "src/lib/crest/vertcon.ts": "01aa96314a1d666e75fe19fcd40f968c0587769b8d4634205b169cf6c3bc66ca",
     "src/lib/crest/viewexport.ts": "da7abe3cb05c9cf4f9f01efef9f1118b7554ad9cee5af28113c11827fb21e7ca",
     "src/lib/crest/warnings.ts": "409483c146ec8d2e09eed8af980d36fcb6ab35b8e8cabdc7476537a819edb5ea",
-    "src/styles.css": "77b3ed2481ee57af930401cc3c219b5bd5f84d1c55d6246537f25b09f81902b0"
+    "src/styles.css": "b20fa08e54821cb47468c2e22d918a0cd42331f427e9a4a150843b4d4794920f"
   }
 }
