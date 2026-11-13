@@ -90,7 +90,13 @@ bash use_local_terrain.sh batch44-anuga
   `--parallel N`, `--redo`, `--dem`, `--cell`, `--watch` (the run watcher) and `--triage`.
   `run_county.py` adds `--county`, `--list`, `--limit N`, `--kind`, `--mode` (LISFLOOD-FP
   or ANUGA) and `--status`.
-- These three scripts are not in a repository yet; they travel with the batch packages.
+- The three scripts are in the DamSafety repository under `tools/batch/` (since 2026-11-13,
+  with tests that run each against a stand-in `dam_chain.py`); copies in the older batch zips
+  are stale. `--watch` starts `batch_watch.py`, which checks each finished dam by rule and
+  writes `BATCH_FINDINGS.md`; it asks the local model nothing unless started with
+  `--with-model`. The zip copies started `lumo_watch.py`, whose model no longer exists.
+- Their data files (`dams_44.gpkg`, `nd_dams_dugouts.csv`, `nd_dams_dugouts.gpkg`) are not
+  in the repository: next to the script, or `BATCH_DATA_DIR`.
 - They decide pass or fail from `state.json`, not from the exit code.
 - LISFLOOD-FP scales poorly with threads: several dams side by side at one thread each
   finish sooner than one dam on many threads.
