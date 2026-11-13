@@ -109,7 +109,7 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "8d74ac96162e1505783a6a6106560419ba78347594c36e229f98b0d7a6025672",
+   "diff": "d0fb73433cf47091733a0dd6306f969a6de73d3e8a9e2a14e73c9aec43a3e546",
    "from": "DamSafety_Runner/algorithms.py"
   },
   "damit_runner/compat/nodata_sample.py": {
@@ -164,6 +164,10 @@
    "diff": "064612b15cb3ef8cba97f1ae3480f1d63bbd78f174b822778f6ddb8f5b7d69d2",
    "from": "DamSafety_Runner/core/basemap.py"
   },
+  "damit_runner/core/batch_workers.py": {
+   "diff": "ac9d1e4f0ab058578e877a7a5c554461061d98ea72eafd6e164aade3b753bb24",
+   "from": "DamSafety_Runner/core/batch_workers.py"
+  },
   "damit_runner/core/benchmark.py": {
    "diff": "",
    "from": "DamSafety_Runner/core/benchmark.py"
@@ -187,6 +191,10 @@
   "damit_runner/core/chain.py": {
    "diff": "d35e10f1773b4ab5fa878c627e8dd309331dd5fd8142d6cf36098827842716f4",
    "from": "DamSafety_Runner/core/chain.py"
+  },
+  "damit_runner/core/ckpt_sign.py": {
+   "diff": "1a7825762893179ee92eb1e130d3bade9ccf9e3024ab9cead7b6c83d53e2155a",
+   "from": "DamSafety_Runner/core/ckpt_sign.py"
   },
   "damit_runner/core/conditioning.py": {
    "diff": "",
@@ -448,5 +456,5 @@
  "schema": "damit.engine_parity",
  "schema_version": 1,
  "source": "nickdbendickson/DWR_Plugins",
- "synced_to": "0c6467008ee1b0597ce4adcc48b9b16ad4b69afa"
+ "synced_to": "1c62d51335b3b93e07460b0438054d2c9141c157"
 }

@@ -178,7 +178,7 @@ low-confidence cases say so) instead of a gap, and `terrain` checks coverage in 
 | `damit_run:rundam` | Accepts a hand-off package (or equivalent parameters), validates it against the catalog, creates a **new** run folder and runs the breach model there (DRY_RUN off, the default), then copies the final rasters and vectors into `<DAMS_FOLDER>/<dam id>/`. DRY_RUN on: `run_setup.json`, the package, `README_run.md` and the expected-output contract only. |
 | `damit_run:checkhandoff` | Validates a package and lists what a run still needs. |
 | `damit_run:hecrasexport` | Writes a HEC-RAS project from a finished run. It does not run HEC-RAS. |
-| `damit_run:batch` | The ported DamSafety batch: a layer of dams, one breach run each, with a summary CSV. |
+| `damit_run:batch` | The ported DamSafety batch: a layer of dams, one breach run each, with a summary CSV. Since 0.6.0 `WORKERS` above 1 runs that many dams at the same time, each in its own `qgis_process` worker with a share of the cores. |
 | `damit_run:sensitivity`, `damit_run:cascade` | The ported sensitivity runs for one dam, and the failure of dams in a chain. |
 | `damit_run:hydrograph`, `damit_run:estimate`, `damit_run:check` | Breach hydrograph only; run-time estimate for one dam; check of the LISFLOOD-FP / ANUGA installation. |
 | `damit_run:finishanuga`, `damit_run:delineate` | Finish an ANUGA run after QGIS closed; delineate the watershed of a dam (USGS StreamStats). |
@@ -186,6 +186,19 @@ low-confidence cases say so) instead of a gap, and `terrain` checks coverage in 
 The eight tools from `batch` down are the DamSafety Runner's own (`algorithms/engine.py`, `core/`), registered since
 0.4.1. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
 DamSafety's dam-folder layout; `damit_run:rundam` stays the tool the Screener hand-off and DamIT Crest call.
+
+**Batch workers (0.6.0).** One dam gains little from more LISFLOOD-FP threads, so a long batch is shortened by running
+dams side by side. Workers need `qgis_process` (set `NDBREACH_QGIS_PROCESS` to its full path if it is not found), layers
+that are files, and DamIT Runner enabled for `qgis_process` in the profile. When they cannot be used the log says why
+and the dams run one after another. Each worker's log and one-row summary are kept in `<Dams folder>/_batch_workers/`.
+The rows are the same as one dam after another.
+
+**ANUGA checkpoints are signed (0.6.0).** A checkpoint is a Python pickle, and loading one runs the code inside it, so a
+dam folder from somewhere else could run anything when resumed. The worker signs each checkpoint it saves
+(`<checkpoint>.pickle.sig`, HMAC-SHA256 under a key in your own settings folder, `DamIT/anuga_checkpoint.key`) and loads
+only one that verifies. Unsigned, signed on another computer, or changed since: the run stops, says why and keeps the
+checkpoints. `NDBREACH_ANUGA_RESUME_TRUST=1` loads your own older ones for one run; `NDBREACH_CKPT_KEY_FILE` names a key
+file to share between your own computers.
 
 **Engine parity with DamSafety.** `core/`, `algorithms/engine.py`, `flood/breach.py` and DamIT Finder are ports of
 the DamSafety plugins ([DWR_Plugins](https://github.com/nickdbendickson/DWR_Plugins)). `scripts/check_engine_parity.py`
