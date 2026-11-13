@@ -242,6 +242,31 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   earlier version doubled: plain `vor ingest` adopts the existing copies and drops the
   originals from the index.
 
+### D10. Three commands that sent each other round in a circle
+- **Was:** on the first real library (191 documents), `vor ocr` answered "No scanned PDFs to
+  OCR" while `vor ingest` and `vor doctor` said 99 documents had pages with no text layer and
+  to run `vor ocr`. A plain `vor ocr` takes a PDF only when at least 30 % of its pages are
+  scanned; the 7 that were had been done, and the 99 were under it. The doctor also said two
+  files were "not in the index. Run: vor ingest" straight after an ingest that added nothing:
+  they were exact copies of indexed files, and ingest goes by content.
+- **Tell:** the advice printed by one command is the command that was just run.
+- **Fix:** Vor 1.3.2. All three count the documents under the share and name
+  `vor ocr --min-fraction 0`; `vor ocr --list` shows them without running anything. The doctor
+  reports copies as fine and a file over the size limit as never indexed. `vor list --missing`
+  lists the documents whose file is gone.
+
+### D11. "command not found" straight after a good install
+- **Was:** the install steps were one paste: the two installers, `source ~/.zshrc`, then
+  `heim-doctor` and `vor doctor`. Both checks answered `zsh: command not found`. Nothing was
+  wrong with the install. zsh reads a whole pasted block before it runs any of it, and the
+  commands are aliases, which are resolved when a line is read: at that moment the `source`
+  line had not run yet. The same lines typed one at a time work.
+- **Tell:** the command works in the next paste, or in a new Terminal tab.
+- **Fix:** steps that add commands end their paste block at `source ~/.zshrc`; the first use
+  of a new command is in the next block. A second cause that looks the same: `heim doctor`
+  with a space used to be a question to the model, not the check (rag_query 2.4 takes
+  `heim doctor`, `heim add FILE` and `heim chat` as words, as Vor does).
+
 ---
 
 _Add a case when a failure cost more than an hour to diagnose and would be recognised
