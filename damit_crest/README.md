@@ -35,6 +35,17 @@ network for ND; no national bundle is committed. No state dam-safety inventory (
 unknown-structure layer and no state suite pack (`NDSUITE_DATA`, `~/.ndsuite`) is read or shipped. Receptors (ND 911
 address points for ND dams, or the user's own), DEMs (3DEP or a local DEM) and NHD streams are separate inputs.
 
+**A batch of any size can be left running in the desk.** Rows are written to browser storage (IndexedDB) as they
+finish, and again when the window is hidden or closed. The state and the selection being run are saved too, so after
+**Stop**, a closed window or a crash the Batch screen reopens on the same state and selection with a line saying how
+many are left, and **Resume** carries on from there; closing mid-run asks first. If the terrain service stops
+answering (six dams in a row fail to reach it), the batch **pauses** instead of failing everything left, and tries
+again by itself after 1, 2, 5, 10, 15 and 30 minutes or as soon as the connection is back; the dams that failed that
+way are retried, never kept as results. *Stop retrying* ends the waits, and so does choosing another state. Only the
+300 most recent finished records are kept in memory for **Open in desk**; any other finished row is rebuilt from the
+NID and the terrain when opened (a few seconds), including after a reload. Above 300 dams the screen still shows the
+command line, which runs without a window and can read a local DEM.
+
 The built-in samples are the NID dam ND00199 (Swan Buffalo Detention 12) and two fictional desk examples
 (*Local-datum sample* `SAMPLE-4031`, *Prairie holding pond* `DESK-014`). Those two ids are **not** NID IDs: the hand-off
 sends them as samples (`is_sample`, no `nid_id`), never as NID inventory records. A new dam (*+ New dam*) starts with an
@@ -84,6 +95,73 @@ desk opens in the system browser. Optional packages: `pyinstaller damit_crest.sp
 The local server listens on 127.0.0.1:47241 (Crest uses 47231, so both can run). Every `/api/` call needs the
 per-launch token the server puts in the page (`X-DamIT-Token`), and a job may only write under `~/DamITDams`,
 `DAMIT_WORK` or `DAMIT_WORK_ROOTS`.
+
+## Settings: starting pool, roughness and the shared defaults
+
+DamIT Crest's presets are the pool at the top of dam, a piping failure, Froehlich (2008) and Manning's n of 0.035 in
+the channel and 0.06 on the floodplain. They can be changed in two places.
+
+**On one record (Breach step, "Advanced: starting pool and roughness").**
+
+- *Starting pool*: top of dam (the default), the record's normal pool, or an elevation you enter (in the same datum
+  as the crest; it is tied to NAVD88 the same way). Below the top of dam the head on the breach is lower and the
+  breach equations use the storage at that pool, so the peak and the released volume are smaller. A pool that cannot
+  be used (no normal pool on the record, above the top of dam, not above the breach bottom) falls back to the top of
+  dam and says why. Inflow cases (PMF, flow over the spillway with or without a breach) are DamIT Runner's.
+- *Manning's n*, channel and floodplain (0.01 to 0.3). Used by the routed flood on the terrain: travel time, depth and
+  spread. Changing either asks for the terrain layer to be built again; the LISFLOOD export's `fpfric` follows the
+  floodplain value.
+
+These belong to the record: they are saved with it and written to its `dam.json`.
+
+**For every new record (header, Settings).** Settings holds the suite's *shared defaults*, the same `defaults.json`
+DamIT Core ships and DamIT Runner reads (`damit_core/lib/shared_defaults.py`): the sunny-day starting pool, the
+failure mode, the breach equation and Manning's n. A new record, a record made from the NID picker and every batch
+row starts from them. Records you already have are not changed; the Breach step lists where a record differs from
+the shared defaults and has a button to put it back on them.
+
+| Where | Your values live in | How to change them |
+| --- | --- | --- |
+| Desktop app | `~/DamIT/defaults.json`, found the way DamIT Core finds it outside QGIS: the `defaults_file` key of the DamIT settings file (`DAMIT_SETTINGS`, else `~/.config/damit/settings.json`), else `DAMIT_DEFAULTS` | Settings > Save writes the file. Editing it by hand works too; DamIT Crest reads it when it opens. |
+| `DamIT.html` in a browser | that browser | Settings > Save. *Open settings file* reads a `defaults.json`; *Save settings file* writes one to hand to the plugins. |
+| Batch command line | a file you name | `npm run batch:dams -- --defaults ~/DamIT/defaults.json ...` |
+
+A `defaults_file` chosen inside QGIS is kept in the QGIS profile, which the desktop app cannot read; set
+`DAMIT_DEFAULTS` to the same path if you keep the file somewhere other than `~/DamIT`.
+
+Your file holds only the keys you changed, so a key you never touched follows the suite's value when the suite is
+updated. Unknown keys and out-of-range values are left out and named, never guessed. DamIT Crest has three of the
+suite's breach equations (Froehlich 2008, MacDonald & Langridge-Monopolis, a TR-60 width); if the shared defaults ask
+for another, new records start on Froehlich (2008) and Settings says so. `pmf_breach_volume` is kept in the file for
+the Runner and not used here. A test compares the desk's copy of the suite values, choices and ranges with
+`damit_core/data/defaults.json` and DamIT Core's schema, so the two cannot drift apart.
+
+Every `dam.json` DamIT Crest writes (Report step, and the dam folder) carries an `assumptions` entry in the form
+`shared_defaults.assumptions()` writes: what the record used, in the shared file's own names, the shared values at the
+time, and `differs`, the keys where the two are not the same. `starting_pool_ft` and `starting_pool_rule` give the pool
+the breach really started from. An `assumptions` entry another tool already wrote in the dam folder's `dam.json` is
+kept; DamIT Crest's own is then on its screened status entry.
+
+## Saving and moving your work
+
+The desk's dams live in the desktop app's own storage (or the browser `DamIT.html` is open in), not in a file you can
+see. Under the dam list:
+
+- **Save desk to file** writes every dam on the desk to one file, `damit-crest-desk-<date>.json`: inputs, receptors,
+  drawn lines and areas, saved 911 / PLSS lookups, the terrain layer, the jurisdiction choice and the last classify
+  result. This is the backup, and the way to move a desk to another computer or between `DamIT.html` and the desktop
+  app.
+- **Open desk file or dam.json** reads that file back. *Add to this desk* never changes a dam already on the desk: a
+  dam that is already there and identical is left alone, and one with the same id but different content is added
+  beside it as "(from file)". *Replace this desk* makes the desk exactly the file's dams.
+- A **dam.json** opens too. One from the Report step carries the whole record (`crest_record`, without the terrain
+  layer) and comes back as it was. The dam folder's `dam.json` (`damit/dam_record`, written by the hand-off) holds the
+  engineering inputs only: it opens as a new record with those inputs and a note that receptors, drawn geometry and
+  layers were not in the file.
+
+A file is read as data only: each record is rebuilt field by field, and a value of the wrong type is dropped with a
+note (`src/lib/crest/desk-file.ts`). The file format is the one Crest writes (`crest-desk`), so a desk saved from
+either opens in the other; fields the other does not have are left out.
 
 ## Report step: DamIT plugins in QGIS
 

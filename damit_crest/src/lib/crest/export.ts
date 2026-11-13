@@ -1,6 +1,8 @@
 import { defaultPresetFor, handoffChoice } from "./jurisdiction.ts";
 import { damLocation, ENGINE_VERSION } from "./engine.ts";
 import { handoffIds } from "./nid-dams.ts";
+import { roughnessOf } from "./routing.ts";
+import { assumptions, mergeDefaults, type Shared } from "./settings.ts";
 import type { Analysis, DamRecord, SeriesPoint } from "./types.ts";
 import { CREST_VERSION } from "./version.ts";
 
@@ -17,8 +19,9 @@ export function exportHydrographCsv(series: SeriesPoint[]): string {
 }
 
 /** Minimal dam.json matching fields the Runner / Screening read. */
-export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
+export function exportDamJson(dam: DamRecord, analysis: Analysis, shared: Shared = mergeDefaults({}), now = new Date()): string {
   const loc = damLocation(dam);
+  const rough = roughnessOf(dam.roughness);
   // dam_id is the NID ID, else the record's own id: a sample's or a new dam's id is never passed off as an NID ID.
   const ids = handoffIds(dam);
   const obj = {
@@ -43,6 +46,14 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
     lon: loc?.lon ?? null,
     method: dam.method,
     failure_mode: dam.failureMode === "overtopping" ? "overtopping" : "piping",
+    // The pool the breach started from (NAVD88) and why, as the Runner's starting_wse_ft / starting_wse_rule.
+    starting_pool_ft: Number.isFinite(analysis.breach.startPoolNavdFt) ? analysis.breach.startPoolNavdFt : null,
+    starting_pool_rule: analysis.breach.startPoolLabel,
+    manning_n_channel: rough.nChannel,
+    manning_n_floodplain: rough.nFloodplain,
+    // What this record used of the suite's shared defaults, and where it differs from them (settings.ts): the same
+    // entry a Runner run writes, so the two can be checked against the same starting values.
+    assumptions: assumptions(dam, shared, CREST_VERSION, analysis.breach.startPool, now),
     // A new dam only when the Record step's "New dam" box is ticked (never inferred).
     is_new: dam.isNew === true,
     ...(ids.isSample ? { is_sample: true } : {}),
@@ -113,8 +124,18 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
           },
         }
       : {}),
+    // The whole desk record, so "Open desk file or dam.json" (desk-file.ts) brings this dam back exactly as it was:
+    // receptors, drawn geometry, saved lookups. The terrain layer is left out (it is megabytes; "Save desk to file"
+    // keeps it). The Runner and the Screening plugin ignore unknown keys.
+    crest_record: recordWithoutLayer(dam),
   };
   return JSON.stringify(obj, null, 2) + "\n";
+}
+
+function recordWithoutLayer(dam: DamRecord): DamRecord {
+  const rest = { ...dam };
+  delete rest.outline;
+  return rest;
 }
 
 /** WGS 84 / NAD 83 geographic to UTM (metres), zone from the longitude (ND: 13N or 14N). */
@@ -179,7 +200,8 @@ export function generateLisfloodPackage(dam: DamRecord, series: SeriesPoint[], o
   const cell = opts.cellSizeM != null && Number.isFinite(opts.cellSizeM) && opts.cellSizeM > 0 ? opts.cellSizeM : 10;
   const cells = Math.max(1, Math.round(opts.inflowCells ?? 2));
   const simHours = opts.simHours ?? 72;
-  const fpfric = opts.fpfric ?? 0.06;
+  // The record's floodplain Manning's n (the built-in 0.06 unless the record sets one), so the export matches the desk.
+  const fpfric = opts.fpfric ?? roughnessOf(dam.roughness).nFloodplain;
   const resroot = (dam.nid || "dam").toLowerCase().replace(/[^a-z0-9]/g, "_");
 
   let x = opts.pointX;

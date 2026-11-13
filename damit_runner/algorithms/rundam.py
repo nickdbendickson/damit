@@ -38,6 +38,37 @@ except Exception:                                                 # noqa - no / 
         pass
 
 
+def _shared_start():
+    """(METHOD index, Manning's n) the tool opens with: the shared defaults file
+    (damit_core.lib.shared_defaults, DamIT Core 0.3.0) when DamIT Core is installed, else
+    (0 = piping Froehlich 2008, 0.06). A run dialog still changes either for one run."""
+    method_i, n = 0, 0.06
+    try:
+        from damit_core.lib import shared_defaults as SD
+        vals = SD.load().values
+        rid = SD.runner_method(vals)
+        br, _ = RD.flood()
+        if rid in br.METHODS:
+            method_i = list(br.METHODS).index(rid)
+        if vals.get("manning_n") is not None:
+            n = float(vals["manning_n"])
+    except Exception:                                             # noqa - no / older DamIT Core
+        pass
+    return method_i, n
+
+
+def _shared_start_pool():
+    """0.5.0: the START_POOL index the tool opens with: 1 (normal pool) when the shared defaults file's
+    sunny_day_start_pool says so, else 0 (top of dam, the preset). A run dialog still changes it for one run."""
+    try:
+        from damit_core.lib import shared_defaults as SD
+        if SD.load().values.get("sunny_day_start_pool") == "normal_pool":
+            return 1
+    except Exception:                                             # noqa - no / older DamIT Core
+        pass
+    return 0
+
+
 class _Base(_UnitParams, QgsProcessingAlgorithm):
     def group(self):
         return "DamIT breach runs"
@@ -140,12 +171,13 @@ class RunDam(_Base):
                                        type=_DOUBLE, optional=True))
         P(QgsProcessingParameterPoint("INFLOW_POINT", "Breach inflow point below the dam (empty = the toe band)",
                                       optional=True))
-        P(QgsProcessingParameterEnum("METHOD", "Breach (ND 5.1.1(d))", RD.method_labels(), defaultValue=0))
+        method_i, manning = _shared_start()
+        P(QgsProcessingParameterEnum("METHOD", "Breach (ND 5.1.1(d))", RD.method_labels(), defaultValue=method_i))
         # 0.5.0: the scenario. The presets (index 0) are the sunny day from the top of dam with a piping breach.
         scen, pools, trigs = RD.scenario_labels()
         P(QgsProcessingParameterEnum("SCENARIO", "Scenario", scen, defaultValue=0))
         P(QgsProcessingParameterEnum("START_POOL", "Sunny day: the pool when the breach starts", pools,
-                                     defaultValue=0))
+                                     defaultValue=_shared_start_pool()))
         P(QgsProcessingParameterNumber("START_WSE_FT", "Sunny day: starting pool elevation (ft; datum as the top of "
                                        "dam), for 'An elevation I state'", type=_DOUBLE, optional=True))
         P(QgsProcessingParameterNumber("NORMAL_POOL_FT", "Normal pool elevation (ft; datum as the top of dam; empty "
@@ -187,7 +219,7 @@ class RunDam(_Base):
                                              "default)", defaultValue=True)))
         P(_adv(QgsProcessingParameterNumber("GRID_CHECK_CELL", "Finer grid: check run cell (m; 0 = off)",
                                             type=_DOUBLE, defaultValue=0.0, minValue=0.0)))
-        P(QgsProcessingParameterNumber("MANNING", "Manning's n", type=_DOUBLE, defaultValue=0.06, minValue=0.005,
+        P(QgsProcessingParameterNumber("MANNING", "Manning's n", type=_DOUBLE, defaultValue=manning, minValue=0.005,
                                        maxValue=1.0))
         P(QgsProcessingParameterNumber("ARRIVAL_FT", "Arrival depth (ft)", type=_DOUBLE, defaultValue=0.1,
                                        minValue=0.01))

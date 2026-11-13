@@ -81,7 +81,7 @@ TIERS = (TIER_LISFLOOD, TIER_BOTH, TIER_HECRAS)
 
 SCENARIO_SUNNY = "sunny"
 SCENARIO_FLOOD = "flood"
-# 3.18.0: the flood (PMF) inflow routed through the spillways, the outlets and over the crest
+# 3.19.0: the flood (PMF) inflow routed through the spillways, the outlets and over the crest
 # with NO breach; that outflow is the flood modelled downstream
 SCENARIO_FLOOD_NO_BREACH = "flood_no_breach"
 FLOOD_SCENARIOS = (SCENARIO_FLOOD, SCENARIO_FLOOD_NO_BREACH)
@@ -432,7 +432,7 @@ class RunSettings:
                                  c.schedule) for c in (v.outlets or [])],
                     "spillway_schedule": v.spillway_schedule}
                 if v is not None and getattr(v, "aux_spillway", None) is not None:
-                    d[k]["aux_spillway"] = v.aux_text       # 3.18.0 (only when one is given)
+                    d[k]["aux_spillway"] = v.aux_text       # 3.19.0 (only when one is given)
             elif k == "receptors":
                 d[k] = None if v is None else len(v)
             elif k == "structures":
@@ -2780,7 +2780,7 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
             "the start of the inflow" if no_breach else "breach initiation"),
     }
     if no_breach:
-        # 3.18.0: a flood WAS modelled (final_model is set), but the dam does not fail in it.
+        # 3.19.0: a flood WAS modelled (final_model is set), but the dam does not fail in it.
         # breach_occurs False keeps ND Dam Hazard's model gate and the dam record from reading
         # these rasters as a failure flood.
         summary["no_breach_scenario"] = True
@@ -3263,7 +3263,7 @@ def _safe(name):
 
 
 def require_breach(st, what):
-    """3.18.0: tools that vary or compare the breach (sensitivity, probabilistic) have nothing
+    """3.19.0: tools that vary or compare the breach (sensitivity, probabilistic) have nothing
     to do in the no-breach flood scenario."""
     if getattr(st, "scenario", None) == SCENARIO_FLOOD_NO_BREACH:
         raise brmod.BreachInputError(
@@ -3278,7 +3278,7 @@ def _flood_hydrographs(dam, st, warnings):
     if fi is None:
         raise brmod.BreachInputError("the flood scenario needs the inflow hydrograph")
     if st.scenario == SCENARIO_FLOOD_NO_BREACH:
-        # 3.18.0: the routed outflow with no failure is the flood. It comes back as the first
+        # 3.19.0: the routed outflow with no failure is the flood. It comes back as the first
         # hydrograph (what the models run) with no baseline: there is nothing to subtract.
         fr = floodmod.route_flood(dam, st.breach_method, st.overrides, fi, breach=False)
         warnings.append(
@@ -3322,6 +3322,53 @@ def _write_no_breach(res, report, warnings, model_dir, hy_nb):
             f.write("\n" + "\n".join(damjson.report_lines(report["dam_record"])) + "\n")
 
 
+def _assumptions(st, version, log, warnings, dam=None):
+    """DamIT Core 0.3.0: the suite-wide assumptions this run used (damsuite.shared_defaults keys), for
+    dam.json's "assumptions" entry, so a Crest hand-off and a Runner run of the same dam can be
+    checked against the same starting values. Where the run differs from the shared defaults
+    file it is logged (a per-run choice is allowed; it is just said). None without DamIT Core 0.3.0."""
+    try:
+        from damit_core.lib import shared_defaults as SD
+    except Exception:                                            # noqa - no / older DamIT Core
+        return None
+    flood_mode = st.scenario in FLOOD_SCENARIOS
+    mode, method = SD.from_runner_method(st.breach_method)
+    used = {"failure_mode": mode, "breach_method": method, "manning_n": float(st.manning_n)}
+    if st.scenario == SCENARIO_FLOOD_NO_BREACH:
+        # 3.19.0: the flood with no failure uses no breach equation at all
+        used.update(failure_mode=None, breach_method=None)
+    elif flood_mode:
+        vw = floodmod.pmf_vw_source(st.flood)
+        used["pmf_breach_volume"] = {v: k for k, v in floodmod.PMF_VW.items()}.get(vw)
+    else:
+        # 3.19.0: the pool the run started at (START_POOL). Top of dam unless the user chose the
+        # normal pool; an elevation the user stated is neither of the shared file's two choices
+        rule = getattr(dam, "start_wse_rule", "") \
+            if getattr(dam, "start_below_top_ft", None) is not None else ""
+        used["sunny_day_start_pool"] = {"": "max_pool",
+                                        brmod.START_NORMAL: "normal_pool"}.get(rule)
+    entry = SD.assumptions(used, "damit_run", version,
+                           note="manning_n is the n where there is no n raster / NLCD class")
+    for line in SD.differs_text(entry):
+        log("Shared defaults: " + line)
+    if not flood_mode and used.get("sunny_day_start_pool") == "max_pool" and \
+            entry["shared_values"].get("sunny_day_start_pool") == "normal_pool":
+        # 3.19.0: the run tools start from the shared value (START_POOL); this run was changed
+        # back to the top of dam, or came from a tool without the choice
+        w = ("The shared defaults file says a sunny-day breach starts at the normal pool; this "
+             "run started at the top of dam (maximum pool). Choose 'Normal pool' under 'Sunny "
+             "day: the pool when the breach starts' to follow the shared defaults.")
+        log(w)
+        if w not in warnings:
+            warnings.append(w)
+    elif not flood_mode and used.get("sunny_day_start_pool") is None:
+        log("Shared defaults: this run started at an elevation you stated, {:.2f} ft below the "
+            "top of dam.".format(float(getattr(dam, "start_below_top_ft", 0.0) or 0.0)))
+    for p in SD.load().problems:
+        log("Shared defaults: " + p)
+    return entry
+
+
 def _record_dam(dam, st, res, dam_xy, out_folder, top_from_dem, final_model, warnings, log,
                 grid=None, depth=None, cut_off=None, crest_from=""):
     """v3.2.0: write what the run used into <dam folder>/dam.json (damjson.record_run) and add
@@ -3359,12 +3406,16 @@ def _record_dam(dam, st, res, dam_xy, out_folder, top_from_dem, final_model, war
                           "estimated by this plugin from the {}; not a surveyed or as-built "
                           "crest")
             dem_note = fmt.format(crest_from or "DEM near the dam point")
+        extra = {"vertical_datum": vdrun.VD.public(vrec)} if vrec else {}
+        assume = _assumptions(st, damjson.plugin_version(), log, warnings, dam=dam)
+        if assume:
+            extra["assumptions"] = assume
         info = damjson.record_run(out_folder, vals, result, dr.get("read"),
-                                  dem_top_note=dem_note,
-                                  extra={"vertical_datum": vdrun.VD.public(vrec)}
-                                  if vrec else None)
+                                  dem_top_note=dem_note, extra=extra or None)
         if vnote:
             info["datum_note"] = vnote
+        if assume:
+            info["assumptions"] = assume
     except Exception as e:           # the record is an extra; never lose the run for it
         info = {"error": "dam.json not updated: {}: {}".format(type(e).__name__, e),
                 "warnings": [], "read": list(dr.get("read") or [])}

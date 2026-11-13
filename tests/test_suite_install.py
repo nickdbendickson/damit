@@ -27,7 +27,7 @@ class TestLocks(unittest.TestCase):
     def test_every_platform_has_its_envs(self):
         for p in PLATFORMS:
             have = {f[:-5] for f in os.listdir(os.path.join(LOCKS, p)) if f.endswith(".lock")}
-            want = {"ndqgis", "ndanuga", "ndresearch"} | (set() if p == "win-64" else {"ndbuild"})
+            want = {"ndqgis", "ndanuga", "ndvor"} | (set() if p == "win-64" else {"ndbuild"})
             self.assertEqual(have, want, p)
 
     def test_conda_locks_are_pinned_conda_forge_files(self):

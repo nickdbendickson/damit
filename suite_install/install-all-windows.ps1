@@ -12,7 +12,7 @@ Installs, for you only (no admin, no pip, no system packages):
     PMP)                                               -> QGIS profile "damit"
   * QGIS 3.34 (conda env ndqgis), ANUGA 4.1 + gmsh 4.15 (env ndanuga)
   * LISFLOOD-FP 8.3 with the Runner patch (lisflood\windows-x64\lisflood.exe, no DLLs)
-  * the local AIs from damit_ai: Pierre and dam-research (Ollama, env, models, library)
+  * the local AIs from damit_ai: Heim and vor (Ollama, env, models, library)
   * the DamIT Crest desk (damit_crest), run on the ndqgis env; it opens in the browser
   * a launcher per profile (in %USERPROFILE%\dam-suite and on the Desktop)
 
@@ -20,14 +20,14 @@ OFFLINE: if offline\ is filled (an offline set unzipped here, or download-all ru
 networked machine), NOTHING is downloaded. Otherwise the missing files are fetched first
 by download-all-windows.ps1, each checked against the sha256 pinned in locks\.
 
-Options: -Offline (refuse to download)  -Check  -NoDamSafety  -NoDamIT  -NoAI  -NoPierre
-         -NoResearch  -SkipLisflood  -NoShortcuts
+Options: -Offline (refuse to download)  -Check  -NoDamSafety  -NoDamIT  -NoAI  -NoHeim
+         -NoVor  -SkipLisflood  -NoShortcuts
 It never touches your data folders, offline packs, or other QGIS profiles.
 =============================================================================
 #>
 param(
   [switch]$Offline, [switch]$Check, [switch]$NoDamSafety, [switch]$NoDamIT, [switch]$NoCrest,
-  [switch]$NoAI, [switch]$NoPierre, [switch]$NoResearch, [switch]$SkipLisflood, [switch]$NoShortcuts
+  [switch]$NoAI, [switch]$NoHeim, [switch]$NoVor, [switch]$SkipLisflood, [switch]$NoShortcuts
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -43,7 +43,7 @@ $DsDir = Join-Path $Profiles $DsProfile; $DiDir = Join-Path $Profiles $DiProfile
 $DsPlugins = @('DamSafety_Core','DamSafety_Setup','DamSafety_Data','DamSafety_Screening','DamSafety_Runner','DamSafety_Hazard','DamSafety_HazardLite','DamSafety_PMP','DamSafety_Finder')
 $DiPlugins = @('damit_core','damit_catalog','damit_setup','damit_data','damit_screener','damit_runner','damit_hazard','damit_hazardlite','damit_pmp','damit_finder')
 $DoDs = -not $NoDamSafety; $DoDi = -not $NoDamIT; $DoCrest = -not $NoCrest
-$DoPierre = -not ($NoAI -or $NoPierre); $DoResearch = -not ($NoAI -or $NoResearch)
+$DoHeim = -not ($NoAI -or $NoHeim); $DoVor = -not ($NoAI -or $NoVor)
 $Threads = if ($env:DAMSUITE_THREADS) { $env:DAMSUITE_THREADS } else { [Environment]::ProcessorCount }
 $CondaPkgs = Join-Path $Here "offline\conda\$P"
 
@@ -76,7 +76,7 @@ $Conda = Find-Conda
 if ($Check) {
   Say "dam suite on $P"
   if ($Conda) { $base = (& $Conda info --base).Trim(); Write-Host "  conda: $Conda"
-    foreach ($e in 'ndqgis','ndanuga','ndresearch','ndpierre') { Write-Host ("    env {0}: {1}" -f $e, $(if (Test-Path "$base\envs\$e\conda-meta") {'present'} else {'missing'})) } }
+    foreach ($e in 'ndqgis','ndanuga','ndvor','ndheim') { Write-Host ("    env {0}: {1}" -f $e, $(if (Test-Path "$base\envs\$e\conda-meta") {'present'} else {'missing'})) } }
   else { Write-Host '  conda: not found' }
   $lf = Join-Path $Prefix 'bin\lisflood.exe'
   Write-Host ("  LISFLOOD-FP: $lf " + $(if (Test-Path $lf) { if (HasText $lf 'inittm_depth') {'OK (Runner patch present)'} else {'UNPATCHED'} } else {'missing'}))
@@ -94,7 +94,7 @@ Say "$Stamp on $P.  Log: $Log"
 # ---------------------------------------------------------------------------
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
-$Roles = @('ndqgis','ndanuga'); if ($DoPierre -or $DoResearch) { $Roles += 'ndresearch' }
+$Roles = @('ndqgis','ndanuga'); if ($DoHeim -or $DoVor) { $Roles += 'ndvor' }
 $miss = 0
 foreach ($r in $Roles) {
   foreach ($l in (LockLines (Join-Path $Here "locks\$P\$r.lock"))) {
@@ -103,7 +103,7 @@ foreach ($l in ExtraLines) { if (-not (Test-Path (Join-Path $Here $l[2]))) { $mi
 if ($miss -gt 0) {
   if ($Offline) { Die "$miss file(s) are missing from offline\ and -Offline was given. Unzip offline-$P.zip here, or run download-all-windows.cmd" }
   Say "$miss file(s) not in offline\ yet: fetching them (pinned, sha256-checked)."
-  $dl = @{ Platform = $P; NoModels = $true }; if (-not $DoResearch) { $dl.NoLibrary = $true }
+  $dl = @{ Platform = $P; NoModels = $true }; if (-not $DoVor) { $dl.NoLibrary = $true }
   & (Join-Path $Here 'download-all-windows.ps1') @dl
   if (-not $?) { Warn 'download-all reported problems (continuing; checked below)' }
 } else { Ok 'every installer file is in offline\ (nothing will be downloaded)' }
@@ -310,21 +310,21 @@ Remove-Item $SettingsPy -ErrorAction SilentlyContinue
 # 6. the local AIs (damit_ai's own installer; envs, Ollama and models from offline\)
 # ---------------------------------------------------------------------------
 $AiOk = $true
-if ($DoPierre -or $DoResearch) {
-  Say "Local AIs (Pierre $(if ($DoPierre) {'on'} else {'off'}), dam-research $(if ($DoResearch) {'on'} else {'off'}))"
-  if ($DoResearch -and -not (Make-Env 'ndresearch' 'ndresearch')) { Warn 'ndresearch env not built from offline\ (the AI installer will try conda-forge)' }
-  if ($DoPierre -and -not (Make-Env 'ndpierre' 'ndresearch')) { Warn 'ndpierre env not built from offline\ (the AI installer will try conda-forge)' }
+if ($DoHeim -or $DoVor) {
+  Say "Local AIs (Heim $(if ($DoHeim) {'on'} else {'off'}), vor $(if ($DoVor) {'on'} else {'off'}))"
+  if ($DoVor -and -not (Make-Env 'ndvor' 'ndvor')) { Warn 'ndvor env not built from offline\ (the AI installer will try conda-forge)' }
+  if ($DoHeim -and -not (Make-Env 'ndheim' 'ndvor')) { Warn 'ndheim env not built from offline\ (the AI installer will try conda-forge)' }
   $om = Join-Path $Here 'damit_ai\offline\models'
   if (Test-Path (Join-Path $om 'manifests')) {
     $md = Join-Path $env:USERPROFILE 'local-ai\models'; New-Item -ItemType Directory -Force -Path $md | Out-Null
     robocopy $om $md /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'models copied to ~\local-ai\models (no pull needed)'
   }
-  $ol = Join-Path $Here 'damit_ai\offline\DamResearch\library'
-  if ($DoResearch -and (Test-Path $ol)) {
-    $ld = Join-Path $env:USERPROFILE 'DamResearch\library'; New-Item -ItemType Directory -Force -Path $ld | Out-Null
-    robocopy $ol $ld /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'reference library copied to ~\DamResearch\library'
+  $ol = Join-Path $Here 'damit_ai\offline\Vor\library'
+  if ($DoVor -and (Test-Path $ol)) {
+    $ld = Join-Path $env:USERPROFILE 'Vor\library'; New-Item -ItemType Directory -Force -Path $ld | Out-Null
+    robocopy $ol $ld /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'reference library copied to ~\Vor\library'
   }
-  $ai = @{}; if (-not $DoPierre) { $ai.NoPierre = $true }; if (-not $DoResearch) { $ai.NoResearch = $true }
+  $ai = @{}; if (-not $DoHeim) { $ai.NoHeim = $true }; if (-not $DoVor) { $ai.NoVor = $true }
   $env:Path = "$CondaBase\Scripts;$CondaBase\condabin;$env:Path"
   try { & (Join-Path $Here 'damit_ai\install-local-ai-windows.ps1') @ai }
   catch { $AiOk = $false; Warn "local AI setup failed ($_); the plugin sets are installed anyway. Re-run: damit_ai\install-local-ai-windows.ps1" }
@@ -343,7 +343,7 @@ foreach ($pair in @(@($DoDs, $DsDir, $DsPlugins), @($DoDi, $DiDir, $DiPlugins)))
   if (-not $pair[0]) { continue }
   foreach ($p in $pair[2]) { $d = Join-Path $pair[1] "python\plugins\$p"
     if (Test-Path (Join-Path $d 'metadata.txt')) { Ok "$p $(VerOf $d)" } else { Warn "$p missing"; $Fail = $true } } }
-if (($DoPierre -or $DoResearch) -and -not $AiOk) { $Fail = $true }
+if (($DoHeim -or $DoVor) -and -not $AiOk) { $Fail = $true }
 
 $rec = @("Installed by $Stamp on $(Get-Date)",
          "  platform $P | QGIS $qv | ANUGA python $(if ($AnugaPy) {$AnugaPy} else {'none'}) | LISFLOOD-FP $(if ($Lisflood) {$Lisflood} else {'built-in engine'})")

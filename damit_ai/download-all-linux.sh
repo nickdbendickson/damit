@@ -4,8 +4,8 @@
 # damit_ai/offline/, so install-local-ai-linux.sh can then run with no network:
 #
 #   offline/ollama/ollama-linux-amd64.tar.zst (+ SHA256SUMS)   the Ollama runtime
-#   offline/models/                                        the AI models (Pierre + dam-research)
-#   offline/DamResearch/library/                           the dam-research PDF library + url list
+#   offline/models/                                        the AI models (Heim + vor)
+#   offline/Vor/library/                           the vor PDF library + url list
 #
 # Run this on a machine WITH network, then carry the whole damit_ai/ folder to the
 # target and run ./install-local-ai-linux.sh there (it picks up offline/ automatically).
@@ -102,14 +102,14 @@ fi
 
 # ---------------------------------------------------------------------------
 if (( DO_LIBRARY )); then
-  say "dam-research library -> offline/DamResearch/library"
-  LIB="$OFFLINE/DamResearch"; mkdir -p "$LIB/library"
-  if [[ -f "$HERE/research/fetch_asdso.py" ]]; then
-    DAMRESEARCH_HOME="$LIB" "$PY" "$HERE/research/fetch_asdso.py" --urls "$LIB/library/library-urls.txt" || true
-    DAMRESEARCH_HOME="$LIB" "$PY" "$HERE/research/fetch_asdso.py" --catalog --asdso || warn "some library files failed (see its sources.csv / log)"
+  say "vor library -> offline/Vor/library"
+  LIB="$OFFLINE/Vor"; mkdir -p "$LIB/library"
+  if [[ -f "$HERE/vor/fetch_asdso.py" ]]; then
+    VOR_HOME="$LIB" "$PY" "$HERE/vor/fetch_asdso.py" --urls "$LIB/library/library-urls.txt" || true
+    VOR_HOME="$LIB" "$PY" "$HERE/vor/fetch_asdso.py" --catalog --asdso || warn "some library files failed (see its sources.csv / log)"
     ok "library in $LIB/library"
   else
-    warn "research/fetch_asdso.py not found; skipped"
+    warn "vor/fetch_asdso.py not found; skipped"
   fi
 fi
 

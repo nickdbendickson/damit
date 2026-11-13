@@ -10,7 +10,7 @@ Double-click download-all-windows.cmd, or:
                         another machine (the same files download-all.sh fetches)
   -NoModels             skip the AI models (the AI installer pulls them online instead)
   -Models "a b"         which models (default: qwen3:30b-a3b qwen3:14b nomic-embed-text qwen3-embedding:0.6b)
-  -NoLibrary            skip the dam-research reference library
+  -NoLibrary            skip the vor reference library
   -Pack                 also zip each platform's set as offline-<platform>.zip
 
 Every file is checked against the sha256 pinned in locks\ and a bad download is deleted.
@@ -103,15 +103,15 @@ if (-not $NoModels -and $Models) {
 }
 
 if (-not $NoLibrary) {
-  Say 'dam-research library -> damit_ai\offline\DamResearch\library'
-  $fa = Join-Path $Here 'damit_ai\research\fetch_asdso.py'
+  Say 'vor library -> damit_ai\offline\Vor\library'
+  $fa = Join-Path $Here 'damit_ai\vor\fetch_asdso.py'
   $py = $null
-  foreach ($c in @((Join-Path $env:USERPROFILE 'miniforge3\envs\ndresearch\python.exe'), (Join-Path $env:USERPROFILE 'miniforge3\python.exe'))) { if (Test-Path $c) { $py = $c; break } }
+  foreach ($c in @((Join-Path $env:USERPROFILE 'miniforge3\envs\ndvor\python.exe'), (Join-Path $env:USERPROFILE 'miniforge3\python.exe'))) { if (Test-Path $c) { $py = $c; break } }
   if (-not $py) { $g = Get-Command python.exe -ErrorAction SilentlyContinue; if ($g -and $g.Source -notmatch 'WindowsApps') { $py = $g.Source } }
   if ($py -and (Test-Path $fa)) {
-    $lib = Join-Path $Here 'damit_ai\offline\DamResearch'; New-Item -ItemType Directory -Force -Path (Join-Path $lib 'library') | Out-Null
-    $env:DAMRESEARCH_HOME = $lib; & $py $fa --catalog --asdso; if ($LASTEXITCODE -ne 0) { Warn 'some library files failed' }
-    Remove-Item Env:DAMRESEARCH_HOME
+    $lib = Join-Path $Here 'damit_ai\offline\Vor'; New-Item -ItemType Directory -Force -Path (Join-Path $lib 'library') | Out-Null
+    $env:VOR_HOME = $lib; & $py $fa --catalog --asdso; if ($LASTEXITCODE -ne 0) { Warn 'some library files failed' }
+    Remove-Item Env:VOR_HOME
   } else { Warn 'library skipped (needs a Python: run it again after install-all, or use download-all.sh on a Mac / Linux box)' }
 }
 

@@ -4,8 +4,8 @@ download-all-windows.ps1 — pre-download EVERYTHING the Windows installer needs
 into damit_ai\offline\, so install-local-ai-windows.ps1 can then run offline:
 
   offline\ollama\OllamaSetup.exe (+ SHA256SUMS)   the Ollama installer
-  offline\models\                                 the AI models (Pierre + dam-research)
-  offline\DamResearch\library\                    the dam-research PDF library + url list
+  offline\models\                                 the AI models (Heim + vor)
+  offline\Vor\library\                    the vor PDF library + url list
 
 Run this on a machine WITH network, then carry the whole damit_ai\ folder to the
 target and run install-local-ai-windows.ps1 there (it picks up offline\ automatically).
@@ -103,16 +103,16 @@ if (-not $NoModels) {
 
 # ---------------------------------------------------------------------------
 if (-not $NoLibrary) {
-  Say "dam-research library -> offline\DamResearch\library"
-  $lib = Join-Path $Offline 'DamResearch'; New-Item -ItemType Directory -Force -Path (Join-Path $lib 'library') | Out-Null
-  $fetch = Join-Path $Here 'research\fetch_asdso.py'
+  Say "vor library -> offline\Vor\library"
+  $lib = Join-Path $Offline 'Vor'; New-Item -ItemType Directory -Force -Path (Join-Path $lib 'library') | Out-Null
+  $fetch = Join-Path $Here 'vor\fetch_asdso.py'
   if (Test-Path $fetch) {
-    $env:DAMRESEARCH_HOME = $lib
+    $env:VOR_HOME = $lib
     & $Py $fetch --urls (Join-Path $lib 'library\library-urls.txt')
     & $Py $fetch --catalog --asdso
-    Remove-Item Env:\DAMRESEARCH_HOME -EA SilentlyContinue
+    Remove-Item Env:\VOR_HOME -EA SilentlyContinue
     Ok "library in $lib\library"
-  } else { Warn 'research\fetch_asdso.py not found; skipped' }
+  } else { Warn 'vor\fetch_asdso.py not found; skipped' }
 }
 
 # ---------------------------------------------------------------------------
