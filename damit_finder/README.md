@@ -76,11 +76,23 @@ rail mask widened to an embankment's base and not one of the fills already found
 pads, drain spoil banks, shelterbelt snow berms and natural ridges pass too (in the Absaraka box
 before the straightness and rail-base tests: 43 ridges, many rail beds and meander spurs).
 
-**Score** (`MODEL`; `core/score.py`). A logistic regression of the fills on a dam list against the
-other fills (height, crest height, net head, storage, pool area, length, flat pool, on a road, open
-pool, spillway beside): a ranking of the new fills by how much they look like listed dams, not a
-probability. Learn it with the score tool from runs over areas with many listed dams; the
+**Score** (`MODEL`; `core/score.py`). The fills on a dam list against the other fills: a ranking
+of the new fills by how much they look like listed dams, not a probability. Four kinds (see Scores
+below). Learn it with the score tool from runs over areas with many listed dams; the
 cross-validated AUC it reports says how well it ranks dams it has not seen.
+
+**How the kinds compare.** This was tested in North Dakota with the 0.5 trees kind (bagged boosted
+trees), learned on 66 USGS 1 m tiles in 7 regions (7,612 fills, 678 by an intact listed dam, no
+reviewer marks):
+
+- **On a reviewer's aerial marks** (245 cards, 31 dams, none used in learning), it ranked the dams
+  with AUC 0.89. The 0.4 logistic score gave 0.63 on the cards that were reviewed, which it had
+  picked (+0.26, 95 % interval +0.16 to +0.36).
+- **Each region held out** scored 0.85-0.93, against 0.69-0.87 for the 0.4 measurements.
+- **In Iowa,** learned only from North Dakota, it ranked the fills on 15 Iowa 1 m tiles against
+  Iowa's complete pond-dam census with AUC 0.89, against 0.84.
+
+A model learned in one state can be used in another, but relearn it where you have a dam list.
 
 Fills closer than 60 m are one. The DEM is read in 5 km tiles with a pad, so a county runs in
 bounded memory. The elevation unit is what the raster records (its band unit or a vertical CRS;
