@@ -110,6 +110,9 @@ else
   fi
   "$PY" "$HERE/eval_damresearch.py" --list | tee "$OUT/eval-coverage.txt"
   MODEL_LIST=( ${=MODELS} )
+  # mtime marker so the copy below can tell this run's reports from older ones
+  EVAL_MARK="$OUT/.eval-start"
+  : > "$EVAL_MARK"
   for m in $MODEL_LIST; do
     if ! "$OLLAMA" list 2>/dev/null | awk '{print $1}' | grep -qx "$m"; then
       # Say what is about to happen. `ollama pull` draws its progress with carriage
@@ -136,8 +139,23 @@ else
       "$OLLAMA" stop "$m" >/dev/null 2>&1 || true
     fi
   done
-  cp "$DR_HOME"/reports/eval_*.md "$DR_HOME"/reports/eval_*.json "$OUT"/ 2>/dev/null
+  # Copy only the reports THIS run produced. This used to be a bare
+  # `cp "$DR_HOME"/reports/eval_*` which swept up every report ever written, so the
+  # zip and the summary below mixed old runs in with the new ones. On 2026-11-12 that
+  # put a stale 11-10 report showing "qwen3.6:27b 0 / 16 passed" (all 16 ERROR, from an
+  # older Ollama that answered /api/chat with "structured output is unavailable") right
+  # next to the same model's real 9 / 16 from that day -- actively misleading for the
+  # one decision this step exists to inform.
+  for f in "$DR_HOME"/reports/eval_*.md(N) "$DR_HOME"/reports/eval_*.json(N); do
+    if [[ "$f" -nt "$EVAL_MARK" ]]; then
+      cp "$f" "$OUT/"
+    fi
+  done
+  rm -f "$EVAL_MARK"
   echo
+  if [[ -z "$OUT"/eval_*.json(N) ]]; then
+    warn "no report from this run: every model errored or was skipped (see above)"
+  fi
   for j in "$OUT"/eval_*.json(N); do
     "$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print("  %-22s %2d / %2d passed  %5.1f min" % (d["model"], d["passed"], d["scored"], d["minutes"]))' "$j"
   done
