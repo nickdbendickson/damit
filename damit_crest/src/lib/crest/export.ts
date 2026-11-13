@@ -2,6 +2,7 @@ import { defaultPresetFor, handoffChoice } from "./jurisdiction.ts";
 import { damLocation, ENGINE_VERSION } from "./engine.ts";
 import { handoffIds } from "./nid-dams.ts";
 import { roughnessOf } from "./routing.ts";
+import { assumptions, mergeDefaults, type Shared } from "./settings.ts";
 import type { Analysis, DamRecord, SeriesPoint } from "./types.ts";
 import { CREST_VERSION } from "./version.ts";
 
@@ -18,8 +19,9 @@ export function exportHydrographCsv(series: SeriesPoint[]): string {
 }
 
 /** Minimal dam.json matching fields the Runner / Screening read. */
-export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
+export function exportDamJson(dam: DamRecord, analysis: Analysis, shared: Shared = mergeDefaults({}), now = new Date()): string {
   const loc = damLocation(dam);
+  const rough = roughnessOf(dam.roughness);
   // dam_id is the NID ID, else the record's own id: a sample's or a new dam's id is never passed off as an NID ID.
   const ids = handoffIds(dam);
   const obj = {
@@ -44,6 +46,14 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis): string {
     lon: loc?.lon ?? null,
     method: dam.method,
     failure_mode: dam.failureMode === "overtopping" ? "overtopping" : "piping",
+    // The pool the breach started from (NAVD88) and why, as the Runner's starting_wse_ft / starting_wse_rule.
+    starting_pool_ft: Number.isFinite(analysis.breach.startPoolNavdFt) ? analysis.breach.startPoolNavdFt : null,
+    starting_pool_rule: analysis.breach.startPoolLabel,
+    manning_n_channel: rough.nChannel,
+    manning_n_floodplain: rough.nFloodplain,
+    // What this record used of the suite's shared defaults, and where it differs from them (settings.ts): the same
+    // entry a Runner run writes, so the two can be checked against the same starting values.
+    assumptions: assumptions(dam, shared, CREST_VERSION, analysis.breach.startPool, now),
     // A new dam only when the Record step's "New dam" box is ticked (never inferred).
     is_new: dam.isNew === true,
     ...(ids.isSample ? { is_sample: true } : {}),
