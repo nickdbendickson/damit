@@ -228,6 +228,8 @@ class SetupMoveTest(Scratch):
 
 
 @unittest.skipUnless(shutil.which("bash"), "bash not installed")
+@unittest.skipUnless(os.path.isfile(os.path.join(VOR, "..", "install-local-ai-linux.sh")),
+                     "this copy of damit_ai ships no Linux/Windows installer (the DamSafety one does not)")
 class LinuxInstallerMoveTest(Scratch):
     """The same carry-over in install-local-ai-linux.sh (it had none: it made an empty ~/Vor
     and pinned VOR_HOME to it), cut out and run under bash."""

@@ -86,7 +86,10 @@ class AddTest(unittest.TestCase):
 
     def test_installers_expose_it_as_heim_add(self):
         root = os.path.dirname(os.path.dirname(HERE))
+        self.assertTrue(os.path.isfile(os.path.join(root, "heim", "setup-local-heim.sh")))
         for name in ("heim/setup-local-heim.sh", "install-local-ai-linux.sh", "install-local-ai-windows.ps1"):
+            if not os.path.isfile(os.path.join(root, name)):
+                continue        # the DamSafety copy of damit_ai ships the Mac installer only
             with open(os.path.join(root, name), encoding="utf-8") as f:
                 self.assertRegex(f.read(), r"heim-add\b.*rag_index\.py.*--add", name)
 
