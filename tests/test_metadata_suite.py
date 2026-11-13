@@ -1,6 +1,7 @@
 """Packaging checks for DamIT Core, Setup, Data, Hazard Lite, PMP and Finder (no QGIS needed)."""
 import configparser
 import os
+import sys
 import re
 import unittest
 
@@ -85,6 +86,29 @@ class Metadata(unittest.TestCase):
             self.assertEqual(m.get("plugin_dependencies"), dep, folder)
             for f in ("__init__.py", "plugin.py", "icon.svg", "README.md"):
                 self.assertTrue(os.path.exists(os.path.join(ROOT, folder, f)), (folder, f))
+
+    def test_the_finder_ships_its_starter_score_model(self):
+        """DamIT Finder names a starter score model in brand.py and the file is in the plugin
+        folder (so 'Find fills' scores a first run), and the plugin zip takes it along."""
+        import json
+        import re
+        here = os.path.join(ROOT, "damit_finder")
+        with open(os.path.join(here, "brand.py"), encoding="utf-8") as fh:
+            m = re.search(r'^DEFAULT_MODEL = "([^"]+)"', fh.read(), re.M)
+        self.assertIsNotNone(m, "damit_finder/brand.py names no DEFAULT_MODEL")
+        path = os.path.join(here, *m.group(1).split("/"))
+        self.assertTrue(os.path.isfile(path), path)
+        with open(path, encoding="utf-8") as fh:
+            model = json.load(fh)
+        self.assertEqual(model["kind"], "finder-fill-score")
+        self.assertEqual(model["learner"], "pu-gbm")
+        self.assertGreater(model["n_listed"], 100)
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        try:
+            import package_plugins as pp
+        finally:
+            sys.path.pop(0)
+        self.assertTrue(pp._should_include(m.group(1)), "the plugin zip would leave the model out")
 
     def test_no_damsafety_dependency(self):
         for folder in PLUGINS:

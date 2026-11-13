@@ -125,6 +125,15 @@ reviewer marks):
 
 A model learned in one state can be used in another, but relearn it where you have a dam list.
 
+**The starter model.** DamIT Finder ships that North Dakota model as
+`models/nd_fill_score_trees_2026-11.json`, and *Find fills* uses it when you give no other model,
+so a first run already ranks its fills. Read the `score` column as "looks like a North Dakota
+stock dam": it was learned where dams are small earthfills across prairie draws and coulees. The
+Iowa check above is the only test outside North Dakota. In mountains, in the arid West or where
+most dams are large or concrete it has not been tested at all. To run without it, clear the
+*Score model* box. To replace it, learn your own with the score tool from runs over areas with
+many listed dams and give that file instead.
+
 Fills closer than 60 m are one. The DEM is read in 5 km tiles with a pad, so a county runs in
 bounded memory. The elevation unit is what the raster records (its band unit or a vertical CRS;
 USGS 3DEP files, `USGS_*`, are metres); a DEM that records none is refused until you choose Metres
