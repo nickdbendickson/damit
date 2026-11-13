@@ -62,6 +62,7 @@ import { saveText } from "@/lib/crest/save";
 import { demTieOffer, missingForNext, needsDemTie } from "@/lib/crest/nid-dams";
 import { onOutlineSaveChange, outlineSaveError } from "@/lib/crest/outline-store";
 import { activeDam, hydrateDesk, useDesk, useSaveStatus } from "@/lib/crest/store";
+import { DeskFiles } from "./DeskFiles";
 import type {
   BreachMethod,
   DamGeometry,
@@ -154,10 +155,8 @@ export function Desk() {
   const step = useDesk((s) => s.step);
   const setStep = useDesk((s) => s.setStep);
   const select = useDesk((s) => s.select);
-  const update = useDesk((s) => s.update);
   const add = useDesk((s) => s.add);
   const restore = useDesk((s) => s.restore);
-  const addDam = useDesk((s) => s.addDam);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<"desk" | "batch">("desk");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -175,7 +174,7 @@ export function Desk() {
     void loadSettings();
   }, []);
 
-  const dam = activeDam({ dams, activeId, step, setStep, select, update, add, addDam, restore });
+  const dam = activeDam({ dams, activeId });
   const result = useMemo(() => analyze(dam), [dam]);
   useResultsSync(dam, result);
 
@@ -189,7 +188,8 @@ export function Desk() {
       ) : saveBlocked ? (
         <div className="border-b border-line bg-card px-4 py-2 text-sm text-amber" role="alert" data-testid="save-blocked">
           This desk is over your browser&rsquo;s storage limit, so your latest edits are no longer being saved.
-          Export your work and reload, or remove a dam&rsquo;s terrain layer to free space.
+          Use &ldquo;Save desk to file&rdquo; (under the dam list) to keep your work, then reload, or remove a
+          dam&rsquo;s terrain layer to free space.
         </div>
       ) : null}
       <header className="border-b border-line bg-card">
@@ -279,6 +279,7 @@ export function Desk() {
             })}
           </ul>
           <div className="hidden px-4 pb-4 lg:block">
+            <DeskFiles onNote={setOpenNote} />
             <button
               type="button"
               onClick={restore}
@@ -344,10 +345,13 @@ export function Desk() {
 
           <StepNav step={step} setStep={setStep} blocked={step === "record" ? missingForNext(dam) : []} />
 
+          <div className="mt-6 lg:hidden">
+            <DeskFiles onNote={setOpenNote} />
+          </div>
           <button
             type="button"
             onClick={restore}
-            className="mt-6 inline-flex h-11 items-center gap-2 text-sm text-muted lg:hidden"
+            className="inline-flex h-11 items-center gap-2 text-sm text-muted lg:hidden"
           >
             <RotateCcw className="size-4" aria-hidden="true" />
             Restore samples

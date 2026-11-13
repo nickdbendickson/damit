@@ -142,6 +142,27 @@ time, and `differs`, the keys where the two are not the same. `starting_pool_ft`
 the breach really started from. An `assumptions` entry another tool already wrote in the dam folder's `dam.json` is
 kept; DamIT Crest's own is then on its screened status entry.
 
+## Saving and moving your work
+
+The desk's dams live in the desktop app's own storage (or the browser `DamIT.html` is open in), not in a file you can
+see. Under the dam list:
+
+- **Save desk to file** writes every dam on the desk to one file, `damit-crest-desk-<date>.json`: inputs, receptors,
+  drawn lines and areas, saved 911 / PLSS lookups, the terrain layer, the jurisdiction choice and the last classify
+  result. This is the backup, and the way to move a desk to another computer or between `DamIT.html` and the desktop
+  app.
+- **Open desk file or dam.json** reads that file back. *Add to this desk* never changes a dam already on the desk: a
+  dam that is already there and identical is left alone, and one with the same id but different content is added
+  beside it as "(from file)". *Replace this desk* makes the desk exactly the file's dams.
+- A **dam.json** opens too. One from the Report step carries the whole record (`crest_record`, without the terrain
+  layer) and comes back as it was. The dam folder's `dam.json` (`damit/dam_record`, written by the hand-off) holds the
+  engineering inputs only: it opens as a new record with those inputs and a note that receptors, drawn geometry and
+  layers were not in the file.
+
+A file is read as data only: each record is rebuilt field by field, and a value of the wrong type is dropped with a
+note (`src/lib/crest/desk-file.ts`). The file format is the one Crest writes (`crest-desk`), so a desk saved from
+either opens in the other; fields the other does not have are left out.
+
 ## Report step: DamIT plugins in QGIS
 
 Needs QGIS 3.28–4.x with the DamIT plugins installed. The buttons do nothing in a page with no desktop server.
