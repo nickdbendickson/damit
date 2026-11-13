@@ -225,6 +225,23 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   file over the indexer's size limit, scanned pages. Both exit 1 on a PROBLEM, 0 otherwise.
 - **Rule:** before trusting an answer that cites nothing, run the doctor.
 
+### D9. OCR that undid itself on the next ingest
+- **Was:** `vor ocr` wrote a searchable copy of each scanned PDF to `library/_ocr`, indexed the
+  copy and dropped the original from the index. The original file stayed in the library, so
+  the next plain `vor ingest` found a file that was not in the index and indexed it again.
+  The document was then in the library twice, once with its unreadable pages, the "pages with
+  no text layer" count was back where it started, and the next `vor ocr` did the same
+  documents again. Stopping `vor ocr` with Ctrl-C was worse: each finished document had
+  already been dropped and its copy was never indexed. Found by reading the code before the
+  first real run on 106 scanned documents, not by a failed run.
+- **Tell:** `vor list` shows a title twice, once from `_ocr`; `vor doctor` reports files "not
+  in the index" straight after an OCR run.
+- **Fix:** Vor 1.3.1. `library/_ocr/ocr_sources.json` records which original each copy stands
+  in for, keyed by the original's content, and ingest leaves those originals out. The original
+  leaves the index only once its copy is in it. A run with 1.3.1 also repairs a library an
+  earlier version doubled: plain `vor ingest` adopts the existing copies and drops the
+  originals from the index.
+
 ---
 
 _Add a case when a failure cost more than an hour to diagnose and would be recognised

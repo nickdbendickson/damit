@@ -388,7 +388,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.3.0
+## vor.py 1.3.1
 
 Installed command: `vor`. The literature assistant.
 
