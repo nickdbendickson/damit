@@ -652,7 +652,12 @@ def index_collection(collection, roots, allow_empty=False):
                         nf += 1
                     elif kind == "pdf":
                         nnp += 1
-                        print("    [no text layer] %s — needs OCR" % rel)
+                        # With no PDF library installed, EVERY pdf yields nothing, and saying
+                        # "needs OCR" blames the file for a missing dependency.
+                        if pdf_backend_names():
+                            print("    [no text layer] %s — needs OCR" % rel)
+                        else:
+                            print("    [skipped, no PDF library] %s" % rel)
         flush()
     except KeyboardInterrupt:
         try:
@@ -692,8 +697,12 @@ def index_collection(collection, roots, allow_empty=False):
         sys.exit("ERROR: swap failed (%s). Live collection untouched." % e)
     db.close()
     print("Indexed collection '%s': %d files, %d chunks in %.0fs" % (collection, nf, nc, time.time() - t0))
-    if nnp:
+    if nnp and pdf_backend_names():
         print("NOTE: %d PDFs had no extractable text (scanned?). OCR then re-run." % nnp)
+    elif nnp:
+        print("NOTE: %d PDFs were skipped because this python has no PDF library. They are not\n"
+              "      necessarily scanned. Re-run with the alias, which uses the environment the\n"
+              "      installer put PyMuPDF in:  pierre-index -c <collection> <folder>" % nnp)
 
 
 def list_collections():
