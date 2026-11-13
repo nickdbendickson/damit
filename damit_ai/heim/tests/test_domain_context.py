@@ -1,4 +1,4 @@
-"""Both personas carry their DOMAIN CONTEXT block, verbatim, in every installer.
+"""Both personas carry their DOMAIN CONTEXT and HOW YOU ANSWER blocks, verbatim, in every installer.
 
 The block is what tells a local model that `damit_run:rundam` is a Processing id and not a typo, that
 ACER TM-11 is a publication and not an equation, and - the part that matters most - that it has no web
@@ -27,6 +27,9 @@ VOR_INSTALLERS = CROSS + (os.path.join(VOR, "setup-vor.zsh"),)
 
 HEIM_CONTEXT = os.path.join(HEIM, "prompts", "domain_context.txt")
 VOR_CONTEXT = os.path.join(VOR, "prompts", "domain_context.txt")
+HEIM_MANNER = os.path.join(HEIM, "prompts", "manner.txt")
+VOR_MANNER = os.path.join(VOR, "prompts", "manner.txt")
+BLOCKS = (HEIM_CONTEXT, VOR_CONTEXT, HEIM_MANNER, VOR_MANNER)
 
 
 def context(path):
@@ -44,7 +47,7 @@ class TestTheBlocksAreSafeToEmbed(StrictCase):
         """Mac/Linux write the Modelfile with an UNQUOTED heredoc and Windows with a @"..."@
         here-string: a $, a backtick or a backslash is expanded before Ollama ever sees it, and a
         triple quote ends the SYSTEM block early - which truncates the persona silently."""
-        for path in (HEIM_CONTEXT, VOR_CONTEXT):
+        for path in BLOCKS:
             c = context(path)
             self.assertNotRegex(c, r'[$`\\]', os.path.basename(path))
             self.assertNotIn('"""', c, os.path.basename(path))
@@ -53,16 +56,18 @@ class TestTheBlocksAreSafeToEmbed(StrictCase):
 
 class TestEveryInstallerCarriesTheBlock(StrictCase):
     def test_heim(self):
-        c = context(HEIM_CONTEXT)
-        for path in HEIM_INSTALLERS:
-            self.assertIn(c, persona_system(path, 'SYSTEM """You are Heim-Lite'),
-                          os.path.basename(path))
+        for block in (HEIM_CONTEXT, HEIM_MANNER):
+            c = context(block)
+            for path in HEIM_INSTALLERS:
+                self.assertIn(c, persona_system(path, 'SYSTEM """You are Heim-Lite'),
+                              "%s in %s" % (os.path.basename(block), os.path.basename(path)))
 
     def test_vor(self):
-        c = context(VOR_CONTEXT)
-        for path in VOR_INSTALLERS:
-            self.assertIn(c, persona_system(path, 'SYSTEM """You are Vor,'),
-                          os.path.basename(path))
+        for block in (VOR_CONTEXT, VOR_MANNER):
+            c = context(block)
+            for path in VOR_INSTALLERS:
+                self.assertIn(c, persona_system(path, 'SYSTEM """You are Vor,'),
+                              "%s in %s" % (os.path.basename(block), os.path.basename(path)))
 
 
 class TestTheBlocksSayWhatTheyMustSay(StrictCase):
@@ -88,12 +93,40 @@ class TestTheBlocksSayWhatTheyMustSay(StrictCase):
         for gone in ("ND_Dam_Hazard_Helper", "nd_breach_runner", "nd_dam_screening", "nd_data_updater"):
             self.assertNotIn(gone, c, gone)
 
-    def test_neither_block_carries_a_personality(self):
-        """A persona told to be curious or engaging paraphrases, and Vor's whole job is copying a
-        quote unchanged. Keep the blocks to vocabulary and constraints."""
-        for path in (HEIM_CONTEXT, VOR_CONTEXT):
-            self.assertNotRegex(context(path), r"(?i)\b(personality|curious|thoughtful|engaging|friendly|witty)\b",
+    def test_no_block_describes_how_the_model_should_sound(self):
+        """Both AIs have a manner, and it is made of behaviours: lead with the line number, give
+        the quote before the explanation. None of it is adjectives. A persona told to be curious
+        or engaging paraphrases, and Vor's whole job is copying a quote unchanged, so the
+        character that belongs to these two lives in the banner line instead - which greets and
+        never answers. Keep the SYSTEM blocks to vocabulary, constraints and behaviour."""
+        for path in BLOCKS:
+            self.assertNotRegex(context(path), r"(?i)\b(personality|curious|thoughtful|engaging|friendly|witty|tone|voice)\b",
                                 os.path.basename(path))
+
+    def test_each_manner_says_what_to_do_not_what_to_be(self):
+        """Every line is an instruction with a verb, so it can be checked against an answer."""
+        for path in (HEIM_MANNER, VOR_MANNER):
+            lines = [ln[2:] for ln in context(path).splitlines() if ln.startswith("- ")]
+            self.assertGreaterEqual(len(lines), 5, os.path.basename(path))
+            for ln in lines:
+                self.assertNotRegex(ln, r"(?i)^(you are|be )\b",
+                                    "%s: %s" % (os.path.basename(path), ln))
+
+    def test_the_character_lines_are_in_the_banner_and_not_in_any_persona(self):
+        """The one line of flavour each AI has greets the user; it must never reach a Modelfile,
+        because anything in the SYSTEM prompt steers the answer."""
+        voice = {
+            "Heim": "It watches and explains; the code sets the verdict.",
+            "Vor": "Every sentence traces to a page, or it says it cannot.",
+        }
+        heim_sh = slurp(os.path.join(HEIM, "setup-local-heim.sh"))
+        self.assertIn(voice["Heim"], heim_sh)
+        self.assertIn(voice["Vor"], slurp(os.path.join(VOR, "vor.py")))
+        for path, lead in ([(p, 'SYSTEM """You are Heim-Lite') for p in HEIM_INSTALLERS]
+                           + [(p, 'SYSTEM """You are Vor,') for p in VOR_INSTALLERS]):
+            system = persona_system(path, lead)
+            for line in voice.values():
+                self.assertNotIn(line, system, os.path.basename(path))
 
 
 class TestTheVorBlockMatchesTheLibrary(StrictCase):
