@@ -19,7 +19,8 @@
 set -e
 HERE=${0:A:h}
 PY=${PYTHON:-python3}
-HOME_DIR=${VOR_HOME:-$HOME/Vor}
+# Where vor.py reads from, by its own rule (see vor_home in fetch_asdso.py).
+HOME_DIR=${VOR_HOME:-$($PY "$HERE/fetch_asdso.py" --print-home)}
 
 INGEST=1
 PASS=()

@@ -1,7 +1,7 @@
 #!/bin/zsh
 # first-run.zsh v1.0 - the first real run of vor on this Mac, in one command:
 #   1. install vor if it is not installed yet (needs Ollama: Heim's installer or the app)
-#   2. download the reference library: the ASDSO / FEMA set and the hazard + design catalog
+#   2. download the reference library: the ASDSO / FEMA set and the whole catalog
 #   3. index it (and OCR scanned pages when OCR is installed)
 #   4. score two models on the answer test (eval/questions.json) and pick the better one
 #   5. pack the results into ~/Desktop/vor-first-run.zip to send back for review
@@ -36,6 +36,18 @@ die()  { printf '  \033[1;31mX\033[0m   %s\n' "$*"; exit 1; }
 [[ -f "$HERE/vor.py" && -f "$HERE/fetch_asdso.py" ]] || die "run this from damit_ai/vor"
 LOCAL_AI="$HOME/local-ai"
 DR_HOME="${VOR_HOME:-$HOME/Vor}"
+# This run's log folder is made inside $DR_HOME two lines down, BEFORE the installer runs. On a
+# machine that still has the pre-rename ~/DamResearch that would create ~/Vor first, and
+# setup-vor.zsh only moves the old library across when ~/Vor does not exist. So do that one
+# move here, ahead of the mkdir. Same condition and same move as setup-vor.zsh.
+if [[ -z "${VOR_HOME:-}" && ! -d "$HOME/Vor" && -d "$HOME/DamResearch" ]]; then
+  if mv "$HOME/DamResearch" "$HOME/Vor" 2>/dev/null; then
+    ok "moved your library from ~/DamResearch to ~/Vor (renamed 2026-11-13; nothing was copied)"
+  else
+    DR_HOME="$HOME/DamResearch"
+    warn "could not move ~/DamResearch to ~/Vor; using the library where it is"
+  fi
+fi
 STAMP=$(date +%Y%m%d-%H%M)
 OUT="$DR_HOME/first-run-$STAMP"
 mkdir -p "$OUT"

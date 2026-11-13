@@ -18,9 +18,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 -m pip install numpy
+      - name: zsh (the rename tests run the real move blocks cut out of setup-vor.zsh and first-run.zsh)
+        run: (sudo apt-get update -qq && sudo apt-get install -y -qq zsh) >/dev/null
       - name: Heim tests (synthetic fixtures only; Ollama is a local mock)
         run: python3 -W error -m unittest discover -v -s damit_ai/heim/tests
       - name: vor tests (retrieval only; embeddings are stubbed, no Ollama)
+        env:
+          REQUIRE_ZSH: "1"      # a missing zsh must fail here, not skip the move tests
         run: python3 -W error -m unittest discover -v -s damit_ai/vor/tests
       - name: Installer scripts parse
         run: |

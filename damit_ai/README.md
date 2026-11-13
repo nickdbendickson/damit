@@ -67,7 +67,7 @@ plugin zip or CI job.
    source ~/.zshrc
    ```
    Then drop PDFs in `~/Vor/library`, or fetch the public ASDSO / FEMA reference set
-   (about 49 PDFs) with `python3 fetch_asdso.py` and 58 hazard-classification and dam-design sources
+   (about 49 PDFs) with `python3 fetch_asdso.py` and the 121 catalog sources (hazard, design, breach, hydrology and more)
    with `python3 fetch_asdso.py --catalog`, and run `vor ingest`. After that:
    `vor search | ask | research | chat ...`, also available as `damchain vor ...`.
    **Just the library, no pipeline:** `zsh vor/download-library.zsh` downloads the catalog

@@ -154,10 +154,11 @@ expected fact is in the answer **and** a quote the code checked comes from the r
 page (+/-1). Questions whose source is not indexed are skipped. Add your own questions in the same
 format; use questions you know the answer to.
 
-### Hazard-classification and dam-design sources (the catalog)
+### The catalog: hazard, design, breach, software, consequence, data, hydrology, ponds
 
-`reference_sources.json` lists 58 more sources, and `fetch_asdso.py --catalog` downloads them into
-`~/Vor/library/references/<group>/`:
+`reference_sources.json` lists 121 more sources in eight groups, and `fetch_asdso.py --catalog`
+downloads them into `~/Vor/library/references/<group>/`. About a third are `manual`: paywalled papers
+and documents with no stable public link, which the run lists in `sources.csv` for you to get by hand.
 
 - **hazard** (39): the sources cited in the "US Dam Hazard Classification" papers: FEMA 333 and P-919,
   USBR ACER TM-11, DSO-99-06 and RCEM, NRCS TR-210-60, FERC Ch. 2, USFWS 361 FW 2, CRS R45981 and
@@ -167,10 +168,26 @@ format; use questions you know the answer to.
   chapters, Wahl's breach-parameter review (DSO-98-004), USACE EM 1110-2-1420 / -2300 / -1902 / -1603 /
   -1913 and ER 1110-2-1156, HEC TD-39 (HEC-RAS dam break), NOAA HMR 51 / 52 / 55A and Atlas 14 Vol. 8,
   the FERC Engineering Guidelines, NY's dam design guidelines and TCEQ GI-364.
+- **breach** (18): FEMA P-946, FERC Chapter R21, HEC Research Note 5, NRCS TR-66, the Ohio and Washington
+  dam-break guidance, HR Wallingford's breach guide, USBR DSO-04-01, the DSS-WISE Lite technical report,
+  and the breach-parameter papers themselves: Froehlich (1995, 2008, 2016), MacDonald and
+  Langridge-Monopolis (1984), Von Thun and Gillette (1990), Xu and Zhang (2009), Pierce, Thornton and
+  Abt (2010). The papers are paywalled, so every one of them is `manual`.
+- **software** (26): LISFLOOD-FP 8.0 to 8.3, Gmsh, ANUGA and HEC-RAS documentation, the GDAL VRT driver
+  page and the QGIS 4 plugin migration notes. Heim indexes this folder as its `engine_docs` collection.
+- **consequence** (6): flood hazard to people outside ACER TM-11: AIDR Guideline 7-3 (the H1-H6 curves),
+  Defra FD2321 TR1 and TR2, the DHS 2011 loss-of-life and economic-consequence reports, and the LifeSim
+  technical reference manual.
+- **data** (3): what the suite's inputs mean: the NSI technical documentation, the NID data dictionary and
+  the USGS Lidar Base Specification (point classes and hydro-flattening).
+- **hydrology** (6): USGS SIR 2015-5096 (North Dakota peak-flow regressions), Bulletin 17C, NEH Part 630,
+  WSP 2339 (Manning's roughness), FHWA HDS-5 (culverts) and NDDOT Design Manual chapter V.
+- **ponds** (4): NRCS Conservation Practice Standard 378 (national, North Dakota, Iowa) and Agriculture
+  Handbook 590.
 
 ```zsh
 python3 fetch_asdso.py --catalog --dry-run   # the list
-python3 fetch_asdso.py --catalog             # both groups (or --catalog hazard / --catalog design)
+python3 fetch_asdso.py --catalog             # every group (or one or more: --catalog breach,ponds)
 vor ingest
 ```
 
@@ -251,7 +268,7 @@ Delete the block between `# >>> vor` and `# <<< vor` in `~/.zshrc`, then
 - `vor.py`: the tool (stdlib + optional numpy / PyMuPDF)
 - `../heim/tools/dam_chain.py` (in the zip: `damchain-1.4/dam_chain.py`): dam_chain 1.3 plus the `vor` pass-through, nothing else changed
 - `fetch_asdso.py`: downloads the public ASDSO / FEMA reference set, and with `--catalog` the sources in `reference_sources.json`
-- `reference_sources.json`: catalog of hazard-classification and dam-design sources (edit to add more)
+- `reference_sources.json`: the catalog of sources in eight groups (edit to add more)
 - `first-run.zsh`: install, download, index, test and pack the results, in one command
 - `eval_vor.py` + `eval/questions.json`: the answer test
 - `READING-LIST.md`: a starter library of public dam-safety publications

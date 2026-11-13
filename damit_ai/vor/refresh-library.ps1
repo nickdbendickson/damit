@@ -24,7 +24,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Py   = if ($env:PYTHON) { $env:PYTHON } else { 'python' }
-$Home2 = if ($env:VOR_HOME) { $env:VOR_HOME } else { Join-Path $env:USERPROFILE 'Vor' }
+# Where vor.py reads from, by its own rule (see vor_home in fetch_asdso.py).
+$Home2 = if ($env:VOR_HOME) { $env:VOR_HOME } else { (& $Py (Join-Path $Here 'fetch_asdso.py') --print-home) }
 
 $pass = @()
 if ($CatalogArgs) { $pass += $CatalogArgs }

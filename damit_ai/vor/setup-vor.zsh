@@ -67,12 +67,30 @@ die()  { printf '  \033[1;31mX\033[0m   %s\n' "$*"; exit 1; }
 # This tool was called damresearch until 2026-11-13. Carry an existing install over rather than
 # leaving a second, empty library beside it: ~/DamResearch -> ~/Vor, research.db -> vor.db.
 # Only ever done when the new name does not exist, so re-running cannot clobber anything.
+has_index() { [[ -f "$1/vor.db" || -f "$1/research.db" ]]; }
 if [[ -z "${VOR_HOME:-}" && ! -d "$RHOME" && -d "$OLD_HOME" ]]; then
   if mv "$OLD_HOME" "$RHOME" 2>/dev/null; then
     ok "moved your library from $OLD_HOME to $RHOME (the old name is gone, nothing was copied)"
   else
     RHOME="$OLD_HOME"
     warn "could not move $OLD_HOME to $HOME/Vor; keeping the library where it is"
+  fi
+elif [[ -z "${VOR_HOME:-}" && -d "$RHOME" && -d "$OLD_HOME" ]] && has_index "$OLD_HOME" && ! has_index "$RHOME"; then
+  # Both names exist and the index is under the OLD one: something made ~/Vor first (a library
+  # download, a first-run log). Treating that folder as "the rename is done" would write
+  # VOR_HOME=~/Vor below and leave the indexed library behind for good, with no error from
+  # anything. The index decides. Nothing is deleted: the stray ~/Vor is set aside, the real
+  # library takes the name, and the stray files are copied back in without overwriting.
+  ASIDE="$RHOME.before-rename-$(date +%Y%m%d-%H%M%S)"
+  if mv "$RHOME" "$ASIDE" 2>/dev/null && mv "$OLD_HOME" "$RHOME" 2>/dev/null; then
+    cp -Rn "$ASIDE/." "$RHOME/" 2>/dev/null || true
+    ok "moved your indexed library from $OLD_HOME to $RHOME"
+    warn "$RHOME already existed without an index; its files were merged in (nothing overwritten)."
+    warn "The original is kept at $ASIDE: delete it once you have looked."
+  else
+    [[ -d "$ASIDE" && ! -d "$RHOME" ]] && mv "$ASIDE" "$RHOME" 2>/dev/null
+    RHOME="$OLD_HOME"
+    warn "could not move $OLD_HOME to $HOME/Vor; keeping the indexed library where it is"
   fi
 fi
 if [[ -f "$RHOME/research.db" && ! -f "$RHOME/vor.db" ]]; then
