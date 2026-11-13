@@ -1,0 +1,452 @@
+{
+ "about": "Recorded differences between DamIT's ported files and their DamSafety originals. Written by scripts/check_engine_parity.py --update; do not edit the hashes by hand.",
+ "not_ported": [
+  "DamSafety_Runner/core/dwr_slope.py",
+  "DamSafety_Runner/core/nd_counties.py",
+  "DamSafety_Runner/core/nd_data.py",
+  "DamSafety_Runner/core/nd_hazard.py",
+  "DamSafety_Runner/core/nddot_text.py"
+ ],
+ "pairs": {
+  "damit_finder/__init__.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/__init__.py"
+  },
+  "damit_finder/brand.py": {
+   "diff": "f0f202ae66b02d83bb69acd1dbb28bc1482c22d9c184cd6539a77b243374e6bb",
+   "from": "DamSafety_Finder/brand.py"
+  },
+  "damit_finder/core/__init__.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/__init__.py"
+  },
+  "damit_finder/core/challenger.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/challenger.py"
+  },
+  "damit_finder/core/crossings.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/crossings.py"
+  },
+  "damit_finder/core/dataset.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/dataset.py"
+  },
+  "damit_finder/core/embankments.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/embankments.py"
+  },
+  "damit_finder/core/evaluate.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/evaluate.py"
+  },
+  "damit_finder/core/evidence.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/evidence.py"
+  },
+  "damit_finder/core/lidar.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/lidar.py"
+  },
+  "damit_finder/core/listed.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/listed.py"
+  },
+  "damit_finder/core/ponds.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/ponds.py"
+  },
+  "damit_finder/core/review.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/review.py"
+  },
+  "damit_finder/core/ridges.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/ridges.py"
+  },
+  "damit_finder/core/score.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/score.py"
+  },
+  "damit_finder/core/storage.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/storage.py"
+  },
+  "damit_finder/core/terrain.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/terrain.py"
+  },
+  "damit_finder/core/warp_opts.py": {
+   "diff": "e3df2e8e9be3f48837e91275b78d082dea6aa75f5e05a9b0a4b95726919d9807",
+   "from": "DamSafety_Finder/core/warp_opts.py"
+  },
+  "damit_finder/core/water.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/core/water.py"
+  },
+  "damit_finder/finder.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/finder.py"
+  },
+  "damit_finder/plugin.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/plugin.py"
+  },
+  "damit_finder/tests/__init__.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/tests/__init__.py"
+  },
+  "damit_finder/tests/test_core.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/tests/test_core.py"
+  },
+  "damit_finder/tests/test_finder.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/tests/test_finder.py"
+  },
+  "damit_finder/tests/test_qgis.py": {
+   "diff": "",
+   "from": "DamSafety_Finder/tests/test_qgis.py"
+  },
+  "damit_runner/algorithms/engine.py": {
+   "diff": "8d74ac96162e1505783a6a6106560419ba78347594c36e229f98b0d7a6025672",
+   "from": "DamSafety_Runner/algorithms.py"
+  },
+  "damit_runner/compat/nodata_sample.py": {
+   "diff": "",
+   "from": "DamSafety_Core/damsuite/nodata_sample.py"
+  },
+  "damit_runner/core/__init__.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/__init__.py"
+  },
+  "damit_runner/core/aadt_join.py": {
+   "diff": "3bb21e29a79b7db5c01c76f1df97c61c548c9ee6ea2640e2d05227b530c6ba9f",
+   "from": "DamSafety_Runner/core/aadt_join.py"
+  },
+  "damit_runner/core/adequacy.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/adequacy.py"
+  },
+  "damit_runner/core/animation.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/animation.py"
+  },
+  "damit_runner/core/anuga_crest.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/anuga_crest.py"
+  },
+  "damit_runner/core/anuga_detach.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/anuga_detach.py"
+  },
+  "damit_runner/core/anuga_dtdiag.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/anuga_dtdiag.py"
+  },
+  "damit_runner/core/anuga_fine_maxima.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/anuga_fine_maxima.py"
+  },
+  "damit_runner/core/anuga_model.py": {
+   "diff": "df864582acee166dd5dace6ea71f97c0efcc58dd0ca6fe5343bc9aa7ce994bb5",
+   "from": "DamSafety_Runner/core/anuga_model.py"
+  },
+  "damit_runner/core/anuga_slowcheck.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/anuga_slowcheck.py"
+  },
+  "damit_runner/core/anuga_worker.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/anuga_worker.py"
+  },
+  "damit_runner/core/basemap.py": {
+   "diff": "064612b15cb3ef8cba97f1ae3480f1d63bbd78f174b822778f6ddb8f5b7d69d2",
+   "from": "DamSafety_Runner/core/basemap.py"
+  },
+  "damit_runner/core/benchmark.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/benchmark.py"
+  },
+  "damit_runner/core/breach.py": {
+   "diff": "24705181090b51f516a44bd8f5b566ee5d48f4c0c344e1b57f5c6b89b68bcf21",
+   "from": "DamSafety_Runner/core/breach.py"
+  },
+  "damit_runner/core/bridge_snap.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/bridge_snap.py"
+  },
+  "damit_runner/core/builtin_lisflood.py": {
+   "diff": "965de37ac60489548317173417914fa56790fe16f0c6520a8277cf70c5f60b48",
+   "from": "DamSafety_Runner/core/builtin_lisflood.py"
+  },
+  "damit_runner/core/cascade.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/cascade.py"
+  },
+  "damit_runner/core/chain.py": {
+   "diff": "d35e10f1773b4ab5fa878c627e8dd309331dd5fd8142d6cf36098827842716f4",
+   "from": "DamSafety_Runner/core/chain.py"
+  },
+  "damit_runner/core/conditioning.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/conditioning.py"
+  },
+  "damit_runner/core/consequences.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/consequences.py"
+  },
+  "damit_runner/core/crestburn.py": {
+   "diff": "b3aac0b4119a0013dadb745b717e9a664d1b101a29807c2ebbb30b4a0f4e37dd",
+   "from": "DamSafety_Runner/core/crestburn.py"
+  },
+  "damit_runner/core/culvert_guess.py": {
+   "diff": "964aba8b8b9b77ac08dcc7b40ef34ea468c6d58849ce59c5c01745a998c3a755",
+   "from": "DamSafety_Runner/core/culvert_guess.py"
+  },
+  "damit_runner/core/culvert_precheck.py": {
+   "diff": "a886a2ff489e8678faf0acf37af2c0555163f74ccb490c3f6822be3e0efcb586",
+   "from": "DamSafety_Runner/core/culvert_precheck.py"
+  },
+  "damit_runner/core/culvert_prep.py": {
+   "diff": "78dce0da20638c8068f3a3800421f18fe0c9e08e9e59955fe71b7f0d2a1cbdbe",
+   "from": "DamSafety_Runner/core/culvert_prep.py"
+  },
+  "damit_runner/core/damjson.py": {
+   "diff": "88488e2d4b960dcb20d95262f48badfcd3341b0d67a14616a8d3dcf08c80b9fd",
+   "from": "DamSafety_Runner/core/damjson.py"
+  },
+  "damit_runner/core/dashboard_html.py": {
+   "diff": "647face7b1733bc8b8681997723707d2b2c6e8eecee1afa7fdb7f7abc797ec58",
+   "from": "DamSafety_Runner/core/dashboard_html.py"
+  },
+  "damit_runner/core/dem_refill.py": {
+   "diff": "e9cb571d57c94e07e42155329644a51b9ddf2ca32c318769ed65afa7b260a67a",
+   "from": "DamSafety_Runner/core/dem_refill.py"
+  },
+  "damit_runner/core/dem_zunit.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/dem_zunit.py"
+  },
+  "damit_runner/core/estimate.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/estimate.py"
+  },
+  "damit_runner/core/flood.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/flood.py"
+  },
+  "damit_runner/core/gdal_io.py": {
+   "diff": "b92b01ef5d7f4304e5184ec2e8cfd87f8a22c07d673b996b120ef8dd5513ebbf",
+   "from": "DamSafety_Runner/core/gdal_io.py"
+  },
+  "damit_runner/core/geom2d.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/geom2d.py"
+  },
+  "damit_runner/core/gmsh_mesher.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/gmsh_mesher.py"
+  },
+  "damit_runner/core/grid.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/grid.py"
+  },
+  "damit_runner/core/grid_default.py": {
+   "diff": "2106070ceab7146435bdc3c855e28aece049e5fca7a25629ce463e30f0a25fac",
+   "from": "DamSafety_Runner/core/grid_default.py"
+  },
+  "damit_runner/core/handoff.py": {
+   "diff": "09cfff473d77fd74490306ddcf80c62e717111f633dd41bfa4d921941f0805cc",
+   "from": "DamSafety_Runner/core/handoff.py"
+  },
+  "damit_runner/core/hecras.py": {
+   "diff": "d0727c4d6f8c79f0469f5983a96f9cff81dbf083e69a8b6afd89e9dbfe2b0ca2",
+   "from": "DamSafety_Runner/core/hecras.py"
+  },
+  "damit_runner/core/hecras_bands.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_bands.py"
+  },
+  "damit_runner/core/hecras_breaklines.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_breaklines.py"
+  },
+  "damit_runner/core/hecras_crest.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_crest.py"
+  },
+  "damit_runner/core/hecras_engine.py": {
+   "diff": "40ec8f7ccf33a8d3958c72c9b6170eba0143ad7a7fd1d4ee950f61baaaa7eae8",
+   "from": "DamSafety_Runner/core/hecras_engine.py"
+  },
+  "damit_runner/core/hecras_fine.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_fine.py"
+  },
+  "damit_runner/core/hecras_model.py": {
+   "diff": "5381cb0285c65eb245ba1fd9f3d9991fe9f996dc105290a6979743e2923c81b7",
+   "from": "DamSafety_Runner/core/hecras_model.py"
+  },
+  "damit_runner/core/hecras_package.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_package.py"
+  },
+  "damit_runner/core/hecras_seeds.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_seeds.py"
+  },
+  "damit_runner/core/hecras_solver.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_solver.py"
+  },
+  "damit_runner/core/hecras_structures.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_structures.py"
+  },
+  "damit_runner/core/hecras_terrain_crs.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hecras_terrain_crs.py"
+  },
+  "damit_runner/core/hecras_windows.py": {
+   "diff": "3b2f997c641330c63d5cc8dced1a712cce48c93e49889d48d2c3bfa8ee866cb3",
+   "from": "DamSafety_Runner/core/hecras_windows.py"
+  },
+  "damit_runner/core/hydrology.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/hydrology.py"
+  },
+  "damit_runner/core/impacts.py": {
+   "diff": "0a6e43910cd73696b35db0aac67447f1d2006b674bf67d2a350bcf53604a51ec",
+   "from": "DamSafety_Runner/core/impacts.py"
+  },
+  "damit_runner/core/lisflood.py": {
+   "diff": "57cc99f60127ea281625f5cbddd271a3f7c00a350fe1bfcc0bd1fab02285b1b6",
+   "from": "DamSafety_Runner/core/lisflood.py"
+  },
+  "damit_runner/core/model_terrain.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/model_terrain.py"
+  },
+  "damit_runner/core/nested.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/nested.py"
+  },
+  "damit_runner/core/omp_probe.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/omp_probe.py"
+  },
+  "damit_runner/core/outlets.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/outlets.py"
+  },
+  "damit_runner/core/probabilistic.py": {
+   "diff": "1a097aef10bea53007314c5ff0eb7b597a116e04fa53a81b4e359228f6bc8512",
+   "from": "DamSafety_Runner/core/probabilistic.py"
+  },
+  "damit_runner/core/products.py": {
+   "diff": "e30962c2e392c65e79345b52ccb2408c2eda1c81fcf3debc317f237b7ac27769",
+   "from": "DamSafety_Runner/core/products.py"
+  },
+  "damit_runner/core/proposed.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/proposed.py"
+  },
+  "damit_runner/core/provenance.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/provenance.py"
+  },
+  "damit_runner/core/qa_maps.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/qa_maps.py"
+  },
+  "damit_runner/core/refine.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/refine.py"
+  },
+  "damit_runner/core/report_docx.py": {
+   "diff": "5673c5dea034e1cbc9d3be1d1032dc747c9c9dc824e36162884c412da83b9a72",
+   "from": "DamSafety_Runner/core/report_docx.py"
+  },
+  "damit_runner/core/report_metrics.py": {
+   "diff": "44e4b9e61c5defbafde3ef3411336429bb690b1a9d5f2c7e90a60edc5e5057a1",
+   "from": "DamSafety_Runner/core/report_metrics.py"
+  },
+  "damit_runner/core/reservoir_carve.py": {
+   "diff": "78dce0da20638c8068f3a3800421f18fe0c9e08e9e59955fe71b7f0d2a1cbdbe",
+   "from": "DamSafety_Runner/core/reservoir_carve.py"
+  },
+  "damit_runner/core/results_info.py": {
+   "diff": "acd2dfceba670fbefb1866a1e7a62f25b62dcd26c99cdcd1bf26dfcdfae44e37",
+   "from": "DamSafety_Runner/core/results_info.py"
+  },
+  "damit_runner/core/review_record.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/review_record.py"
+  },
+  "damit_runner/core/road_profile.py": {
+   "diff": "7b873e13638da8b0a90f95352943e9fef6da0639f6e5e0dcbeab29fd9c12bbfe",
+   "from": "DamSafety_Runner/core/road_profile.py"
+  },
+  "damit_runner/core/run_params.py": {
+   "diff": "a6965d3eff8c916bdf29f2757b616e8ae09dd830a696a4fd8319ae1991f8844f",
+   "from": "DamSafety_Runner/core/run_params.py"
+  },
+  "damit_runner/core/selftest.py": {
+   "diff": "1463ff3900d06e442a648c431d3a55ceb80ed8e9ec457205c54df7569d9e5227",
+   "from": "DamSafety_Runner/core/selftest.py"
+  },
+  "damit_runner/core/sensitivity.py": {
+   "diff": "e138ed895aee636a032e1843bd9d26720662359bc7c36acccc2a8493bdb7ef22",
+   "from": "DamSafety_Runner/core/sensitivity.py"
+  },
+  "damit_runner/core/solve_gate.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/solve_gate.py"
+  },
+  "damit_runner/core/stoprule.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/stoprule.py"
+  },
+  "damit_runner/core/structures.py": {
+   "diff": "c8230c960199275188146e55850acdf7a1fd828c5ace1482469468f8798bccd7",
+   "from": "DamSafety_Runner/core/structures.py"
+  },
+  "damit_runner/core/terrain.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/terrain.py"
+  },
+  "damit_runner/core/units.py": {
+   "diff": "2e9d39beb135656b18f121981424401d80c90c6ffa21ee6896ee713275438d32",
+   "from": "DamSafety_Runner/core/units.py"
+  },
+  "damit_runner/core/vdatum_run.py": {
+   "diff": "7dd5b7a69bcb6213ca5640237a0cd986acd0d13bb29ee90edf017eeda5cb832d",
+   "from": "DamSafety_Runner/core/vdatum_run.py"
+  },
+  "damit_runner/core/verification.py": {
+   "diff": "26e26aebe7017625aa7e2590c69f47e778e1c71406c39f0c1b8b1399723a3c2d",
+   "from": "DamSafety_Runner/core/verification.py"
+  },
+  "damit_runner/core/wallclock.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/wallclock.py"
+  },
+  "damit_runner/core/warp_opts.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/warp_opts.py"
+  },
+  "damit_runner/core/workflow.py": {
+   "diff": "1b9bb3419d8741d2f3fa17a80ea6bb4a56017e034759faa19c881128b8bedf17",
+   "from": "DamSafety_Runner/core/workflow.py"
+  },
+  "damit_runner/flood/breach.py": {
+   "diff": "b6d5815aa35db334c1907c7e29e0c6ccd6c52b649f0f464f8627d33adc979f44",
+   "from": "DamSafety_Runner/core/breach.py"
+  }
+ },
+ "schema": "damit.engine_parity",
+ "schema_version": 1,
+ "source": "nickdbendickson/DWR_Plugins",
+ "synced_to": "27db606ed0d689be2e6ff4bebfe973e8ffb168c8"
+}

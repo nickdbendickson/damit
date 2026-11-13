@@ -32,6 +32,10 @@ run notes say which and why. The Screener and the QGIS crest reader use the same
 original_outer_m, widened, widening_reason: DWR-2645 widened 27 m to 37 m because the nearer ground was the dam's face), and a run that
 ends with a wet edge warns (flood/model.py final_edge_note: edges, depths, outflow %, the limit it stopped at or why the domain did not
 grow). The report's warnings are now in the log ("Warning: ...") and in run_setup.json run_notes. No change to the model or its numbers.
+
+0.3.5: the ported DamSafety engine (core/, algorithms/engine.py) is brought up to DamSafety Runner 3.17.13 and its tools are
+registered (they failed to import until now); scripts/check_engine_parity.py keeps the ported files in step with DamSafety.
+No change to this module's run or its numbers.
 """
 import datetime
 import json
@@ -39,7 +43,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

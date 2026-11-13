@@ -19,6 +19,7 @@ from . import anuga_detach as detach   # 3.12.2: the worker runs detached from Q
 from .units import ARRIVAL_DEPTH_FT, FT
 from . import conditioning as cond
 from . import structures as structmod
+from . import model_terrain                 # 3.17.7
 from . import gmsh_mesher as gmshmod     # numpy only; gmsh is imported in build_mesh
 from . import anuga_dtdiag               # 3.10.70: numpy only (the worker's dt diagnostic)
 from . import anuga_crest as crestmod    # 3.10.91: road / rail crests held (numpy only)
@@ -170,6 +171,8 @@ class AnugaSettings:
         self.checkpoint_min = None
         self.checkpoint_steps = 0
         self.checkpoint_keep = 2
+        self.keep_fine_maxima = False
+        self.keep_fine_support = False
         self.partial_min = None
         self.resume = False
         self.resume_with_run = False
@@ -320,14 +323,36 @@ def culvert_regions(culverts, st):
         r = max(3.0 * c["width"], 25.0)
         for e in c["end_points"]:
             polys.append(octagon(e, r))
+    # M14: memoise the pairwise near-test keyed by a per-polygon SERIAL (not id(): del polys[j]
+    # frees an ndarray whose id CPython reuses for the next convex_hull, which would answer for a
+    # different polygon). A merged region gets a fresh serial; cache entries touching a retired
+    # serial are dropped. The same octagons merge, so the returned regions are bit-identical; the
+    # full pairwise scan is no longer redone from scratch after every merge (was O(n^3) in ends).
+    serials = list(range(len(polys)))
+    next_serial = len(polys)
+    near = {}
+
+    def _near(i, j):
+        si, sj = serials[i], serials[j]
+        key = (si, sj) if si < sj else (sj, si)
+        if key not in near:
+            near[key] = convex_polygons_near(polys[i], polys[j], gap)
+        return near[key]
+
     merged = True
     while merged:
         merged = False
         for i in range(len(polys)):
             for j in range(i + 1, len(polys)):
-                if convex_polygons_near(polys[i], polys[j], gap):
+                if _near(i, j):
                     polys[i] = convex_hull(np.vstack([polys[i], polys[j]]))
+                    old_i, old_j = serials[i], serials[j]
+                    serials[i] = next_serial
+                    next_serial += 1
                     del polys[j]
+                    del serials[j]
+                    near = {k: v for k, v in near.items()
+                            if old_i not in k and old_j not in k}
                     merged = True
                     break
             if merged:
@@ -513,6 +538,10 @@ def write_job(path, dem, outer, fine, inlet, hydrograph, st, out_grid, initial_d
     if crest is not None and len(crest[0]):  # 3.10.91: crest nodes (x, y) and their z
         job["crest_xy"] = np.asarray(crest[0], float).reshape(-1, 2)
         job["crest_z"] = np.asarray(crest[1], float).ravel()
+    if getattr(st, "keep_fine_maxima", False):
+        job.update(keep_fine_maxima=True,
+                   keep_fine_support=bool(getattr(st, "keep_fine_support", False)),
+                   fine_maxima_crs=str(getattr(dem, "crs_wkt", "") or ""))
     job.update(checkpoint_job(st))   # 3.10.35: opt-in checkpoints; absent = as before
     job.update(dt_diag_job(st, getattr(dem, "crs_wkt", None)))   # 3.10.70; off = as before
     np.savez(path, **job)
@@ -1513,6 +1542,8 @@ def run(workdir, dem, flooded, inflow_xy, direction, inlet_width_m, hydrograph, 
         else:
             minfo["used"] = "gmsh"
             minfo["gmsh"] = mesh.get("stats", {})
+            if model_terrain.enabled(st):        # 3.17.7: the mesh as a GeoPackage for review
+                model_terrain.write_gmsh_mesh(mesh, dem, spec, workdir, log)
             minfo["reused"] = bool(mesh.get("reused"))     # 3.12.6
             mnote = msg
             if log:
@@ -1576,18 +1607,21 @@ def run(workdir, dem, flooded, inflow_xy, direction, inlet_width_m, hydrograph, 
         note = partial_note(workdir) if checkpoint_job(cst) else ""
         raise ModelError("ANUGA stopped with code {}:\n{}{}".format(
             proc.returncode, tail, "\n" + note if note else ""))
-    fpath = os.path.join(workdir, ELEVATION_FILE)
-    if elev_job and os.path.exists(fpath):      # up to ~1 GB; the job only needs it once
-        try:
-            os.remove(fpath)
-            elev_info["file_removed_after_run"] = True
-        except OSError:
-            pass
     # 3.4.1: read the archive inside `with` - an open .npz keeps the file locked on Windows
     # until garbage collection, which stopped the work folder from being removed
     with np.load(result) as r:
         stats = json.loads(str(r["stats"]))
         depth, vel, arr, wse = r["depth"], r["velocity"], r["arrival_hr"], r["wse"]
+    from . import anuga_fine_maxima
+    fine_record = stats.get("fine_maxima", {})
+    anuga_fine_maxima.export_geotiffs(workdir, fine_record, log=log)
+    fpath = os.path.join(workdir, ELEVATION_FILE)
+    if elev_job and os.path.exists(fpath) and not fine_record.get("support_kept", False):      # up to ~1 GB; the job only needs it once
+        try:
+            os.remove(fpath)
+            elev_info["file_removed_after_run"] = True
+        except OSError:
+            pass
     detach.mark_processed(workdir)           # 3.12.2: no longer pending for the window
     if not have and culverts:            # 3.10.71: the inverts the operators got, and why
         rec = structmod.invert_record(culverts)

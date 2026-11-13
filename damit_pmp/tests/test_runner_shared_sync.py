@@ -14,7 +14,7 @@ SHARED = os.path.join(ROOT, "damit_pmp", "runner_shared")
 CORE = os.path.join(ROOT, "damit_runner", "core")
 FLOOD = os.path.join(ROOT, "damit_runner", "flood")          # terrain3dep.py lives here, the others in core/
 FILES = ("gmsh_mesher.py", "grid.py", "terrain.py", "anuga_worker.py", "omp_probe.py", "anuga_dtdiag.py",
-         "wallclock.py", "lisflood.py", "units.py", "data_conventions.py", "terrain3dep.py")
+         "anuga_fine_maxima.py", "wallclock.py", "lisflood.py", "units.py", "data_conventions.py", "terrain3dep.py")
 
 
 def source(f):
