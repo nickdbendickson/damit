@@ -122,7 +122,7 @@ class Integration(unittest.TestCase):
         self.assertIsNone(reg.algorithmById("damit_run:classify"))
 
     def test_runner_ported_tools_are_registered(self):
-        # Runner 0.3.5: until 0.3.4 the ported DamSafety tools failed to import (compat.structure_flags and
+        # Runner 0.4.1: until 0.4.0 the ported DamSafety tools failed to import (compat.structure_flags and
         # compat.suite_config did not exist), the provider swallowed the ImportError, and only rundam,
         # checkhandoff and hecrasexport existed. The count is pinned so a tool cannot vanish unnoticed again.
         from damit_runner import provider as RP

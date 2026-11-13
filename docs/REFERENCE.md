@@ -184,7 +184,7 @@ low-confidence cases say so) instead of a gap, and `terrain` checks coverage in 
 | `damit_run:finishanuga`, `damit_run:delineate` | Finish an ANUGA run after QGIS closed; delineate the watershed of a dam (USGS StreamStats). |
 
 The eight tools from `batch` down are the DamSafety Runner's own (`algorithms/engine.py`, `core/`), registered since
-0.3.5. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
+0.4.1. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
 DamSafety's dam-folder layout; `damit_run:rundam` stays the tool the Screener hand-off and DamIT Crest call.
 
 **Engine parity with DamSafety.** `core/`, `algorithms/engine.py`, `flood/breach.py` and DamIT Finder are ports of
