@@ -174,5 +174,88 @@ class Update(unittest.TestCase):
             update.update(p, http, self.root, feedback=Quiet())
 
 
+class GetDataScript(unittest.TestCase):
+    """get_data.py: the same engine from the command line, with no QGIS."""
+
+    def setUp(self):
+        import importlib
+        self.cli = importlib.import_module("damit_data.get_data")
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.data = os.path.join(self.root, "data")
+        self.lines = []
+
+    def run_cli(self, *argv, http=None):
+        return self.cli.main(list(argv) + ["--folder", self.data], client=http, out=self.lines.append)
+
+    def text(self):
+        return "\n".join(self.lines)
+
+    def test_a_box_fetches_nsi_and_status_names_it(self):
+        http = FakeHttp(json_by_url=lambda u: nsi_fixture())
+        self.assertEqual(self.run_cli("--bbox=-96.9,46.8,-96.7,46.95", http=http), 0, self.text())
+        areas = [d for d in os.listdir(self.data) if d.startswith("extent_")]
+        self.assertEqual(len(areas), 1)
+        self.assertTrue(os.path.isfile(os.path.join(self.data, areas[0], "nsi", "nsi.geojson")))
+        self.assertIn("bbox=", http.calls[0][1])
+        self.assertIn("1 of 1 source(s) in place", self.text())
+        self.lines = []
+        self.assertEqual(self.run_cli("--status"), 0)
+        self.assertIn(areas[0] + "/nsi", self.text())
+
+    def test_a_state_takes_the_default_sources_and_one_failure_keeps_the_rest(self):
+        osm = sources.plan("osm", state="ND")["urls"][0]
+
+        class Http(FakeHttp):
+            def head(self, url, timeout=30):
+                if url not in self.files:
+                    raise IOError("server down")
+                return FakeHttp.head(self, url, timeout)
+        http = Http(files={osm: zip_bytes({"gis_osm_buildings.gpkg": b"GPKG"})}, headers={osm: {"etag": '"v1"'}})
+        self.assertEqual(self.run_cli("--state", "North Dakota", "--sources", "osm,microsoft", http=http), 1)
+        self.assertTrue(os.path.exists(os.path.join(self.data, "ND", "osm", "gis_osm_buildings.gpkg")))
+        self.assertIn("1 of 2 source(s) in place (failed: microsoft)", self.text())
+        self.assertIn("FAILED: Microsoft US Building Footprints", self.text())
+        self.assertEqual(self.cli.pick_sources("", "ND", None, ""),
+                         [s for s in sources.ORDER if sources.SOURCES[s]["default"]])
+        self.assertEqual(self.cli.pick_sources("", None, (0, 0, 1, 1), ""), ["nsi"], "a box alone serves NSI only")
+        self.assertNotIn("usa_structures", self.cli.pick_sources("all", "ND", None, ""))
+        self.assertIn("usa_structures", self.cli.pick_sources("all", "ND", None, "https://x/y.zip"))
+
+    def test_a_dry_run_and_the_list_download_nothing(self):
+        http = FakeHttp()
+        self.assertEqual(self.run_cli("--state", "ND", "--dry-run", http=http), 0)
+        self.assertEqual(self.cli.main(["--list"], client=http, out=self.lines.append), 0)
+        self.assertEqual(http.calls, [])
+        self.assertFalse(os.path.exists(self.data))
+        self.assertIn("53 request(s)", self.text())           # NSI, one per ND county
+        self.assertIn("microsoft", self.text())
+
+    def test_requests_that_cannot_be_made_stop_with_the_reason(self):
+        http = FakeHttp()
+        for argv, want in (((), "give --state"), (("--state", "Narnia"), "unknown US state"),
+                           (("--state", "ND", "--sources", "nsi,bogus"), "unknown source(s): bogus"),
+                           (("--bbox=1,2,3",), "--bbox needs"),
+                           (("--bbox=-97,46,-96.9,46.1", "--sources", "osm"), "OpenStreetMap"),
+                           (("--bbox=-104,45,-96,49",), "square degrees")):
+            self.lines = []
+            self.assertEqual(self.run_cli(*argv, http=http), 2, argv)
+            self.assertIn(want, self.text(), argv)
+        self.lines = []
+        pack = os.path.join(self.root, "ND_Dam_Suite_Pack", "x")
+        self.assertEqual(self.cli.main(["--state", "ND", "--folder", pack], client=http, out=self.lines.append), 2)
+        self.assertIn("offline pack", self.text())
+        self.assertEqual(http.calls, [])
+
+    def test_it_runs_as_a_script_from_anywhere_without_qgis(self):
+        import subprocess
+        script = os.path.join(ROOT, "damit_data", "get_data.py")
+        env = dict(os.environ)
+        env.pop("PYTHONPATH", None)
+        r = subprocess.run([sys.executable, script, "--list"], capture_output=True, text=True, cwd=self.root, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("National Structure Inventory", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
