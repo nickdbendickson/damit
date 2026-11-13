@@ -119,7 +119,7 @@ open the Crest desk wired to one plugin set
 
 ---
 
-## rag_index.py 2.7
+## rag_index.py 2.8
 
 Installed command: `heim-index  (and heim-add = --add)`. Build Heim's document index.
 

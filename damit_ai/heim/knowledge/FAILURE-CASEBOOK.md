@@ -267,6 +267,22 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   with a space used to be a question to the model, not the check (rag_query 2.4 takes
   `heim doctor`, `heim add FILE` and `heim chat` as words, as Vor does).
 
+### D12. "100 file(s) changed since", minutes after they were indexed
+- **Was:** on the first install from the package, `heim-doctor` reported that every page of
+  the knowledge pack had changed since it was indexed, and a second line that `engine_docs`
+  came from a folder that was "not there now". Neither was a fault in the index. The package
+  zip was made on a machine set to UTC, and a zip stores each file's wall-clock time with no
+  zone: unpacked six time zones west, the pages were dated six hours in the future, later than
+  the index run. Re-indexing could not clear it, because the new run was still earlier than
+  those dates. The folder had moved because the Vor installer, run after Heim's, renamed
+  `~/DamResearch` to `~/Vor`.
+- **Tell:** every file of a collection "changed" at once; `ls -l` shows dates later than now.
+- **Fix:** rag_index 2.8 records each file's size, date and content hash when it indexes, and
+  the doctor compares against that, so a date alone never means a change. For a folder moved
+  by the rename it prints the `heim-index` line for the new place. On an index that 2.8 has
+  not rebuilt yet, `touch` the files and re-index once. Build package zips with a tool that
+  writes UTC times (Info-ZIP `zip`), not one that stores local time only.
+
 ---
 
 _Add a case when a failure cost more than an hour to diagnose and would be recognised
