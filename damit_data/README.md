@@ -20,6 +20,19 @@ Tools:
 * Menu: **Download / update offline layers…** and **Add DamIT Data layers to the project** (group
   "DamIT data").
 
+Without QGIS, the same engine from a terminal (any Python 3, run from the plugin's folder, DamIT Core
+beside it):
+
+    python3 get_data.py --list                          # the sources, and which are fetched by default
+    python3 get_data.py --state ND                      # the default sources for one state
+    python3 get_data.py --state ND --sources nsi,osm    # only these; `all` = every source that needs no link
+    python3 get_data.py --bbox=-101.2,46.8,-100.8,47.2  # NSI for a box of at most 1 square degree
+    python3 get_data.py --status                        # what the data folder holds
+
+It exits 0 when every source asked for is in place and 1 when one or more failed; the others are kept, and
+running the same command again fetches only what is missing or changed. `--folder`, `--force`, `--max-mb`
+and `--usa-structures-url` are the tool's parameters of the same names.
+
 Layout: `<data folder>/<STATE or extent_xxxxxxxx>/<source>/…` plus `damit_data_manifest.json`
 (versions, URLs, citations). The data folder is the tool's FOLDER, else the DamIT `data_folder` setting
 (DamIT Setup), else `~/Documents/DamIT Data`. Any folder inside an `ND_Dam_Suite_Pack` is refused.
