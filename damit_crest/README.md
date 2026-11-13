@@ -35,6 +35,17 @@ network for ND; no national bundle is committed. No state dam-safety inventory (
 unknown-structure layer and no state suite pack (`NDSUITE_DATA`, `~/.ndsuite`) is read or shipped. Receptors (ND 911
 address points for ND dams, or the user's own), DEMs (3DEP or a local DEM) and NHD streams are separate inputs.
 
+**A batch of any size can be left running in the desk.** Rows are written to browser storage (IndexedDB) as they
+finish, and again when the window is hidden or closed. The state and the selection being run are saved too, so after
+**Stop**, a closed window or a crash the Batch screen reopens on the same state and selection with a line saying how
+many are left, and **Resume** carries on from there; closing mid-run asks first. If the terrain service stops
+answering (six dams in a row fail to reach it), the batch **pauses** instead of failing everything left, and tries
+again by itself after 1, 2, 5, 10, 15 and 30 minutes or as soon as the connection is back; the dams that failed that
+way are retried, never kept as results. *Stop retrying* ends the waits, and so does choosing another state. Only the
+300 most recent finished records are kept in memory for **Open in desk**; any other finished row is rebuilt from the
+NID and the terrain when opened (a few seconds), including after a reload. Above 300 dams the screen still shows the
+command line, which runs without a window and can read a local DEM.
+
 The built-in samples are the NID dam ND00199 (Swan Buffalo Detention 12) and two fictional desk examples
 (*Local-datum sample* `SAMPLE-4031`, *Prairie holding pond* `DESK-014`). Those two ids are **not** NID IDs: the hand-off
 sends them as samples (`is_sample`, no `nid_id`), never as NID inventory records. A new dam (*+ New dam*) starts with an
