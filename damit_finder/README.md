@@ -21,7 +21,9 @@ Install: Processing Toolbox → DamIT Finder → Find structures.
 | `damit_find:water` Find open water in aerial imagery | 4-band or colour-infrared imagery: USGS NAIP Plus, your own GeoTIFF / VRT, or any ArcGIS ImageServer address (a state's 4-band or colour-infrared service); **or** a classified LiDAR tile / folder (.las/.laz, ASPRS class 9 = water), **or** a prebuilt class-9 water-count raster / VRT (the statewide LiDAR water mosaic); mapped water bodies, buildings / streets (both optional) | Open-water outlines (one year, or the water of most of several years), each marked **mapped** or not (cast shadows and, with a buildings / streets layer, roofs and pavement in town are left out): the pond outlines for the second tool when no layer has them |
 | `damit_find:water_mosaic` Build a class-9 water mosaic from LiDAR tiles | a classified LiDAR tile or a folder of them (.las/.laz, ASPRS class 9); the water classes, their EPSG (only if the files carry none) and the cell size | `water_count.vrt` (class-9 points per cell) and `water_elev.vrt` (their mean elevation, the pond water surface), in CONUS Albers (EPSG:5070) for the whole U.S.: build once, then give the count VRT to the open-water tool as its **prebuilt class-9 water-count raster** |
 | `damit_find:osm` Extract dams, dikes and culverts from OpenStreetMap | an OpenStreetMap file (.osm.pbf, the Geofabrik extract) | `waterway=dam / weir`, `man_made=dyke / embankment`, `tunnel=culvert`, `ford=yes` as points: one more known-structure layer |
-| `damit_find:score` Score fills by how much they look like the listed dams | the `embankments` layers of one or more runs | A model learned from the fills already on a dam list, and every fill scored 0-1 with it (look at the high-scoring new ones first) |
+| `damit_find:score` Score fills by how much they look like the listed dams | the `embankments` layers of one or more runs | A model learned from the fills already on a dam list (four kinds; reviewers' marks as trusted labels), and every fill scored 0-1 with it (look at the high-scoring new ones first) |
+| `damit_find:evidence` Add evidence to fills | an `embankments` layer; imagery years, NWI, quarries, land cover, soils, the LiDAR return-count and class-9 mosaics, a DEM with buildings / roads (all optional) | Water year after year, bare ground, NWI h / x, LiDAR drop-out in the pool, buildings and roads down the flow path, a 12.5 ac-ft storage check |
+| `damit_find:review_batch` Pick a review batch | scored fills; cards already reviewed (optional) | A batch for review: random control, top-ranked, near the cut, each card with its chance of being picked; a share flagged for a blind second look |
 
 The first three take **Known structures** (any number of point, line or polygon layers: the NID, state dam,
 pond and dugout lists, NBI bridges (DamIT Data), state DOT bridge / culvert inventories, USGS stream
@@ -74,11 +76,23 @@ rail mask widened to an embankment's base and not one of the fills already found
 pads, drain spoil banks, shelterbelt snow berms and natural ridges pass too (in the Absaraka box
 before the straightness and rail-base tests: 43 ridges, many rail beds and meander spurs).
 
-**Score** (`MODEL`; `core/score.py`). A logistic regression of the fills on a dam list against the
-other fills (height, crest height, net head, storage, pool area, length, flat pool, on a road, open
-pool, spillway beside): a ranking of the new fills by how much they look like listed dams, not a
-probability. Learn it with the score tool from runs over areas with many listed dams; the
+**Score** (`MODEL`; `core/score.py`). The fills on a dam list against the other fills: a ranking
+of the new fills by how much they look like listed dams, not a probability. Four kinds (see Scores
+below). Learn it with the score tool from runs over areas with many listed dams; the
 cross-validated AUC it reports says how well it ranks dams it has not seen.
+
+**How the kinds compare.** This was tested in North Dakota with the 0.5 trees kind (bagged boosted
+trees), learned on 66 USGS 1 m tiles in 7 regions (7,612 fills, 678 by an intact listed dam, no
+reviewer marks):
+
+- **On a reviewer's aerial marks** (245 cards, 31 dams, none used in learning), it ranked the dams
+  with AUC 0.89. The 0.4 logistic score gave 0.63 on the cards that were reviewed, which it had
+  picked (+0.26, 95 % interval +0.16 to +0.36).
+- **Each region held out** scored 0.85-0.93, against 0.69-0.87 for the 0.4 measurements.
+- **In Iowa,** learned only from North Dakota, it ranked the fills on 15 Iowa 1 m tiles against
+  Iowa's complete pond-dam census with AUC 0.89, against 0.84.
+
+A model learned in one state can be used in another, but relearn it where you have a dam list.
 
 Fills closer than 60 m are one. The DEM is read in 5 km tiles with a pad, so a county runs in
 bounded memory. The elevation unit is what the raster records (its band unit or a vertical CRS;
@@ -151,6 +165,91 @@ depression whose outline fills at least `DUG_RECT` (85 %) of its smallest rectan
 most 2 acres) is called a dugout: potholes are round or ragged, dug pits are rectangles
 (`rectangularity`).
 
+## What 0.5 adds to each fill (`core/embankments.py` steps 7-10)
+
+New fields on every fill; they describe it, and only one of them drops a fill (one fill per pool):
+
+* **The pool's outlet**: `outlet_dist_ft` (how far the spill point is from the raised fill; a dam
+  holds its pool at the outlet), `spill_on_fill`, `same_pool` (other humps on the same pool that
+  were dropped: spoil heaps round one dug pit, a road across a pond), `drain_ac` and `drain_ratio`
+  (contributing area, and its ratio to storage: a "dam" with no drainage is a pit, a hilltop or a
+  ridge nose).
+* **Above original ground** (the NRCS 378 idea: an embankment pond holds 3 ft or more of water
+  against its fill above the original ground; a dug pond holds none): `ag_head_ft` = spill level -
+  the original ground put back under the fill, and `below_frac` = the share of the pool's volume
+  below that ground (about 1 for a pit dug into level ground, about 0 for a pool behind a fill).
+  This is reasoning from the definitions, not a published method.
+* **Shape**: of the pool, `rect` (area / smallest rectangle), `elong`, `wall_slope` (dug pits
+  are about 1.5:1) and `mounds` (spoil heaps round it); of the fill, `top_w_ft` and `side_sum`
+  (upstream + downstream face, horizontal per vertical).
+* **Terrain** round the crest: `relief_ft` and `slope_pct` (flat prairie, rolling breaks, cut
+  badlands), for the terrain-aware score; `pool_lat` / `pool_lon` (the pool's middle, where the
+  evidence tool looks for water).
+
+Distances along the stream line are true metres whatever the line's direction, and the toe walk
+stops at the foot of the downstream face on a steep draw (before 0.5.0 a steep draw could carry
+the toe on and make a fill 2-3 times too high).
+
+## Scores: four kinds, and reviewers' marks (`damit_find:score`)
+
+`KIND`: **v1** (the 11 measurements of 0.4), **0.5** (every 0.5 measurement, one fill per listed
+dam: the fill nearest each listed point is the dam, the rest of its bag is left out), **0.5
+terrain** (also hinge terms and flat / rolling / cut copies of every weight) and **0.5 trees**
+(bagged PU boosted trees on the 0.5 measurements). `MARKS`: a CSV of `find_id, mark` (yes / no /
+unsure) from a review: each mark replaces that fill's own listed / not-listed label, at weight
+`marks_weight` (an unsure one as half a dam, half not). Learn marks per region (a prairie model, a
+breaks model): marks from one terrain can misrank another. Each fill gets `score` and
+`score_note` (outside the training range, or a terrain group with few listed dams to learn from).
+A fill on a listed dam that the list itself says is not there (a dam layer with a `status` field,
+as North Dakota's dam list has: Breached, Not Built, Removed, Submerged, Location Inconclusive ...; only
+Intact counts) is left out of training and of the checks: neither a dam nor background. Every
+candidate carries that status as `known_state`.
+
+## Evidence the DEM cannot give (`damit_find:evidence`, `core/evidence.py`)
+
+For each fill of an `embankments` layer, every source optional:
+
+* **Water year after year** (`IMAGES`, one line per image: `YEAR | file or ImageServer | bands`):
+  NDWI in the pool on each image, `img_years`, `wet_years`, `wet_share`, `first_wet`, `wet_list`.
+  The default is USGS NAIP Plus (the most recent NAIP only): add a line per older year your state
+  serves for a water history. **Check a service's band order** in its keyProperties: North Dakota's
+  colour-infrared years, for one, are NIR, green, blue (`nir=1 green=2`), not the classic NIR, red,
+  green.
+  Two images of one year count as one year, water in either. `bare_share`: bright bare ground
+  (pits, quarries, fresh spoil) on a 4-band image.
+* **NWI** (`nwi_code`, `nwi_h` impounded, `nwi_x` excavated, `nwi_regime`), a **quarry** layer
+  (`in_quarry`, 50 m), the **pasture** share of a land-cover raster (CDL), a **soil** rating.
+* **LiDAR drop-out** (`lidar_points`: the per-cell count of all returns that *Build a class-9 water
+  mosaic* writes with `POINTS`; `lidar_water`: its class-9 count): water swallows the pulses, so a
+  pond too small to be flattened or classed shows as empty cells. `lidar_pool_empty`,
+  `lidar_ring_empty`, `lidar_contrast`, `lidar_class9`; blank where no survey covers the pool
+  (a gap between tiles, the empty corner of a tile cut by a project edge or a VRT of
+  per-project VRTs is not "empty": a cell counts as surveyed inside a tile and within reach of
+  that tile's own returns, so a pond void inside the survey still reads empty and a gap between
+  two surveys is not bridged).
+* **What is below** (with a DEM and buildings / roads): buildings and road crossings down the flow
+  path within 1, 3 and 5 miles, and `conseq`, a second sort for the review. `permit_check` = yes
+  when the storage is over 12.5 acre-feet (North Dakota's water-permit line; check your state's),
+  for every fill with a storage.
+
+## Review batches and honest numbers (`damit_find:review_batch`, `core/review.py`, `core/evaluate.py`)
+
+A review batch is the Finder's experiment: the marks are the only ground truth. A batch samples
+the cards not yet reviewed (give it the earlier marks file as `REVIEWED`). It holds a **random
+control** (about 18 %: the unreviewed cards with the smallest hash of the card id for the `SEED`,
+so the control stays put from one model version to the next, and a later round with the same
+seed takes the next-smallest hashes), the **top-ranked** unreviewed cards (about 37 %) and cards
+**near the cut** (ranks k to 3k, at most `CAP` from one 5 km tile), and flags about 12 % for a
+blind second reviewer. Every card carries `incl_prob`, the chance it had of being picked from the
+unreviewed pool (`pool_n` cards; the tile cap counted), so `evaluate.ht_share` turns a batch's
+marks into the share of real dams among the unreviewed cards with an honest interval (a control
+with no dams still gives an upper bound, not 0 +/- 0). For the whole list, add the cards marked in
+earlier rounds at `incl_prob` 1: they are a census of what has been looked at.
+A review sheet (an aerial and a hillshade chip per card; yes / no / unsure / offset, where offset is
+a real dam just off the point) gives the marks the score tool's `MARKS` takes, and
+`core/dataset.py` files every reviewed card with its chips (a training set for an image model once
+there are about 100 confirmed dams; `stats()` says when).
+
 ## Culvert size at a crossing (`core/crossings.py`)
 
 With a DEM the crossings tool reads the drainage area above each crossing (the same priority-flood
@@ -168,7 +267,7 @@ One GeoPackage per tool run (EPSG:5070 points or polygons, lat / lon fields) and
 work grid is CONUS Albers (EPSG:5070): Alaska, Hawaii and the territories are not supported yet.
 
 * `embankments` / `ponds` / `crossings`: every candidate, new first, with `status`, `known_id`,
-  `known_layer`, `known_ft`, heights in feet, storage in acre-feet, areas in acres, `confidence`
+  `known_layer`, `known_state` (the list's own status of that structure, when it has one), `known_ft`, heights in feet, storage in acre-feet, areas in acres, `confidence`
   and `notes`.
 * `screening_dams` / `screening_ponds`: the not-listed candidates that could release water
   (dams, dry embankments, levees; never a road fill, which screening cuts to open its culvert), as
