@@ -16,7 +16,7 @@ File layout:
 
 Keys (SCHEMA): sunny_day_start_pool, pmf_breach_volume, failure_mode, breach_method, manning_n.
 Per-dam inputs (height, storage, crest, pools) are NOT here: they belong to the dam (dam.json).
-Engine-only knobs (LISFLOOD CFL / theta, cell size) are NOT here. Nothing here is a jurisdiction
+Engine-only knobs (solver CFL / theta, cell size) are NOT here. Nothing here is a jurisdiction
 threshold (those are DamIT Catalog data).
 
 DamIT Runner's rundam tool takes METHOD and MANNING from these values when DamIT Core is

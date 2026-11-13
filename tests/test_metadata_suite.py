@@ -64,6 +64,7 @@ def _finder_version():
 
 FINDER_VERSION = _finder_version()
 PMP_VERSION = "0.4.1"           # DamIT PMP 0.4.0: watershed, temporal patterns, losses, lisfloodrain (the others are 0.2.0)
+CORE_VERSION = "0.3.0"          # DamIT Core 0.3.0: the shared defaults file (lib/shared_defaults.py)
 
 
 class Metadata(unittest.TestCase):
@@ -73,7 +74,8 @@ class Metadata(unittest.TestCase):
             self.assertEqual(m["name"], name)
             # the Finder engine is shared with DamSafety Finder and versioned with it (its
             # run_info records finder.VERSION); the rest are versioned with the DamIT suite
-            self.assertEqual(m["version"], {"damit_finder": FINDER_VERSION, "damit_pmp": PMP_VERSION}.get(folder, "0.2.0"))
+            self.assertEqual(m["version"], {"damit_finder": FINDER_VERSION, "damit_pmp": PMP_VERSION,
+                                             "damit_core": CORE_VERSION}.get(folder, "0.2.0"))
             self.assertEqual(m["qgisMinimumVersion"], "3.28")
             self.assertEqual(m["qgisMaximumVersion"], "4.99")
             self.assertEqual(m["supportsQt6"], "True")
