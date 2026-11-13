@@ -39,7 +39,7 @@ plugin zip or CI job.
    source ~/.zshrc
    ```
    Commands: `heim-start` (Ollama server, in its own tab), `heim "question"`, `heim-chat` (a conversation; every
-   question is looked up in the indexed documents first, `--bare` for the model on its own), `heim-add <file>`, `heim-doctor` (is Heim reading what you think it is), `heim-index`, `heim-query`,
+   question is looked up in the indexed documents first, `--bare` for the model on its own), `heim-add <file>`, `heim-doctor` (is Heim reading what you think it is; `heim doctor`, `heim add` and `heim chat` are the same three as words), `heim-index`, `heim-query`,
    `heim-audit`, `heim-digest`, `heim-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
 
    **Repo audit:** `damchain audit --repo ~/path/to/DWR_Plugins` writes one report to
@@ -60,6 +60,10 @@ plugin zip or CI job.
       time must stay within tolerance, and LISFLOOD-FP volume error must stay at 1 % or under.
    Any HIGH finding gives exit code 1, so the audit can gate a merge. `--only release,security`
    runs a subset.
+
+   Run the first command after the `source` line, not in the same paste: zsh reads a whole pasted
+   block before running any of it, so a new command pasted along with `source ~/.zshrc` is
+   `command not found` although the install is fine. A new Terminal tab does the same job.
 
 2. **Vor (needs Ollama from step 1, or the Ollama app):**
    ```zsh

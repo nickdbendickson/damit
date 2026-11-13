@@ -242,6 +242,47 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   earlier version doubled: plain `vor ingest` adopts the existing copies and drops the
   originals from the index.
 
+### D10. Three commands that sent each other round in a circle
+- **Was:** on the first real library (191 documents), `vor ocr` answered "No scanned PDFs to
+  OCR" while `vor ingest` and `vor doctor` said 99 documents had pages with no text layer and
+  to run `vor ocr`. A plain `vor ocr` takes a PDF only when at least 30 % of its pages are
+  scanned; the 7 that were had been done, and the 99 were under it. The doctor also said two
+  files were "not in the index. Run: vor ingest" straight after an ingest that added nothing:
+  they were exact copies of indexed files, and ingest goes by content.
+- **Tell:** the advice printed by one command is the command that was just run.
+- **Fix:** Vor 1.3.2. All three count the documents under the share and name
+  `vor ocr --min-fraction 0`; `vor ocr --list` shows them without running anything. The doctor
+  reports copies as fine and a file over the size limit as never indexed. `vor list --missing`
+  lists the documents whose file is gone.
+
+### D11. "command not found" straight after a good install
+- **Was:** the install steps were one paste: the two installers, `source ~/.zshrc`, then
+  `heim-doctor` and `vor doctor`. Both checks answered `zsh: command not found`. Nothing was
+  wrong with the install. zsh reads a whole pasted block before it runs any of it, and the
+  commands are aliases, which are resolved when a line is read: at that moment the `source`
+  line had not run yet. The same lines typed one at a time work.
+- **Tell:** the command works in the next paste, or in a new Terminal tab.
+- **Fix:** steps that add commands end their paste block at `source ~/.zshrc`; the first use
+  of a new command is in the next block. A second cause that looks the same: `heim doctor`
+  with a space used to be a question to the model, not the check (rag_query 2.4 takes
+  `heim doctor`, `heim add FILE` and `heim chat` as words, as Vor does).
+
+### D12. "100 file(s) changed since", minutes after they were indexed
+- **Was:** on the first install from the package, `heim-doctor` reported that every page of
+  the knowledge pack had changed since it was indexed, and a second line that `engine_docs`
+  came from a folder that was "not there now". Neither was a fault in the index. The package
+  zip was made on a machine set to UTC, and a zip stores each file's wall-clock time with no
+  zone: unpacked six time zones west, the pages were dated six hours in the future, later than
+  the index run. Re-indexing could not clear it, because the new run was still earlier than
+  those dates. The folder had moved because the Vor installer, run after Heim's, renamed
+  `~/DamResearch` to `~/Vor`.
+- **Tell:** every file of a collection "changed" at once; `ls -l` shows dates later than now.
+- **Fix:** rag_index 2.8 records each file's size, date and content hash when it indexes, and
+  the doctor compares against that, so a date alone never means a change. For a folder moved
+  by the rename it prints the `heim-index` line for the new place. On an index that 2.8 has
+  not rebuilt yet, `touch` the files and re-index once. Build package zips with a tool that
+  writes UTC times (Info-ZIP `zip`), not one that stores local time only.
+
 ---
 
 _Add a case when a failure cost more than an hour to diagnose and would be recognised

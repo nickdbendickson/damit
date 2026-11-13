@@ -119,7 +119,7 @@ open the Crest desk wired to one plugin set
 
 ---
 
-## rag_index.py 2.7
+## rag_index.py 2.8
 
 Installed command: `heim-index  (and heim-add = --add)`. Build Heim's document index.
 
@@ -139,7 +139,7 @@ Index folders (text+PDFs) into a named collection.
 
 ---
 
-## rag_query.py 2.3
+## rag_query.py 2.4
 
 Installed command: `heim  /  heim-query  /  heim-chat (with --chat)`. Ask Heim a question, or hold a conversation, answered from the index.
 
@@ -388,7 +388,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.3.1
+## vor.py 1.3.2
 
 Installed command: `vor`. The literature assistant.
 
@@ -421,7 +421,9 @@ copy files into the library and index them (drag them in)
 
 documents in the library
 
-No arguments.
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `--missing` |  |  | only the indexed documents whose file is no longer where it was |
 
 #### `vor.py meta`
 
@@ -496,7 +498,8 @@ OCR scanned PDFs (needs ocrmypdf) and re-index them
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
-| `--min-fraction` | MIN_FRACTION | `0.3` | OCR a PDF when at least this share of its pages has no text (default 0.3) |
+| `--min-fraction` | MIN_FRACTION | `0.3` | OCR a PDF when at least this share of its pages has no text (default 0.3; 0 = every PDF with a scanned page) |
+| `--list` |  |  | show what would be OCRed at this --min-fraction, and what would be left; runs nothing |
 
 #### `vor.py remove`
 
