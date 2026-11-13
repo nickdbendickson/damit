@@ -184,7 +184,7 @@ low-confidence cases say so) instead of a gap, and `terrain` checks coverage in 
 | `damit_run:finishanuga`, `damit_run:delineate` | Finish an ANUGA run after QGIS closed; delineate the watershed of a dam (USGS StreamStats). |
 
 The eight tools from `batch` down are the DamSafety Runner's own (`algorithms/engine.py`, `core/`), registered since
-0.3.5. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
+0.4.1. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
 DamSafety's dam-folder layout; `damit_run:rundam` stays the tool the Screener hand-off and DamIT Crest call.
 
 **Engine parity with DamSafety.** `core/`, `algorithms/engine.py`, `flood/breach.py` and DamIT Finder are ports of
@@ -204,7 +204,7 @@ names and defaults: `METHOD` (Froehlich 2008 piping by default; TR-60, MacDonald
 PATH; `builtin` = the built-in numpy engine, never chosen by itself), `ANUGA_PYTHON`, `KEEP_FILES`, `PRODUCTS`,
 `CONTOURS_HR` "0.25, 0.5, 1, 2, 4, 8", `PIPE_FRACTION` 0.5, `PIPE_DIA_FT` 0.5, `DEM_Z`. The preset is a sunny day:
 no outlet or spillway flow, the reservoir starts at the top of dam, a piping breach (`PMF_FT` is recorded only).
-Since 0.4.0 the scenario can be changed: `START_POOL` (top of dam / normal pool, `NORMAL_POOL_FT` or dam.json /
+Since 0.5.0 the scenario can be changed: `START_POOL` (top of dam / normal pool, `NORMAL_POOL_FT` or dam.json /
 a stated elevation, `START_WSE_FT`) moves the sunny-day pool, held as its depth below the top of dam, and the breach
 equations then use the storage at that pool; `SCENARIO` = flood routes a PMP/PMF inflow hydrograph (`INFLOW_CSV`,
 hours and cfs) through the reservoir, the spillway rating (`SPILLWAY_CSV`), an auxiliary spillway weir

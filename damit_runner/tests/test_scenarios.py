@@ -1,4 +1,4 @@
-"""DamIT Runner 0.4.0: the scenario choices of damit_run:rundam (no QGIS; the engine is stubbed).
+"""DamIT Runner 0.5.0: the scenario choices of damit_run:rundam (no QGIS; the engine is stubbed).
 
 The preset is unchanged: a sunny day from the top of dam with a piping breach. START_POOL starts the sunny day at the
 normal pool or a stated elevation; SCENARIO = flood routes an inflow hydrograph with a breach or with no breach, with

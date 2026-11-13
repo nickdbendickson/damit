@@ -62,9 +62,9 @@ DEFAULTS = dict(method=BR.METHOD_PIPING, tier=TIER_LISFLOOD, force_anuga=False, 
                 anuga_fine_m2=100.0, anuga_coarse_m2=1000.0, anuga_near_mi=1.0, anuga_buffer_m=500.0, threads=0,
                 keep_files=True, products=True, contours_hr=(0.25, 0.5, 1.0, 2.0, 4.0, 8.0), z_units="auto",
                 pipe_fraction=0.5, pipe_dia_ft=0.5,
-                # 0.4.0: the scenario. The preset is the sunny day from the top of dam with a piping breach.
+                # 0.5.0: the scenario. The preset is the sunny day from the top of dam with a piping breach.
                 scenario="sunny", start_pool="top", trigger="peak")
-# 0.4.0: the scenarios (the ids of the ported engine's core/workflow.py)
+# 0.5.0: the scenarios (the ids of the ported engine's core/workflow.py)
 SCENARIO_SUNNY, SCENARIO_FLOOD, SCENARIO_FLOOD_NO_BREACH = "sunny", "flood", "flood_no_breach"
 SCENARIOS = (SCENARIO_SUNNY, SCENARIO_FLOOD, SCENARIO_FLOOD_NO_BREACH)
 SCENARIO_LABELS = {
@@ -198,7 +198,7 @@ def _num(v):
 
 
 def flood_inputs(p, dam):
-    """0.4.0: the flood (PMP/PMF) inputs of a flood scenario from the run parameters: the inflow hydrograph CSV
+    """0.5.0: the flood (PMP/PMF) inputs of a flood scenario from the run parameters: the inflow hydrograph CSV
     (hours, cfs), a spillway rating CSV (ft, cfs) and/or the normal pool, an auxiliary spillway weir, and when the
     dam fails. The routing is the ported engine's core/flood.py (the same code as the DamSafety Runner)."""
     from ..core import flood as FL
@@ -624,7 +624,7 @@ def run_breach(p, out_dir, log=print, cancel=None):
         final_engine = "ANUGA"
     t_ref_hr = float(getattr(hy, "t_ref_s", 0.0) or 0.0) / 3600.0
     if t_ref_hr > 0:
-        # 0.4.0, flood with a breach: arrival times count from breach initiation, not from the start of the inflow
+        # 0.5.0, flood with a breach: arrival times count from breach initiation, not from the start of the inflow
         # (ground the spillway flow wetted before the breach gets 0), as the DamSafety Runner reports them
         arr = np.asarray(out["arrival_hr"], float)
         out["arrival_hr"] = np.where(np.isfinite(arr), np.clip(arr - t_ref_hr, 0.0, None), np.nan)

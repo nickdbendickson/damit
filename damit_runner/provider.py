@@ -6,7 +6,7 @@ from qgis.PyQt.QtGui import QIcon
 from .algorithms.rundam import ALGORITHMS as _RUNDAM_ALGS
 
 # The ported DamSafety tools (batch, sensitivity, cascade, hydrograph, estimate, check, finishanuga, delineate).
-# 0.3.5: a failed import is no longer silent. Until 0.3.4 a missing compat module (structure_flags, suite_config)
+# 0.4.1: a failed import is no longer silent. Until 0.4.0 a missing compat module (structure_flags, suite_config)
 # made this import fail, the except below emptied the list, and none of those tools was ever registered.
 ENGINE_IMPORT_ERROR = None
 try:
@@ -70,7 +70,7 @@ class DamitRunProvider(QgsProcessingProvider):
         return "DamIT Runner"
 
     def longName(self):  # noqa: N802
-        return "DamIT Runner 0.4.0"
+        return "DamIT Runner 0.5.0"
 
     def icon(self):
         return QIcon(os.path.join(os.path.dirname(__file__), "icon.svg"))

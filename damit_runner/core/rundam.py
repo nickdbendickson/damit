@@ -33,11 +33,11 @@ original_outer_m, widened, widening_reason: DWR-2645 widened 27 m to 37 m becaus
 ends with a wet edge warns (flood/model.py final_edge_note: edges, depths, outflow %, the limit it stopped at or why the domain did not
 grow). The report's warnings are now in the log ("Warning: ...") and in run_setup.json run_notes. No change to the model or its numbers.
 
-0.3.5: the ported DamSafety engine (core/, algorithms/engine.py) is brought up to DamSafety Runner 3.17.13 and its tools are
+0.4.1: the ported DamSafety engine (core/, algorithms/engine.py) is brought up to DamSafety Runner 3.17.13 and its tools are
 registered (they failed to import until now); scripts/check_engine_parity.py keeps the ported files in step with DamSafety.
 No change to this module's run or its numbers.
 
-0.4.0: the scenario. The preset is as before (sunny day, top of dam, piping). START_POOL starts the sunny day at the normal pool or
+0.5.0: the scenario. The preset is as before (sunny day, top of dam, piping). START_POOL starts the sunny day at the normal pool or
 a stated elevation; SCENARIO = flood routes an inflow hydrograph (INFLOW_CSV) through the reservoir, the spillway rating, an auxiliary
 spillway weir (AUX_*) and over the crest, with a breach (TRIGGER) or with none (flood/model.py scenario_hydrograph; the routing is the
 ported engine's core/flood.py). PMF_FT stays recorded only.
@@ -48,7 +48,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -241,10 +241,10 @@ MODEL_PARAMS = {
     "PRODUCTS": ("products", True), "CONTOURS_HR": ("contours_hr", "0.25, 0.5, 1, 2, 4, 8"),
     "PIPE_FRACTION": ("pipe_fraction", 0.5), "PIPE_DIA_FT": ("pipe_dia_ft", 0.5),
     "DEM_Z": ("z_units", 0),
-    # 0.4.0: the scenario. Index 0 of each is the preset (sunny day, top of dam; METHOD 0 is piping).
+    # 0.5.0: the scenario. Index 0 of each is the preset (sunny day, top of dam; METHOD 0 is piping).
     "SCENARIO": ("scenario", 0), "START_POOL": ("start_pool", 0), "TRIGGER": ("trigger", 0),
 }
-# 0.4.0: values with no default (None = not given)
+# 0.5.0: values with no default (None = not given)
 SCENARIO_VALUES = {"START_WSE_FT": "start_wse_ft", "NORMAL_POOL_FT": "normal_pool_ft",
                    "TRIGGER_VALUE": "trigger_value", "AUX_CREST_FT": "aux_crest_ft",
                    "AUX_LENGTH_FT": "aux_length_ft", "AUX_C": "aux_c"}

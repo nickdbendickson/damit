@@ -141,7 +141,7 @@ class RunDam(_Base):
         P(QgsProcessingParameterPoint("INFLOW_POINT", "Breach inflow point below the dam (empty = the toe band)",
                                       optional=True))
         P(QgsProcessingParameterEnum("METHOD", "Breach (ND 5.1.1(d))", RD.method_labels(), defaultValue=0))
-        # 0.4.0: the scenario. The presets (index 0) are the sunny day from the top of dam with a piping breach.
+        # 0.5.0: the scenario. The presets (index 0) are the sunny day from the top of dam with a piping breach.
         scen, pools, trigs = RD.scenario_labels()
         P(QgsProcessingParameterEnum("SCENARIO", "Scenario", scen, defaultValue=0))
         P(QgsProcessingParameterEnum("START_POOL", "Sunny day: the pool when the breach starts", pools,
