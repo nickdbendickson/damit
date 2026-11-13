@@ -12,7 +12,7 @@
 #   offline/lisflood-src/            LISFLOOD-FP 8.3 source (macOS builds it at install)
 #   damit_ai/offline/ollama/         the pinned Ollama runtime for that platform
 #   damit_ai/offline/models/         the AI models (pulled once; same files on every OS)
-#   damit_ai/offline/DamResearch/    the dam-research reference library
+#   damit_ai/offline/Vor/    the vor reference library
 #
 #   bash download-all.sh                          # this machine's platform
 #   bash download-all.sh --platform win-64        # build a Windows set from a Mac / Linux box
@@ -141,14 +141,14 @@ fi
 
 # ---------------------------------------------------------------------------
 if [ "$DO_LIBRARY" = 1 ]; then
-  say "dam-research library -> damit_ai/offline/DamResearch/library"
-  FA="$HERE/damit_ai/research/fetch_asdso.py"; PY="$(command -v python3 || true)"
+  say "vor library -> damit_ai/offline/Vor/library"
+  FA="$HERE/damit_ai/vor/fetch_asdso.py"; PY="$(command -v python3 || true)"
   if [ -f "$FA" ] && [ -n "$PY" ]; then
-    LIB="$HERE/damit_ai/offline/DamResearch"; mkdir -p "$LIB/library"
-    DAMRESEARCH_HOME="$LIB" "$PY" "$FA" --catalog --asdso || warn "some library files failed (see $LIB)"
+    LIB="$HERE/damit_ai/offline/Vor"; mkdir -p "$LIB/library"
+    VOR_HOME="$LIB" "$PY" "$FA" --catalog --asdso || warn "some library files failed (see $LIB)"
     ok "library: $(du -sh "$LIB/library" | awk '{print $1}')"
   else
-    warn "library skipped (needs python3 and damit_ai/research/fetch_asdso.py)"
+    warn "library skipped (needs python3 and damit_ai/vor/fetch_asdso.py)"
   fi
 fi
 
