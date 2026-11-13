@@ -129,6 +129,21 @@ class Embankments(unittest.TestCase):
         got = em.find(dem, GT, [LINE], params=em.FinderParams(min_height_m=0.5, dedupe_m=1.0))
         b = [e for e in got if abs((N * CELL - e.y) / CELL - 182) < 3][0]
         self.assertAlmostEqual(b.orig_m, bed(182), delta=0.15)
+        # nor ordinary micro-relief on the floor (8 cm): a 4 m valley dam whose pool runs off the
+        # grid is not 'dug' (the fit used to stop at the first 15 cm bump, on the face remnant)
+        from scipy import ndimage as ndi_
+        for seed in range(6):
+            dem, y = valley()
+            dem = fill(dem, y, 200, 4.0)
+            noise = ndi_.gaussian_filter(np.random.default_rng(seed).normal(0, 1, dem.shape), 2.0)
+            dem = dem + 0.08 * noise / noise.std()
+            lvl = bed(200) + 3.0
+            dem = np.where((y < 197) & (dem < lvl), lvl, dem)
+            got = em.find(dem, GT, [LINE], params=em.FinderParams(min_height_m=0.5, dedupe_m=1.0))
+            d = [e for e in got if abs((N * CELL - e.y) / CELL - 200) < 4]
+            self.assertTrue(d, seed)
+            self.assertFalse(any("(dug)" in n for n in d[0].notes), (seed, d[0].below_frac))
+            self.assertLess(d[0].below_frac, 0.3, seed)
 
     def test_profile_measures_do_not_depend_on_the_line_angle(self):
         # a 3 m fill with 3:1 faces across a 0.5 % valley, the stream line at several angles to
@@ -209,8 +224,62 @@ class Embankments(unittest.TestCase):
             kd3, open3 = em.face_toe(zz, e - 3, int(150 / cell), cell, 8.0)
             crest = zz[int(np.argmax(fill))]
             self.assertLess(crest - zz[kd3], 3.0 + slope * 20 + 0.6, (slope, cell))
+            # ... and at the foot, not a sample up the face (the window that stops the walk)
+            self.assertGreater(crest - zz[kd3], crest - (200.0 - slope * 101.0) - 0.35, (slope, cell))
             self.assertLess(x[kd3] - x[e], 25.0)
             self.assertFalse(open3)
+
+    def draw_dam(self, slope, h, phase, pool_below=0.6, face=3.0, n=300, cell=3.0):
+        """A fill with `face`:1 faces and a 4 m top across a draw falling `slope`, a flat pool
+        pool_below m under the crest behind it; the fill centre shifted by phase of a cell."""
+        y, x = np.mgrid[0:n, 0:n]
+        yc, xm = (y + 0.5) * cell, (n // 2 + 0.5) * cell
+        dem = 100.0 - yc * slope + np.abs((x + 0.5) * cell - xm) * 0.03
+        y0 = 150 * cell + phase * cell
+        b0 = 100.0 - y0 * slope
+        dem = np.maximum(dem, b0 + h - np.maximum(0.0, np.abs(yc - y0) - 2.0) / face)
+        if pool_below is not None:
+            lvl = b0 + h - pool_below
+            dem = np.where((yc < y0) & (dem < lvl), lvl, dem)
+        gt = (0.0, cell, 0.0, n * cell, 0.0, -cell)
+        line = [(xm, n * cell - 1.0), (xm, 1.0)]
+        return dem, gt, line, b0 - slope * (2.0 + face * h)
+
+    def test_a_pooled_dam_on_a_gentle_draw_keeps_its_height(self):
+        # 3:1 faces on a 2 % draw at 3 m cells: the toe used to stop a sample up the face, so a
+        # 7-8 ft dam fell under the 5 ft minimum on some sample phases
+        for h in (2.3, 3.0):
+            for phase in (0.0, 0.2, 0.4, 0.6, 0.8):
+                dem, gt, line, foot = self.draw_dam(0.02, h, phase)
+                got = em.find(dem, gt, [line])
+                self.assertEqual(len(got), 1, (h, phase))
+                true = (100.0 - (150 + phase) * 3.0 * 0.02 + h) - foot
+                self.assertAlmostEqual(got[0].crest_height_m, true, delta=0.4, msg=(h, phase))
+
+    def test_side_slopes_of_a_full_pond_are_not_read_flatter(self):
+        # the pool 0.6-1.0 m under the crest leaves a face about a sample long: NaN or near the
+        # true 3:1 + 3:1, never much flatter
+        for below in (0.6, 1.0):
+            for phase in (0.0, 0.25, 0.5, 0.75):
+                dem, gt, line, _f = self.draw_dam(0.004, 3.0, phase, pool_below=below)
+                e = em.find(dem, gt, [line])[0]
+                if math.isfinite(e.side_sum):
+                    self.assertLess(e.side_sum, 7.0, (below, phase))
+                    self.assertGreater(e.side_sum, 5.0, (below, phase))
+        dem, gt, line, _f = self.draw_dam(0.004, 3.0, 0.0, pool_below=None)
+        self.assertAlmostEqual(em.find(dem, gt, [line])[0].side_sum, 6.0, delta=0.3)
+
+    def test_a_line_that_leaves_the_grid_and_comes_back(self):
+        # the stretch off the grid is not profile spacing: a 4:1 fill on such a line is still found,
+        # with the same length as on a straight line
+        dem, gt, line, _f = self.draw_dam(0.004, 3.0, 0.0, pool_below=1.0, face=4.0)
+        xm = line[0][0]
+        top, bot = line[0][1], line[1][1]
+        out = [(xm, top), (xm, top - 60 * 3.0), (xm + 2000.0, top - 62 * 3.0), (xm, top - 64 * 3.0), (xm, bot)]
+        a, b = em.find(dem, gt, [line]), em.find(dem, gt, [out])
+        self.assertEqual((len(a), len(b)), (1, 1))
+        self.assertAlmostEqual(a[0].len_m, b[0].len_m, delta=1.0)
+        self.assertAlmostEqual(a[0].height_m, b[0].height_m, delta=0.05)
 
     def test_low_fill_left_out_and_threshold_is_yours(self):
         dem, y = valley()
@@ -520,11 +589,17 @@ class Score(unittest.TestCase):
         import tempfile
         rows = self.rows05()
         rows.append(dict(rows[0], on_road="yes", known_ft=250.0))      # a second fill in a dam's bag
-        m = sc.train(rows, features=sc.ALL_FEATURES, bags=True, learner="trees", n_bags=3,
-                     extra=[(dict(rows[1]), 1.0, 20.0), (dict(rows[2]), 0.5, 20.0)])
+        from unittest import mock
+        with mock.patch.object(sc.ch, "bagging_pu", wraps=sc.ch.bagging_pu) as bp:
+            m = sc.train(rows, features=sc.ALL_FEATURES, bags=True, learner="trees", n_bags=3,
+                         extra=[(dict(rows[1]), 1.0, 20.0), (dict(rows[2]), 0.5, 20.0)])
         self.assertEqual((m["version"], m["learner"]), (3, "pu-gbm"))
         self.assertEqual(m["clean_positives"]["bags"], 80)
-        self.assertEqual(m["trusted_labels"], 2)                        # the unsure mark counts as both
+        self.assertEqual(m["trusted_labels"], 2)
+        # what the learner got: the yes mark, and the unsure one as both a dam and not, half each
+        tr = np.asarray(bp.call_args.kwargs["trusted"], bool)
+        self.assertEqual(np.asarray(bp.call_args.args[1])[tr].tolist(), [1.0, 1.0, 0.0])
+        self.assertEqual(np.asarray(bp.call_args.kwargs["sw"])[tr].tolist(), [20.0, 10.0, 10.0])
         test = self.rows05(seed=9)
         self.assertGreater(sc.ranked_auc(sc.score(m, test), sc.labels(test)), 0.85)
         p = os.path.join(tempfile.mkdtemp(), "t.json")
@@ -574,6 +649,47 @@ class Score(unittest.TestCase):
         m = sc.train(self.rows(n=120))                   # pre-0.5 rows: no relief_ft
         notes = [msg for _s, msg in sc.score_detail(m, self.rows05(n=30))]
         self.assertFalse(any("terrain" in msg for msg in notes))
+        # most listed dams unmeasured (200), a few measured (about 7 per group): the unmeasured
+        # ones may be in any group, so no 'only 7' note - unless even all of them are too few
+        m = sc.train(self.rows(n=600) + self.rows05(n=60))
+        self.assertGreater(m["group_positives"].get("", 0), 150)
+        notes = [msg for _s, msg in sc.score_detail(m, self.rows05(n=30))]
+        self.assertFalse(any("terrain" in msg for msg in notes))
+        notes = [msg for _s, msg in sc.score_detail(m, self.rows05(n=30), min_group_positives=1000)]
+        self.assertTrue(any("terrain: only" in msg for msg in notes))
+
+    def test_a_yes_on_a_listed_fill_holds_its_bag(self):
+        # a listed dam's bag: the fill on it and a road fill 250 ft off. A 'yes' on the dam's
+        # fill is that dam's positive - the road fill must not become a second one; a 'no' on it
+        # leaves the road fill in, to be promoted
+        rows = self.rows05()
+        for i, r in enumerate(rows):
+            r["find_id"] = "F{}".format(i)
+        rows.append(dict(rows[0], find_id="FD", on_road="yes", known_ft=250.0))
+        ids = lambda rr: {r["find_id"] for r in rr}
+        for t, bags, has_decoy in ((1.0, True, False), (0.5, True, False), (0.0, True, True), (1.0, False, True)):
+            kept, _bg = sc._without_marked(rows, None, [(dict(rows[0]), t, 20.0)], ("dam",), bags)
+            self.assertNotIn("F0", ids(kept))
+            self.assertEqual("FD" in ids(kept), has_decoy, (t, bags))
+            self.assertEqual(len(kept), len(rows) - (1 if has_decoy else 2))
+        m = sc.train(rows, features=sc.ALL_FEATURES, bags=True, extra=[(dict(rows[0]), 1.0, 20.0)])
+        self.assertEqual(m["clean_positives"]["bags"], 79)              # D0 is the mark now
+
+    def test_trees_background_counts_the_marked_dams(self):
+        # 3 listed dams and 30 'yes' marks: the background is 5 x 33, not 5 x 3
+        from ..core import challenger as ch
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=(400, 3))
+        y = np.zeros(400)
+        y[:3] = 1.0
+        tr = np.zeros(400, bool)
+        tr[3:33] = True
+        y[3:33] = 1.0
+        with mock_fit(ch) as fit:
+            ch.bagging_pu(x, y, n_bags=2, trusted=tr)
+        self.assertEqual(len(fit.call_args_list[0].args[1]), 3 + 5 * 33 + 30)
+        with self.assertRaises(ValueError):                 # every row a dam: a constant model
+            ch.bagging_pu(x[:40], np.ones(40), n_bags=2)
 
     def test_round_trip(self):
         import os
@@ -582,6 +698,11 @@ class Score(unittest.TestCase):
         p = os.path.join(tempfile.mkdtemp(), "m.json")
         sc.save(m, p)
         self.assertEqual(sc.load(p)["weights"], m["weights"])
+
+
+def mock_fit(ch):
+    from unittest import mock
+    return mock.patch.object(ch, "fit_gbm", wraps=ch.fit_gbm)
 
 
 class Pipes(unittest.TestCase):
@@ -989,6 +1110,11 @@ class Evaluate(unittest.TestCase):
         self.assertGreaterEqual(h0["lo"] * h0["n_list"], 4.0 - 1e-6)
         # ... and the upper bound sits at least where Wilson puts 0 of 30 (0.114 of the rest)
         self.assertGreater(h0["hi"], 0.11 * 8863 / h0["n_list"])
+        # chances that differ only by Monte Carlo noise are one stratum, not one stratum a card
+        jit = [1.0] * 10 + [0.1 + 1e-3 * ((-1) ** i) * (i % 3) for i in range(20)]
+        hj = ev.ht_share(y, jit)
+        self.assertAlmostEqual(hj["lo"], h["lo"], delta=0.01)
+        self.assertAlmostEqual(hj["hi"], h["hi"], delta=0.01)
 
     def test_platt_is_monotone_and_folds_leave_one_out(self):
         rng = np.random.default_rng(4)
@@ -1079,6 +1205,10 @@ class EvidenceSources(unittest.TestCase):
         red = np.where(m, 200.0, 60.0)
         nir = np.where(m, 190.0, 160.0)                     # bare: NIR ~ red; grass: NIR >> red
         self.assertGreater(evd.bare_share(red, red, red, nir, m), 0.9)
+        # an image that holds a sliver of the disk is no reading
+        sliver = red.copy()
+        sliver[:, 25:] = np.nan
+        self.assertTrue(np.isnan(evd.bare_share(sliver, red, red, nir, m)))
         cdl = np.where(m, 176, 1).astype(float)
         self.assertEqual(evd.share_of_classes(cdl, m, (176,)), 1.0)
 
@@ -1151,14 +1281,40 @@ class Review(unittest.TestCase):
         b = rv.pick_batch(rows, 90, committee=comm, seed=3)
         self.assertTrue(all(r["incl_prob"] == 1.0 for r in b if r["stratum"] == "near"))
 
-    def test_reviewed_cards_only_come_back_through_the_random_control(self):
+    def test_a_later_round_samples_the_cards_not_yet_reviewed(self):
+        # the documented flow: the same seed, the earlier batches as reviewed. A round samples the
+        # pool of unreviewed cards (reviewed cards never come back); its chances add up to the
+        # pool, and the earlier cards at chance 1 plus this batch estimate the whole list
         rows = self.cands()
-        r1 = rv.pick_batch(rows, 90, seed=0)
-        r2 = rv.pick_batch(rows, 90, seed=0, reviewed={r["find_id"] for r in r1})
-        p_rand = 16 / 600.0
-        for r in r2:
-            if r["stratum"] == "random":
-                self.assertAlmostEqual(r["incl_prob"], p_rand, places=5)
+        trait = {r["find_id"]: r["score"] > 0.7 for r in rows}
+        ratio, est = [], []
+        for seed in range(40):
+            r1 = rv.pick_batch(rows, 90, seed=seed)
+            done = {r["find_id"] for r in r1}
+            r2 = rv.pick_batch(rows, 90, seed=seed, reviewed=done)
+            self.assertFalse(done & {r["find_id"] for r in r2})
+            self.assertEqual({r["pool_n"] for r in r2}, {600 - len(done)})
+            ratio.append(sum(1.0 / r["incl_prob"] for r in r2) / (600 - len(done)))
+            h = ev.ht_share([trait[r["find_id"]] for r in r1 + r2], [1.0] * len(r1) + [r["incl_prob"] for r in r2])
+            est.append(h["share"])
+        self.assertAlmostEqual(float(np.mean(ratio)), 1.0, delta=0.07)
+        self.assertAlmostEqual(float(np.mean(est)), float(np.mean(list(trait.values()))), delta=0.03)
+
+    def test_a_batch_that_takes_the_whole_pool_is_a_census(self):
+        rows = self.cands(n=200)
+        s = np.array([r["score"] for r in rows])
+        order = np.argsort(-s)
+        keep = {rows[i]["find_id"] for i in list(order[:5]) + [order[-1]]}
+        done = {r["find_id"] for r in rows} - keep
+        for seed in range(5):
+            b = rv.pick_batch(rows, 90, seed=seed, reviewed=done)
+            self.assertEqual({r["find_id"] for r in b}, keep)
+            self.assertTrue(all(r["incl_prob"] == 1.0 for r in b))
+        small = self.cands(n=10)
+        for seed in range(5):
+            b = rv.pick_batch(small, 90, seed=seed)
+            self.assertEqual(len(b), 10)
+            self.assertTrue(all(r["incl_prob"] == 1.0 for r in b), seed)
 
     def test_dense_area_still_gets_a_near_slice(self):
         # the tile cap counts near-the-cut cards only, not the random and top cards there
@@ -1219,6 +1375,16 @@ class Dataset(unittest.TestCase):
         self.assertEqual((st2["yes"], st2["no"]), (0, 1))
         ds.add(d2, "FIND-1", "yes", reviewer="ann")             # ann changes the mark: the latest counts
         self.assertEqual(ds.stats(d2)["yes"], 1)
+        # a reviewer's own blind second look does not replace their first mark (named or not)
+        for rv_ in ("", "ann"):
+            d3 = tempfile.mkdtemp()
+            ds.add(d3, "FIND-1", "yes", reviewer=rv_)
+            if rv_:
+                ds.add(d3, "FIND-1", "no", reviewer="bob")
+            ds.add(d3, "FIND-1", "no", {"second_look": True}, reviewer=rv_)
+            st3 = ds.stats(d3)
+            self.assertEqual((st3["cards"], st3["yes"], st3["no"], st3["second_looks"]), (1, 1, 0, 1), rv_)
+            self.assertEqual(sorted(r["label"] for r in ds.load(d3) if r["reviewer"] == rv_), ["no", "yes"])
 
 
 if __name__ == "__main__":
