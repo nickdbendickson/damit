@@ -69,6 +69,25 @@ function ServerUp {
 
 # ---------------------------------------------------------------------------
 Say 'Step 1 - Directory skeleton'
+# Vor was called damresearch until 2026-11-13 and kept its library and index in ~\DamResearch
+# (or wherever DAMRESEARCH_HOME pointed). Creating an empty ~\Vor beside it and pinning VOR_HOME
+# to that would leave the indexed library behind with no error from anything. Carry it over
+# first: the index decides, the move is only onto a name that does not exist, nothing is deleted.
+function VorHasIndex ($d) { (Test-Path (Join-Path $d 'vor.db')) -or (Test-Path (Join-Path $d 'research.db')) }
+$OldRHome = if ($env:DAMRESEARCH_HOME) { $env:DAMRESEARCH_HOME } else { Join-Path $env:USERPROFILE 'DamResearch' }
+if (-not $env:VOR_HOME -and ($OldRHome -ne $RHome) -and (VorHasIndex $OldRHome) -and -not (VorHasIndex $RHome)) {
+  $moved = $false
+  # Only the default folder is renamed; a library kept elsewhere (another disk) stays there.
+  if (($OldRHome -eq (Join-Path $env:USERPROFILE 'DamResearch')) -and -not (Test-Path $RHome)) {
+    try { Move-Item -LiteralPath $OldRHome -Destination $RHome -ErrorAction Stop; $moved = $true } catch { $moved = $false }
+  }
+  if ($moved) { Ok "moved your Vor library from $OldRHome to $RHome (nothing was copied)" }
+  else { Warn "keeping your indexed Vor library where it is: $OldRHome"; $RHome = $OldRHome }
+}
+if ((Test-Path (Join-Path $RHome 'research.db')) -and -not (Test-Path (Join-Path $RHome 'vor.db'))) {
+  Rename-Item -LiteralPath (Join-Path $RHome 'research.db') -NewName 'vor.db'
+  Ok "index renamed research.db -> vor.db (nothing re-indexed)"
+}
 foreach ($d in @($LocalAI, $ModelsDir, $VorDir, (Join-Path $RHome 'library'), (Join-Path $RHome 'reports'))) {
   New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
@@ -392,6 +411,7 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
     $lines += "`$env:HEIM_NUM_CTX = '$NumCtx'"
     $lines += "function heim     { & '$PyL' '$LocalAI\rag_query.py' @args }"
     $lines += "function damchain { & '$PyL' '$LocalAI\dam_chain.py' @args }"
+    $lines += "function heim-add { & '$PyL' '$LocalAI\rag_index.py' --add @args }"
     $lines += "`$env:HEIM_WATCH_MODEL = '$WatchModel'"
     $lines += "function heim-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
     $lines += "function heim-watch  { & '$PyL' '$LocalAI\heim_watch.py' @args }"

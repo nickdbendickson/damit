@@ -660,7 +660,10 @@ def vor_home():
         return os.path.expanduser(os.environ["VOR_HOME"])
     new = os.path.expanduser("~/Vor")
     old = os.path.expanduser("~/DamResearch")
-    for d in (new, old):
+    # DAMRESEARCH_HOME: the old installers exported it, so a library kept somewhere else is
+    # still named by it in a shell whose rc file has not been rewritten yet.
+    legacy = os.path.expanduser(os.environ.get("DAMRESEARCH_HOME") or old)
+    for d in (new, legacy, old):
         if any(os.path.isfile(os.path.join(d, f)) for f in ("vor.db", "research.db")):
             return d
     if not os.path.isdir(new) and os.path.isdir(old):

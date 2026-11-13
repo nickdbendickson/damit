@@ -26,10 +26,10 @@ def slurp(name):
 
 def load(name, home, env=None):
     """Import a script with HOME pointed at a scratch folder (both read ~ at import or call)."""
-    keep = {k: os.environ.get(k) for k in ("HOME", "VOR_HOME", "VOR_DB")}
+    keep = {k: os.environ.get(k) for k in ("HOME", "VOR_HOME", "VOR_DB", "DAMRESEARCH_HOME")}
     os.environ["HOME"] = home
-    os.environ.pop("VOR_HOME", None)
-    os.environ.pop("VOR_DB", None)
+    for k in ("VOR_HOME", "VOR_DB", "DAMRESEARCH_HOME"):
+        os.environ.pop(k, None)
     os.environ.update(env or {})
     try:
         spec = importlib.util.spec_from_file_location("home_test_" + name.replace(".", "_"), os.path.join(VOR, name))
@@ -96,6 +96,17 @@ class HomeRuleTest(Scratch):
         self.make(self.old, "research.db")
         other = os.path.join(self.home, "elsewhere")
         self.assertEqual(self.both({"VOR_HOME": other}), other)
+
+    def test_a_library_kept_elsewhere_is_found_through_the_old_variable(self):
+        # the old installers exported DAMRESEARCH_HOME; a shell that has not re-read its rc
+        # file still carries it, and it is the only thing that names a library on another disk
+        other = os.path.join(self.home, "disk2", "papers")
+        self.make(other, "research.db")
+        self.assertEqual(self.both({"DAMRESEARCH_HOME": other}), other)
+
+    def test_a_stale_old_variable_pointing_at_nothing_is_ignored(self):
+        self.make(self.new, "vor.db")
+        self.assertEqual(self.both({"DAMRESEARCH_HOME": self.old}), self.new)
 
     def test_print_home_is_what_the_shell_scripts_get(self):
         self.make(self.old, "research.db")
@@ -193,6 +204,16 @@ class SetupMoveTest(Scratch):
         self.assertTrue(os.path.isfile(os.path.join(self.old, "research.db")))
         self.assertIn("RHOME=" + other, out)
 
+    def test_library_on_another_disk_is_kept_there_not_moved(self):
+        other = os.path.join(self.home, "disk2", "papers")
+        self.make(other, "research.db", "library/a.pdf")
+        out = self.run_block("setup-vor.zsh", "has_index() {", "# ----------",
+                             prelude='export DAMRESEARCH_HOME="%s"\n' % other + self.PRELUDE)
+        self.assertIn("RHOME=" + other, out)
+        self.assertTrue(os.path.isfile(os.path.join(other, "library/a.pdf")))
+        self.assertTrue(os.path.isfile(os.path.join(other, "vor.db")))       # only the index is renamed
+        self.assertFalse(os.path.exists(self.new))
+
     def test_first_run_moves_the_library_before_it_makes_its_log_folder(self):
         text = slurp("first-run.zsh")
         self.assertLess(text.index('mv "$HOME/DamResearch" "$HOME/Vor"'), text.index('mkdir -p "$OUT"'),
@@ -204,6 +225,62 @@ class SetupMoveTest(Scratch):
         self.assertFalse(os.path.exists(self.old))
         self.assertTrue(os.path.isfile(os.path.join(self.new, "research.db")))
         self.assertTrue(os.path.isdir(os.path.join(self.new, "library")))
+
+
+@unittest.skipUnless(shutil.which("bash"), "bash not installed")
+class LinuxInstallerMoveTest(Scratch):
+    """The same carry-over in install-local-ai-linux.sh (it had none: it made an empty ~/Vor
+    and pinned VOR_HOME to it), cut out and run under bash."""
+
+    def run_block(self, extra_env=None):
+        text = slurp(os.path.join("..", "install-local-ai-linux.sh"))
+        code = ('ok(){ echo "OK $*"; }; warn(){ echo "WARN $*"; }\n'
+                'LOCAL_AI="$HOME/local-ai"; MODELS_DIR="$LOCAL_AI/models"; VOR_DIR="$LOCAL_AI/vor"\n'
+                'RHOME="${VOR_HOME:-$HOME/Vor}"\n'
+                + block(text, 'OLD_RHOME="${DAMRESEARCH_HOME', "ok \"$LOCAL_AI, $RHOME\"")
+                + '\necho "RHOME=$RHOME"')
+        env = {"HOME": self.home, "PATH": os.environ["PATH"]}
+        env.update(extra_env or {})
+        r = subprocess.run(["bash", "-c", code], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_old_library_is_moved_before_the_skeleton_is_made(self):
+        self.make(self.old, "research.db", "library/a.pdf")
+        out = self.run_block()
+        self.assertIn("RHOME=" + self.new, out)
+        self.assertFalse(os.path.exists(self.old))
+        self.assertTrue(os.path.isfile(os.path.join(self.new, "vor.db")))
+        self.assertTrue(os.path.isfile(os.path.join(self.new, "library/a.pdf")))
+
+    def test_new_folder_already_there_keeps_the_indexed_one_as_the_library(self):
+        self.make(self.old, "research.db", "library/a.pdf")
+        self.make(self.new, "library/x.pdf")
+        out = self.run_block()
+        self.assertIn("RHOME=" + self.old, out)           # VOR_HOME gets pinned to the real library
+        self.assertTrue(os.path.isfile(os.path.join(self.old, "library/a.pdf")))
+
+    def test_library_on_another_disk_is_kept_there(self):
+        other = os.path.join(self.home, "disk2", "papers")
+        self.make(other, "research.db")
+        out = self.run_block({"DAMRESEARCH_HOME": other})
+        self.assertIn("RHOME=" + other, out)
+        self.assertFalse(os.path.isfile(os.path.join(self.new, "vor.db")))
+
+    def test_fresh_machine_and_rerun_are_untouched(self):
+        self.assertIn("RHOME=" + self.new, self.run_block())
+        self.make(self.new, "vor.db")
+        out = self.run_block()
+        self.assertIn("RHOME=" + self.new, out)
+        self.assertNotIn("moved", out)
+
+    def test_the_windows_installer_carries_the_same_rule(self):
+        # PowerShell cannot be run here, so this holds the structure only: the carry-over
+        # exists and comes before the folders are created.
+        ps = slurp(os.path.join("..", "install-local-ai-windows.ps1"))
+        self.assertLess(ps.index("function VorHasIndex"), ps.index("foreach ($d in @($LocalAI, $ModelsDir, $VorDir"))
+        for needle in ("DAMRESEARCH_HOME", "Move-Item -LiteralPath $OldRHome", "$RHome = $OldRHome", "'research.db'"):
+            self.assertIn(needle, ps)
 
 
 if __name__ == "__main__":

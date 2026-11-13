@@ -68,6 +68,13 @@ die()  { printf '  \033[1;31mX\033[0m   %s\n' "$*"; exit 1; }
 # leaving a second, empty library beside it: ~/DamResearch -> ~/Vor, research.db -> vor.db.
 # Only ever done when the new name does not exist, so re-running cannot clobber anything.
 has_index() { [[ -f "$1/vor.db" || -f "$1/research.db" ]]; }
+# A library the old installer was pointed at somewhere else (DAMRESEARCH_HOME, another disk)
+# stays where it is: moving it home would copy the whole library, not rename a folder.
+if [[ -z "${VOR_HOME:-}" && -n "${DAMRESEARCH_HOME:-}" && "$DAMRESEARCH_HOME" != "$OLD_HOME" ]] \
+   && has_index "$DAMRESEARCH_HOME" && ! has_index "$RHOME"; then
+  RHOME="$DAMRESEARCH_HOME"
+  ok "keeping your library where DAMRESEARCH_HOME put it: $RHOME"
+fi
 if [[ -z "${VOR_HOME:-}" && ! -d "$RHOME" && -d "$OLD_HOME" ]]; then
   if mv "$OLD_HOME" "$RHOME" 2>/dev/null; then
     ok "moved your library from $OLD_HOME to $RHOME (the old name is gone, nothing was copied)"

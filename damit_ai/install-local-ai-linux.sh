@@ -65,6 +65,26 @@ sha(){ sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
 
 # ---------------------------------------------------------------------------
 say "Step 1 — Directory skeleton"
+# Vor was called damresearch until 2026-11-13 and kept its library and index in ~/DamResearch
+# (or wherever DAMRESEARCH_HOME pointed). The mkdir below would create an empty ~/Vor beside it
+# and the rc block would then pin VOR_HOME to that empty folder: the indexed library is left
+# behind and nothing errors, `vor ask` just finds no passages. So carry it over first. The
+# index decides, the move happens only onto a name that does not exist, nothing is deleted.
+OLD_RHOME="${DAMRESEARCH_HOME:-$HOME/DamResearch}"
+vor_has_index() { [[ -f "$1/vor.db" || -f "$1/research.db" ]]; }
+if [[ -z "${VOR_HOME:-}" && "$OLD_RHOME" != "$RHOME" ]] && vor_has_index "$OLD_RHOME" && ! vor_has_index "$RHOME"; then
+  # Only the default folder is renamed. A library someone put elsewhere (another disk) stays
+  # there: moving it home would be a copy of the whole library, not a rename.
+  if [[ "$OLD_RHOME" == "$HOME/DamResearch" && ! -e "$RHOME" ]] && mv "$OLD_RHOME" "$RHOME" 2>/dev/null; then
+    ok "moved your Vor library from $OLD_RHOME to $RHOME (nothing was copied)"
+  else
+    warn "keeping your indexed Vor library where it is: $OLD_RHOME"
+    RHOME="$OLD_RHOME"
+  fi
+fi
+if [[ -f "$RHOME/research.db" && ! -f "$RHOME/vor.db" ]]; then
+  mv "$RHOME/research.db" "$RHOME/vor.db" && ok "index renamed research.db -> vor.db (nothing re-indexed)"
+fi
 mkdir -p "$LOCAL_AI" "$MODELS_DIR" "$VOR_DIR" "$RHOME/library" "$RHOME/reports"
 ok "$LOCAL_AI, $RHOME"
 
@@ -345,6 +365,7 @@ if ! grep -qF "$MARK" "$RC" 2>/dev/null; then
     [[ "$DO_HEIM" == 1 ]] && echo "export HEIM_NUM_CTX=$NUM_CTX"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias damchain='\"$LOCAL_AI/python\" \"$LOCAL_AI/dam_chain.py\"'"
+    [[ "$DO_HEIM" == 1 ]] && echo "alias heim-add='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_index.py\" --add'"
     [[ "$DO_HEIM" == 1 ]] && echo "export HEIM_WATCH_MODEL=\"${WATCH_MODEL:-qwen3:4b}\""
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-digest='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_digest.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-watch='\"$LOCAL_AI/python\" \"$LOCAL_AI/heim_watch.py\"'"

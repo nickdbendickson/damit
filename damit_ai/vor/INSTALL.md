@@ -68,6 +68,8 @@ heim-start                                     # Ollama server in its own tab (s
 # 1. Build the library: drop PDFs (sub-folders fine) into ~/Vor/library, then
 vor ingest                             # re-run any time; only new/changed files are read
 vor ingest ~/Zotero/storage            # or index a folder where it already lives
+vor add ~/Downloads/TR-66.pdf          # one file: copied into ~/Vor/library/added and indexed.
+                                       # Type `vor add ` and drag the file into the window.
 vor list                               # what's in, pages, and pages with no text (scanned)
 
 # 2. Fix citations (makes the references readable)
@@ -79,7 +81,8 @@ vor meta fema_p946 --title "Federal Guidelines for Inundation Mapping..." --year
 vor search "Froehlich breach width side slope"      # passages + pages, no model, instant
 vor ask "What flow depth do federal guidelines use for the inundation boundary?"
 vor research "How should breach formation time be chosen for small homogeneous earthen dams, and how uncertain is it?"
-vor chat                               # follow-ups; prefix a question with ! for deep research
+vor chat                               # follow-ups; prefix a question with ! for deep research.
+                                       # Drag a file into the chat window to add it on the spot.
 damchain vor ask "..."                         # same thing through damchain
 vor doctor                             # checks Ollama, both models, the library
 ```
