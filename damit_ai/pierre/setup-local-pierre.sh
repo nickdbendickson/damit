@@ -653,7 +653,10 @@ def index_collection(collection, roots, allow_empty=False):
                     elif kind == "pdf":
                         nnp += 1
                         # With no PDF library installed, EVERY pdf yields nothing, and saying
-                        # "needs OCR" blames the file for a missing dependency.
+                        # "needs OCR" blames the file for a missing dependency. On 2026-11-13
+                        # that sent seven perfectly good engine-doc PDFs to an OCR queue they
+                        # did not need; the real fix was to run this with the python that has
+                        # PyMuPDF. Only claim a missing text layer when we could have read one.
                         if pdf_backend_names():
                             print("    [no text layer] %s — needs OCR" % rel)
                         else:
