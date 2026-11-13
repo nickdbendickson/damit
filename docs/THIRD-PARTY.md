@@ -25,7 +25,7 @@ at install time; **"runtime"** means you install or download it yourself. Each p
 | GDAL, NumPy, SciPy | conda-forge | MIT, BSD-3-Clause, BSD-3-Clause | installed |
 | Miniforge | [conda-forge/miniforge](https://github.com/conda-forge/miniforge) | BSD-3-Clause | installed |
 | Ollama 0.40 | [ollama/ollama](https://github.com/ollama/ollama) | MIT | installed |
-| PyMuPDF | [pymupdf/PyMuPDF](https://github.com/pymupdf/PyMuPDF) | AGPL-3.0 (or commercial) | installed for dam-research |
+| PyMuPDF | [pymupdf/PyMuPDF](https://github.com/pymupdf/PyMuPDF) | AGPL-3.0 (or commercial) | installed for Vor |
 | laspy (+ lazrs) | [laspy/laspy](https://github.com/laspy/laspy) | BSD-2-Clause (laspy) | installed for DamIT Finder |
 | HEC-RAS | US Army Corps of Engineers | US government software | runtime (DamIT Runner refuses HEC-RAS today) |
 
@@ -46,7 +46,7 @@ hydrography, StreamStats; Microsoft US Building Footprints (ODbL); OpenStreetMap
 (**© OpenStreetMap contributors, ODbL**: keep this credit on any map that shows OSM data); FEMA / ORNL USA
 Structures; FHWA HPMS and National Bridge Inventory; FRA rail network; US Census TIGER; HIFLD; MRLC NLCD;
 NOAA Atlas 14 (PFDS); NOAA VERTCON. US federal data is public domain unless the source says otherwise.
-The dam-research library (ASDSO and other papers) is downloaded to your own machine for private use and is not
+The Vor library (ASDSO and other papers) is downloaded to your own machine for private use and is not
 redistributed. DamIT Catalog encodes *US Dam Hazard Classification — Corrected Edition* and the Nov 2026
 *In-Depth Summaries*, with a citation on every rule.
 
