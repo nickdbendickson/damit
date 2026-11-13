@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.2.0 — local research assistant for dam-safety, dam-design and
+# vor.py v1.3.0 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -47,6 +47,10 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.3.0: an answer is never empty. A reply with no text in it (a reasoning model spending its
+#   whole allowance before the first word of the answer) is asked for once more with reasoning
+#   off and more room; if that is empty too, the answer is the checked findings themselves,
+#   each with its quote and page, and the report says which of the three it was and why.
 # 1.2.0: `vor add`, and `vor chat` takes a dragged file: the line Terminal pastes is a path, which
 #        used to be sent to the model as a question. A chat that is running keeps its vectors in
 #        memory, so before this a document ingested from another tab was invisible to it until
@@ -59,7 +63,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 
 def _home():
@@ -206,6 +210,47 @@ def embed(texts, model):
 _think_ok = [True]
 _format_ok = [True]
 
+# How the most recent chat() reply ended: done_reason ("stop", "length", ...), tokens written
+# (eval_count) and how many characters of them were reasoning rather than answer. 1.3.0: a
+# reply can come back EMPTY with nothing wrong at the HTTP level - a reasoning model spends its
+# whole num_predict allowance in message.thinking and writes no content - and before this
+# nothing recorded which of those happened.
+LAST_REPLY = {"done_reason": "", "eval_count": 0, "thinking_chars": 0, "content_chars": 0}
+
+
+def _note_reply(done_reason, eval_count, thinking_chars, content_chars):
+    LAST_REPLY.update(done_reason=str(done_reason or ""), eval_count=int(eval_count or 0),
+                      thinking_chars=int(thinking_chars or 0), content_chars=int(content_chars or 0))
+
+
+def strip_think(text):
+    """Remove a model's inline reasoning from a reply. Closed <think>..</think> blocks go; an
+    opening tag that is never closed means the reply ran out while still reasoning, so
+    everything after it goes; a lone closing tag means the renderer dropped the opening one,
+    so everything before it goes."""
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    if "<think>" in text:
+        text = text.split("<think>", 1)[0]
+    return text.strip()
+
+
+def empty_reply_reason():
+    """Why the last reply had no answer in it, in words a report can carry."""
+    r = LAST_REPLY
+    if r["done_reason"] == "length":
+        if r["thinking_chars"]:
+            return ("it reached its length limit (%d tokens) while still reasoning, before writing "
+                    "an answer" % r["eval_count"])
+        return "it reached its length limit (%d tokens) without writing an answer" % r["eval_count"]
+    if r["thinking_chars"]:
+        return "it reasoned (%d characters) and then stopped without writing an answer" % r["thinking_chars"]
+    if r["eval_count"]:
+        return "it stopped after %d token(s) with no text (done_reason: %s)" % (
+            r["eval_count"], r["done_reason"] or "not given")
+    return "the reply was empty (done_reason: %s)" % (r["done_reason"] or "not given")
+
 
 def chat(messages, schema=None, think=False, stream_to=None, num_predict=None, temperature=0.2):
     """One /api/chat call. schema = JSON schema (structured output). Returns the answer text.
@@ -229,7 +274,11 @@ def chat(messages, schema=None, think=False, stream_to=None, num_predict=None, t
     try:
         if stream_to is None:
             out = _post("/api/chat", p)
-            return ((out.get("message") or {}).get("content") or "").strip()
+            msg = out.get("message") or {}
+            content = (msg.get("content") or "").strip()
+            _note_reply(out.get("done_reason"), out.get("eval_count"), len(msg.get("thinking") or ""),
+                        len(content))
+            return content
         return _stream(p, stream_to)
     except RuntimeError as e:
         s = str(e)
@@ -247,7 +296,7 @@ def chat(messages, schema=None, think=False, stream_to=None, num_predict=None, t
 def _stream(p, out):
     req = urllib.request.Request(BASE + "/api/chat", data=json.dumps(p).encode(),
                                  headers={"Content-Type": "application/json"})
-    buf, thinking_shown = [], False
+    buf, thinking_shown, thinking_chars, done_reason, eval_count = [], False, 0, "", 0
     try:
         r = urllib.request.urlopen(req, timeout=3600)
     except urllib.error.HTTPError as e:
@@ -267,6 +316,7 @@ def _stream(p, out):
             if ch.get("error"):
                 raise RuntimeError(ch["error"])
             msg = ch.get("message") or {}
+            thinking_chars += len(msg.get("thinking") or "")
             if msg.get("thinking") and not thinking_shown:
                 out.write("(thinking...)\n")
                 out.flush()
@@ -277,14 +327,17 @@ def _stream(p, out):
                 out.write(piece)
                 out.flush()
             if ch.get("done"):
+                done_reason, eval_count = ch.get("done_reason") or "", ch.get("eval_count") or 0
                 break
     out.write("\n")
-    return "".join(buf).strip()
+    text = "".join(buf).strip()
+    _note_reply(done_reason, eval_count, thinking_chars, len(text))
+    return text
 
 
 def parse_json(text):
     """Structured output is JSON already; older Ollama / models may wrap it in prose or fences."""
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    text = strip_think(text)
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -1072,6 +1125,8 @@ class Evidence:
         self.findings = []       # dict(F, source, quote, claim, kind, check, numbers, sub)
         self.rejected = []
         self.not_covered = []
+        self.answer_note = ""    # set when the model's own write-up could not be used
+        self.answer_from = "model"   # "model" | "model, second attempt" | "findings"
 
     def add_source(self, h):
         if h.cid not in self.by_cid:
@@ -1103,8 +1158,21 @@ def extract(ev, sub, hits):
            "characters), a one-sentence plain claim that says no more than the quote, and its kind. "
            "Skip passages that are not relevant. In not_covered, list parts of the sub-question that "
            "none of the passages answer." % (sub, "\n\n".join(b for _, b in blocks)))
-    out = parse_json(chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}],
-                          schema=EXTRACT_SCHEMA, num_predict=2500))
+    reply = chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}],
+                 schema=EXTRACT_SCHEMA, num_predict=2500)
+    out = parse_json(reply)
+    if out is None and not strip_think(reply):
+        # 1.3.0: nothing came back at all. Once more with twice the room, because the usual
+        # cause is the allowance being spent before the first character of the answer.
+        why = empty_reply_reason()
+        say("  (the model returned nothing for these passages: %s. Asking once more.)" % why)
+        reply = chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}],
+                     schema=EXTRACT_SCHEMA, num_predict=5000)
+        out = parse_json(reply)
+        if out is None and not strip_think(reply):
+            ev.rejected.append({"sub": sub, "why": "model returned nothing for these passages, twice (%s; "
+                                                    "then %s)" % (why, empty_reply_reason())})
+            return
     if out is None:
         ev.rejected.append({"sub": sub, "why": "model reply was not valid JSON"})
         return
@@ -1160,8 +1228,83 @@ def synthesize(question, ev, mode, out):
     reserve = 3000 if mode == "ask" else 5000
     if len(msg) > budget_chars(reserve):
         msg = msg[:budget_chars(reserve)] + "\n[findings list cut to fit the context window]"
-    return chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}],
-                think=THINK, stream_to=out, num_predict=reserve)
+    msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}]
+    body = strip_think(chat(msgs, think=THINK, stream_to=out, num_predict=reserve))
+    if body:
+        return body
+    # 1.3.0. On the first real run (2026-11-12, qwen3.6:27b) four of sixteen questions ended
+    # here with one to four checked findings and an empty answer: the right page found, the
+    # quote verified, and nothing written. The reply being empty is not an error to Ollama, so
+    # the empty string went into the report as the answer.
+    first = empty_reply_reason()
+    say("The model wrote no answer: %s. Asking once more, with reasoning off and more room." % first)
+    room = int(NUM_CTX - len(msg) / CHARS_PER_TOKEN - 600)
+    again = [msgs[0], {"role": "user", "content": msg + "\n\nWrite the answer itself now, beginning "
+                       "with its first sentence. Do not reason or plan first."}]
+    body = strip_think(chat(again, think=False, stream_to=out,
+                            num_predict=max(reserve, min(reserve * 2, room)), temperature=0.5))
+    if body:
+        ev.answer_from = "model, second attempt"
+        ev.answer_note = ("the model wrote no answer at first (%s); this is its second attempt" % first)
+        return body
+    second = empty_reply_reason()
+    ev.answer_from = "findings"
+    ev.answer_note = ("the model wrote no answer twice (%s; then %s), so the answer above is the checked "
+                      "findings themselves, not a written summary" % (first, second))
+    body = findings_answer(ev)
+    out.write(body + "\n")
+    return body
+
+
+def no_findings_answer(ev, keep):
+    """What to say when no quote survived. 1.3.0: two different things used to get one sentence,
+    "The library returned no passage that answers this question". On 2026-11-12 one model gave
+    that for seven of sixteen questions whose right page was in the passages it had just been
+    handed: the library was not empty, the model drew nothing from it. Saying the library has
+    nothing sends the reader off to find a document they already own."""
+    if not ev.sources:
+        return ("That document returned no passage that answers this question, so there is nothing to "
+                "cite. Try `vor search --doc ...` with different words, or drop --doc and search "
+                "the whole library." if keep else
+                "The library returned no passage that answers this question, so there is nothing to cite. "
+                "Try `vor search` with different words, or add publications that cover it.")
+    seen, pages = set(), []
+    for h in ev.sources:
+        key = (h.short(), h.pg)
+        if key not in seen:
+            seen.add(key)
+            pages.append("- %s, %s" % key)
+    quoted = [r for r in ev.rejected if r.get("quote")]
+    other = [r for r in ev.rejected if not r.get("quote")]
+    if quoted:
+        drew = "the model offered %d quote(s), and none of them passed the check against its page" % len(quoted)
+    elif other:
+        drew = "the model's reply could not be used (%s)" % other[0].get("why", "no reason recorded")
+    else:
+        drew = "the model drew no quote from them"
+    return ("There is nothing to cite: %d passage(s) were read and %s. That is not the same as the "
+            "library having nothing. These are the passages the search ranked closest to the question, "
+            "unchecked:\n\n%s\n\nOpen those pages, or ask again in different words%s."
+            % (len(ev.sources), drew, "\n".join(pages[:8]),
+               "" if keep else ", or name the publication with --doc"))
+
+
+def findings_answer(ev):
+    """An answer made only of what was verified: each finding's claim, its quote and its label.
+    Used when the model writes nothing. Every line carries its [F] label, so it renders with
+    page citations like any other answer, and nothing in it is the model's unchecked prose."""
+    L = ["The model did not write an answer, so these are the checked findings as they stand. "
+         "Each quote was found on the page cited."]
+    L.append("")
+    for f in ev.findings:
+        claim = f["claim"].rstrip()
+        if claim and claim[-1] not in ".!?":
+            claim += "."
+        L.append('- %s "%s" [F%d]' % (claim, f["quote"], f["F"]))
+    if ev.not_covered:
+        L.append("")
+        L.append("Not covered: " + "; ".join(g for _, g in ev.not_covered))
+    return "\n".join(L)
 
 
 def render_citations(text, ev):
@@ -1208,8 +1351,14 @@ def uncited_sentences(text):
 def run_pipeline(question, mode, depth, k, out=sys.stdout, idx=None, save=True,
                  keep=None, per_doc=None, scope=""):
     db = connect()
-    check_embed_model(db)
-    idx = idx or Index(db)
+    try:
+        check_embed_model(db)
+        return _run_pipeline(db, question, mode, depth, k, out, idx or Index(db), save, keep, per_doc, scope)
+    finally:
+        db.close()          # one connection per question was left open for the life of a chat
+
+
+def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, scope):
     if scope:
         say(scope)
     t0 = time.time()
@@ -1234,16 +1383,12 @@ def run_pipeline(question, mode, depth, k, out=sys.stdout, idx=None, save=True,
         % (nf, nr))
     say("-" * 72)
     if not ev.findings:
-        body = ("That document returned no passage that answers this question, so there is nothing to "
-                "cite. Try `vor search --doc ...` with different words, or drop --doc and search "
-                "the whole library." if keep else
-                "The library returned no passage that answers this question, so there is nothing to cite. "
-                "Try `vor search` with different words, or add publications that cover it.")
+        body = no_findings_answer(ev, keep)
         out.write(body + "\n")
     else:
         body = synthesize(question, ev, mode, out)
     rendered, order, unknown, used_f = render_citations(body, ev)
-    unc = uncited_sentences(body) if ev.findings else 0
+    unc = uncited_sentences(body) if (ev.findings and ev.answer_from != "findings") else 0
     report = build_report(question, mode, subs, terms, log, ev, rendered, order, unknown, used_f, unc,
                           time.time() - t0, scope=scope)
     path = None
@@ -1260,7 +1405,7 @@ def run_pipeline(question, mode, depth, k, out=sys.stdout, idx=None, save=True,
     for n, did in enumerate(order, 1):
         h = next(s for s in ev.sources if s.doc_id == did)
         say("  [%d] %s" % (n, cite_line(h)))
-    if unknown or unc or any(f["numbers"] for f in ev.findings if f["F"] in used_f):
+    if unknown or unc or ev.answer_note or any(f["numbers"] for f in ev.findings if f["F"] in used_f):
         say("\nChecks: %s" % "; ".join(checks_summary(ev, unknown, used_f, unc)))
     if path:
         say("\nReport (evidence table, quotes, rejected items): %s" % path)
@@ -1300,6 +1445,8 @@ def checks_summary(ev, unknown, used_f, unc):
         c.append("%d long sentence(s) carry no citation - treat them as the model's own words" % unc)
     if not c:
         c.append("all cited quotes found on their pages; no uncited sentences")
+    if ev.answer_note:
+        c.insert(0, ev.answer_note)
     return c
 
 
@@ -1409,6 +1556,7 @@ def cmd_chat(a):
                        "Previous question: %s\nPrevious answer (start): %s\nFollow-up: %s\n\nRewrite the follow-up "
                        "as one standalone question. Reply with the question only." % (last_q, (last_a or "")[:800], q)}],
                      num_predict=200)
+            r = strip_think(r)
             r = r.strip().strip('"').splitlines()[0] if r.strip() else q
             if r and r.lower() != q.lower():
                 say("(searching for: %s)" % r)

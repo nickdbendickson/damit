@@ -184,6 +184,9 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   passage" sentence on 7 of 16 questions whose page was in its own top 8.
 - **Rule:** retrieval was identical between the two models compared, so the difference was
   entirely after retrieval. Do not change retrieval or embeddings to fix an answer-stage gap.
+- **Fix (Vor 1.3.0):** that sentence is now kept for a search that returned no passage.
+  When passages were read and nothing was quoted, the answer says so, says how many quotes
+  failed their check, and lists the pages the search ranked closest.
 
 ### D6. A local model used as a live run watcher
 - **Was:** on a CPU-only machine it took over 13 minutes to read a 10k-token prompt and timed
@@ -191,6 +194,23 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   rule backwards and invented tool names.
 - **Rule:** code does the checking and sets OK / WATCH / PROBLEM. Heim explains a short
   digest, after the fact, and never gates anything.
+
+### D7. Vor: the right page found, the quote verified, and an empty answer
+- **Seen:** in an eval report, `findings` 1 to 4, the right page in `grounded`, and an
+  `answer` of zero characters. Four of sixteen questions on the first real run.
+- **Was:** the write-up reply came back with no text. To Ollama that is a normal reply
+  (HTTP 200, `done: true`), so the empty string was stored as the answer. The usual way to
+  get one is a reasoning model spending its whole `num_predict` allowance in
+  `message.thinking`: the reply ends with `done_reason: "length"` and no `content`.
+- **Tell:** Vor 1.3.0 records it. The report's "Automatic checks" starts with "the model
+  wrote no answer at first (...)" or "wrote no answer twice (...)", with the reason in
+  brackets; the eval report has an "Answer written by" column.
+- **Fix (Vor 1.3.0):** an empty reply is asked for once more with reasoning off and twice
+  the room. If that is empty too, the answer is the checked findings themselves, each with
+  its quote and page, and it says the model did not write it. An extraction reply with
+  nothing in it is retried the same way and is no longer reported as "not valid JSON".
+- **Rule:** a reply can be empty without being an error. Anything that takes text from a
+  model has to check that there is some.
 
 ---
 

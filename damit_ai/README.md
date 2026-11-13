@@ -183,7 +183,7 @@ Embeddings: Heim uses `nomic-embed-text`; Vor uses `qwen3-embedding:0.6b`.
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.
-- `vor/` is vor 1.1.0, setup-vor 1.2 (bundled Ollama and packages), fetch_asdso 1.3 (download-library.zsh + --urls), eval_vor 1.1 and first-run.zsh 1.0.
+- `vor/` is vor 1.3.0, setup-vor 1.2 (bundled Ollama and packages), fetch_asdso 1.4 (download-library.zsh + --urls), eval_vor 1.2 and first-run.zsh 1.0.
   fetch_asdso was tested against damsafety.org on 2026-11-09 (48 of 49 files downloaded; the 49th
   is on damtoolbox.org, which the cloud workspace can't reach). The `--catalog` sources were only
   partly tested: the cloud workspace reaches 2 of their 31 sites, so most catalog URLs were checked
