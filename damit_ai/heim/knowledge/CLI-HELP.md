@@ -119,7 +119,7 @@ open the Crest desk wired to one plugin set
 
 ---
 
-## rag_index.py 2.6
+## rag_index.py 2.7
 
 Installed command: `heim-index  (and heim-add = --add)`. Build Heim's document index.
 
@@ -134,6 +134,8 @@ Index folders (text+PDFs) into a named collection.
 | `--list-collections` |  |  |  |
 | `--add` |  |  | the paths are single FILES: copy them into <index folder>/added and index them as the collection 'added' (type the command, drag the files in) |
 | `--allow-empty` |  |  | allow a run with 0 chunks to replace (clear) the collection |
+| `--doctor` |  |  | check, without changing anything, that the index is there, holds the knowledge pack and is level with the folders it was built from |
+| `--library` |  |  | with --doctor: check the index and folders only (no Ollama needed) |
 
 ---
 
@@ -506,9 +508,11 @@ drop a document from the index
 
 #### `vor.py doctor`
 
-check Ollama, models and the library
+check Ollama, the models, and that the library being read is the full one and level with its files
 
-No arguments.
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `--library` |  |  | check the library and index only (no Ollama needed) |
 
 ---
 

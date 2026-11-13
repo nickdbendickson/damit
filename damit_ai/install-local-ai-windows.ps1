@@ -438,6 +438,7 @@ if ($writeBlock) {
     $lines += "function damchain { & '$PyL' '$LocalAI\dam_chain.py' @args }"
     $lines += "function heim-chat { & '$PyL' '$LocalAI\rag_query.py' --chat @args }"
     $lines += "function heim-add { & '$PyL' '$LocalAI\rag_index.py' --add @args }"
+    $lines += "function heim-doctor { & '$PyL' '$LocalAI\rag_index.py' --doctor @args }"
     $lines += "`$env:HEIM_WATCH_MODEL = '$WatchModel'"
     $lines += "function heim-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
     $lines += "function heim-watch  { & '$PyL' '$LocalAI\heim_watch.py' @args }"

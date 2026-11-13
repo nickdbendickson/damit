@@ -167,6 +167,7 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   as done. The indexed library was left under the old name.
 - **Tell:** `vor list` shows no documents while `~/DamResearch/research.db` exists.
 - **Fix:** Vor uses the folder that holds the index; the installers move it or keep it.
+  `vor doctor` (1.3.0) names a second library and says which one holds more.
 - **Was, case 2:** the question named the publication ("... in FEMA P-946"). The name only
   adds search words that match every FEMA document, and `ask` read at most three passages
   per document.
@@ -211,6 +212,18 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   nothing in it is retried the same way and is no longer reported as "not valid JSON".
 - **Rule:** a reply can be empty without being an error. Anything that takes text from a
   model has to check that there is some.
+
+### D8. An AI that runs and answers from nothing
+- **Was:** four separate times one of the two AIs started, answered, and had nothing behind
+  the answer: an empty knowledge collection, a collection left under its pre-rename name, a
+  second empty library beside the full one, a page too big to index. None raised an error,
+  because an empty index is a valid index.
+- **Tell:** `heim-doctor` (the code index) or `vor doctor` (the literature). Neither
+  changes anything. A PROBLEM line is a state in which the AI answers from less than you
+  think: no index, an empty one, no knowledge pack, a pack under its old name, a second and
+  fuller library. A WATCH line is an index older than its files, a folder that moved, a
+  file over the indexer's size limit, scanned pages. Both exit 1 on a PROBLEM, 0 otherwise.
+- **Rule:** before trusting an answer that cites nothing, run the doctor.
 
 ---
 

@@ -391,6 +391,7 @@ if [[ "$WRITE_BLOCK" == 1 ]]; then
     [[ "$DO_HEIM" == 1 ]] && echo "alias damchain='\"$LOCAL_AI/python\" \"$LOCAL_AI/dam_chain.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-chat='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\" --chat'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-add='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_index.py\" --add'"
+    [[ "$DO_HEIM" == 1 ]] && echo "alias heim-doctor='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_index.py\" --doctor'"
     [[ "$DO_HEIM" == 1 ]] && echo "export HEIM_WATCH_MODEL=\"${WATCH_MODEL:-qwen3:4b}\""
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-digest='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_digest.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-watch='\"$LOCAL_AI/python\" \"$LOCAL_AI/heim_watch.py\"'"

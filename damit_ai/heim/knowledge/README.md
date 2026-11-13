@@ -45,6 +45,8 @@ automatically. Ask e.g. `heim "what does REFINE_NEAR do and why is it off by def
 - `python3 ../tools/dump_cli_help.py` regenerates `CLI-HELP.md` (plain Python, no QGIS, no Ollama);
   `--check` says whether it is stale. Run it whenever a tool gains or loses a flag.
 
+- `heim-doctor` says when this pack's index is older than its files, or holds a file too big to index.
+
 - `refresh-open-issues.zsh [owner/repo ...]` — re-snapshot open issues (needs `gh`).
 - `dump-algorithm-help.zsh [profile]` — re-dump the DamSafety tool help into `ALGORITHM-HELP.md` and
   `algorithm-help/` (run on a machine with the plugins installed in a QGIS profile, and give the profile

@@ -39,7 +39,7 @@ plugin zip or CI job.
    source ~/.zshrc
    ```
    Commands: `heim-start` (Ollama server, in its own tab), `heim "question"`, `heim-chat` (a conversation; every
-   question is looked up in the indexed documents first, `--bare` for the model on its own), `heim-add <file>`, `heim-index`, `heim-query`,
+   question is looked up in the indexed documents first, `--bare` for the model on its own), `heim-add <file>`, `heim-doctor` (is Heim reading what you think it is), `heim-index`, `heim-query`,
    `heim-audit`, `heim-digest`, `heim-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
 
    **Repo audit:** `damchain audit --repo ~/path/to/DWR_Plugins` writes one report to

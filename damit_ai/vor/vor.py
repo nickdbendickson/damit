@@ -61,7 +61,7 @@
 import os, sys, re, json, time, math, hashlib, sqlite3, argparse, subprocess, difflib, shutil, shlex
 import urllib.request, urllib.error, unicodedata
 from array import array
-from datetime import datetime
+from datetime import datetime, timedelta
 
 VERSION = "1.3.0"
 
@@ -1707,39 +1707,186 @@ def cmd_ocr(a):
     cmd_ingest(argparse.Namespace(paths=[outdir], prune=False))
 
 
+def home_reason():
+    """Why HOME is the folder it is, in a few words (see _home)."""
+    if os.environ.get("VOR_HOME"):
+        return "VOR_HOME is set"
+    if any(os.path.isfile(os.path.join(HOME, f)) for f in ("vor.db", "research.db")):
+        return "it holds the index"
+    return "the default; no index found anywhere yet"
+
+
+def _index_counts(path):
+    """(documents, passages) in an index file, or None when it cannot be read as one."""
+    try:
+        db = sqlite3.connect("file:%s?mode=ro" % urllib.request.pathname2url(path), uri=True)
+        try:
+            return (db.execute("SELECT COUNT(*) FROM docs").fetchone()[0],
+                    db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return None
+
+
+def other_libraries():
+    """Folders that look like a Vor library and are NOT the one in use: (folder, index counts
+    or None, number of document files). Two libraries is how Vor has gone quiet before: the
+    one being read was empty and the full one was a folder away."""
+    here = os.path.realpath(HOME)
+    seen, out = {here}, []
+    cands = [os.path.expanduser("~/Vor"), os.path.expanduser("~/DamResearch")]
+    if os.environ.get("DAMRESEARCH_HOME"):
+        cands.append(os.path.expanduser(os.environ["DAMRESEARCH_HOME"]))
+    parent = os.path.expanduser("~")
+    try:
+        cands += sorted(os.path.join(parent, d) for d in os.listdir(parent)
+                        if d.startswith("Vor.before-rename-"))
+    except OSError:
+        pass
+    for d in cands:
+        real = os.path.realpath(d)
+        if real in seen or not os.path.isdir(d):
+            continue
+        seen.add(real)
+        counts = None
+        for f in ("vor.db", "research.db"):
+            if os.path.isfile(os.path.join(d, f)):
+                counts = _index_counts(os.path.join(d, f)) or (0, 0)
+                break
+        nfiles = sum(1 for _ in walk([os.path.join(d, "library")])) if os.path.isdir(os.path.join(d, "library")) else 0
+        if counts is not None or nfiles:
+            out.append((d, counts, nfiles))
+    return out
+
+
+def library_checks():
+    """The checks that need no model: is Vor reading the library you think it is, and is the
+    index level with the files. Returns [(level, text)], level one of OK / WATCH / PROBLEM.
+    Every PROBLEM here is a state in which Vor runs without error and answers from nothing."""
+    out = []
+    add = lambda level, text: out.append((level, text))
+    add("OK", "library folder %s (%s)" % (HOME, home_reason()))
+    on_disk = list(walk([LIBRARY])) if os.path.isdir(LIBRARY) else []
+    if not os.path.exists(DB_PATH):
+        nd = nc = 0
+        add("PROBLEM", "no index at %s%s" % (DB_PATH, (": %d document file(s) are waiting in the library. "
+            "Run: vor ingest" % len(on_disk)) if on_disk else ". Put PDFs in %s and run: vor ingest" % LIBRARY))
+        rows, used = [], None
+    else:
+        counts = _index_counts(DB_PATH)
+        if counts is None:
+            add("PROBLEM", "%s is not a readable index" % DB_PATH)
+            return out
+        nd, nc = counts
+        db = connect()
+        try:
+            used = meta_get(db, "embed_model")
+            rows = db.execute("SELECT path, notext, added FROM docs").fetchall()
+            fts = db.fts
+        finally:
+            db.close()
+        if not nc:
+            add("PROBLEM", "the index is empty (%d documents, 0 passages): every question will get "
+                "'no passage'. %s" % (nd, ("%d file(s) are in the library. Run: vor ingest" % len(on_disk))
+                                       if on_disk else "Put PDFs in %s and run: vor ingest" % LIBRARY))
+        else:
+            add("OK", "index: %d documents, %d passages" % (nd, nc))
+        if used and used != EMBED_MODEL:
+            add("PROBLEM", "indexed with %s but VOR_EMBED is %s: every search is refused until one is "
+                           "set back or the index is rebuilt" % (used, EMBED_MODEL))
+        if not fts:
+            add("WATCH", "keyword search is off (this Python's SQLite has no FTS5): names like "
+                         "'Froehlich' are found by meaning only")
+    for d, counts, nfiles in other_libraries():
+        what = ("an index with %d documents" % counts[0]) if counts is not None else "no index"
+        text = ("a second library exists at %s (%s, %d document file(s)); Vor is reading %s"
+                % (d, what, nfiles, HOME))
+        fuller = (counts[0] if counts else 0) > nd or (nd == 0 and nfiles)
+        add("PROBLEM" if fuller else "WATCH",
+            text + (". It holds MORE than the one in use: run `zsh setup-vor.zsh` to bring it over, or set "
+                    "VOR_HOME to it" if fuller else ". Nothing reads it; remove it once you are sure"))
+    if rows:
+        indexed = {os.path.normpath(r[0]) for r in rows}
+        new = [f for f in on_disk if os.path.normpath(f) not in indexed]
+        if new:
+            add("WATCH", "%d file(s) in the library are not in the index (first: %s). Run: vor ingest"
+                % (len(new), os.path.relpath(new[0], LIBRARY)))
+        gone = [r[0] for r in rows if not os.path.exists(r[0])]
+        if gone:
+            add("WATCH", "%d indexed document(s) no longer have a file (first: %s). They are still "
+                "answered from. To drop them: vor ingest --prune" % (len(gone), os.path.basename(gone[0])))
+        changed = []
+        for path, _, added in rows:
+            try:
+                when = datetime.fromisoformat((added or "")[:19])
+                if os.path.exists(path) and datetime.fromtimestamp(os.path.getmtime(path)) > when + timedelta(seconds=2):
+                    changed.append(path)
+            except ValueError:
+                continue
+        if changed:
+            add("WATCH", "%d file(s) changed after they were indexed (first: %s), so answers come from "
+                "the older text. Run: vor ingest" % (len(changed), os.path.basename(changed[0])))
+        scanned = [r for r in rows if (r[1] or "").strip()]
+        if scanned:
+            pages = sum(len(r[1].split(",")) for r in scanned)
+            add("WATCH", "%d document(s) have %d page(s) with no text layer: Vor cannot read those pages. %s"
+                % (len(scanned), pages, "Run: vor ocr, then vor ingest" if ocr_exe() else
+                   "OCR is not installed: re-run the installer with --ocr, then vor ocr and vor ingest"))
+        if not (new or gone or changed):
+            add("OK", "every file in the library is indexed, and none changed since")
+    return out
+
+
+def print_checks(checks):
+    """Print [(level, text)] and return the number of PROBLEMs."""
+    for level, text in checks:
+        say("  %-8s %s" % ({"OK": "ok", "WATCH": "WATCH", "PROBLEM": "PROBLEM"}[level], text))
+    return sum(1 for level, _ in checks if level == "PROBLEM")
+
+
 def cmd_doctor(a):
     ok = True
     say(damit_banner("vor"))
     say("vor %s   home %s" % (VERSION, HOME))
-    try:
-        v = _get("/api/version").get("version")
-        say("  Ollama %s at %s" % (v, BASE))
-        tags = {m["name"] for m in _get("/api/tags").get("models", [])}
-        for m in (CHAT_MODEL, EMBED_MODEL):
-            have = m in tags or (m + ":latest") in tags
-            say("  model %-28s %s" % (m, "present" if have else "MISSING - re-run setup-vor.zsh"))
-            ok &= have
-        if ok:
-            vec = embed([query_text(EMBED_MODEL, "spillway design flood")], EMBED_MODEL)[0]
-            say("  embeddings work (%d dims)" % len(vec))
-            r = chat([{"role": "user", "content": "Reply with the single word: ready"}], num_predict=20)
-            say("  chat model replies: %r" % r[:40])
-    except Exception as e:
-        say("  Ollama: NOT reachable (%s). Start it with heim-start in its own tab." % e)
-        ok = False
-    db = connect()
-    nd = db.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
-    nc = db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-    say("  library: %d documents, %d passages, indexed with %s; keyword search %s; numpy %s"
-        % (nd, nc, meta_get(db, "embed_model", "-"), "on" if db.fts else "OFF (no FTS5)",
-           "yes" if np is not None else "no (slower search)"))
+    if getattr(a, "library_only", False):
+        say("  (models not checked: --library)")
+    else:
+        try:
+            v = _get("/api/version").get("version")
+            say("  Ollama %s at %s" % (v, BASE))
+            tags = {m["name"] for m in _get("/api/tags").get("models", [])}
+            for m in (CHAT_MODEL, EMBED_MODEL):
+                have = m in tags or (m + ":latest") in tags
+                say("  model %-28s %s" % (m, "present" if have else "MISSING - re-run setup-vor.zsh"))
+                ok &= have
+            if ok:
+                vec = embed([query_text(EMBED_MODEL, "spillway design flood")], EMBED_MODEL)[0]
+                say("  embeddings work (%d dims)" % len(vec))
+                r = strip_think(chat([{"role": "user", "content": "Reply with the single word: ready"}],
+                                     num_predict=20))
+                if r:
+                    say("  chat model replies: %r" % r[:40])
+                else:
+                    # 1.3.0: an empty reply used to print as '' and count as working
+                    say("  chat model replied with NOTHING to a one-word request: %s" % empty_reply_reason())
+                    ok = False
+        except Exception as e:
+            say("  Ollama: NOT reachable (%s). Start it with heim-start in its own tab." % e)
+            ok = False
+    # 1.3.0: the library itself. These need no model, and each PROBLEM is a state in which Vor
+    # runs without an error and answers from nothing.
+    problems = print_checks(library_checks())
+    say("  numpy %s" % ("yes" if np is not None else "no (slower search)"))
     try:
         import pymupdf  # noqa
         say("  PDF reader: PyMuPDF (printed page labels on)")
     except ImportError:
         say("  PDF reader: %s" % ("pdftotext" if shutil.which("pdftotext") else "pypdf/none"))
     say("  OCR: %s" % ("ocrmypdf" if ocr_exe() else "not installed (installer --ocr)"))
-    sys.exit(0 if ok else 1)
+    if problems:
+        say("\n%d PROBLEM(s) above: until fixed, Vor will run and answer from less than you think." % problems)
+    sys.exit(0 if (ok and not problems) else 1)
 
 
 def add_scope_args(s):
@@ -1806,7 +1953,10 @@ def main():
     s = sub.add_parser("remove", help="drop a document from the index")
     s.add_argument("doc")
     s.set_defaults(fn=cmd_remove)
-    s = sub.add_parser("doctor", help="check Ollama, models and the library")
+    s = sub.add_parser("doctor", help="check Ollama, the models, and that the library being read is "
+                                      "the full one and level with its files")
+    s.add_argument("--library", dest="library_only", action="store_true",
+                   help="check the library and index only (no Ollama needed)")
     s.set_defaults(fn=cmd_doctor)
     a = ap.parse_args()
     try:
