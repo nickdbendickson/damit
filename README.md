@@ -65,7 +65,7 @@ Hugging Face fallbacks are checked against a pinned SHA-256. No model weights ar
 [LISFLOOD-FP 8.3](https://zenodo.org/records/13121119) (University of Bristol, GPL-3.0; source from Zenodo, built or shipped as a binary),
 [ANUGA 4.1](https://github.com/anuga-community/anuga_core) (Geoscience Australia / ANU, Apache-2.0),
 [gmsh 4.15](https://gmsh.info) (GPL-2.0-or-later), [QGIS 3.34](https://qgis.org) (GPL-2.0-or-later), all from conda-forge.
-The **Finder score** is DamIT's own logistic regression, learned from your dam list; no outside model.
+The **Finder score** is DamIT's own model (bagged boosted trees, written in this repository; no outside model or weights). A starter is shipped in `damit_finder/models/`: learned from North Dakota's dam list on USGS 1 m LiDAR and checked on Iowa pond dams (AUC 0.89). Relearn it from your own state's dam list with the score tool.
 
 **Data** (downloaded by you, not stored here): USACE NID and NSI, USGS 3DEP elevation and 3DHP streams,
 Microsoft Building Footprints, OpenStreetMap (© OpenStreetMap contributors, ODbL), FEMA/ORNL USA Structures,

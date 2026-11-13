@@ -54,3 +54,9 @@ MOSAIC_HELP = ("Point it at a folder of classified LiDAR tiles (USGS 3DEP .las/.
                "need their EPSG. Dry land and the gaps between tiles read back as no water.")
 OSM_HELP = ("Use a Geofabrik extract of your state (https://download.geofabrik.de, <state>-latest.osm.pbf). "
             "Give the output to the other tools as a known-structure layer.")
+# The starter fill score model shipped with the plugin (core/score.py; the same file as DamSafety
+# Finder's default). It was learned from listed dams on USGS 1 m LiDAR in 7 North Dakota regions
+# and, with nothing from Iowa in it, ranked the fills on 15 Iowa 1 m tiles against Iowa's pond-dam
+# census with AUC 0.89. The Find fills tool uses it when no other model is given: a starting
+# point, not a model of your state. Relearn it with the score tool where you have a dam list.
+DEFAULT_MODEL = "models/nd_fill_score_trees_2026-11.json"

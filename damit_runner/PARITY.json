@@ -13,7 +13,7 @@
    "from": "DamSafety_Finder/__init__.py"
   },
   "damit_finder/brand.py": {
-   "diff": "f0f202ae66b02d83bb69acd1dbb28bc1482c22d9c184cd6539a77b243374e6bb",
+   "diff": "3df5e782a265071f3692e8a42e4d68c5297303ab8093aff2f0d052dd75f708fc",
    "from": "DamSafety_Finder/brand.py"
   },
   "damit_finder/core/__init__.py": {
@@ -448,5 +448,5 @@
  "schema": "damit.engine_parity",
  "schema_version": 1,
  "source": "nickdbendickson/DWR_Plugins",
- "synced_to": "32613b1f27bb8e9fc22a1edbd3c6ea67cfdf233f"
+ "synced_to": "0c6467008ee1b0597ce4adcc48b9b16ad4b69afa"
 }
