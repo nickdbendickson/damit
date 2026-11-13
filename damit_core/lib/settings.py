@@ -28,6 +28,7 @@ KEYS = {
     "pfds_cache": "cache folder for NOAA Atlas 14 PFDS answers (DamIT PMP)",
     "unit_system": "units the windows show and accept: us (default) or si (display only; "
                    "display_units.py)",
+    "defaults_file": "your shared defaults file (empty = ~/DamIT/defaults.json; shared_defaults.py)",
 }
 
 
