@@ -1,24 +1,24 @@
 <#
 =============================================================================
-install-local-ai-windows.ps1 — install BOTH local AIs (Pierre code-triage +
-dam-research literature) on Windows 10/11. The Windows counterpart of
-damit_ai/pierre/setup-local-pierre.sh and research/setup-dam-research.zsh.
+install-local-ai-windows.ps1 — install BOTH local AIs (Heim code-triage +
+vor literature) on Windows 10/11. The Windows counterpart of
+damit_ai/heim/setup-local-heim.sh and vor/setup-vor.zsh.
 
   powershell -ExecutionPolicy Bypass -File .\install-local-ai-windows.ps1
-  .\install-local-ai-windows.ps1 -NoPierre          # dam-research only
-  .\install-local-ai-windows.ps1 -NoResearch      # Pierre only
-  .\install-local-ai-windows.ps1 -Ocr             # dam-research with OCR (ocrmypdf + tesseract)
+  .\install-local-ai-windows.ps1 -NoHeim          # vor only
+  .\install-local-ai-windows.ps1 -NoVor      # Heim only
+  .\install-local-ai-windows.ps1 -Ocr             # vor with OCR (ocrmypdf + tesseract)
   .\install-local-ai-windows.ps1 -Small           # force the small chat model
   .\install-local-ai-windows.ps1 -NoIndex         # skip indexing the knowledge pack / engine docs
   .\install-local-ai-windows.ps1 -WatchModel phi4-mini   # the SMALL run-watcher explainer (default qwen3:4b);
-                                                         # -NoWatchModel skips pulling it. pierre (Q&A) keeps the big model.
+                                                         # -NoWatchModel skips pulling it. heim (Q&A) keeps the big model.
 
   If 'ollama pull' fails (a proxy that breaks the registry redirect) the model's official GGUF is fetched from
   Hugging Face with curl.exe (https_proxy / $env:HF_ENDPOINT honoured), sha256-checked and loaded with 'ollama create'
-  under the same tag. $env:PIERRE_NO_HF_FALLBACK = 1 turns that off.
+  under the same tag. $env:HEIM_NO_HF_FALLBACK = 1 turns that off.
 
-By default, when Pierre is installed the Pierre knowledge pack (pierre\knowledge) and, if present,
-the dam-research engine docs are indexed into the RAG so Pierre comes up already knowing the
+By default, when Heim is installed the Heim knowledge pack (heim\knowledge) and, if present,
+the vor engine docs are indexed into the RAG so Heim comes up already knowing the
 suite's behaviours, findings and tool contracts. Pass -NoIndex to skip that.
 
 Policy (same as the Mac/Linux installers): NO download-then-run. Ollama,
@@ -34,13 +34,13 @@ If PowerShell blocks the script, start it with:
 #>
 [CmdletBinding()]
 param(
-  [switch]$NoPierre,
-  [switch]$NoResearch,
+  [switch]$NoHeim,
+  [switch]$NoVor,
   [switch]$Ocr,
   [switch]$Small,
   [switch]$IndexKnowledge,   # on by default; kept for compatibility
   [switch]$NoIndex,
-  [string]$WatchModel = $(if ($env:PIERRE_WATCH_MODEL) { $env:PIERRE_WATCH_MODEL } else { 'qwen3:4b' }),
+  [string]$WatchModel = $(if ($env:HEIM_WATCH_MODEL) { $env:HEIM_WATCH_MODEL } else { 'qwen3:4b' }),
   [switch]$NoWatchModel
 )
 $ErrorActionPreference = 'Stop'
@@ -48,14 +48,14 @@ $ErrorActionPreference = 'Stop'
 $Here       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LocalAI    = Join-Path $env:USERPROFILE 'local-ai'
 $ModelsDir  = Join-Path $LocalAI 'models'
-$ResearchDir= Join-Path $LocalAI 'research'
-$RHome      = if ($env:DAMRESEARCH_HOME) { $env:DAMRESEARCH_HOME } else { Join-Path $env:USERPROFILE 'DamResearch' }
+$VorDir= Join-Path $LocalAI 'vor'
+$RHome      = if ($env:VOR_HOME) { $env:VOR_HOME } else { Join-Path $env:USERPROFILE 'Vor' }
 $Downloads  = Join-Path $env:USERPROFILE 'Downloads'
 $Offline    = Join-Path $Here 'offline'
-$PierreEnv    = 'ndpierre'; $ResearchEnv = 'ndresearch'
+$HeimEnv    = 'ndheim'; $VorEnv = 'ndvor'
 $OllamaUrl  = 'http://127.0.0.1:11434'
-$DoPierre     = -not $NoPierre
-$DoResearch = -not $NoResearch
+$DoHeim     = -not $NoHeim
+$DoVor = -not $NoVor
 
 function Say ($m) { Write-Host "`n== $m" -ForegroundColor White }
 function Ok  ($m) { Write-Host "  ok $m"   -ForegroundColor Green }
@@ -69,7 +69,7 @@ function ServerUp {
 
 # ---------------------------------------------------------------------------
 Say 'Step 1 - Directory skeleton'
-foreach ($d in @($LocalAI, $ModelsDir, $ResearchDir, (Join-Path $RHome 'library'), (Join-Path $RHome 'reports'))) {
+foreach ($d in @($LocalAI, $ModelsDir, $VorDir, (Join-Path $RHome 'library'), (Join-Path $RHome 'reports'))) {
   New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 Ok "$LocalAI, $RHome"
@@ -192,10 +192,10 @@ Ok "RAM $RamGB GB -> chat model $ChatModel (num_ctx $NumCtx)"
 # >>> hf_gguf_fallback (Windows copy of the bash block in install-local-ai-linux.sh; the table must match, a test checks it)
 # `ollama pull` can fail behind a proxy. Fallback: fetch the model's official GGUF from Hugging Face (curl.exe honours
 # https_proxy; $env:HF_ENDPOINT can point at a mirror), check its sha256, `ollama create` the SAME tag, delete the GGUF.
-# $env:PIERRE_GGUF_SPEC = "repo file sha256 bytes" overrides the table; $env:PIERRE_GGUF_DIR = scratch dir;
-# $env:PIERRE_NO_HF_FALLBACK = 1 turns the fallback off.
+# $env:HEIM_GGUF_SPEC = "repo file sha256 bytes" overrides the table; $env:HEIM_GGUF_DIR = scratch dir;
+# $env:HEIM_NO_HF_FALLBACK = 1 turns the fallback off.
 function Get-HfGgufSpec ($tag) {
-  if ($env:PIERRE_GGUF_SPEC) { return ($env:PIERRE_GGUF_SPEC -split '\s+') }
+  if ($env:HEIM_GGUF_SPEC) { return ($env:HEIM_GGUF_SPEC -split '\s+') }
   switch -Regex ($tag) {
     '^qwen3:4b$'          { return @('Qwen/Qwen3-4B-GGUF','Qwen3-4B-Q4_K_M.gguf','7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5','2497280256') }
     '^qwen3:8b$'          { return @('Qwen/Qwen3-8B-GGUF','Qwen3-8B-Q4_K_M.gguf','d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785','5027783488') }
@@ -208,14 +208,14 @@ function Get-HfGgufSpec ($tag) {
 }
 function New-OllamaFromHf ($tag) {
   $spec = Get-HfGgufSpec $tag
-  if (-not $spec) { Warn "no Hugging Face GGUF is known for $tag (set PIERRE_GGUF_SPEC=`"repo file sha256 bytes`")"; return $false }
+  if (-not $spec) { Warn "no Hugging Face GGUF is known for $tag (set HEIM_GGUF_SPEC=`"repo file sha256 bytes`")"; return $false }
   $repo, $file, $sha, $size = $spec; $size = [int64]$size
-  if ($env:PIERRE_NO_HF_FALLBACK -eq '1') { Warn "PIERRE_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return $false }
+  if ($env:HEIM_NO_HF_FALLBACK -eq '1') { Warn "HEIM_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return $false }
   if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { Warn "curl.exe not found: cannot fetch the GGUF for $tag"; return $false }
-  $dir = if ($env:PIERRE_GGUF_DIR) { $env:PIERRE_GGUF_DIR } else { Join-Path $env:TEMP 'pierre-gguf' }
+  $dir = if ($env:HEIM_GGUF_DIR) { $env:HEIM_GGUF_DIR } else { Join-Path $env:TEMP 'heim-gguf' }
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $free = (Get-PSDrive -Name ((Resolve-Path $dir).Drive.Name)).Free
-  if ($free -lt ($size + [int64]($size / 10))) { Warn "not enough free space in $dir for the $([int]($size / 1MB)) MB GGUF (set PIERRE_GGUF_DIR to a bigger disk)"; return $false }
+  if ($free -lt ($size + [int64]($size / 10))) { Warn "not enough free space in $dir for the $([int]($size / 1MB)) MB GGUF (set HEIM_GGUF_DIR to a bigger disk)"; return $false }
   $ep = if ($env:HF_ENDPOINT) { $env:HF_ENDPOINT } else { 'https://huggingface.co' }
   $gguf = Join-Path $dir $file
   $have = if (Test-Path $gguf) { (Get-Item $gguf).Length } else { 0 }
@@ -249,8 +249,8 @@ function Pull ($m) {
 }
 
 # ===========================================================================
-if ($DoPierre) {
-  Say 'Pierre - code triage'
+if ($DoHeim) {
+  Say 'Heim - code triage'
   Pull $ChatModel; Pull 'nomic-embed-text'
   # the run-watcher's explainer: a SMALL model. Stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs, so an
   # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
@@ -260,82 +260,101 @@ if ($DoPierre) {
       Ok "pulling $WatchModel (the small watcher model)"
       & $Ollama pull $WatchModel
       if ($LASTEXITCODE -ne 0) { if ([bool](@(New-OllamaFromHf $WatchModel))[-1]) { $global:LASTEXITCODE = 0 } }
-      if ($LASTEXITCODE -ne 0) { Warn "could not pull the watcher model $WatchModel (pierre-watch still gives the digest and verdict)" }
+      if ($LASTEXITCODE -ne 0) { Warn "could not pull the watcher model $WatchModel (heim-watch still gives the digest and verdict)" }
     }
   }
-  $mf = Join-Path $LocalAI 'Modelfile.pierre'
+  $mf = Join-Path $LocalAI 'Modelfile.heim'
 @"
 FROM $ChatModel
 PARAMETER num_ctx $NumCtx
 PARAMETER temperature 0.6
 PARAMETER top_p 0.95
 PARAMETER top_k 20
-SYSTEM """You are Pierre-Lite, a fully local assistant for dam-safety engineering work on this machine.
-- QGIS plugins of the ND dam suite and the DamSafety fork; QGIS 3.34 / Python 3.12 from conda-forge; CI also runs QGIS 4 / Qt6.
-- Crest: a TypeScript desk-screening app (screening, not hazard classification).
-- Dam hazard classification per USBR ACER TM-11 and ND state standards; depth/velocity/arrival rasters (EPSG:26914), LISFLOOD-FP and ANUGA outputs.
+SYSTEM """You are Heim-Lite, a fully local assistant for dam-safety engineering work on this machine.
+DOMAIN CONTEXT (what this machine builds; it tells you what the names mean, never whether a claim is true):
+- The DamIT QGIS plugins (damit_core, damit_screener, damit_runner, damit_hazard, damit_hazardlite, damit_finder, damit_data, damit_catalog, damit_pmp, damit_setup) and the DamSafety fork of the same engine. Their Processing ids clash, so each set gets its own QGIS profile.
+- QGIS 3.34 LTR, Python 3.12 from conda-forge (env ndqgis) on macOS; CI also runs QGIS 4 / Qt6.
+- Crest: a TypeScript desk-screening app off USGS 3DEP 10 m. A screening tool, not a hazard classification.
+- Hazard classification follows USBR ACER TM-11 and the ND Dam Safety Standards (REG_05.2026).
+- The hydraulic engines are subprocesses, not libraries: LISFLOOD-FP 8.x (ACC is the default solver; FV2 and MWDG2 are CUDA-only), ANUGA 4.1, gmsh, and HEC-RAS under Wine. Each Runner pass writes Depth, Velocity, Arrival Time and WSE rasters.
+- Terrain is 3DEP 1 m and statewide VRTs on NAVD88, EPSG:26914 (ND) or EPSG:5070 (DamSafety WORK_CRS). A DEM projected in metres overrides WORK_CRS, and a VRT reads a missing source back as nodata, which the models read as high ground.
+- Data sources: NSI, ND GIS Hub, FEMA, OSM, NDDOT ArcGIS REST, USGS 3DHP, the NID and the ND DWR dam list.
+- The GUI can display SI, but a Run still receives FEET.
+- You have NO web access and cannot check anything online. Your training is older than this code: say when a fact may be out of date instead of asserting it.
+- Every file, log and run you are shown stays on this machine. Treat all of it as private.
 Be precise about code, filenames, paths and units (ft vs m, cfs vs m3/s, NAVD88 vs local datum). Show the complete corrected function, never fragments. Never call sys.exit()/os._exit() in code that runs inside QGIS. Guard None before string ops. Only report a defect you can point to by line number in code you were shown. When uncertain, say UNSURE. Never recommend destructive operations without a backup and a dry-run.
 STANDING RULES (Nick's; never contradict them, even if a question assumes otherwise):
 - Sunny-day breach: there is NO inflow, the outlets are empty, and there is NO outlet or spillway flow. The reservoir starts at the top of dam, which is the DWR max pool. The only water is the breach. Never say the inflow equals the reservoir capacity or that the outlets are operational.
 - Breach volume Vw: a sunny-day breach uses the DWR maximum pool and maximum storage unless stated otherwise; a PMF or flood-inflow breach uses the storage at the pool when the breach starts (ND Dam Safety Standards).
 - The real DamIT qgis_process algorithm ids: damit_screen:handoff (hand-off to the Runner), damit_run:rundam (breach flood for one dam), damit:classify (hazard classification), damit_lite:classify (Hazard Lite). The automatic 10 m refine is turned off with --GRID_REFINE=0. There is no damit_runner algorithm, no damit_screener_handoff, no damit_hazard_classification and no --no-refine switch.
 - Never invent a tool, algorithm id, parameter, switch, flag id or number. If a name is not in these rules or in the context you were given, say UNSURE and point to ALGORITHM-HELP-DAMIT.md.
-- The run watcher's OK / WATCH / PROBLEM verdict is set by code from the flags alone. Pierre only explains the flags and never sets or changes the verdict."""
+- The run watcher's OK / WATCH / PROBLEM verdict is set by code from the flags alone. Heim only explains the flags and never sets or changes the verdict."""
 "@ | Set-Content -Path $mf -Encoding UTF8
-  & $Ollama create pierre -f $mf | Out-Null
-  if ($LASTEXITCODE -ne 0) { Die 'pierre persona creation failed' }
-  Ok "'pierre' persona created"
-  $PyL = Make-Env $PierreEnv 'python=3.12 pymupdf pypdf numpy'
-  Ok "pierre python: $PyL"
-  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_pierre.py','run_digest.py','pierre_watch.py')) {
-    $src = Join-Path $Here "pierre\tools\$t"
+  & $Ollama create heim -f $mf | Out-Null
+  if ($LASTEXITCODE -ne 0) { Die 'heim persona creation failed' }
+  Ok "'heim' persona created"
+  $PyL = Make-Env $HeimEnv 'python=3.12 pymupdf pypdf numpy'
+  Ok "heim python: $PyL"
+  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py')) {
+    $src = Join-Path $Here "heim\tools\$t"
     if (Test-Path $src) { Copy-Item $src (Join-Path $LocalAI $t) -Force }
   }
-  $evalL = Join-Path $Here 'pierre\eval'
+  $evalL = Join-Path $Here 'heim\eval'
   if (Test-Path $evalL) { Copy-Item $evalL (Join-Path $LocalAI 'eval') -Recurse -Force }   # code-triage eval set
-  # .cmd launchers so pierre/damchain work from cmd.exe too
-  "@echo off`r`n`"$PyL`" `"$LocalAI\rag_query.py`" %*" | Set-Content (Join-Path $LocalAI 'pierre.cmd') -Encoding ASCII
+  # .cmd launchers so heim/damchain work from cmd.exe too
+  "@echo off`r`n`"$PyL`" `"$LocalAI\rag_query.py`" %*" | Set-Content (Join-Path $LocalAI 'heim.cmd') -Encoding ASCII
   "@echo off`r`n`"$PyL`" `"$LocalAI\dam_chain.py`" %*" | Set-Content (Join-Path $LocalAI 'damchain.cmd') -Encoding ASCII
-  Ok "pierre tools -> $LocalAI"
+  Ok "heim tools -> $LocalAI"
 }
 
 # ===========================================================================
-if ($DoResearch) {
-  Say 'dam-research - literature'
+if ($DoVor) {
+  Say 'vor - literature'
   $Embed = 'qwen3-embedding:0.6b'
   & $Ollama pull $Embed *> $null
   if ($LASTEXITCODE -ne 0) { Warn 'qwen3-embedding pull failed; using nomic-embed-text'; $Embed = 'nomic-embed-text' }
   Pull $ChatModel; Pull $Embed
-  $mf = Join-Path $ResearchDir 'Modelfile'
+  $mf = Join-Path $VorDir 'Modelfile'
 @"
 FROM $ChatModel
 PARAMETER num_ctx $NumCtx
 PARAMETER temperature 0.2
 PARAMETER top_p 0.9
 PARAMETER repeat_penalty 1.05
-SYSTEM """You are a research assistant for dam-safety engineers in North Dakota: dam safety, dam and spillway design, breach parameters, inundation mapping, hydrology and flood hazards. When source passages are supplied, use only them: every fact gets a citation to its source and page, quotes are copied exactly, numbers/units/equations and their applicability limits kept exactly, and disagreements between sources are reported, not resolved silently. When no passages are supplied, say the answer is from general knowledge, is UNVERIFIED, and must be checked against the primary publication; give the publication to check (agency, document number, year) and never invent a citation, page number, coefficient or value. You are not a licensed engineer and your output is not engineering judgement."""
+SYSTEM """You are Vor, a research assistant for dam-safety engineers in North Dakota: dam safety, dam and spillway design, breach parameters, inundation mapping, hydrology and flood hazards.
+DOMAIN CONTEXT (the vocabulary of this library; it tells you what the terms mean, never what the answer is - the answer comes from the passages):
+- Hazard classification: USBR ACER TM-11 depth-velocity danger charts, FEMA 333, ND REG_05.2026 and NDAC 89-08, NRCS TR-60 and TR-210-60, and state rules such as NY 6 NYCRR 673, VA 4VAC50-20 and TX 30 TAC 299.
+- Inundation mapping and breach analysis: FEMA P-946, FEMA P-919, FERC Engineering Guidelines Chapter R21, USBR DSO reports, HEC Research Note 5, NRCS TR-66.
+- Breach parameters: Froehlich (1995, 2008), Von Thun and Gillette, MacDonald and Langridge-Monopolis, Xu and Zhang - breach width, side slope and formation time, each with its own applicability limits, which are part of the result and must be carried with it.
+- Design and hydrology: USACE EM 1110-2-2300, -1902, -1603, -1420 and ER 1110-2-1156; USBR Design of Small Dams; NOAA HMR 51, 52 and 55A and Atlas 14; PMP and PMF.
+- Modelling: LISFLOOD-FP (Bates et al. 2010, local inertia), ANUGA (Zoppou and Roberts 1999), HEC-RAS.
+- Terms that must never be conflated: hazard potential class and risk; a sunny-day (fair-weather) breach and a PMF breach; NAVD88 and a local datum; feet and metres; cfs and m3/s; depth and the depth-velocity product; peak discharge and the breach outflow hydrograph.
+- You have NO web access. Nothing outside the supplied passages and this prompt can be checked, so never present general knowledge as if it were sourced, and say when your training may be out of date.
+- The library is the user's own files and stays on this machine. Treat every document as private.
+- If the passages do not answer the question, say UNSURE and say what is missing. "Not in the library" is worth more than a plausible paragraph.
+When source passages are supplied, use only them: every fact gets a citation to its source and page, quotes are copied exactly, numbers/units/equations and their applicability limits kept exactly, and disagreements between sources are reported, not resolved silently. When no passages are supplied, say the answer is from general knowledge, is UNVERIFIED, and must be checked against the primary publication; give the publication to check (agency, document number, year) and never invent a citation, page number, coefficient or value. You are not a licensed engineer and your output is not engineering judgement."""
 "@ | Set-Content -Path $mf -Encoding UTF8
-  & $Ollama create dam-research -f $mf | Out-Null
-  if ($LASTEXITCODE -ne 0) { Die 'could not create the dam-research model' }
-  Ok "'dam-research' persona created"
+  & $Ollama create vor -f $mf | Out-Null
+  if ($LASTEXITCODE -ne 0) { Die 'could not create the vor model' }
+  Ok "'vor' persona created"
   $RSpec = 'python=3.12 numpy pymupdf'; if ($Ocr) { $RSpec = "$RSpec ocrmypdf tesseract" }
-  $PyR = Make-Env $ResearchEnv $RSpec
+  $PyR = Make-Env $VorEnv $RSpec
   Ok "research python: $PyR"
-  foreach ($t in @('damresearch.py','fetch_asdso.py','eval_damresearch.py','reference_sources.json')) {
-    $src = Join-Path $Here "research\$t"
-    if (Test-Path $src) { Copy-Item $src (Join-Path $ResearchDir $t) -Force }
+  foreach ($t in @('vor.py','fetch_asdso.py','eval_vor.py','reference_sources.json')) {
+    $src = Join-Path $Here "vor\$t"
+    if (Test-Path $src) { Copy-Item $src (Join-Path $VorDir $t) -Force }
   }
-  $evalSrc = Join-Path $Here 'research\eval'
-  if (Test-Path $evalSrc) { Copy-Item $evalSrc (Join-Path $ResearchDir 'eval') -Recurse -Force }
-  "@echo off`r`n`"$PyR`" `"$ResearchDir\damresearch.py`" %*" | Set-Content (Join-Path $ResearchDir 'damresearch.cmd') -Encoding ASCII
-  Ok "dam-research tools -> $ResearchDir; drop PDFs in $RHome\library"
+  $evalSrc = Join-Path $Here 'vor\eval'
+  if (Test-Path $evalSrc) { Copy-Item $evalSrc (Join-Path $VorDir 'eval') -Recurse -Force }
+  "@echo off`r`n`"$PyR`" `"$VorDir\vor.py`" %*" | Set-Content (Join-Path $VorDir 'vor.cmd') -Encoding ASCII
+  Ok "vor tools -> $VorDir; drop PDFs in $RHome\library"
 }
 
 # ===========================================================================
 $DoIndex = (-not $NoIndex)
-if ($DoIndex -and $DoPierre -and (Test-Path (Join-Path $Here 'pierre\knowledge'))) {
-  Say 'Indexing the Pierre knowledge pack'
-  & $PyL (Join-Path $LocalAI 'rag_index.py') -c pierre_knowledge (Join-Path $Here 'pierre\knowledge')
+if ($DoIndex -and $DoHeim -and (Test-Path (Join-Path $Here 'heim\knowledge'))) {
+  Say 'Indexing the Heim knowledge pack'
+  & $PyL (Join-Path $LocalAI 'rag_index.py') -c heim_knowledge (Join-Path $Here 'heim\knowledge')
   if ($LASTEXITCODE -ne 0) { Warn 'knowledge index failed' }
   $edocs = Join-Path $RHome 'library\references\software'
   if (Test-Path $edocs) {
@@ -346,7 +365,7 @@ if ($DoIndex -and $DoPierre -and (Test-Path (Join-Path $Here 'pierre\knowledge')
 
 # ---------------------------------------------------------------------------
 Say "Step 5 - PowerShell profile ($PROFILE)"
-$mark = '# >>> dam local AI (pierre + dam-research) >>>'
+$mark = '# >>> dam local AI (heim + vor) >>>'
 $profExists = Test-Path $PROFILE
 if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -Quiet)) {
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $PROFILE) | Out-Null
@@ -355,17 +374,17 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
     "`$env:OLLAMA_MODELS = '$ModelsDir'",
     "`$env:OLLAMA_FLASH_ATTENTION = '1'",
     "`$env:OLLAMA_KV_CACHE_TYPE = 'q8_0'")
-  if ($DoPierre) {
-    $lines += "`$env:PIERRE_NUM_CTX = '$NumCtx'"
-    $lines += "function pierre     { & '$PyL' '$LocalAI\rag_query.py' @args }"
+  if ($DoHeim) {
+    $lines += "`$env:HEIM_NUM_CTX = '$NumCtx'"
+    $lines += "function heim     { & '$PyL' '$LocalAI\rag_query.py' @args }"
     $lines += "function damchain { & '$PyL' '$LocalAI\dam_chain.py' @args }"
-    $lines += "`$env:PIERRE_WATCH_MODEL = '$WatchModel'"
-    $lines += "function pierre-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
-    $lines += "function pierre-watch  { & '$PyL' '$LocalAI\pierre_watch.py' @args }"
+    $lines += "`$env:HEIM_WATCH_MODEL = '$WatchModel'"
+    $lines += "function heim-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
+    $lines += "function heim-watch  { & '$PyL' '$LocalAI\heim_watch.py' @args }"
   }
-  if ($DoResearch) {
-    $lines += "`$env:DAMRESEARCH_HOME = '$RHome'"
-    $lines += "function damresearch { & '$PyR' '$ResearchDir\damresearch.py' @args }"
+  if ($DoVor) {
+    $lines += "`$env:VOR_HOME = '$RHome'"
+    $lines += "function vor { & '$PyR' '$VorDir\vor.py' @args }"
   }
   $lines += '# <<< dam local AI <<<'
   Add-Content -Path $PROFILE -Value $lines
@@ -377,7 +396,7 @@ if (-not $profExists -or -not (Select-String -Path $PROFILE -SimpleMatch $mark -
 # ---------------------------------------------------------------------------
 Say 'Done'
 Write-Host "  Open a new PowerShell (the profile loads automatically), then:"
-if ($DoPierre)     { Write-Host '    pierre "where is the breach width computed"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits' }
-if ($DoResearch) { Write-Host "    damresearch ingest    # after dropping PDFs in $RHome\library (or run research\fetch_asdso.py --catalog)" }
-Write-Host "  .cmd launchers for cmd.exe are in $LocalAI (pierre.cmd, damchain.cmd) and $ResearchDir (damresearch.cmd)."
+if ($DoHeim)     { Write-Host '    heim "where is the breach width computed"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits' }
+if ($DoVor) { Write-Host "    vor ingest    # after dropping PDFs in $RHome\library (or run vor\fetch_asdso.py --catalog)" }
+Write-Host "  .cmd launchers for cmd.exe are in $LocalAI (heim.cmd, damchain.cmd) and $VorDir (vor.cmd)."
 Write-Host '  The local AIs need no admin rights and no GPU; a discrete GPU only makes them faster.'

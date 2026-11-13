@@ -5,19 +5,19 @@ installer that sets up **both**:
 
 | Assistant | What it does |
 |-----------|--------------|
-| **Pierre** | Code triage over the suite repos (RAG + `pierre` / `damchain`). |
-| **dam-research** | Literature Q&A over dam-safety PDFs (`damresearch`, cited answers). |
+| **Heim** | Code triage over the suite repos (RAG + `heim` / `damchain`). |
+| **Vor** | Literature Q&A over dam-safety PDFs (`vor`, cited answers). |
 
 | Platform | Installer | Run it with |
 |----------|-----------|-------------|
-| macOS | `pierre/setup-local-pierre.sh` (+ `research/setup-dam-research.zsh`), or the packaged `install_all.zsh` | `zsh …` |
+| macOS | `heim/setup-local-heim.sh` (+ `vor/setup-vor.zsh`), or the packaged `install_all.zsh` | `zsh …` |
 | Linux / openSUSE | `install-local-ai-linux.sh` | `./install-local-ai-linux.sh` |
 | Windows 10/11 | `install-local-ai-windows.ps1` | `powershell -ExecutionPolicy Bypass -File .\install-local-ai-windows.ps1` |
 
 All three do the same thing and share the same conventions: models in
-`~/local-ai/models` (`%USERPROFILE%\local-ai\models`), chat persona `pierre` and
-`dam-research`, the server on `127.0.0.1:11434`, and conda envs `ndpierre` /
-`ndresearch` (a Python venv is the fallback when conda isn't present).
+`~/local-ai/models` (`%USERPROFILE%\local-ai\models`), chat persona `heim` and
+`vor`, the server on `127.0.0.1:11434`, and conda envs `ndheim` /
+`ndvor` (a Python venv is the fallback when conda isn't present).
 
 ## No download-then-run
 
@@ -31,25 +31,25 @@ before running it:
 - **Windows** — save `OllamaSetup.exe` into your Downloads (or
   `damit_ai\offline\ollama\` with `SHA256SUMS`), or let the script use
   `winget install Ollama.Ollama`. No admin rights.
-- **macOS** — as documented in `setup-local-pierre.sh` (bundled zip or
+- **macOS** — as documented in `setup-local-heim.sh` (bundled zip or
   `~/Downloads/Ollama-darwin.zip`, SHA256-checked).
 
 ## Options (same meaning on every platform)
 
 | Linux / macOS flag | Windows switch | Effect |
 |--------------------|----------------|--------|
-| `--no-pierre` | `-NoPierre` | Install dam-research only. |
-| `--no-research` | `-NoResearch` | Install Pierre only. |
+| `--no-heim` | `-NoHeim` | Install Vor only. |
+| `--no-vor` | `-NoVor` | Install Heim only. |
 | `--ocr` | `-Ocr` | Add `ocrmypdf` + `tesseract` for scanned PDFs. |
 | `--small` | `-Small` | Force the small chat model (for low-RAM machines). |
-| `--index-knowledge` | `-IndexKnowledge` | Also index `pierre/knowledge/` into the RAG. |
+| `--index-knowledge` | `-IndexKnowledge` | Also index `heim/knowledge/` into the RAG. |
 
 ## Which model you get
 
 Picked from installed RAM: ≥32 GB → `qwen3:30b-a3b` (num_ctx 16384); ≥16 GB →
 `qwen3:14b`; otherwise `qwen3:8b` (num_ctx 12288). Embeddings: `nomic-embed-text`
-for Pierre, `qwen3-embedding:0.6b` (falling back to `nomic-embed-text`) for
-dam-research.
+for Heim, `qwen3-embedding:0.6b` (falling back to `nomic-embed-text`) for
+vor.
 
 ## After it finishes
 
@@ -57,12 +57,12 @@ Open a new shell (the aliases/functions load from `~/.bashrc` / `~/.zshrc` /
 PowerShell `$PROFILE`), then:
 
 ```
-pierre "where is the breach width computed"       # set ND_REPO / DWR_REPO / CREST_REPO for repo audits
-damresearch ingest                               # after dropping PDFs in ~/DamResearch/library
+heim "where is the breach width computed"       # set ND_REPO / DWR_REPO / CREST_REPO for repo audits
+vor ingest                               # after dropping PDFs in ~/Vor/library
 ```
 
-On Windows, `cmd.exe` users get `pierre.cmd`, `damchain.cmd` and
-`damresearch.cmd` in `%USERPROFILE%\local-ai` (and `…\local-ai\research`).
+On Windows, `cmd.exe` users get `heim.cmd`, `damchain.cmd` and
+`vor.cmd` in `%USERPROFILE%\local-ai` (and `…\local-ai\research`).
 
 ## Download everything for an offline install
 
@@ -76,7 +76,7 @@ connected machine first:
 ```
 
 Each one fills `damit_ai/offline/` with the Ollama runtime (checked against Ollama's own published
-sha256), the AI models, and the dam-research PDF library. Then carry the whole `damit_ai/` folder to
+sha256), the AI models, and the Vor PDF library. Then carry the whole `damit_ai/` folder to
 the target and run the normal installer — it picks up `offline/` automatically (no Ollama download,
 and it seeds the models from `offline/models` so nothing is pulled). Flags: `--no-models` /
 `-NoModels`, `--models "…"` / `-Models "…"`, `--no-library` / `-NoLibrary`, `--ollama-version` /
@@ -84,18 +84,18 @@ and it seeds the models from `offline/models` so nothing is pulled). Flags: `--n
 
 ## What the installers now set up for you
 
-- **Knowledge pack indexed on install** — the Pierre knowledge pack (`pierre/knowledge/`) and,
-  if the dam-research library has them, the engine docs are indexed into the RAG automatically,
-  so Pierre answers behaviour/findings questions out of the box. Skip with `--no-index` / `-NoIndex`.
-- **Pierre code-triage eval** — `eval_pierre.py` (+ `pierre/eval/questions.json`, 10 questions) is
-  installed next to the other Pierre tools. Score a model against known answers:
-  `python3 ~/local-ai/eval_pierre.py` (or `--model qwen3:14b` to compare models). Mirrors
-  `research/eval_damresearch.py`.
-- **Periodic library refresh** — `research/refresh-library.zsh` (macOS/Linux) and
-  `research/refresh-library.ps1` (Windows) download any new catalog/ASDSO files and re-index them.
+- **Knowledge pack indexed on install** — the Heim knowledge pack (`heim/knowledge/`) and,
+  if the Vor library has them, the engine docs are indexed into the RAG automatically,
+  so Heim answers behaviour/findings questions out of the box. Skip with `--no-index` / `-NoIndex`.
+- **Heim code-triage eval** — `eval_heim.py` (+ `heim/eval/questions.json`, 10 questions) is
+  installed next to the other Heim tools. Score a model against known answers:
+  `python3 ~/local-ai/eval_heim.py` (or `--model qwen3:14b` to compare models). Mirrors
+  `vor/eval_vor.py`.
+- **Periodic library refresh** — `vor/refresh-library.zsh` (macOS/Linux) and
+  `vor/refresh-library.ps1` (Windows) download any new catalog/ASDSO files and re-index them.
   Each script's header has the launchd / cron / Task Scheduler line to run it weekly.
 - **ALGORITHM-HELP** — the one piece that needs a live QGIS box: run
-  `pierre/knowledge/dump-algorithm-help.zsh` once where the plugins are installed in a QGIS profile,
+  `heim/knowledge/dump-algorithm-help.zsh` once where the plugins are installed in a QGIS profile,
   commit the generated `ALGORITHM-HELP.md`, and the next install (or `index-knowledge.zsh`) picks it up.
 
 ## openSUSE GUI-QGIS note

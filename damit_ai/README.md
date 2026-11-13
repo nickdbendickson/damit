@@ -3,14 +3,22 @@
 Two local assistants that run on your Mac through [Ollama](https://ollama.com). Nothing is sent
 off the machine. They are kept apart: separate Ollama models, separate databases, separate commands.
 
+> **Renamed 2026-11-13.** The code-triage AI was `pierre` (and `lumo` before that) and is now
+> **Heim**; the literature AI was `damresearch` and is now **Vor**. Re-running either installer
+> carries an existing install over: `~/DamResearch` is moved to `~/Vor`, `research.db` becomes
+> `vor.db`, and Heim's RAG collection is renamed in place so nothing is re-embedded. `damchain
+> research ...` still works as an alias for `damchain vor ...`. The conda environments are the one
+> thing that is rebuilt rather than renamed (`ndpierre` -> `ndheim`, `ndresearch` -> `ndvor`); the
+> packages are bundled, so nothing is downloaded, and the old environments can be deleted.
+
 | Folder | Assistant | What it does | Ollama model | Data |
 |---|---|---|---|---|
-| [`pierre/`](pierre/) | **Pierre**, code triage | Audits plugin code (static pass + model pass), runs the plugin test suites, drives the plugin chain headless (`damchain`), explains failed runs | `pierre` | `~/local-ai/knowledge.db` |
-| [`research/`](research/) | **dam-research**, literature | Answers questions from your library of dam-safety / dam-design / flood-hazard publications, citing document and page; deep-research briefs with every quote checked against its page | `dam-research` | `~/DamResearch/research.db` |
+| [`heim/`](heim/) | **Heim**, code triage | Audits plugin code (static pass + model pass), runs the plugin test suites, drives the plugin chain headless (`damchain`), explains failed runs | `heim` | `~/local-ai/knowledge.db` |
+| [`vor/`](vor/) | **Vor**, literature | Answers questions from your library of dam-safety / dam-design / flood-hazard publications, citing document and page; deep-research briefs with every quote checked against its page | `vor` | `~/Vor/vor.db` |
 
 > **Both are assistants, not engineers.** A local model misreads code and papers often enough that
-> every Pierre finding must be confirmed against the live code with a failing test, and every
-> dam-research statement checked against the cited page of the source, before anything is
+> every Heim finding must be confirmed against the live code with a failing test, and
+> every Vor statement checked against the cited page of the source, before anything is
 > changed or relied on in a dam-safety decision.
 
 These are Mac tools (zsh, Ollama.app, conda). They are not QGIS plugins and are not part of any
@@ -24,14 +32,14 @@ plugin zip or CI job.
 
 ## Install
 
-1. **Pierre (installs Ollama too):**
+1. **Heim (installs Ollama too):**
    ```zsh
-   cd damit_ai/pierre
-   zsh setup-local-pierre.sh                     # --small for a 16 GB Mac, --model TAG for any model
+   cd damit_ai/heim
+   zsh setup-local-heim.sh                     # --small for a 16 GB Mac, --model TAG for any model
    source ~/.zshrc
    ```
-   Commands: `pierre-start` (Ollama server, in its own tab), `pierre-chat`, `pierre-index`, `pierre-query`,
-   `pierre-audit`, `pierre-digest`, `pierre-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
+   Commands: `heim-start` (Ollama server, in its own tab), `heim-chat`, `heim-index`, `heim-query`,
+   `heim-audit`, `heim-digest`, `heim-watch`, `damchain ...` (the watcher's small model: `--watch-model TAG`, default `qwen3:4b`).
 
    **Repo audit:** `damchain audit --repo ~/path/to/DWR_Plugins` writes one report to
    `~/local-ai/reports/audit_<repo>_<time>.md` (and `.json`). It checks:
@@ -43,7 +51,7 @@ plugin zip or CI job.
       (never installed by the audit);
    3. network: every host the code names, written to `hosts_<repo>.txt` for IT; with
       `--allow-hosts FILE` any host not in the file is flagged;
-   4. `--pierre`: the local model reviews the diff against `origin/main`. Its findings are marked
+   4. `--heim`: the local model reviews the diff against `origin/main`. Its findings are marked
       UNVERIFIED (triage only; confirm each with a failing test);
    5. golden runs: `damchain audit --golden-record --results ~/DamSafety/Dams --ids DWR-2801,DWR-4031`
       saves those dams' run_report.json numbers as a baseline, and after a plugin update rerun the
@@ -52,29 +60,29 @@ plugin zip or CI job.
    Any HIGH finding gives exit code 1, so the audit can gate a merge. `--only release,security`
    runs a subset.
 
-2. **dam-research (needs Ollama from step 1, or the Ollama app):**
+2. **Vor (needs Ollama from step 1, or the Ollama app):**
    ```zsh
-   cd damit_ai/research
-   zsh setup-dam-research.zsh                  # --ocr for scanned PDFs, --big / --small / --model TAG
+   cd damit_ai/vor
+   zsh setup-vor.zsh                  # --ocr for scanned PDFs, --big / --small / --model TAG
    source ~/.zshrc
    ```
-   Then drop PDFs in `~/DamResearch/library`, or fetch the public ASDSO / FEMA reference set
+   Then drop PDFs in `~/Vor/library`, or fetch the public ASDSO / FEMA reference set
    (about 49 PDFs) with `python3 fetch_asdso.py` and 58 hazard-classification and dam-design sources
-   with `python3 fetch_asdso.py --catalog`, and run `damresearch ingest`. After that:
-   `damresearch search | ask | research | chat ...`, also available as `damchain research ...`.
-   **Just the library, no pipeline:** `zsh research/download-library.zsh` downloads the catalog
+   with `python3 fetch_asdso.py --catalog`, and run `vor ingest`. After that:
+   `vor search | ask | research | chat ...`, also available as `damchain vor ...`.
+   **Just the library, no pipeline:** `zsh vor/download-library.zsh` downloads the catalog
    and ASDSO files only (no install, ingest, OCR or eval) and writes `library-urls.txt` — a
    plain-text list of every source and its web address; `python3 fetch_asdso.py --urls FILE`
    writes that list alone, offline, downloading nothing.
-   **First run, in one command:** `zsh first-run.zsh` installs dam-research if needed, downloads
+   **First run, in one command:** `zsh first-run.zsh` installs Vor if needed, downloads
    both reference sets, indexes them, scores two models on 16 questions with known answers
-   (`eval_damresearch.py`), and packs the results into `~/Desktop/damresearch-first-run.zip`.
-   Full guide, model and memory trade-offs: [`research/INSTALL.md`](research/INSTALL.md).
-   Starter reading list: [`research/READING-LIST.md`](research/READING-LIST.md).
+   (`eval_vor.py`), and packs the results into `~/Desktop/vor-first-run.zip`.
+   Full guide, model and memory trade-offs: [`vor/INSTALL.md`](vor/INSTALL.md).
+   Starter reading list: [`vor/READING-LIST.md`](vor/READING-LIST.md).
 
-## Run watcher: Pierre reviews a DamIT run
+## Run watcher: Heim reviews a DamIT run
 
-Pierre can watch a DamIT Runner run, but the review does not depend on the model. Two parts:
+Heim can watch a DamIT Runner run, but the review does not depend on the model. Two parts:
 
 1. **`run_digest.py`, deterministic, no AI.** After each Runner pass it reads what the Runner already wrote (the
    per-pass record in `run_report.json`, the per-pass results, the dam folder, the Hazard report) and checks: `.mass`
@@ -84,49 +92,49 @@ Pierre can watch a DamIT Runner run, but the review does not depend on the model
    spillway flow; receptors on NoData or dry cells next to wet cells; unscored roads; Hazard drivers that need a person
    (e.g. BNSF KO = 15 trains/day). It prints a 20-40 line summary and machine flags (JSON), and **the code sets the
    verdict, OK / WATCH / PROBLEM, from the flags alone.**
-2. **`pierre_watch.py`, Pierre explains.** A 500-1,000 token prompt (the digest and flag titles, plus a pinned system
+2. **`heim_watch.py`, Heim explains.** A 500-1,000 token prompt (the digest and flag titles, plus a pinned system
    prompt of Nick's rules and the real tool names) goes to a **small model** (default `qwen3:4b`; `phi4-mini` is the
-   alternative; `PIERRE_WATCH_MODEL` or `--model`), through Ollama `/api/chat` with `think:false`, `num_ctx` about 4k and
+   alternative; `HEIM_WATCH_MODEL` or `--model`), through Ollama `/api/chat` with `think:false`, `num_ctx` about 4k and
    `stream:true`. Every streamed piece is saved at once, so a slow box leaves partial text; there is no hard timeout that
-   throws it away. Pierre never changes or gates the verdict, and if it does not answer in a few seconds the review stands.
+   throws it away. Heim never changes or gates the verdict, and if it does not answer in a few seconds the review stands.
    The **complete flag list** (every flag, receptor ids capped at 10 plus a count) is written by code at the top of
-   `pierre_<event>.md`; Pierre's one-line comments go below it, and a footer names any flag it skipped or any flag-like id it
+   `heim_<event>.md`; Heim's one-line comments go below it, and a footer names any flag it skipped or any flag-like id it
    invented. Timing (`prompt_eval_duration`, `eval_duration`, tokens/s ...) and any `message.thinking` that arrived despite
    `think:false` are kept in the status JSON.
-   **Pierre does not compete with the Runner for the CPU.** `PIERRE_WATCH_EXPLAIN=idle` (default) queues the explanation until the
+   **Heim does not compete with the Runner for the CPU.** `HEIM_WATCH_EXPLAIN=idle` (default) queues the explanation until the
    Runner's whole pipeline has finished (`run_progress.json` complete, `run_report.json`, or `run_setup.json` finished / failed)
-   and no `lisflood` process runs; a pass hook only queues. (1.2.0 waited for a quiet gap between passes and started Pierre 2 s
+   and no `lisflood` process runs; a pass hook only queues. (1.2.0 waited for a quiet gap between passes and started Heim 2 s
    after pass 6 of DWR-2824, which slowed pass 7 from 26 s to 71 s: the Runner works in Python between passes.) A Runner that
-   died is treated as over after `PIERRE_WATCH_STALE_S` (900 s) with nothing written to the run folder and no `lisflood` process.
+   died is treated as over after `HEIM_WATCH_STALE_S` (900 s) with nothing written to the run folder and no `lisflood` process.
    `end` is the same gate, `always` is the old behaviour, `never` writes the digest only.
    **Pass hooks are cheap (1.3.1).** The structure layer is read and reprojected once per `watch` process and sampled with numpy
-   (one array lookup for all points); a `pass_end` hook samples receptors only on every Nth pass (`PIERRE_WATCH_PASS_RECEPTOR_EVERY`,
-   default 2; 1 = every pass; 0 = only at `run_end`) and `watch` runs at nice 19 (`PIERRE_WATCH_PASS_NICE`). `run_end` always samples the
+   (one array lookup for all points); a `pass_end` hook samples receptors only on every Nth pass (`HEIM_WATCH_PASS_RECEPTOR_EVERY`,
+   default 2; 1 = every pass; 0 = only at `run_end`) and `watch` runs at nice 19 (`HEIM_WATCH_PASS_NICE`). `run_end` always samples the
    final raster. `PASS_UNFINISHED` tolerates one `.mass` output interval (`massint`) when the log or the Runner agrees the pass ended. Ollama gets
-   `num_thread` 2 (`PIERRE_WATCH_NUM_THREAD`, 0 = Ollama's default) and the explain process is niced. A busy shared Ollama is
-   waited for (`PIERRE_WATCH_FIRST_TOKEN_S`, default 600; 0 = no limit): it ends as status `timeout`, not a partial reply.
+   `num_thread` 2 (`HEIM_WATCH_NUM_THREAD`, 0 = Ollama's default) and the explain process is niced. A busy shared Ollama is
+   waited for (`HEIM_WATCH_FIRST_TOKEN_S`, default 600; 0 = no limit): it ends as status `timeout`, not a partial reply.
    **1.3.2 (DWR-2645, DWR-2801).** Every `pass_end` digest carries receptors or `checks.receptors_skipped` with the reason (never a blank),
    and the hook waits for the Runner to write the finished pass into `run_progress.json` (its georeference; at most
-   `PIERRE_WATCH_RECORD_GRACE_S`, 120 s). A mid-run hook does not read a pass grid that would leave under `PIERRE_WATCH_MIN_FREE_MB` (1024) of RAM free,
+   `HEIM_WATCH_RECORD_GRACE_S`, 120 s). A mid-run hook does not read a pass grid that would leave under `HEIM_WATCH_MIN_FREE_MB` (1024) of RAM free,
    late-pass grids are read leaner (float32 above 4 M cells, edges streamed, no full-size copies), and Ollama keeps the model
-   `PIERRE_WATCH_KEEP_ALIVE` (2m; it was 30m) after an explain. The dam line check reads the file: a MultiLineString counts, with its parts.
+   `HEIM_WATCH_KEEP_ALIVE` (2m; it was 30m) after an explain. The dam line check reads the file: a MultiLineString counts, with its parts.
    **1.3.3 (DWR-2645).** A toe band the Runner widened (Runner 0.3.3 records the effective band and why) is judged by its effective
    band: an inflow inside it is the INFO note `TOE_BAND_WIDENED`, not a `TOE_INFLOW` problem. The Runner now warns when a run ends with a wet edge.
-   Interactive Q&A (`pierre`, `pierre-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
+   Interactive Q&A (`heim`, `heim-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
    **1.3.5 (DWR-2659).** `RECEPTOR_NODATA` describes both Hazard 0.2.6 paths: neighbourhood fill only on a depth grid coarser than 20 m (`sampling=neighbourhood`, flag `nodata_neighbourhood`); at 20 m or finer Hazard still scores the NoData cell dry (`sampling=centre_nodata_dry`) and flags `nodata_dry_review`.
 
 Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
 
 ```
-pierre-digest RUN_DIR                       # the digest, no AI (add --json for the machine flags)
-pierre-watch watch RUN_DIR                  # follow a run; one digest per hook, Pierre explains the newest
-pierre-watch event run_end RUN_DIR          # one hook now (pass_end | stall | before_hazard | after_hazard | run_end)
+heim-digest RUN_DIR                       # the digest, no AI (add --json for the machine flags)
+heim-watch watch RUN_DIR                  # follow a run; one digest per hook, Heim explains the newest
+heim-watch event run_end RUN_DIR          # one hook now (pass_end | stall | before_hazard | after_hazard | run_end)
 ```
 
 Output goes to `~/local-ai/watch/<dam>_<run>/`, never into the run folder. Details, every flag id and the thresholds:
-[`pierre/knowledge/WATCHER-DIGEST.md`](pierre/knowledge/WATCHER-DIGEST.md). The real algorithm ids and parameters Pierre cites come
-from [`pierre/knowledge/ALGORITHM-HELP-DAMIT.md`](pierre/knowledge/ALGORITHM-HELP-DAMIT.md), generated from the plugin code by
-`pierre/tools/dump_damit_algorithm_help.py` in an offscreen QGIS (CI checks it is current).
+[`heim/knowledge/WATCHER-DIGEST.md`](heim/knowledge/WATCHER-DIGEST.md). The real algorithm ids and parameters Heim cites come
+from [`heim/knowledge/ALGORITHM-HELP-DAMIT.md`](heim/knowledge/ALGORITHM-HELP-DAMIT.md), generated from the plugin code by
+`heim/tools/dump_damit_algorithm_help.py` in an offscreen QGIS (CI checks it is current).
 
 No `dam.json` in the dam folder? The digest says so (`DAM_RECORD_MISSING`, info), does not raise a datum alarm for elevations in
 the NAVD88 range, takes the dam id from the run setup, the handoff or the folder name, and writes a flat
@@ -140,42 +148,42 @@ the NAVD88 range, takes the dam id from the run setup, the handoff or the folder
 
 ## Offline folder (nothing downloaded by the installers)
 
-The `damit_ai-offline` download adds `damit_ai/offline/` next to `pierre/` and `research/`:
+The `damit_ai-offline` download adds `damit_ai/offline/` next to `heim/` and `vor/`:
 
 - `offline/ollama/Ollama-darwin.zip` + `SHA256SUMS`: Ollama for Mac, checked against Ollama's
   published hash. Both installers use it, after checking the hash, instead of downloading Ollama.
 - `offline/conda/osx-arm64/` and `offline/conda/osx-64/`: every conda-forge package for the
-  `ndresearch` env (Python 3.12, numpy, PyMuPDF, pypdf, ocrmypdf, tesseract, ghostscript), with
-  `ndresearch.txt` and `SHA256SUMS`. `setup-dam-research.zsh` builds the env from these files with
+  `ndvor` env (Python 3.12, numpy, PyMuPDF, pypdf, ocrmypdf, tesseract, ghostscript), with
+  `ndvor.txt` and `SHA256SUMS`. `setup-vor.zsh` builds the env from these files with
   `conda create --offline`, OCR included. It needs conda (the dam-suites package ships Miniforge).
 
 Models still come from Ollama's registry (`ollama pull`, 17 to 24 GB each). They are too big to bundle. If `ollama pull` fails
 (for example behind a proxy), the Linux, Mac and Windows installers fall back to the model's Hugging Face GGUF (sha256 checked,
-resumable) and `ollama create` it under the same tag. `HF_ENDPOINT` points at a mirror, `PIERRE_GGUF_SPEC` overrides the table,
-`PIERRE_NO_HF_FALLBACK=1` turns the fallback off.
+resumable) and `ollama create` it under the same tag. `HF_ENDPOINT` points at a mirror, `HEIM_GGUF_SPEC` overrides the table,
+`HEIM_NO_HF_FALLBACK=1` turns the fallback off.
 
 ## Models by Mac
 
-| Mac | Pierre | dam-research |
+| Mac | Heim | Vor |
 |---|---|---|
 | Apple Silicon 48 GB+ | `qwen3:30b-a3b` | `qwen3.6:35b-a3b` (falls back to `qwen3:30b-a3b`) |
-| Apple Silicon 32 GB | `qwen3:30b-a3b` | `qwen3:30b-a3b`, sharing Pierre's download. `--model qwen3.6:27b` trades speed for quality |
+| Apple Silicon 32 GB | `qwen3:30b-a3b` | `qwen3:30b-a3b`, sharing Heim's download. `--model qwen3.6:27b` trades speed for quality |
 | Apple Silicon 16-24 GB | `qwen3:14b` | `qwen3:14b` / `qwen3:8b` |
 | Intel Mac (CPU only) | `qwen3:30b-a3b` at 32 GB+, else `qwen3:8b` | `qwen3.6:35b-a3b` at 48 GB+, `qwen3:30b-a3b` at 32 GB |
 
-Embeddings: Pierre uses `nomic-embed-text`; dam-research uses `qwen3-embedding:0.6b`.
+Embeddings: Heim uses `nomic-embed-text`; Vor uses `qwen3-embedding:0.6b`.
 
 ## Status
 
-- `pierre/knowledge/` is a knowledge pack to index into Pierre's RAG beyond the source code (known behaviours /
+- `heim/knowledge/` is a knowledge pack to index into Heim's RAG beyond the source code (known behaviours /
   conventions, modeling findings, open-issues snapshot, and helpers to dump Processing-tool help and index
-  it); see `pierre/knowledge/README.md` and `index-knowledge.zsh`.
-- `pierre/` is setup-local-pierre.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
-  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.3 and pierre_watch 1.3.3; `pierre-chat` shows the
+  it); see `heim/knowledge/README.md` and `index-knowledge.zsh`.
+- `heim/` is setup-local-heim.sh v3.8 (bundled Ollama and packages, no web downloads) with rag_index 2.4, rag_query 2.2, audit_plugin 1.3,
+  suite_check 1.0, dam_chain 1.5 and repo_audit 1.0 (written by the installer itself; v3.8 also copies the run watcher: run_digest 1.3.3 and heim_watch 1.3.3; `heim-chat` shows the
   DaMiT banner). dam_chain 1.5 adds DamSafety Core to the DWR set and no longer reports the hidden
   self-test / run-chain tools as MISSING (`qgis_process list` leaves them out). `suite_check.py` and `dam_chain.py` drive the ND and DamSafety plugin sets (QGIS
   profiles `nd` and `damsafety`). The DamIT plugins are not wired into them yet.
-- `research/` is damresearch 1.0.4, setup-dam-research 1.1 (bundled Ollama and packages), fetch_asdso 1.3 (download-library.zsh + --urls), eval_damresearch 1.1 and first-run.zsh 1.0.
+- `vor/` is vor 1.1.0, setup-vor 1.2 (bundled Ollama and packages), fetch_asdso 1.3 (download-library.zsh + --urls), eval_vor 1.1 and first-run.zsh 1.0.
   fetch_asdso was tested against damsafety.org on 2026-11-09 (48 of 49 files downloaded; the 49th
   is on damtoolbox.org, which the cloud workspace can't reach). The `--catalog` sources were only
   partly tested: the cloud workspace reaches 2 of their 31 sites, so most catalog URLs were checked
