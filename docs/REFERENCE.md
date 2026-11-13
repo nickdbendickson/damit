@@ -177,6 +177,22 @@ low-confidence cases say so) instead of a gap, and `terrain` checks coverage in 
 |---|---|
 | `damit_run:rundam` | Accepts a hand-off package (or equivalent parameters), validates it against the catalog, creates a **new** run folder and runs the breach model there (DRY_RUN off, the default), then copies the final rasters and vectors into `<DAMS_FOLDER>/<dam id>/`. DRY_RUN on: `run_setup.json`, the package, `README_run.md` and the expected-output contract only. |
 | `damit_run:checkhandoff` | Validates a package and lists what a run still needs. |
+| `damit_run:hecrasexport` | Writes a HEC-RAS project from a finished run. It does not run HEC-RAS. |
+| `damit_run:batch` | The ported DamSafety batch: a layer of dams, one breach run each, with a summary CSV. |
+| `damit_run:sensitivity`, `damit_run:cascade` | The ported sensitivity runs for one dam, and the failure of dams in a chain. |
+| `damit_run:hydrograph`, `damit_run:estimate`, `damit_run:check` | Breach hydrograph only; run-time estimate for one dam; check of the LISFLOOD-FP / ANUGA installation. |
+| `damit_run:finishanuga`, `damit_run:delineate` | Finish an ANUGA run after QGIS closed; delineate the watershed of a dam (USGS StreamStats). |
+
+The eight tools from `batch` down are the DamSafety Runner's own (`algorithms/engine.py`, `core/`), registered since
+0.4.1. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
+DamSafety's dam-folder layout; `damit_run:rundam` stays the tool the Screener hand-off and DamIT Crest call.
+
+**Engine parity with DamSafety.** `core/`, `algorithms/engine.py`, `flood/breach.py` and DamIT Finder are ports of
+the DamSafety plugins ([DWR_Plugins](https://github.com/nickdbendickson/DWR_Plugins)). `scripts/check_engine_parity.py`
+compares every ported file with its original: identical, differing exactly as recorded in `damit_runner/PARITY.json`
+(DamIT's names, imports and wording), or drifted, which fails. CI runs it on pull requests against the recorded
+DamSafety commit and daily against DamSafety's `main`. After porting a DamSafety change run
+`python3 scripts/check_engine_parity.py --dwr <DWR_Plugins checkout> --update` and commit `PARITY.json` with it.
 
 0.2.0 runs the model like the DamSafety Runner's `rundam` (`ndbreach:rundam`, DWR_Plugins main), with its parameter
 names and defaults: `METHOD` (Froehlich 2008 piping by default; TR-60, MacDonald, Von Thun & Gillette, Froehlich

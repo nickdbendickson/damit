@@ -5,10 +5,15 @@ from qgis.PyQt.QtGui import QIcon
 
 from .algorithms.rundam import ALGORITHMS as _RUNDAM_ALGS
 
+# The ported DamSafety tools (batch, sensitivity, cascade, hydrograph, estimate, check, finishanuga, delineate).
+# 0.4.1: a failed import is no longer silent. Until 0.4.0 a missing compat module (structure_flags, suite_config)
+# made this import fail, the except below emptied the list, and none of those tools was ever registered.
+ENGINE_IMPORT_ERROR = None
 try:
     from .algorithms.engine import ALGORITHMS as _ENGINE_ALGS
-except ImportError:
-    _ENGINE_ALGS = []  # outside QGIS or missing dependencies
+except ImportError as _e:
+    _ENGINE_ALGS = []
+    ENGINE_IMPORT_ERROR = "{}: {}".format(type(_e).__name__, _e)
 
 # the handoff rundam (algorithms/rundam.py) owns damit_run:rundam; the ported engine's own rundam would collide
 _RUNDAM_NAMES = {cls().name() for cls in _RUNDAM_ALGS}
@@ -19,6 +24,15 @@ PROVIDER_ID = "damit_run"        # distinct from ndbreach, nddam and damit (DamI
 
 class DamitRunProvider(QgsProcessingProvider):
     def load(self):
+        if ENGINE_IMPORT_ERROR:
+            try:
+                from qgis.core import Qgis, QgsMessageLog
+                QgsMessageLog.logMessage(
+                    "DamIT Runner: the batch, sensitivity, cascade, hydrograph and estimate tools did not load ({}). "
+                    "Only 'Run breach model for one dam' is available.".format(ENGINE_IMPORT_ERROR), "DamIT",
+                    Qgis.Warning)
+            except Exception:                                    # noqa: BLE001 - a log line only
+                pass
         # 0.3.0: where an empty LISFLOOD_EXE looks first (flood/lisflood.find_exe), as the old ND Breach Runner's
         # provider settings; optional - the parameters can carry the path
         try:
@@ -56,7 +70,7 @@ class DamitRunProvider(QgsProcessingProvider):
         return "DamIT Runner"
 
     def longName(self):  # noqa: N802
-        return "DamIT Runner 0.3.0"
+        return "DamIT Runner 0.4.1"
 
     def icon(self):
         return QIcon(os.path.join(os.path.dirname(__file__), "icon.svg"))

@@ -10,7 +10,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = ("gmsh_mesher.py", "grid.py", "terrain.py", "anuga_worker.py", "omp_probe.py",
-         "anuga_dtdiag.py", "wallclock.py", "lisflood.py", "units.py", "data_conventions.py", "terrain3dep.py")
+         "anuga_dtdiag.py", "anuga_fine_maxima.py", "wallclock.py", "lisflood.py", "units.py", "data_conventions.py", "terrain3dep.py")
 SRC = os.path.join(ROOT, "damit_runner", "core")
 FLOOD_FILES = ("terrain3dep.py",)          # this one lives in damit_runner/flood/, the rest in damit_runner/core/
 FLOOD_SRC = os.path.join(ROOT, "damit_runner", "flood")

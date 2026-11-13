@@ -7,7 +7,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGINS = {"damit_catalog": ("DamIT Catalog", "no", None, "0.2.0"),
            "damit_screener": ("DamIT Screener", "yes", "DamIT Catalog,DamIT Runner", "0.3.3"),
-           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.4.0")}
+           "damit_runner": ("DamIT Runner", "yes", "DamIT Catalog", "0.4.1")}
 # DamIT Runner 0.3.0 carries the full ported flood engine, so these plugins MAY spawn processes directly
 # (LISFLOOD-FP, the ANUGA worker, HEC-RAS and Wine, ffmpeg, pandoc, conda, caffeinate). Two teeth stay:
 # never through a shell, and never the North Dakota breach/screening suite's processing ids. The HEC-RAS ->

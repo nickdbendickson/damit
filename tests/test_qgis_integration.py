@@ -121,6 +121,40 @@ class Integration(unittest.TestCase):
         self.assertIsNone(reg.algorithmById("damit_screen:classify"))
         self.assertIsNone(reg.algorithmById("damit_run:classify"))
 
+    def test_runner_ported_tools_are_registered(self):
+        # Runner 0.4.1: until 0.4.0 the ported DamSafety tools failed to import (compat.structure_flags and
+        # compat.suite_config did not exist), the provider swallowed the ImportError, and only rundam,
+        # checkhandoff and hecrasexport existed. The count is pinned so a tool cannot vanish unnoticed again.
+        from damit_runner import provider as RP
+        self.assertIsNone(RP.ENGINE_IMPORT_ERROR)
+        reg = QgsApplication.processingRegistry()
+        have = sorted(a.id() for a in reg.providerById("damit_run").algorithms())
+        self.assertEqual(have, ["damit_run:batch", "damit_run:cascade", "damit_run:check", "damit_run:checkhandoff",
+                                "damit_run:delineate", "damit_run:estimate", "damit_run:finishanuga",
+                                "damit_run:hecrasexport", "damit_run:hydrograph", "damit_run:rundam",
+                                "damit_run:sensitivity"])
+        for a in reg.providerById("damit_run").algorithms():
+            self.assertTrue(a.parameterDefinitions(), a.id())
+            self.assertTrue(a.displayName(), a.id())
+
+    def test_runner_hydrograph_tool_runs(self):
+        import processing
+        out = os.path.join(self.tmp, "ported_hydrograph.csv")
+        r = processing.run("damit_run:hydrograph", {"DAM_ID": "ND00009", "HEIGHT_FT": 20, "STORAGE_ACFT": 500,
+                                                    "TOP_FT": 1000, "OUTPUT": out})
+        self.assertTrue(os.path.isfile(r["OUTPUT"]))
+        with open(r["OUTPUT"], encoding="utf-8") as fh:
+            rows = [ln for ln in fh.read().splitlines() if ln.strip()]
+        self.assertGreater(len(rows), 10)
+
+    def test_no_flagged_structures_shipped(self):
+        from damit_runner.compat import structure_flags as F, suite_config as SC
+        self.assertEqual(F.FLAGS, ())
+        self.assertEqual(F.problems(), [])
+        self.assertIsNone(F.lookup("ND00597"))
+        self.assertFalse(SC.in_suite_pack("/x/ND_Dam_Suite_Pack/y"))
+        self.assertTrue(SC.default_dams_folder().endswith(os.path.join("DamIT", "Dams")))
+
     def _dams(self):
         return point_layer([{"_x": 500000.0, "_y": 5200000.0, "ID": "ND00009", "HT": 30.0, "STOR": 450.0,
                              "TOD": 1530.0, "NP": 1520.0, "PMF": 1534.0}],

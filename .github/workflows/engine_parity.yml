@@ -1,0 +1,62 @@
+name: engine_parity
+
+# DamIT's engine, breach equations and Finder are ports of the DamSafety plugins (nickdbendickson/DWR_Plugins).
+# scripts/check_engine_parity.py compares every ported file with its original (damit_runner/PARITY.json holds the
+# accepted differences).
+#   pull request / push: against the DamSafety commit PARITY.json was recorded at, so an edit to a ported file
+#                        has to be acknowledged (re-record with --update);
+#   daily:               against DamSafety's main, so a DamSafety fix that was not ported shows up within a day.
+
+on:
+  push:
+    branches: [main]
+    paths: ["damit_runner/**", "damit_finder/**", "scripts/check_engine_parity.py", "tests/test_engine_parity.py",
+            ".github/workflows/engine_parity.yml"]
+  pull_request:
+    paths: ["damit_runner/**", "damit_finder/**", "scripts/check_engine_parity.py", "tests/test_engine_parity.py",
+            ".github/workflows/engine_parity.yml"]
+  schedule:
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recorded:
+    name: Ported files match the recorded DamSafety commit
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The gate's own tests
+        run: python3 -m unittest -v tests.test_engine_parity
+      - name: Recorded DamSafety commit
+        id: rec
+        run: echo "sha=$(python3 scripts/check_engine_parity.py --dwr . --print-synced-to)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: nickdbendickson/DWR_Plugins
+          ref: ${{ steps.rec.outputs.sha }}
+          path: _dwr
+      - name: Parity with the recorded commit
+        run: python3 scripts/check_engine_parity.py --dwr _dwr
+
+  damsafety-main:
+    name: Ported files match DamSafety main
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/checkout@v4
+        with:
+          repository: nickdbendickson/DWR_Plugins
+          path: _dwr
+      - name: Parity with DamSafety main (a failure lists the files to port)
+        run: python3 scripts/check_engine_parity.py --dwr _dwr
