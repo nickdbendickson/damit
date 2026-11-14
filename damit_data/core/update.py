@@ -120,11 +120,28 @@ def _staging(target):
 
 
 def _swap(staging, target):
+    """Put the staged folder in the target's place. When the old folder cannot be moved away
+    (on Windows: one of its files is open, for example as a layer in QGIS) the old copy stays
+    where it is, the staged one is removed and the update stops with the reason (0.2.1: it was
+    a bare PermissionError, and the staged download was left beside the target)."""
     old = target + ".old"
     shutil.rmtree(old, ignore_errors=True)
-    if os.path.isdir(target):
-        os.replace(target, old)
-    os.replace(staging, target)
+    had = os.path.isdir(target)
+    try:
+        if had:
+            os.replace(target, old)
+        try:
+            os.replace(staging, target)
+        except OSError:
+            if had and not os.path.exists(target):
+                os.replace(old, target)                    # the old copy back in its place
+            raise
+    except OSError as e:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise UpdateError(
+            "{} could not be replaced: one of its files is open in QGIS or in another program, "
+            "or the folder cannot be written ({}). The copy you had is kept. Remove its layers "
+            "from the project and update again.".format(target, e))
     shutil.rmtree(old, ignore_errors=True)
 
 
