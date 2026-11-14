@@ -22,7 +22,7 @@ PY="${DAMIT_PYTHON:-python3}"
 QPY="${DAMIT_QGIS_PYTHON:-python3}"
 echo "== pure Python ($PY)"
 nice -n 19 $PY -m unittest -v damit_catalog.tests.test_catalog damit_screener.tests.test_workflow \
-    damit_screener.tests.test_engine2d damit_runner.tests.test_rundam damit_runner.tests.test_flood damit_runner.tests.test_scenarios damit_runner.tests.test_followups damit_runner.tests.test_batch_workers damit_runner.tests.test_ckpt_sign damit_runner.tests.test_qa_maps_headless tests.test_metadata tests.test_engine_parity \
+    damit_screener.tests.test_engine2d damit_runner.tests.test_rundam damit_runner.tests.test_flood damit_runner.tests.test_scenarios damit_runner.tests.test_followups damit_runner.tests.test_batch_workers damit_runner.tests.test_ckpt_sign damit_runner.tests.test_qa_maps_headless damit_runner.tests.test_engine_sync3 tests.test_metadata tests.test_engine_parity \
     tests.test_hazard_screener_agree
 nice -n 19 $PY damit_hazard/tests/run_tests.py
 echo "== DamIT Core, Setup, Data, Hazard Lite, PMP: pure Python ($PY)"

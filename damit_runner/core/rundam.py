@@ -45,6 +45,10 @@ ported engine's core/flood.py). PMF_FT stays recorded only.
 0.6.0: the ported engine is brought up to DamSafety Runner 3.20.3: damit_run:batch can run several dams at the same time
 (WORKERS, core/batch_workers.py), ANUGA checkpoints are signed and only this user's own are resumed (core/ckpt_sign.py),
 and the QA maps no longer end a run that has no Qt application and no matplotlib. No change to this module's run or its numbers.
+
+0.6.1: the ported engine is brought up to DamSafety Runner 3.20.5 (LISFLOOD-FP flow sections that stay on their gauge, a
+LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
+runners pass. No change to this module's run or its numbers.
 """
 import datetime
 import json
@@ -52,7 +56,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

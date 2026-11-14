@@ -141,6 +141,50 @@ class Update(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.root, "ND", "microsoft_footprints", "NorthDakota.geojson")))
         self.assertFalse(any(n.startswith(".staging") for n in os.listdir(os.path.join(self.root, "ND"))))
 
+    def test_a_folder_that_cannot_be_replaced_keeps_the_old_copy(self):
+        """0.2.1. On Windows a folder with an open file (a layer in QGIS) cannot be renamed.
+        The refusal is played here; the update must say why, keep the copy the user had and
+        leave no staged download behind. Both steps of the swap are tried."""
+        p = sources.plan("microsoft", state="ND")
+        url = p["urls"][0]
+        folder = os.path.join(self.root, "ND", "microsoft_footprints")
+        mine = os.path.join(folder, "NorthDakota.geojson")
+        http = FakeHttp(files={url: zip_bytes({"NorthDakota.geojson": FC_EMPTY})}, headers={url: {"etag": "a"}})
+        update.update(p, http, self.root, feedback=Quiet())
+        with open(mine, "rb") as fh:
+            before = fh.read()
+        recorded = store.read_manifest(self.root)["entries"]["ND/microsoft"]["version"]
+        real = os.replace
+        for refuse in ("old", "new"):
+            calls = []
+
+            def replace(src, dst, _refuse=refuse, _calls=calls):
+                _calls.append((src, dst))
+                if (_refuse == "old" and dst.endswith(".old")) or \
+                        (_refuse == "new" and os.path.basename(src).startswith(".staging")):
+                    raise PermissionError(13, "The process cannot access the file", src)
+                return real(src, dst)
+            http.files[url] = zip_bytes({"NorthDakota.geojson": FC_EMPTY, "new.txt": "x"})
+            http.headers[url] = {"etag": "b-" + refuse}
+            update.os.replace = replace
+            try:
+                with self.assertRaises(update.UpdateError) as cm:
+                    update.update(p, http, self.root, feedback=Quiet())
+            finally:
+                update.os.replace = real
+            self.assertIn("is open in QGIS", str(cm.exception))
+            self.assertIn("The copy you had is kept", str(cm.exception))
+            self.assertTrue(calls, refuse)
+            with open(mine, "rb") as fh:
+                self.assertEqual(fh.read(), before, refuse)
+            self.assertFalse(os.path.exists(os.path.join(folder, "new.txt")), refuse)
+            self.assertEqual(sorted(os.listdir(os.path.join(self.root, "ND"))), ["microsoft_footprints"], refuse)
+            self.assertEqual(store.read_manifest(self.root)["entries"]["ND/microsoft"]["version"], recorded)
+        # and the next update, with nothing open, goes through
+        http.headers[url] = {"etag": "c"}
+        self.assertEqual(update.update(p, http, self.root, feedback=Quiet())["status"], "updated")
+        self.assertTrue(os.path.exists(os.path.join(folder, "new.txt")))
+
     def test_size_limit(self):
         p = sources.plan("osm", state="ND")
         url = p["urls"][0]

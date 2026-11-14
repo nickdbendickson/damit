@@ -137,7 +137,7 @@ class CoreModules(unittest.TestCase):
 
     def test_rundam_version(self):
         from damit_runner.core import rundam as RD
-        self.assertEqual(RD.VERSION, "0.6.0")
+        self.assertEqual(RD.VERSION, "0.6.1")
         self.assertEqual(RD.ENGINE_LISFLOOD, 1)
         # 0.3.0: LISFLOOD-FP and ANUGA run; HEC-RAS 2D is refused
         with self.assertRaises(RD.RunError):
