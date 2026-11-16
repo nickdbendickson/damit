@@ -346,10 +346,13 @@ else
       fi
       if [ -n "$BUILT" ] && [ -x "$BUILT" ]; then
         cp "$BUILT" "$PREFIX/bin/lisflood"; chmod +x "$PREFIX/bin/lisflood"
+        # the Metal kernels (built only when Apple's Metal compiler works) are loaded from the
+        # folder of the executable
+        if [ -f "$(dirname "$BUILT")/metal_fv1_kernels.metallib" ]; then cp "$(dirname "$BUILT")/metal_fv1_kernels.metallib" "$PREFIX/bin/"; fi
         lf_ok "$PREFIX/bin/lisflood" && LISFLOOD_EXE="$PREFIX/bin/lisflood"
       fi
     fi
-    [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (macOS: install Apple's Command Line Tools with  xcode-select --install  and re-run). The Runners use their built-in engine meanwhile."
+    [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (the build's own messages are above; macOS needs Apple's Command Line Tools:  xcode-select --install ). The Runners use their built-in engine meanwhile."
   fi
   [ -n "$LISFLOOD_EXE" ] && ok "LISFLOOD-FP: $LISFLOOD_EXE ($("$LISFLOOD_EXE" -version 2>&1 | grep -o 'LISFLOOD-FP [0-9.]*' | head -1), Runner patch present)"
 fi
