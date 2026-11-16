@@ -3029,7 +3029,10 @@ def run_dwr(args):
         return
     counts = str(res.get("COUNTS") or "")
     m = re.search(r"(\d+)\s+failed", counts)
-    if ok and (m and int(m.group(1)) > 0 or "error" in counts):
+    # "preflight: 0 error(s)" is a clean preflight: count the errors, don't look for the word
+    errs = re.search(r"(\d+)\s+error", counts)
+    if ok and (m and int(m.group(1)) > 0 or (errs and int(errs.group(1)) > 0)
+               or ("error" in counts and not errs)):
         ok = False                       # the chain finished, but some dams (or the preflight) failed
     print("%s  %s" % ("OK" if ok else "FAILED", counts or err))
     print("log: %s" % log)
@@ -3038,6 +3041,15 @@ def run_dwr(args):
     if not ok and getattr(args, "triage", False):
         triage_failure("DamSafety chain", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
+
+
+def default_lisflood():
+    """The suite's LISFLOOD-FP: install-all puts it in ~/dam-suite/bin, the older Mac installer in
+    ~/nd-dam-suite/bin. The newer one first, so an old build left behind is not the one used."""
+    for p in ("~/dam-suite/bin/lisflood", "~/nd-dam-suite/bin/lisflood"):
+        if os.path.isfile(os.path.expanduser(p)):
+            return p
+    return "~/dam-suite/bin/lisflood"
 
 
 def _stamp():
@@ -3146,7 +3158,7 @@ def main():
     ap.add_argument("--env", default="ndqgis", help="conda env with QGIS (default ndqgis)")
     ap.add_argument("--qgis-process", default="", help="path to qgis_process (default: found in the env)")
     ap.add_argument("--threads", type=int, default=1)
-    ap.add_argument("--lisflood", default="~/nd-dam-suite/bin/lisflood",
+    ap.add_argument("--lisflood", default=default_lisflood(),
                     help="LISFLOOD-FP binary (missing = the plugins' own choice / built-in engine)")
     ap.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     ap.add_argument("--quiet", action="store_true", help="don't stream each step's progress lines to the terminal (the full log is still written)")
