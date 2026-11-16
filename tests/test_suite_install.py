@@ -201,6 +201,16 @@ class TestScripts(unittest.TestCase):
             subprocess.run(["bash", "-c", func + '\nqgis_process_profile damsafety "$1" >/dev/null', "x", prof],
                            env=env, check=True)
             self.assertFalse(os.path.lexists(os.path.join(prof, "damsafety")))
+            # a real folder in the link's place (qgis_process makes an empty profile when the link
+            # is missing) is moved aside, not kept as the profile qgis_process loads (review 2026-11-16)
+            os.remove(link); os.makedirs(os.path.join(link, "processing"))
+            again = subprocess.run(["bash", "-c", func + '\nqgis_process_profile damsafety "$1"', "x", prof],
+                                   env=env, capture_output=True, text=True, check=True).stdout
+            self.assertEqual(again, line)
+            self.assertEqual(os.readlink(link), prof)
+            kept = [n for n in os.listdir(os.path.dirname(link)) if n.startswith("default.bak-")]
+            self.assertEqual(len(kept), 1)
+            self.assertTrue(os.path.isdir(os.path.join(os.path.dirname(link), kept[0], "processing")))
             if shutil.which("qgis_process"):
                 out = subprocess.run(["bash", "-c", line + "\nqgis_process plugins"], cwd=t,
                                      env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
@@ -242,14 +252,49 @@ class TestScripts(unittest.TestCase):
             run()
             run(os.path.join(t, "My Data"), "--bbox", "1,2,3,4")
             run("--list")
+            # review 2026-11-16: a relative folder is taken from where the script was run (it was
+            # resolved inside the QGIS plugins folder), --out is the folder that gets adopted, and
+            # --help / -h never change the suite data folder.
+            cwd = os.path.join(t, "here"); os.makedirs(cwd)
+            subprocess.run(["bash", out, "Rel Pack"], env=dict(os.environ, HOME=home), cwd=cwd,
+                           capture_output=True, text=True, check=True)
+            run("--bbox", "1,2,3,4", "--out", os.path.join(t, "Ext"))
+            run("--out=" + os.path.join(t, "Ext2"))
+            run("~/Tilde Pack")
+            run("--help")
+            run("-h")
             with open(log) as fh:
                 got = fh.read().splitlines()
             data = os.path.join(home, "ND_Suite_Data")
+            rel, ext, ext2 = os.path.join(cwd, "Rel Pack"), os.path.join(t, "Ext"), os.path.join(t, "Ext2")
+            tilde = os.path.join(home, "Tilde Pack")
             self.assertEqual(got, [
                 "build --out " + data, "adopt " + data + " None",
                 "build --out " + os.path.join(t, "My Data") + " --bbox 1,2,3,4",
                 "adopt " + os.path.join(t, "My Data") + " None",
-                "build --out " + data + " --list"])
+                "build --out " + data + " --list",
+                "build --out " + rel, "adopt " + rel + " None",
+                "build --out " + ext + " --bbox 1,2,3,4", "adopt " + ext + " None",
+                "build --out " + ext2, "adopt " + ext2 + " None",
+                "build --out " + tilde, "adopt " + tilde + " None",
+                "build --out " + data + " --help",
+                "build --out " + data + " -h"])
+
+    def test_windows_pack_builder_and_junction(self):
+        """review 2026-11-16: build-offline-pack.cmd takes the folder (made absolute, a trailing
+        backslash kept as a folder) before it moves into the plugins folder with pushd (a UNC
+        profile path works there), and the qgis_process junction is checked: a real folder in its
+        place is renamed aside, and a junction that was not made sets no QGIS_CUSTOM_CONFIG_PATH."""
+        with open(os.path.join(SI, "install-all-windows.ps1"), encoding="utf-8") as fh:
+            ps = fh.read()
+        mk = ps[ps.index("function Make-PackBuilder"):ps.index("Say 'Settings and launchers'")]
+        self.assertLess(mk.index('set "OUT=%~f1"'), mk.index("pushd"))
+        self.assertIn('if "%OUT:~-1%"=="\\" set "OUT=%OUT%."', mk)
+        self.assertNotIn("cd /d", mk)
+        qp = ps[ps.index("function QgisProcessProfile"):ps.index("$CrestSrc =")]
+        self.assertIn("ReparsePoint", qp)
+        self.assertIn("default.bak-", qp)
+        self.assertIn('return "rem QGIS_CUSTOM_CONFIG_PATH not set', qp)
 
     def test_settings_written_to_the_file_qgis_reads(self):
         """QGIS keeps a profile's settings in <profile>/qgis.org/QGIS3.ini on macOS (Qt uses the

@@ -279,9 +279,10 @@ function Make-PackBuilder($file) {
     '@echo off',
     "rem DamSafety offline pack (conda env ndqgis, profile '$DsProfile'). Written by $Stamp.",
     "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
-    "cd /d `"$DsDir\python\plugins`" || exit /b 1",
     'set "OUT=%USERPROFILE%\ND_Suite_Data"',
-    'if not "%~1"=="" set "OUT=%~1"',
+    'if not "%~1"=="" set "OUT=%~f1"',
+    'if "%OUT:~-1%"=="\" set "OUT=%OUT%."',
+    "pushd `"$DsDir\python\plugins`" || exit /b 1",
     'set PYTHONUNBUFFERED=1',
     'echo Building the offline pack in %OUT% (a stopped build picks up where it left off)',
     'python -m DamSafety_Data.pack_build --out "%OUT%" || exit /b 1',
@@ -311,9 +312,18 @@ function QgisProcessProfile($profile, $dir) {
   $root = Join-Path $Prefix "qgis-process\$profile"
   $link = Join-Path $root 'profiles\default'
   New-Item -ItemType Directory -Force -Path (Join-Path $root 'profiles') | Out-Null
-  if (Test-Path $link) { cmd /c rmdir "`"$link`"" | Out-Null }
+  $old = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+  if ($old) {
+    # A real folder there is a profile qgis_process made itself when the junction was missing: keep it.
+    if ($old.Attributes -band [IO.FileAttributes]::ReparsePoint) { cmd /c rmdir "`"$link`"" | Out-Null }
+    else { Rename-Item -LiteralPath $link -NewName ('default.bak-' + (Get-Date -Format 'yyyyMMddHHmmss')) }
+  }
   cmd /c mklink /J "`"$link`"" "`"$dir`"" | Out-Null
-  if (-not (Test-Path (Join-Path $link 'python'))) { Warn "could not link ${link} -> ${dir}: Crest's Report step will not find the $profile plugins" }
+  $made = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+  if (-not $made -or -not ($made.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path (Join-Path $link 'python'))) {
+    Warn "could not link ${link} -> ${dir}: Crest's Report step will not find the $profile plugins"
+    return "rem QGIS_CUSTOM_CONFIG_PATH not set: the junction $link was not made"
+  }
   return "set `"QGIS_CUSTOM_CONFIG_PATH=$root`""
 }
 $CrestSrc = Join-Path $Here 'damit_crest'

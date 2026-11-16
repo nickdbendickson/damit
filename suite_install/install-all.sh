@@ -426,20 +426,29 @@ mk_launcher() {  # mk_launcher <file> <profile>
 # resumes a stopped build, and then makes the folder the suite data folder (~/.ndsuite/config.json,
 # which the plugins read when the profile has no data folder of its own). Usage:
 #   build-offline-pack.sh [folder, default ~/ND_Suite_Data] [more pack_build options, e.g. --list]
+# The folder may also be given as --out; a relative one is taken from where the script was run
+# (it is made absolute before the cd). --list, --verify and --help never change the data folder.
 mk_pack_builder() {
   { echo '#!/bin/bash'
     echo "# DamSafety offline pack from Terminal (conda env ndqgis, profile '$DS_PROFILE'). Written by $STAMP."
     echo '# usage: build-offline-pack.sh [folder (default ~/ND_Suite_Data)] [pack_build options]'
     printf '. %q || exit 1\n' "$CONDA_BASE/etc/profile.d/conda.sh"
     printf 'conda activate %q || exit 1\n' "$QP"
+    echo 'OUT="$HOME/ND_Suite_Data"; ARGS=()'
+    echo 'case "${1:-}" in ""|-*) ;; *) OUT="$1"; shift ;; esac'
+    echo 'while [ $# -gt 0 ]; do case "$1" in'
+    echo '  --out) [ $# -gt 1 ] && OUT="$2"; shift; [ $# -gt 0 ] && shift ;;'
+    echo '  --out=*) OUT="${1#--out=}"; shift ;;'
+    echo '  *) ARGS+=("$1"); shift ;;'
+    echo 'esac; done'
+    echo 'case "$OUT" in "~") OUT="$HOME" ;; "~/"*) OUT="$HOME/${OUT#"~/"}" ;; /*) ;; *) OUT="$PWD/$OUT" ;; esac'
     printf 'cd %q || exit 1\n' "$DS_DIR/python/plugins"
-    echo 'OUT="$HOME/ND_Suite_Data"; case "${1:-}" in ""|-*) ;; *) OUT="$1"; shift ;; esac'
     echo 'unset PYTHONPATH; export PYTHONUNBUFFERED=1'
     printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
     echo 'KEEP_AWAKE=""; command -v caffeinate >/dev/null 2>&1 && KEEP_AWAKE="caffeinate -i"'
     echo 'echo "Building the offline pack in $OUT (a stopped build picks up where it left off)"'
-    echo '$KEEP_AWAKE python -m DamSafety_Data.pack_build --out "$OUT" "$@" || exit 1'
-    echo 'case " $* " in *" --list "*|*" --verify "*) exit 0 ;; esac'
+    echo '$KEEP_AWAKE python -m DamSafety_Data.pack_build --out "$OUT" ${ARGS[@]+"${ARGS[@]}"} || exit 1'
+    echo 'case " ${ARGS[*]-} " in *" --list "*|*" --verify "*|*" -h "*|*" --help "*) exit 0 ;; esac'
     echo 'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "$OUT"'
   } > "$1"
   chmod +x "$1"
@@ -476,8 +485,15 @@ if [ "$DO_DI" = 1 ]; then
 qgis_process_profile() {
   local root="$PREFIX/qgis-process/$1"
   [ -d "$2" ] || return 0
+  local link="$root/profiles/default"
   mkdir -p "$root/profiles"
-  rm -f "$root/profiles/default"; ln -s "$2" "$root/profiles/default"
+  # A real folder there is a profile qgis_process made itself when the link was missing: keep it.
+  if [ -e "$link" ] && [ ! -L "$link" ]; then mv "$link" "$link.bak-$(date +%Y%m%d%H%M%S)"; fi
+  rm -f "$link"; ln -s "$2" "$link"
+  if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$2" ]; then
+    warn "Could not link $link to $2: Crest's Report step will not see the $1 plugins."
+    printf '# QGIS_CUSTOM_CONFIG_PATH not set: the link %q was not made\n' "$link"; return 0
+  fi
   printf 'export QGIS_CUSTOM_CONFIG_PATH=%q\n' "$root"
 }
 CREST_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1 || true)"
