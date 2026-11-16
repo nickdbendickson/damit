@@ -153,6 +153,67 @@ class DamChainExitTest(unittest.TestCase):
             sys.stdout = keep
 
 
+class RunDwrCountsTest(unittest.TestCase):
+    """2026-11-16: run_dwr took "preflight: 0 error(s)" for a failure (it looked for the word
+    "error"), so `--check-only` always said FAILED and exited 1 on a clean preflight."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="dam-chain-dwr-")
+        self._qp = DC.QP
+
+    def tearDown(self):
+        DC.QP = self._qp
+
+    def run_dwr(self, counts):
+        DC.QP = FakeQP([(True, {"COUNTS": counts}, "")])
+        args = Args("", set="dwr", dams=os.path.join(self.tmp, "dams.gpkg"), out=self.tmp,
+                    hec="skip", stop_after="end", anuga=False, check_only=True, id_field="dam_id",
+                    ids="DWR-3034", dem="", screen_work="", settings_file="", overrides_csv="",
+                    runner_param=None, dem_units="")
+        out, keep = io.StringIO(), sys.stdout
+        sys.stdout = out
+        try:
+            DC.run_dwr(args)
+            code = 0
+        except SystemExit as e:
+            code = e.code if isinstance(e.code, int) else 1
+        finally:
+            sys.stdout = keep
+        return code, out.getvalue()
+
+    def test_a_clean_preflight_is_ok(self):
+        code, out = self.run_dwr("preflight: 0 error(s)")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("OK"), out)
+
+    def test_preflight_errors_and_failed_dams_still_fail(self):
+        for counts in ("preflight: 1 error(s)", "2 done, 1 failed", "error: no dams layer"):
+            with self.subTest(counts=counts):
+                code, out = self.run_dwr(counts)
+                self.assertEqual(code, 1, out)
+        self.assertEqual(self.run_dwr("2 done, 0 failed")[0], 0)
+
+
+class DefaultLisfloodTest(unittest.TestCase):
+    """install-all puts LISFLOOD-FP in ~/dam-suite/bin; an older Mac install left one in
+    ~/nd-dam-suite/bin, which dam_chain used to pick by default (as NDBREACH_LISFLOOD)."""
+
+    def test_the_new_install_first(self):
+        home = tempfile.mkdtemp(prefix="dam-chain-home-")
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = home
+        try:
+            self.assertEqual(DC.default_lisflood(), "~/dam-suite/bin/lisflood")
+            for d in ("nd-dam-suite", "dam-suite"):
+                os.makedirs(os.path.join(home, d, "bin"))
+                open(os.path.join(home, d, "bin", "lisflood"), "w").close()
+                if d == "nd-dam-suite":
+                    self.assertEqual(DC.default_lisflood(), "~/nd-dam-suite/bin/lisflood")
+            self.assertEqual(DC.default_lisflood(), "~/dam-suite/bin/lisflood")
+        finally:
+            os.environ["HOME"] = old_home
+
+
 class EmbeddedToolsMatchTest(unittest.TestCase):
     """setup-local-heim.sh ships each tool as a heredoc. A fix applied to tools/ only would
     leave every installed copy unfixed, with nothing to notice it."""

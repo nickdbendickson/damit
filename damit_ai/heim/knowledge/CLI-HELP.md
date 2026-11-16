@@ -22,7 +22,7 @@ Run the ND and DamSafety dam plugins headless. `vor ...` runs the literature ass
 | `--env` | ENV | `ndqgis` | conda env with QGIS (default ndqgis) |
 | `--qgis-process` | QGIS_PROCESS |  | path to qgis_process (default: found in the env) |
 | `--threads` | THREADS | `1` |  |
-| `--lisflood` | LISFLOOD | `~/nd-dam-suite/bin/lisflood` | LISFLOOD-FP binary (missing = the plugins' own choice / built-in engine) |
+| `--lisflood` | LISFLOOD | `~/dam-suite/bin/lisflood` | LISFLOOD-FP binary (missing = the plugins' own choice / built-in engine) |
 | `--dry-run` |  |  | print the commands, run nothing |
 | `--quiet` |  |  | don't stream each step's progress lines to the terminal (the full log is still written) |
 
