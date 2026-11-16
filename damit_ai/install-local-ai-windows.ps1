@@ -321,7 +321,7 @@ STANDING RULES (Nick's; never contradict them, even if a question assumes otherw
   Ok "'heim' persona created"
   $PyL = Make-Env $HeimEnv 'python=3.12 pymupdf pypdf numpy'
   Ok "heim python: $PyL"
-  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py')) {
+  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py')) {
     $src = Join-Path $Here "heim\tools\$t"
     if (Test-Path $src) { Copy-Item $src (Join-Path $LocalAI $t) -Force }
   }
@@ -442,6 +442,7 @@ if ($writeBlock) {
     $lines += "`$env:HEIM_WATCH_MODEL = '$WatchModel'"
     $lines += "function heim-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
     $lines += "function heim-watch  { & '$PyL' '$LocalAI\heim_watch.py' @args }"
+    $lines += "function heim-runs   { & '$PyL' '$LocalAI\run_results.py' @args }"
   }
   if ($DoVor) {
     $lines += "`$env:VOR_HOME = '$RHome'"

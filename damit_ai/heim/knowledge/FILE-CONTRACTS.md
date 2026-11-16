@@ -118,6 +118,7 @@ The table that decides what `--redo` re-runs (each stage, and the earlier stages
 | Store | What | Stale or empty when |
 |---|---|---|
 | `~/local-ai/knowledge.db` | Heim's index, one **collection** per source (`heim_knowledge`, `engine_docs`, the repos, `added`) | a collection is rebuilt whole, through a hidden stage, so a failed run leaves the old one. An empty collection is **not listed and not an error**: a query against it just returns nothing. |
+| `~/local-ai/runs.db` | run results (`heim runs add`): one row per run, the report's numbers as facts, hydrographs, and the structures / roads / receptors with depth, velocity and arrival | a run re-run or re-classified after it was read: read it again (`heim runs add` replaces the earlier read of the same report). `heim runs show` says when Hazard's outputs are older than the run |
 | `~/local-ai/added/` | files given to `heim-add` (copies) | the collection `added` is rebuilt from this folder each time |
 | `~/Vor/vor.db` | Vor's index (documents, passages, vectors) | bound to one embedding model; a different `VOR_EMBED` is refused, not mixed |
 | `~/Vor/library/` | Vor's documents; `references/<group>/` from the catalog, `asdso/`, `added/` | `vor ingest` reads only new or changed files; `--prune` drops entries whose file is gone |
