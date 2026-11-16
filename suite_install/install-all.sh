@@ -335,20 +335,24 @@ else
     [ -f "$PATCHER" ] || PATCHER="$HERE/lisflood/build/patch_lisflood.py"
     if [ -f "$SRCZIP" ] && make_env ndbuild ndbuild; then
       say "Building LISFLOOD-FP 8.3 with the Runner patch (conda compilers)"
-      BARGS="--conda $CONDA_EXE --env ndbuild --out $PREFIX --zip $SRCZIP --python $QP/bin/python --patcher $PATCHER"
-      # shellcheck disable=SC2086
-      BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" $BARGS | tail -n 1)" || BUILT=""
+      # An array, not a string: on macOS the patcher sits under
+      # "~/Library/Application Support/QGIS/...", and a string split that path at the space
+      # ("build_lisflood.sh: unknown option Support/QGIS/..."), so the build never started.
+      BARGS=(--conda "$CONDA_EXE" --env ndbuild --out "$PREFIX" --zip "$SRCZIP" --python "$QP/bin/python" --patcher "$PATCHER")
+      BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" | tail -n 1)" || BUILT=""
       if [ -z "$BUILT" ] && [ "$OS" = Darwin ]; then
         warn "conda clang failed; retrying with Apple's clang (Command Line Tools)"
-        # shellcheck disable=SC2086
-        BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" $BARGS --apple-clang | tail -n 1)" || BUILT=""
+        BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" --apple-clang | tail -n 1)" || BUILT=""
       fi
       if [ -n "$BUILT" ] && [ -x "$BUILT" ]; then
         cp "$BUILT" "$PREFIX/bin/lisflood"; chmod +x "$PREFIX/bin/lisflood"
+        # the Metal kernels (built only when Apple's Metal compiler works) are loaded from the
+        # folder of the executable
+        if [ -f "$(dirname "$BUILT")/metal_fv1_kernels.metallib" ]; then cp "$(dirname "$BUILT")/metal_fv1_kernels.metallib" "$PREFIX/bin/"; fi
         lf_ok "$PREFIX/bin/lisflood" && LISFLOOD_EXE="$PREFIX/bin/lisflood"
       fi
     fi
-    [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (macOS: install Apple's Command Line Tools with  xcode-select --install  and re-run). The Runners use their built-in engine meanwhile."
+    [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (the build's own messages are above; macOS needs Apple's Command Line Tools:  xcode-select --install ). The Runners use their built-in engine meanwhile."
   fi
   [ -n "$LISFLOOD_EXE" ] && ok "LISFLOOD-FP: $LISFLOOD_EXE ($("$LISFLOOD_EXE" -version 2>&1 | grep -o 'LISFLOOD-FP [0-9.]*' | head -1), Runner patch present)"
 fi
