@@ -153,15 +153,19 @@ if [ "$DO_MODELS" = 1 ] && [ -n "$MODELS" ]; then
   say "AI models -> damit_ai/offline/models: $MODELS"
   MDIR="$HERE/damit_ai/offline/models"; mkdir -p "$MDIR"
   T="$(mktemp -d)"; OL=""
+  # The Ollama used to pull is the same pinned file the platform step saves in
+  # damit_ai/offline/ollama/, so it is fetched (and sha-checked) there once and reused on every
+  # re-run; only its unpacked copy goes in the temp folder. (It used to be downloaded into the
+  # temp folder on every run.)
   case "$HOST" in
     linux-64)
-      L="$(awk '!/^#/ && $1=="linux-64" && $2=="ollama" {print $4, $5}' "$LOCKS/extra.lock")"
-      F="$T/ollama.tar.zst"; echo "${L%% *} $F ${L##* }" > "$T/l"; fetch_list "$T/l"
+      L="$(awk '!/^#/ && $1=="linux-64" && $2=="ollama" {print $4, $3, $5}' "$LOCKS/extra.lock")"
+      set -- $L; F="$HERE/$2"; echo "$1 $F $3" > "$T/l"; fetch_list "$T/l"
       if [ -f "$F" ] && tar --zstd -xf "$F" -C "$T" 2>/dev/null; then OL="$T/bin/ollama"; fi ;;
     osx-*)
-      L="$(awk '!/^#/ && $1=="osx-arm64" && $2=="ollama" {print $4, $5}' "$LOCKS/extra.lock")"
-      F="$T/Ollama-darwin.zip"; echo "${L%% *} $F ${L##* }" > "$T/l"; fetch_list "$T/l"
-      if [ -f "$F" ] && (cd "$T" && unzip -q Ollama-darwin.zip); then OL="$(find "$T" -path '*Contents/Resources/ollama' -type f | head -1)"; fi ;;
+      L="$(awk '!/^#/ && $1=="osx-arm64" && $2=="ollama" {print $4, $3, $5}' "$LOCKS/extra.lock")"
+      set -- $L; F="$HERE/$2"; echo "$1 $F $3" > "$T/l"; fetch_list "$T/l"
+      if [ -f "$F" ] && unzip -q "$F" -d "$T"; then OL="$(find "$T" -path '*Contents/Resources/ollama' -type f | head -1)"; fi ;;
   esac
   if [ -n "$OL" ] && [ -x "$OL" ]; then
     OLLAMA_HOST=127.0.0.1:11499 OLLAMA_MODELS="$MDIR" "$OL" serve > "$T/serve.log" 2>&1 &
