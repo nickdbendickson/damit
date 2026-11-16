@@ -335,13 +335,14 @@ else
     [ -f "$PATCHER" ] || PATCHER="$HERE/lisflood/build/patch_lisflood.py"
     if [ -f "$SRCZIP" ] && make_env ndbuild ndbuild; then
       say "Building LISFLOOD-FP 8.3 with the Runner patch (conda compilers)"
-      BARGS="--conda $CONDA_EXE --env ndbuild --out $PREFIX --zip $SRCZIP --python $QP/bin/python --patcher $PATCHER"
-      # shellcheck disable=SC2086
-      BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" $BARGS | tail -n 1)" || BUILT=""
+      # An array, not a string: on macOS the patcher sits under
+      # "~/Library/Application Support/QGIS/...", and a string split that path at the space
+      # ("build_lisflood.sh: unknown option Support/QGIS/..."), so the build never started.
+      BARGS=(--conda "$CONDA_EXE" --env ndbuild --out "$PREFIX" --zip "$SRCZIP" --python "$QP/bin/python" --patcher "$PATCHER")
+      BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" | tail -n 1)" || BUILT=""
       if [ -z "$BUILT" ] && [ "$OS" = Darwin ]; then
         warn "conda clang failed; retrying with Apple's clang (Command Line Tools)"
-        # shellcheck disable=SC2086
-        BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" $BARGS --apple-clang | tail -n 1)" || BUILT=""
+        BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" --apple-clang | tail -n 1)" || BUILT=""
       fi
       if [ -n "$BUILT" ] && [ -x "$BUILT" ]; then
         cp "$BUILT" "$PREFIX/bin/lisflood"; chmod +x "$PREFIX/bin/lisflood"
