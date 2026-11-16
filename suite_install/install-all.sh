@@ -72,7 +72,14 @@ case "$OS-$ARCH" in
   *) die "Unsupported system $OS $ARCH (supported: Linux x86_64, macOS Apple Silicon or Intel; Windows: install-all-windows.cmd)." ;;
 esac
 [ "$(id -u)" != 0 ] || [ "${DAMSUITE_ALLOW_ROOT:-0}" = 1 ] || die "Do not run this with sudo; run it as yourself."
+# QGIS's own settings file inside a profile. Qt names the folder after the organisation DOMAIN on
+# macOS (qgis.org) and after the organisation NAME elsewhere (QGIS). Up to 2026-11-16 this wrote
+# QGIS/QGIS3.ini on a Mac too, which QGIS there never reads: the LISFLOOD-FP and ANUGA paths, the
+# threads and the enabled plugins written here were ignored, and older values in qgis.org/QGIS3.ini
+# (an earlier install's) stayed in force. Seen on Nick's MacBook: the Runner used ~/nd-dam-suite.
+QINI="QGIS/QGIS3.ini"
 if [ "$OS" = Darwin ]; then
+  QINI="qgis.org/QGIS3.ini"
   PROFILES="$HOME/Library/Application Support/QGIS/QGIS3/profiles"
   NCPU="$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.ncpu)"
   case "$HERE" in "$HOME/Downloads"*|"$HOME/Desktop"*|"$HOME/Documents"*)
@@ -441,11 +448,11 @@ mk_pack_builder() {
 say "Settings and launchers"
 if [ "$DO_DS" = 1 ]; then
   # shellcheck disable=SC2086
-  write_settings "$DS_DIR/QGIS/QGIS3.ini" damsafety $DS_PLUGINS; mk_launcher "$PREFIX/open-damsafety-qgis.sh" "$DS_PROFILE"
+  write_settings "$DS_DIR/$QINI" damsafety $DS_PLUGINS; mk_launcher "$PREFIX/open-damsafety-qgis.sh" "$DS_PROFILE"
   mk_pack_builder "$PREFIX/build-offline-pack.sh"; fi
 if [ "$DO_DI" = 1 ]; then
   # shellcheck disable=SC2086
-  write_settings "$DI_DIR/QGIS/QGIS3.ini" damit $DI_PLUGINS; mk_launcher "$PREFIX/open-damit-qgis.sh" "$DI_PROFILE"; fi
+  write_settings "$DI_DIR/$QINI" damit $DI_PLUGINS; mk_launcher "$PREFIX/open-damit-qgis.sh" "$DI_PROFILE"; fi
 
 # DamIT Crest desktop. It runs on the ndqgis env: that env already has pyproj (Crest's only
 # third-party import) and puts qgis_process on PATH, which Crest's Report step calls. The launcher

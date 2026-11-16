@@ -246,6 +246,7 @@ print("  wrote", ini)
 '@ | Set-Content -LiteralPath $SettingsPy -Encoding ASCII
 
 function Write-Settings($profileDir, $which, $names) {
+  # Windows: Qt names the folder after the organisation name (QGIS); only macOS uses qgis.org
   $ini = Join-Path $profileDir 'QGIS\QGIS3.ini'
   New-Item -ItemType Directory -Force -Path (Split-Path $ini) | Out-Null
   QPy $SettingsPy $ini $which "$AnugaPy" "$Lisflood" "$Threads" (Join-Path $Run 'Dams') $Stamp @names

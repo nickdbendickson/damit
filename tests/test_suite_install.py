@@ -251,6 +251,51 @@ class TestScripts(unittest.TestCase):
                 "adopt " + os.path.join(t, "My Data") + " None",
                 "build --out " + data + " --list"])
 
+    def test_settings_written_to_the_file_qgis_reads(self):
+        """QGIS keeps a profile's settings in <profile>/qgis.org/QGIS3.ini on macOS (Qt uses the
+        organisation domain there) and in <profile>/QGIS/QGIS3.ini elsewhere. install-all wrote
+        QGIS/QGIS3.ini on a Mac too, so the engine paths and enabled plugins it set were never read
+        (Nick's MacBook, 2026-11-16: QgsSettings().fileName() was .../damsafety/qgis.org/QGIS3.ini)."""
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        darwin = sh[sh.index('QINI="QGIS/QGIS3.ini"'):sh.index('PROFILES="$HOME/.local/share/QGIS')]
+        self.assertIn('if [ "$OS" = Darwin ]; then\n  QINI="qgis.org/QGIS3.ini"', darwin)
+        self.assertNotIn("/QGIS/QGIS3.ini\" ", sh)
+        self.assertEqual(len(re.findall(r'write_settings "\$D[SI]_DIR/\$QINI"', sh)), 2)
+
+    @unittest.skipUnless(shutil.which("qgis_process") and os.uname().sysname == "Linux", "Linux qgis_process")
+    def test_linux_qgis_reads_QGIS_slash_QGIS3_ini(self):
+        """The Linux half of the rule above, asked of the real QGIS: a plugin enabled in
+        profiles/default/QGIS/QGIS3.ini is loaded; enabled only in qgis.org/QGIS3.ini it is not."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            prof = os.path.join(t, "profiles", "default")
+            plug = os.path.join(prof, "python", "plugins", "probe_ini")
+            os.makedirs(plug)
+            with open(os.path.join(plug, "metadata.txt"), "w") as fh:
+                fh.write("[general]\nname=probe_ini\nqgisMinimumVersion=3.0\ndescription=x\nversion=1\n"
+                         "author=x\nemail=x@x\nhasProcessingProvider=yes\n")
+            with open(os.path.join(plug, "__init__.py"), "w") as fh:
+                fh.write("def classFactory(iface):\n    class P:\n        def initGui(self): pass\n"
+                         "        def initProcessing(self): pass\n        def unload(self): pass\n    return P()\n")
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QGIS_CUSTOM_CONFIG_PATH=t)
+
+            def loaded(folder):
+                d = os.path.join(prof, folder)
+                os.makedirs(d, exist_ok=True)
+                with open(os.path.join(d, "QGIS3.ini"), "w") as fh:
+                    fh.write("[PythonPlugins]\nprobe_ini=true\n")
+                try:
+                    out = subprocess.run(["qgis_process", "plugins"], cwd=t, env=env,
+                                         capture_output=True, text=True, timeout=300).stdout
+                finally:
+                    os.remove(os.path.join(d, "QGIS3.ini"))
+                line = [l for l in out.splitlines() if "probe_ini" in l]
+                self.assertEqual(len(line), 1, out)
+                return line[0].lstrip().startswith("*")
+            self.assertTrue(loaded("QGIS"))
+            self.assertFalse(loaded("qgis.org"))
+
     @unittest.skipUnless(shutil.which("bash"), "no bash")
     def test_bash_scripts_parse(self):
         for f in ("install-all.sh", "download-all.sh", "tools/make_package.sh"):
