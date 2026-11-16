@@ -159,6 +159,98 @@ class TestScripts(unittest.TestCase):
             self.assertIn("vor-fresh", out)
             self.assertFalse(os.path.lexists(os.path.join(home, "miniforge3", "envs", "ndvor")))
 
+    @staticmethod
+    def _func(sh, name):
+        return re.search(r"^" + name + r"\(\) \{.*?^\}", sh, re.S | re.M).group(0)
+
+    @unittest.skipUnless(shutil.which("bash"), "no bash")
+    def test_crest_launcher_points_qgis_process_at_the_profile(self):
+        """qgis_process 3.34 has no --profile and always loads profile "default", so a Crest desk's
+        Report step saw neither damsafety nor damit. The launcher line points QGIS_CUSTOM_CONFIG_PATH
+        at <prefix>/qgis-process/<profile>, whose profiles/default links to the real profile. With
+        qgis_process installed, check that it really lists that profile's plugin."""
+        import tempfile
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        func = self._func(sh, "qgis_process_profile")
+        with tempfile.TemporaryDirectory() as t:
+            prefix = os.path.join(t, "dam suite")
+            prof = os.path.join(t, "Application Support", "profiles", "damsafety")
+            plug = os.path.join(prof, "python", "plugins", "probe_ds")
+            os.makedirs(plug); os.makedirs(os.path.join(prof, "QGIS"))
+            with open(os.path.join(plug, "metadata.txt"), "w") as fh:
+                fh.write("[general]\nname=probe_ds\nqgisMinimumVersion=3.0\ndescription=x\nversion=1\n"
+                         "author=x\nemail=x@x\nhasProcessingProvider=yes\n")
+            with open(os.path.join(plug, "__init__.py"), "w") as fh:
+                fh.write("def classFactory(iface):\n    class P:\n        def initGui(self): pass\n"
+                         "        def initProcessing(self): pass\n        def unload(self): pass\n    return P()\n")
+            with open(os.path.join(prof, "QGIS", "QGIS3.ini"), "w") as fh:
+                fh.write("[PythonPlugins]\nprobe_ds=true\n")
+            env = dict(os.environ, PREFIX=prefix)
+            line = subprocess.run(["bash", "-c", func + '\nqgis_process_profile damsafety "$1"\n'
+                                   'qgis_process_profile damit "$1/nothing-here"', "x", prof],
+                                  env=env, capture_output=True, text=True, check=True).stdout
+            root = os.path.join(prefix, "qgis-process", "damsafety")
+            self.assertEqual(line.strip().splitlines(), ["export QGIS_CUSTOM_CONFIG_PATH=" +
+                                                         root.replace(" ", "\\ ")])
+            link = os.path.join(root, "profiles", "default")
+            self.assertTrue(os.path.islink(link))
+            self.assertEqual(os.readlink(link), prof)
+            self.assertFalse(os.path.exists(os.path.join(prefix, "qgis-process", "damit")))
+            # run again: the link is replaced, not nested inside the profile
+            subprocess.run(["bash", "-c", func + '\nqgis_process_profile damsafety "$1" >/dev/null', "x", prof],
+                           env=env, check=True)
+            self.assertFalse(os.path.lexists(os.path.join(prof, "damsafety")))
+            if shutil.which("qgis_process"):
+                out = subprocess.run(["bash", "-c", line + "\nqgis_process plugins"], cwd=t,
+                                     env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
+                                     capture_output=True, text=True, timeout=300).stdout
+                self.assertIn("probe_ds", out)
+
+    @unittest.skipUnless(shutil.which("bash") and shutil.which("python3"), "no bash/python3")
+    def test_pack_builder_launcher(self):
+        """build-offline-pack.sh runs DamSafety_Data.pack_build from the profile's plugins folder,
+        then adopts the folder as the suite data folder (not after --list / --verify)."""
+        import tempfile
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        func = self._func(sh, "mk_pack_builder")
+        with tempfile.TemporaryDirectory() as t:
+            base = os.path.join(t, "conda base"); os.makedirs(os.path.join(base, "etc", "profile.d"))
+            with open(os.path.join(base, "etc", "profile.d", "conda.sh"), "w") as fh:
+                fh.write("conda() { :; }\n")
+            plugins = os.path.join(t, "profiles", "damsafety", "python", "plugins")
+            os.makedirs(os.path.join(plugins, "DamSafety_Data"))
+            os.makedirs(os.path.join(plugins, "DamSafety_Core", "damsuite"))
+            for d in ("DamSafety_Data", "DamSafety_Core", "DamSafety_Core/damsuite"):
+                open(os.path.join(plugins, d, "__init__.py"), "w").close()
+            log = os.path.join(t, "log.txt")
+            with open(os.path.join(plugins, "DamSafety_Data", "pack_build.py"), "w") as fh:
+                fh.write("import sys\nopen(%r, 'a').write('build ' + ' '.join(sys.argv[1:]) + '\\n')\n" % log)
+            with open(os.path.join(plugins, "DamSafety_Core", "damsuite", "suitedata.py"), "w") as fh:
+                fh.write("_qsettings = None\ndef adopt_folder(p):\n"
+                         "    open(%r, 'a').write('adopt ' + p + ' ' + str(_qsettings()) + '\\n')\n"
+                         "    return {'folder': p}\n" % log)
+            out = os.path.join(t, "pack.sh")
+            env = dict(os.environ, CONDA_BASE=base, QP=os.path.join(t, "env"),
+                       DS_DIR=os.path.dirname(os.path.dirname(plugins)), DS_PROFILE="damsafety",
+                       STAMP="test", OS="Linux")
+            subprocess.run(["bash", "-c", func + '\nmk_pack_builder "$1"', "x", out], env=env, check=True)
+            home = os.path.join(t, "home")
+            run = lambda *a: subprocess.run(["bash", out, *a], env=dict(os.environ, HOME=home),
+                                            capture_output=True, text=True, check=True)
+            run()
+            run(os.path.join(t, "My Data"), "--bbox", "1,2,3,4")
+            run("--list")
+            with open(log) as fh:
+                got = fh.read().splitlines()
+            data = os.path.join(home, "ND_Suite_Data")
+            self.assertEqual(got, [
+                "build --out " + data, "adopt " + data + " None",
+                "build --out " + os.path.join(t, "My Data") + " --bbox 1,2,3,4",
+                "adopt " + os.path.join(t, "My Data") + " None",
+                "build --out " + data + " --list"])
+
     @unittest.skipUnless(shutil.which("bash"), "no bash")
     def test_bash_scripts_parse(self):
         for f in ("install-all.sh", "download-all.sh", "tools/make_package.sh"):

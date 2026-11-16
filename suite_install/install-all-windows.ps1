@@ -13,8 +13,10 @@ Installs, for you only (no admin, no pip, no system packages):
   * QGIS 3.34 (conda env ndqgis), ANUGA 4.1 + gmsh 4.15 (env ndanuga)
   * LISFLOOD-FP 8.3 with the Runner patch (lisflood\windows-x64\lisflood.exe, no DLLs)
   * the local AIs from damit_ai: Heim and vor (Ollama, env, models, library)
-  * the DamIT Crest desk (damit_crest), run on the ndqgis env; it opens in the browser
-  * a launcher per profile (in %USERPROFILE%\dam-suite and on the Desktop)
+  * the DamIT Crest desk (damit_crest) and the North Dakota Crest desk (nd_crest, from the crest
+    repo), both run on the ndqgis env; they open in the browser and can run side by side
+  * a launcher per profile (in %USERPROFILE%\dam-suite and on the Desktop), and
+    build-offline-pack.cmd (the DamSafety offline pack without opening QGIS)
 
 OFFLINE: if offline\ is filled (an offline set unzipped here, or download-all run on any
 networked machine), NOTHING is downloaded. Otherwise the missing files are fetched first
@@ -268,8 +270,26 @@ function Make-Launcher($file, $profile) {
     } catch { Warn "could not make the Desktop shortcut for $profile" }
   }
 }
+# build-offline-pack.cmd [folder]: the DamSafety offline pack without opening QGIS (default folder
+# %USERPROFILE%\ND_Suite_Data). A stopped build picks up where it left off; when it finishes the
+# folder becomes the suite data folder (~\.ndsuite\config.json, read when the profile has none).
+function Make-PackBuilder($file) {
+  $lines = @(
+    '@echo off',
+    "rem DamSafety offline pack (conda env ndqgis, profile '$DsProfile'). Written by $Stamp.",
+    "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+    "cd /d `"$DsDir\python\plugins`" || exit /b 1",
+    'set "OUT=%USERPROFILE%\ND_Suite_Data"',
+    'if not "%~1"=="" set "OUT=%~1"',
+    'set PYTHONUNBUFFERED=1',
+    'echo Building the offline pack in %OUT% (a stopped build picks up where it left off)',
+    'python -m DamSafety_Data.pack_build --out "%OUT%" || exit /b 1',
+    'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "%OUT%"')
+  [IO.File]::WriteAllLines($file, $lines)
+}
 Say 'Settings and launchers'
-if ($DoDs) { Write-Settings $DsDir 'damsafety' $DsPlugins; Make-Launcher (Join-Path $Prefix 'open-damsafety-qgis.cmd') $DsProfile }
+if ($DoDs) { Write-Settings $DsDir 'damsafety' $DsPlugins; Make-Launcher (Join-Path $Prefix 'open-damsafety-qgis.cmd') $DsProfile
+             Make-PackBuilder (Join-Path $Prefix 'build-offline-pack.cmd') }
 if ($DoDi) { Write-Settings $DiDir 'damit' $DiPlugins;     Make-Launcher (Join-Path $Prefix 'open-damit-qgis.cmd') $DiProfile }
 
 # DamIT Crest desk. It runs on the ndqgis env: that env already has pyproj (Crest's only
@@ -280,6 +300,21 @@ if ($DoDi) { Write-Settings $DiDir 'damit' $DiPlugins;     Make-Launcher (Join-P
 # <parents[3]>\damit_catalog\handoff.py and refuses to start without it, so Crest keeps its
 # damit_crest\desktop nesting and gets a damit_catalog\handoff.py beside it, taken from the
 # Catalog plugin zip we just installed so the rule always matches the plugin.
+# QgisProcessProfile <profile> <profile dir>: the line a Crest launcher needs so the desk's Report
+# step finds that profile's plugins. qgis_process (3.34) has no profile option and always loads the
+# profile named "default" under QGIS_CUSTOM_CONFIG_PATH, so the launcher points that at
+# <prefix>\qgis-process\<profile>, whose profiles\default is a junction to the real profile (a
+# junction needs no admin rights; `rmdir` removes only the junction, never the profile).
+function QgisProcessProfile($profile, $dir) {
+  if (-not (Test-Path $dir)) { return 'rem (no QGIS profile folder yet for ' + $profile + ')' }
+  $root = Join-Path $Prefix "qgis-process\$profile"
+  $link = Join-Path $root 'profiles\default'
+  New-Item -ItemType Directory -Force -Path (Join-Path $root 'profiles') | Out-Null
+  if (Test-Path $link) { cmd /c rmdir "`"$link`"" | Out-Null }
+  cmd /c mklink /J "`"$link`"" "`"$dir`"" | Out-Null
+  if (-not (Test-Path (Join-Path $link 'python'))) { Warn "could not link ${link} -> ${dir}: Crest's Report step will not find the $profile plugins" }
+  return "set `"QGIS_CUSTOM_CONFIG_PATH=$root`""
+}
 $CrestSrc = Join-Path $Here 'damit_crest'
 $CatZip = Get-ChildItem (Join-Path $Here 'plugins\damit') -Filter 'damit_catalog_*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($DoCrest -and (Test-Path (Join-Path $CrestSrc 'desktop'))) {
@@ -299,10 +334,26 @@ if ($DoCrest -and (Test-Path (Join-Path $CrestSrc 'desktop'))) {
     if (Test-Path $ho) {
       $cl = Join-Path $Prefix 'open-damit-crest.cmd'
       @("@echo off", "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+        (QgisProcessProfile $DiProfile $DiDir),
         "cd /d `"$CrestDir\desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
       Ok "Crest desk (open: $cl)"
     } else { Warn "could not read damit_catalog/handoff.py from $($CatZip.Name): Crest was skipped" }
   }
+}
+# North Dakota Crest desk (crest repo, crest-desktop\). Same engine as DamIT Crest with the ND
+# inventory and the DamSafety hand-off (profile damsafety). Standard library only; its port differs
+# from DamIT Crest's, so both desks can be open at once.
+$NdCrestSrc = Join-Path $Here 'nd_crest'
+if ($DoCrest -and (Test-Path (Join-Path $NdCrestSrc 'crest-desktop\run.py'))) {
+  Say "North Dakota Crest desk -> $Prefix\nd_crest"
+  $NdCrestDir = Join-Path $Prefix 'nd_crest'
+  New-Item -ItemType Directory -Force -Path $NdCrestDir | Out-Null
+  Copy-Item -Recurse -Force (Join-Path $NdCrestSrc '*') $NdCrestDir
+  $cl = Join-Path $Prefix 'open-nd-crest.cmd'
+  @("@echo off", "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+    (QgisProcessProfile $DsProfile $DsDir),
+    "cd /d `"$NdCrestDir\crest-desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
+  Ok "North Dakota Crest desk (open: $cl)"
 }
 Remove-Item $SettingsPy -ErrorAction SilentlyContinue
 
@@ -350,6 +401,8 @@ $rec = @("Installed by $Stamp on $(Get-Date)",
 if ($DoDs) { $rec += "  DamSafety -> profile $DsProfile  (open: $Prefix\open-damsafety-qgis.cmd)" }
 if ($DoDi) { $rec += "  DamIT     -> profile $DiProfile  (open: $Prefix\open-damit-qgis.cmd)" }
 if (Test-Path (Join-Path $Prefix 'open-damit-crest.cmd')) { $rec += "  DamIT Crest desk              (open: $Prefix\open-damit-crest.cmd)" }
+if (Test-Path (Join-Path $Prefix 'open-nd-crest.cmd')) { $rec += "  North Dakota Crest desk       (open: $Prefix\open-nd-crest.cmd)" }
+if (Test-Path (Join-Path $Prefix 'build-offline-pack.cmd')) { $rec += "  DamSafety offline pack        (build: $Prefix\build-offline-pack.cmd)" }
 $rec | Set-Content (Join-Path $Prefix 'INSTALLED.txt')
 Say $(if ($Fail) { "Done, with warnings (see above and $Log)." } else { 'Done: all checks passed.' })
 $rec | ForEach-Object { Write-Host $_ }

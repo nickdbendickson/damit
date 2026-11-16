@@ -5,6 +5,8 @@
 #        [--lisflood-bin DIR]   DIR/linux-x64/lisflood and DIR/windows-x64/lisflood.exe
 #                               (default: build them here from the official 8.3 source with
 #                               DWR_Plugins' Runner scripts; Windows needs MinGW-w64)
+#        [--crest ../crest]     the North Dakota Crest desk (crest repo: crest-desktop/ + README),
+#                               shipped as nd_crest/ next to DamIT Crest
 #        [--zip]                also write <out>.zip
 #
 # The package = suite_install's scripts + locks, the DamSafety plugin zips (DWR_Plugins
@@ -15,13 +17,15 @@
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"        # suite_install/
 DAMIT="$(cd "$HERE/.." && pwd)"
-DWR=""; OUT=""; LFBIN=""; ZIP=0
+DWR=""; OUT=""; LFBIN=""; ZIP=0; CREST=""
 while [ $# -gt 0 ]; do case "$1" in
   --dwr) DWR="$(cd "$2" && pwd)"; shift ;; --out) OUT="$2"; shift ;;
   --lisflood-bin) LFBIN="$(cd "$2" && pwd)"; shift ;; --zip) ZIP=1 ;;
+  --crest) CREST="$(cd "$2" && pwd)"; shift ;;
   *) echo "unknown option $1" >&2; exit 2 ;; esac; shift; done
 [ -n "$DWR" ] && [ -f "$DWR/tools/build_release.py" ] || { echo "--dwr <DWR_Plugins checkout> is required" >&2; exit 2; }
 [ -n "$OUT" ] || { echo "--out is required" >&2; exit 2; }
+[ -z "$CREST" ] || [ -f "$CREST/crest-desktop/run.py" ] || { echo "--crest: no crest-desktop/run.py in $CREST" >&2; exit 2; }
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 
 rm -rf "$OUT"; mkdir -p "$OUT"
@@ -30,7 +34,8 @@ cp "$HERE"/install-all.sh "$HERE"/download-all.sh "$HERE"/install-all-windows.ps
 cp -R "$HERE/locks" "$OUT/locks"
 chmod +x "$OUT"/*.sh
 DWR_C="$(git -C "$DWR" rev-parse --short HEAD)"; DAMIT_C="$(git -C "$DAMIT" rev-parse --short HEAD)"
-echo "$(date +%Y-%m-%d) (DWR_Plugins $DWR_C, damit $DAMIT_C)" > "$OUT/VERSION"
+CREST_C=""; [ -n "$CREST" ] && CREST_C=", crest $(git -C "$CREST" rev-parse --short HEAD)"
+echo "$(date +%Y-%m-%d) (DWR_Plugins $DWR_C, damit $DAMIT_C$CREST_C)" > "$OUT/VERSION"
 
 echo "== plugins"
 T="$(mktemp -d)"
@@ -79,7 +84,7 @@ offline set (offline/lisflood-src/) or at the Zenodo record.
 EOF
 (cd "$OUT/lisflood" && sha */lisflood* > SHA256SUMS)
 
-echo "== damit_ai + damit_crest + Absaraka"
+echo "== damit_ai + damit_crest + nd_crest + Absaraka"
 mkdir -p "$OUT/damit_ai"
 # The trailing `|| die` matters: as the last stage of a pipeline the loop hands a failing
 # `cp` (a tracked-but-deleted worktree file) straight to errexit, which aborted the build
@@ -98,6 +103,17 @@ mkdir -p "$OUT/damit_crest"
   cp -p "$DAMIT/damit_crest/$f" "$OUT/damit_crest/$f" \
     || { echo "damit_crest/$f is tracked but missing from the worktree" >&2; exit 1; }
 done
+# the North Dakota Crest desk: committed crest-desktop/ (the built web bundle is committed there)
+# and the README. install-all runs it on the ndqgis env, like DamIT Crest.
+if [ -n "$CREST" ]; then
+  mkdir -p "$OUT/nd_crest"
+  (cd "$CREST" && git ls-files crest-desktop README.md) | while IFS= read -r f; do
+    mkdir -p "$OUT/nd_crest/$(dirname "$f")"
+    cp -p "$CREST/$f" "$OUT/nd_crest/$f" \
+      || { echo "crest/$f is tracked but missing from the worktree" >&2; exit 1; }
+  done
+  git -C "$CREST" rev-parse --short HEAD > "$OUT/nd_crest/COMMIT"
+fi
 cp -R "$DWR/tools/mac/absaraka" "$OUT/absaraka"
 rm -rf "$T"
 

@@ -14,8 +14,10 @@
 #     official source with conda's clang on macOS (needs Apple's Command Line Tools)
 #   * the local AIs from damit_ai: Heim (code triage) and vor (literature),
 #     with Ollama, their conda env, the models and the reference library
-#   * the DamIT Crest desk (damit_crest), run on the ndqgis env; it opens in the browser
-#   * one launcher per profile, and the Absaraka Dam (DWR-2801) run folder
+#   * the DamIT Crest desk (damit_crest) and the North Dakota Crest desk (nd_crest, from the
+#     crest repo), both run on the ndqgis env; they open in the browser and can run side by side
+#   * one launcher per profile, build-offline-pack.sh (the DamSafety offline pack from
+#     Terminal), and the Absaraka Dam (DWR-2801) run folder
 #
 # OFFLINE: if offline/ is filled (an offline set unzipped here, or download-all.sh run on
 # any networked machine), NOTHING is downloaded. On Linux, missing files are otherwise
@@ -26,7 +28,7 @@
 #   bash install-all.sh                  # everything
 #   bash install-all.sh --offline        # refuse to download anything
 #   bash install-all.sh --check          # report what is installed
-#   options: --no-damsafety --no-damit --no-crest --no-ai --no-heim --no-vor --skip-lisflood
+#   options: --no-damsafety --no-damit --no-crest (both desks) --no-ai --no-heim --no-vor --skip-lisflood
 #
 # It never touches your data folders (~/ND_Suite_Data, DamIT data), offline packs, or
 # any QGIS profile other than "damsafety" and "damit".
@@ -47,7 +49,7 @@ while [ $# -gt 0 ]; do
     --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;  --no-crest) DO_CREST=0 ;;
     --no-ai) DO_HEIM=0; DO_VOR=0 ;;  --no-heim) DO_HEIM=0 ;;  --no-vor) DO_VOR=0 ;;
     --skip-lisflood) SKIP_LISFLOOD=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac; shift
 done
@@ -412,10 +414,35 @@ mk_launcher() {  # mk_launcher <file> <profile>
   chmod +x "$1"
   if [ "$OS" = Darwin ]; then cp "$1" "${1%.sh}.command"; chmod +x "${1%.sh}.command"; fi
 }
+# mk_pack_builder <file>: the DamSafety offline pack from Terminal, without opening QGIS. It runs
+# DamSafety_Data.pack_build from the profile's plugins folder (DamSafety_Core must be importable),
+# resumes a stopped build, and then makes the folder the suite data folder (~/.ndsuite/config.json,
+# which the plugins read when the profile has no data folder of its own). Usage:
+#   build-offline-pack.sh [folder, default ~/ND_Suite_Data] [more pack_build options, e.g. --list]
+mk_pack_builder() {
+  { echo '#!/bin/bash'
+    echo "# DamSafety offline pack from Terminal (conda env ndqgis, profile '$DS_PROFILE'). Written by $STAMP."
+    echo '# usage: build-offline-pack.sh [folder (default ~/ND_Suite_Data)] [pack_build options]'
+    printf '. %q || exit 1\n' "$CONDA_BASE/etc/profile.d/conda.sh"
+    printf 'conda activate %q || exit 1\n' "$QP"
+    printf 'cd %q || exit 1\n' "$DS_DIR/python/plugins"
+    echo 'OUT="$HOME/ND_Suite_Data"; case "${1:-}" in ""|-*) ;; *) OUT="$1"; shift ;; esac'
+    echo 'unset PYTHONPATH; export PYTHONUNBUFFERED=1'
+    printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+    echo 'KEEP_AWAKE=""; command -v caffeinate >/dev/null 2>&1 && KEEP_AWAKE="caffeinate -i"'
+    echo 'echo "Building the offline pack in $OUT (a stopped build picks up where it left off)"'
+    echo '$KEEP_AWAKE python -m DamSafety_Data.pack_build --out "$OUT" "$@" || exit 1'
+    echo 'case " $* " in *" --list "*|*" --verify "*) exit 0 ;; esac'
+    echo 'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "$OUT"'
+  } > "$1"
+  chmod +x "$1"
+  if [ "$OS" = Darwin ]; then cp "$1" "${1%.sh}.command"; chmod +x "${1%.sh}.command"; fi
+}
 say "Settings and launchers"
 if [ "$DO_DS" = 1 ]; then
   # shellcheck disable=SC2086
-  write_settings "$DS_DIR/QGIS/QGIS3.ini" damsafety $DS_PLUGINS; mk_launcher "$PREFIX/open-damsafety-qgis.sh" "$DS_PROFILE"; fi
+  write_settings "$DS_DIR/QGIS/QGIS3.ini" damsafety $DS_PLUGINS; mk_launcher "$PREFIX/open-damsafety-qgis.sh" "$DS_PROFILE"
+  mk_pack_builder "$PREFIX/build-offline-pack.sh"; fi
 if [ "$DO_DI" = 1 ]; then
   # shellcheck disable=SC2086
   write_settings "$DI_DIR/QGIS/QGIS3.ini" damit $DI_PLUGINS; mk_launcher "$PREFIX/open-damit-qgis.sh" "$DI_PROFILE"; fi
@@ -433,6 +460,19 @@ if [ "$DO_DI" = 1 ]; then
 # `|| true` inside the substitution: with no match the glob stays literal, `ls` exits 2,
 # and pipefail would make this assignment kill the whole install — silently, because the
 # stderr is discarded. The "no DamIT Catalog zip" warning below could never be reached.
+# qgis_process_profile <profile> <profile dir>: the line a Crest launcher needs so the desk's
+# Report step finds that profile's plugins. qgis_process (3.34) has no --profile option and always
+# loads the profile named "default" under QGIS_CUSTOM_CONFIG_PATH (or the usual QGIS3 folder), so
+# without this it saw neither "damsafety" nor "damit". The launcher points QGIS_CUSTOM_CONFIG_PATH
+# at $PREFIX/qgis-process/<profile>, whose profiles/default is a link to the real profile. Only
+# Crest's own qgis_process calls see it; QGIS opened with the launchers is unchanged.
+qgis_process_profile() {
+  local root="$PREFIX/qgis-process/$1"
+  [ -d "$2" ] || return 0
+  mkdir -p "$root/profiles"
+  rm -f "$root/profiles/default"; ln -s "$2" "$root/profiles/default"
+  printf 'export QGIS_CUSTOM_CONFIG_PATH=%q\n' "$root"
+}
 CREST_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1 || true)"
 if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
   if [ -z "$CREST_ZIP" ]; then
@@ -449,6 +489,7 @@ if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
         printf 'conda activate %q || exit 1\n' "$QP"
         printf 'cd %q || exit 1\n' "$PREFIX/damit_crest/desktop"
         printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+        qgis_process_profile "$DI_PROFILE" "$DI_DIR"
         echo 'exec python run.py "$@"'; } > "$PREFIX/open-damit-crest.sh"
       chmod +x "$PREFIX/open-damit-crest.sh"
       if [ "$OS" = Darwin ]; then cp "$PREFIX/open-damit-crest.sh" "$PREFIX/open-damit-crest.command"
@@ -459,6 +500,29 @@ if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
       warn "could not read damit_catalog/handoff.py from $(basename "$CREST_ZIP"): Crest was skipped"
     fi
   fi
+fi
+
+# North Dakota Crest desk (nickdbendickson/crest, crest-desktop/). Same engine as DamIT Crest, with
+# the ND inventory (DWR dams + NID + other structures), ND VERTCON grid and the DamSafety hand-off
+# (nddam:preflight / nddam:runchain / ndbreach:rundam in profile "damsafety"). It is self-contained
+# (no Catalog rule) and only needs the standard library, so it runs on the ndqgis env like DamIT
+# Crest. The two desks use different ports (47231 and 47241), so both can be open at once.
+if [ "$DO_CREST" = 1 ] && [ -f "$HERE/nd_crest/crest-desktop/run.py" ]; then
+  say "North Dakota Crest desk -> $PREFIX/nd_crest"
+  rm -rf "$PREFIX/nd_crest"; mkdir -p "$PREFIX/nd_crest"
+  cp -R "$HERE/nd_crest/." "$PREFIX/nd_crest/"
+  { echo '#!/bin/bash'
+    echo "# North Dakota Crest desk (conda env ndqgis). Written by $STAMP."
+    printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
+    printf 'conda activate %q || exit 1\n' "$QP"
+    printf 'cd %q || exit 1\n' "$PREFIX/nd_crest/crest-desktop"
+    printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+    qgis_process_profile "$DS_PROFILE" "$DS_DIR"
+    echo 'exec python run.py "$@"'; } > "$PREFIX/open-nd-crest.sh"
+  chmod +x "$PREFIX/open-nd-crest.sh"
+  if [ "$OS" = Darwin ]; then cp "$PREFIX/open-nd-crest.sh" "$PREFIX/open-nd-crest.command"
+    chmod +x "$PREFIX/open-nd-crest.command"; fi
+  ok "North Dakota Crest desk (open: $PREFIX/open-nd-crest.sh)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -523,6 +587,8 @@ if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs instal
   [ "$DO_DS" = 1 ] && echo "  DamSafety -> profile $DS_PROFILE  (open: $PREFIX/open-damsafety-qgis.sh)"
   [ "$DO_DI" = 1 ] && echo "  DamIT     -> profile $DI_PROFILE  (open: $PREFIX/open-damit-qgis.sh)"
   [ -f "$PREFIX/open-damit-crest.sh" ] && echo "  DamIT Crest desk              (open: $PREFIX/open-damit-crest.sh)"
+  [ -f "$PREFIX/open-nd-crest.sh" ] && echo "  North Dakota Crest desk       (open: $PREFIX/open-nd-crest.sh)"
+  [ -f "$PREFIX/build-offline-pack.sh" ] && echo "  DamSafety offline pack        (build: $PREFIX/build-offline-pack.sh)"
   true; } > "$PREFIX/INSTALLED.txt"
 
 say "Done$( [ "$FAIL" = 0 ] && echo ': all checks passed.' || echo ", with warnings (see above and $LOG).")"
