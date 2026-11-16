@@ -103,10 +103,21 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
 ### B4. "QGIS does not import in env ndqgis" on a Mac whose env is complete
 - **Was:** the check ran the env's `python` directly. On macOS the QGIS libraries resolve
   only with the env **activated**; on Linux the direct call works.
-- **Tell:** `mamba run -n ndqgis python -c "import qgis.core"` succeeds.
-- **Fix:** every env check goes through `mamba run -n <env> python`. Because the installer
+- **Tell:** `~/miniforge3/bin/mamba run -p ~/miniforge3/envs/ndqgis python -c "import qgis.core"` succeeds.
+- **Fix:** every env check goes through `mamba run -p <conda base>/envs/<env> python`. Because the installer
   stopped there, the plugins were never installed: a missing-plugins report after this error
   is the same failure, not a second one.
+
+### B4b. Launchers, ANUGA path and `conda activate` point at `~/miniforge3/envs/<env>`, which is missing
+- **Was:** installs before 2026-11-16 made the envs by name (`mamba create -n`). mamba 2 puts a
+  by-name env under `$MAMBA_ROOT_PREFIX` (e.g. `~/micromamba/envs`, left by an old micromamba),
+  while everything else looks in `<conda base>/envs`.
+- **Tell:** `conda activate ~/miniforge3/envs/ndqgis` says "Not a conda environment", yet
+  `~/miniforge3/bin/mamba run -n ndqgis python -c "import sys; print(sys.prefix)"` prints a
+  `~/micromamba/envs/...` path.
+- **Fix:** the installer now makes and uses every env by path. On an existing install, link
+  `~/miniforge3/envs/<env>` to the real env (`ln -s`, never move it), or re-run the installer.
+  Undo a link with `rm` and no trailing slash; never `conda env remove` through the link.
 
 ### B5. A tool is "missing" from `qgis_process list`
 - **Was:** algorithms flagged hidden from the toolbox are omitted from `list`.

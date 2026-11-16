@@ -67,6 +67,16 @@ On Windows the options are `-NoDamSafety`, `-NoDamIT`, `-NoAI`, `-NoHeim`, `-NoV
 - **Linux and Windows** fetch any missing files first, pinned and checked, unless you pass
   `--offline` / `-Offline`.
 - The installer is safe to re-run. It keeps existing conda envs and data, and replaces the plugins.
+- The envs always live in `<conda base>/envs` (e.g. `~/miniforge3/envs/ndqgis`), made by path, even
+  when `MAMBA_ROOT_PREFIX` points elsewhere. Installs before 2026-11-16 could land them in
+  `~/micromamba/envs` instead, which broke the launchers and the ANUGA setting.
+- Before building an env the installer searches for one of that name elsewhere (`$MAMBA_ROOT_PREFIX`,
+  `~/micromamba`, `~/miniforge3`, `~/miniconda3`, `~/anaconda3`, `~/.conda`, and the envs listed in
+  `~/.conda/environments.txt`). One that has every package in the lock is used as it is, through a
+  link `<conda base>/envs/<name>` → that env; one that differs is left alone and a fresh env is built.
+  Nothing is moved or deleted. `DAMSUITE_REUSE_ENVS=0` always builds fresh. Never `conda env remove`
+  a linked env (that empties the real one); undo a link with `rm <conda base>/envs/<name>`, no
+  trailing slash.
 
 Open QGIS with a launcher: `~/dam-suite/open-damsafety-qgis.sh` or `open-damit-qgis.sh` (on a
 Mac, also the `.command` files). On Windows, use `open-damsafety-qgis.cmd` /

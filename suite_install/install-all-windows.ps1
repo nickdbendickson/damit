@@ -143,7 +143,7 @@ function Make-Env($name, $role) {
   $tmp = Join-Path $env:TEMP "damsuite-$name.txt"
   [IO.File]::WriteAllLines($tmp, $spec)
   Say "Creating conda env $name from $($spec.Count - 1) local packages (no download)"
-  & $Mamba create -y --offline -n $name --file $tmp
+  & $Mamba create -y --offline -p (EnvPrefix $name) --file $tmp
   $okc = ($LASTEXITCODE -eq 0); Remove-Item $tmp -ErrorAction SilentlyContinue
   return $okc
 }
@@ -252,7 +252,7 @@ function Make-Launcher($file, $profile) {
   $lines = @(
     '@echo off',
     "rem QGIS 3.34 (conda env ndqgis) in profile '$profile'. Written by $Stamp.",
-    "call `"$CondaBat`" activate ndqgis",
+    "call `"$CondaBat`" activate `"$QP`"",
     'set NDBREACH_ANUGA_MESHER=gmsh',
     "set `"NDBREACH_ANUGA_PYTHON=$AnugaPy`"",
     "set `"NDBREACH_LISFLOOD=$Lisflood`"",
@@ -298,7 +298,7 @@ if ($DoCrest -and (Test-Path (Join-Path $CrestSrc 'desktop'))) {
     } finally { $zf.Dispose() }
     if (Test-Path $ho) {
       $cl = Join-Path $Prefix 'open-damit-crest.cmd'
-      @("@echo off", "call `"$CondaBat`" activate ndqgis || exit /b 1",
+      @("@echo off", "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
         "cd /d `"$CrestDir\desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
       Ok "Crest desk (open: $cl)"
     } else { Warn "could not read damit_catalog/handoff.py from $($CatZip.Name): Crest was skipped" }

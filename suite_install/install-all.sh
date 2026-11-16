@@ -90,14 +90,70 @@ locate_conda() {
   done
 }
 locate_conda
+# Every env is made and used BY PATH (-p), in <conda base>/envs. Made by name (-n), mamba 2 puts it
+# under $MAMBA_ROOT_PREFIX (or a .mambarc root) when one is set - e.g. ~/micromamba/envs on a Mac
+# that once had micromamba - while the launchers, the QGIS settings (ANUGA python), `conda
+# activate`, --check and the local AIs all look in <conda base>/envs, so none of them found it.
 env_prefix() { echo "$CONDA_BASE/envs/$1"; }
+# env_candidates <name>: other places an env of that name may already be (an older install, a
+# mamba root, Miniconda/Anaconda), one per line: $MAMBA_ROOT_PREFIX, the usual roots, then the envs
+# conda/mamba registered in ~/.conda/environments.txt. <conda base>/envs/<name> itself is not listed.
+env_candidates() {
+  local n="$1" r
+  for r in "${MAMBA_ROOT_PREFIX:-}" "$HOME/micromamba" "$HOME/.local/share/mamba" "$HOME/miniforge3" \
+           "$HOME/mambaforge" "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/opt/anaconda3" "$HOME/.conda"; do
+    [ -n "$r" ] && echo "$r/envs/$n"
+  done
+  if [ -f "$HOME/.conda/environments.txt" ]; then
+    grep -E "/$n/?\$" "$HOME/.conda/environments.txt" 2>/dev/null || true
+  fi
+}
+# lock_match <prefix> <lock file>: "<have> <want>": how many of the locked packages are installed
+# in that env (conda-meta/<package file name without .conda/.tar.bz2>.json)
+lock_match() {
+  local pre="$1" url f have=0 want=0
+  while read -r url _; do case "$url" in ''|\#*) continue ;; esac
+    want=$((want + 1)); f="${url##*/}"; f="${f%.conda}"; f="${f%.tar.bz2}"
+    if [ -f "$pre/conda-meta/$f.json" ]; then have=$((have + 1)); fi
+  done < "$2"
+  echo "$have $want"
+}
+# env_works <prefix> <lock role>: the role's own check, run in that env (an env whose locked
+# packages are all recorded can still have had files replaced, e.g. by pip)
+env_works() {
+  case "$2" in
+    ndqgis)  env PYTHONPATH="$1/share/qgis/python:$1/share/qgis/python/plugins" QT_PLUGIN_PATH="$1/plugins" \
+               QGIS_PREFIX_PATH="$1" QT_QPA_PLATFORM=offscreen "$MAMBA" run -p "$1" python -c "import qgis.core" ;;
+    ndanuga) "$MAMBA" run -p "$1" python -c "import anuga, gmsh" ;;
+    ndbuild) "$MAMBA" run -p "$1" cmake --version ;;
+    *)       "$MAMBA" run -p "$1" python -c "import sys" ;;
+  esac >/dev/null 2>&1
+}
+# found_elsewhere <name>: each candidate env that exists and is not <conda base>/envs/<name>
+found_elsewhere() {
+  local c seen=""
+  while IFS= read -r c; do
+    [ -n "$c" ] && [ -d "$c/conda-meta" ] || continue
+    c="$(cd "$c" && pwd -P)" || continue
+    if ! [ "$c" -ef "$(env_prefix "$1")" ]; then
+      case "$seen" in *"|$c|"*) continue ;; esac
+      seen="$seen|$c|"; echo "$c"
+    fi
+  done <<EOF_C
+$(env_candidates "$1")
+EOF_C
+}
 
 # ---------------------------------------------------------------------------
 if [ "$MODE" = check ]; then
   say "dam suite on $P"
   if [ -n "$CONDA_EXE" ]; then CONDA_BASE="$("$CONDA_EXE" info --base)"; echo "  conda: $CONDA_EXE"
     for e in ndqgis ndanuga ndvor ndheim ndbuild; do
-      echo "    env $e: $( [ -d "$CONDA_BASE/envs/$e/conda-meta" ] && echo present || echo missing)"; done
+      if [ -L "$CONDA_BASE/envs/$e" ] && [ -d "$CONDA_BASE/envs/$e/conda-meta" ]; then st="present (link to $(readlink "$CONDA_BASE/envs/$e"))"
+      elif [ -d "$CONDA_BASE/envs/$e/conda-meta" ]; then st=present; else st=missing; fi
+      echo "    env $e: $st"
+      found_elsewhere "$e" | while IFS= read -r o; do echo "      another $e at $o"; done
+    done
   else echo "  conda: not found"; fi
   L="$PREFIX/bin/lisflood"
   echo "  LISFLOOD-FP: $L $( [ -x "$L" ] && { grep -aq inittm_depth "$L" && echo 'OK (Runner patch present)' || echo UNPATCHED; } || echo missing)"
@@ -183,7 +239,34 @@ MAMBA="$CONDA_BASE/bin/mamba"
 make_env() {
   local name="$1" role="$2" lock="$HERE/locks/$P/$2.lock" spec url want md5 f enc
   if [ -d "$(env_prefix "$name")/conda-meta" ]; then ok "conda env $name already exists (kept)"; return 0; fi
+  if [ -L "$(env_prefix "$name")" ]; then warn "removing the broken link $(env_prefix "$name")"; rm -f "$(env_prefix "$name")"; fi
   [ -f "$lock" ] || { warn "no lock for $role on $P"; return 1; }
+  # search first: an env of this name elsewhere that has every locked package is used as it is,
+  # through a link <conda base>/envs/<name> -> that env (nothing is moved, copied or deleted).
+  # One that differs from the lock is left alone and a fresh one is built. DAMSUITE_REUSE_ENVS=0: never reuse.
+  if [ -e "$(env_prefix "$name")" ]; then
+    warn "$(env_prefix "$name") exists but is not a conda env (an interrupted build?): move it aside, then run this again"
+    return 1
+  fi
+  if [ "${DAMSUITE_REUSE_ENVS:-1}" != 0 ]; then
+    local other m
+    while IFS= read -r other; do
+      [ -n "$other" ] || continue
+      m="$(lock_match "$other" "$lock")"
+      if [ "${m% *}" = "${m#* }" ] && ! env_works "$other" "$role"; then
+        warn "found an env $name at $other with every locked package, but its check fails (files changed since?): left as it is, not used"
+      elif [ "${m% *}" = "${m#* }" ]; then
+        mkdir -p "$CONDA_BASE/envs"
+        ln -s "$other" "$(env_prefix "$name")" || { warn "could not link $(env_prefix "$name") -> $other"; continue; }
+        ok "conda env $name: using the one at $other (all ${m#* } locked packages; linked from $(env_prefix "$name"))"
+        return 0
+      else
+        warn "found an env $name at $other, but it is not the locked build (${m% *} of ${m#* } packages): left as it is, not used"
+      fi
+    done <<EOF_O
+$(found_elsewhere "$name")
+EOF_O
+  fi
   spec="$(mktemp)"; echo "@EXPLICIT" > "$spec"
   while read -r url want md5; do case "$url" in ''|\#*) continue ;; esac
     f="$(pkg_path "$url")"
@@ -192,7 +275,7 @@ make_env() {
     echo "file://$enc#$md5" >> "$spec"
   done < "$lock"
   say "Creating conda env $name from $(($(wc -l < "$spec") - 1)) local packages (no download)"
-  "$MAMBA" create -y --offline -n "$name" --file "$spec" || { rm -f "$spec"; return 1; }
+  "$MAMBA" create -y --offline -p "$(env_prefix "$name")" --file "$spec" || { rm -f "$spec"; return 1; }
   rm -f "$spec"
 }
 
@@ -202,12 +285,12 @@ make_env ndanuga ndanuga || warn "the ANUGA env could not be built: the ANUGA ti
 QP="$(env_prefix ndqgis)"
 qpy() { env PYTHONPATH="$QP/share/qgis/python:$QP/share/qgis/python/plugins" QT_PLUGIN_PATH="$QP/plugins" \
             QGIS_PREFIX_PATH="$QP" PROJ_DATA="$QP/share/proj" GDAL_DATA="$QP/share/gdal" QT_QPA_PLATFORM=offscreen \
-            "$MAMBA" run -n ndqgis python "$@"; }
+            "$MAMBA" run -p "$QP" python "$@"; }
 # `mamba run` activates the env. Calling $QP/bin/python directly works on Linux (RPATH $ORIGIN)
 # but fails on macOS, where dyld only resolves the QGIS dylibs with the env activated.
-qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis (see $LOG)"
+qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis$( [ -L "$QP" ] && echo " (a link to $(readlink "$QP")); remove the link with: rm \"$QP\" and run this again to build a fresh one") (see $LOG)"
 ANUGA_PY="$(env_prefix ndanuga)/bin/python"
-"$MAMBA" run -n ndanuga python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
+"$MAMBA" run -p "$(env_prefix ndanuga)" python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
 
 # ---------------------------------------------------------------------------
 # 3. plugins (zips in plugins/; Core first so every dependency is in place)
@@ -363,7 +446,7 @@ if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
       { echo '#!/bin/bash'
         echo "# DamIT Crest desk (conda env ndqgis). Written by $STAMP."
         printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
-        echo 'conda activate ndqgis || exit 1'
+        printf 'conda activate %q || exit 1\n' "$QP"
         printf 'cd %q || exit 1\n' "$PREFIX/damit_crest/desktop"
         printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
         echo 'exec python run.py "$@"'; } > "$PREFIX/open-damit-crest.sh"

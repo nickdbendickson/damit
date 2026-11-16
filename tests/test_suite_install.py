@@ -95,6 +95,70 @@ class TestScripts(unittest.TestCase):
         self.assertIn('[ "$OS" = Darwin ] && OFFLINE_ONLY=1', sh)
         self.assertNotIn("curl ", sh)
 
+    def test_envs_made_and_used_by_path(self):
+        """Made by name, mamba 2 puts an env under $MAMBA_ROOT_PREFIX (~/micromamba/envs on a Mac
+        that once had micromamba), where the launchers, the ANUGA setting and conda activate never
+        look. So every env is created and run by path, in <conda base>/envs."""
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        self.assertNotRegex(sh, r'"\$MAMBA" (create|run)[^\n]* -n ')
+        self.assertIn('"$MAMBA" create -y --offline -p "$(env_prefix "$name")"', sh)
+        self.assertNotIn("conda activate ndqgis", sh)
+        with open(os.path.join(SI, "install-all-windows.ps1"), encoding="utf-8") as fh:
+            ps = fh.read()
+        self.assertNotRegex(ps, r"\$Mamba (create|run)[^\n]* -n ")
+        self.assertNotIn("activate ndqgis", ps)
+
+    @unittest.skipUnless(shutil.which("bash"), "no bash")
+    def test_make_env_reuses_a_locked_env_found_elsewhere(self):
+        """make_env searches first: an env of that name elsewhere (here a mamba root) that has every
+        locked package is linked in and used; one that differs from the lock is left alone."""
+        import tempfile
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        funcs = sh[sh.index("env_prefix() {"):sh.index("# ----", sh.index("env_prefix() {"))]
+        make = re.search(r"^make_env\(\) \{.*?^\}", sh, re.S | re.M).group(0)
+        with tempfile.TemporaryDirectory() as t:
+            home = os.path.join(t, "home dir")
+            lock = os.path.join(t, "locks", "osx-arm64", "ndqgis.lock")
+            os.makedirs(os.path.dirname(lock))
+            with open(lock, "w") as fh:
+                fh.write("# c\nhttps://x/osx-arm64/a-1-0.conda s m\nhttps://x/noarch/b-2-py_0.tar.bz2 s m\n")
+            good = os.path.join(home, "micromamba", "envs", "ndqgis", "conda-meta")
+            part = os.path.join(home, "miniconda3", "envs", "ndanuga", "conda-meta")
+            for d in (good, part, os.path.join(home, "miniforge3")):
+                os.makedirs(d)
+            for f in ("a-1-0.json", "b-2-py_0.json"):
+                open(os.path.join(good, f), "w").close()
+            open(os.path.join(part, "a-1-0.json"), "w").close()
+            # every locked package recorded, but its own check fails (files replaced): not used
+            bad = os.path.join(home, "miniconda3", "envs", "ndvor", "conda-meta")
+            os.makedirs(bad)
+            for f in ("a-1-0.json", "b-2-py_0.json"):
+                open(os.path.join(bad, f), "w").close()
+            # a stand-in mamba: `run -p <prefix> ...` fails for the ndvor env only
+            mamba = os.path.join(t, "mamba")
+            with open(mamba, "w") as fh:
+                fh.write('#!/bin/sh\ncase "$3" in *ndvor*) exit 1 ;; esac\nexit 0\n')
+            os.chmod(mamba, 0o755)
+            script = ("set -eo pipefail\nok(){ echo \"OK $*\"; }; warn(){ echo \"WARN $*\"; }; say(){ :; }\n"
+                      "pkg_path(){ echo /none; }; sha(){ echo x; }\n" + funcs + make +
+                      "\nmake_env ndqgis ndqgis\nmake_env ndanuga ndqgis || echo built-fresh\n"
+                      "make_env ndvor ndqgis || echo vor-fresh\n")
+            env = dict(os.environ, HOME=home, CONDA_BASE=os.path.join(home, "miniforge3"), HERE=t,
+                       P="osx-arm64", MAMBA_ROOT_PREFIX=os.path.join(home, "micromamba"), MAMBA=mamba)
+            out = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True).stdout
+            link = os.path.join(home, "miniforge3", "envs", "ndqgis")
+            self.assertTrue(os.path.islink(link), out)
+            self.assertEqual(os.readlink(link), os.path.dirname(good))
+            self.assertIn("not the locked build (1 of 2", out)
+            self.assertIn("built-fresh", out)
+            self.assertFalse(os.path.exists(os.path.join(home, "miniforge3", "envs", "ndanuga")))
+            self.assertTrue(os.path.isdir(part))
+            self.assertIn("its check fails", out)
+            self.assertIn("vor-fresh", out)
+            self.assertFalse(os.path.lexists(os.path.join(home, "miniforge3", "envs", "ndvor")))
+
     @unittest.skipUnless(shutil.which("bash"), "no bash")
     def test_bash_scripts_parse(self):
         for f in ("install-all.sh", "download-all.sh", "tools/make_package.sh"):
