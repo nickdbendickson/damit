@@ -139,7 +139,7 @@ Index folders (text+PDFs) into a named collection.
 
 ---
 
-## rag_query.py 2.4
+## rag_query.py 2.5
 
 Installed command: `heim  /  heim-query  /  heim-chat (with --chat)`. Ask Heim a question, or hold a conversation, answered from the index.
 
@@ -275,6 +275,93 @@ Heim as a DamIT run watcher: the code sets the verdict, Heim explains.
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
 | `--write` | WRITE |  |  |
+
+---
+
+## run_results.py
+
+Installed command: `heim runs  /  heim-runs`. Dam-breach run results in a database: exact depth, velocity, arrival, peak flow.
+
+### `run_results.py`
+
+Dam-breach run results (peak flow, depth / velocity / arrival at each structure) in a database Heim answers from with exact numbers.
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `--db` | DB |  | the run database (default ~/local-ai/runs.db, or HEIM_RUNS_DB) |
+| `--version` |  |  | show program's version number and exit |
+
+#### `run_results.py add`
+
+read every run below the folders (dam folders, a Dams folder, a run folder)
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `paths` | PATHS [PATHS ...] |  |  |
+
+#### `run_results.py list`
+
+the runs in the database
+
+No arguments.
+
+#### `run_results.py show`
+
+one dam's numbers: breach, flood, hazard
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `dam` | DAM |  | DWR-2801, 2801, ND00199 or part of the name |
+
+#### `run_results.py at`
+
+depth / velocity / arrival at a structure, road, address or point
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `dam` | DAM |  |  |
+| `place` | PLACE [PLACE ...] |  | a structure id, a name or address (part of it), or 'lat,lon' / 'x,y' |
+| `--near-m` | NEAR_M | `100.0` | with a point: list features this close |
+
+#### `run_results.py hydrograph`
+
+the hydrograph(s) of a dam's runs: peak and time to peak
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `dam` | DAM |  |  |
+| `--every` | EVERY |  | also print every Nth point |
+
+#### `run_results.py ask`
+
+a question in words; Heim writes the query, the code runs it
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `question` | QUESTION [QUESTION ...] |  |  |
+
+#### `run_results.py sql`
+
+your own SELECT (read-only)
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `query` | QUERY [QUERY ...] |  |  |
+
+#### `run_results.py schema`
+
+the tables and what each column means
+
+No arguments.
+
+#### `run_results.py forget`
+
+take a dam's runs out of the database
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `dam` | [DAM] |  |  |
+| `--all` |  |  | empty the database |
 
 ---
 
