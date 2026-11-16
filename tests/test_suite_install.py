@@ -131,11 +131,22 @@ class TestScripts(unittest.TestCase):
             for f in ("a-1-0.json", "b-2-py_0.json"):
                 open(os.path.join(good, f), "w").close()
             open(os.path.join(part, "a-1-0.json"), "w").close()
+            # every locked package recorded, but its own check fails (files replaced): not used
+            bad = os.path.join(home, "miniconda3", "envs", "ndvor", "conda-meta")
+            os.makedirs(bad)
+            for f in ("a-1-0.json", "b-2-py_0.json"):
+                open(os.path.join(bad, f), "w").close()
+            # a stand-in mamba: `run -p <prefix> ...` fails for the ndvor env only
+            mamba = os.path.join(t, "mamba")
+            with open(mamba, "w") as fh:
+                fh.write('#!/bin/sh\ncase "$3" in *ndvor*) exit 1 ;; esac\nexit 0\n')
+            os.chmod(mamba, 0o755)
             script = ("set -eo pipefail\nok(){ echo \"OK $*\"; }; warn(){ echo \"WARN $*\"; }; say(){ :; }\n"
                       "pkg_path(){ echo /none; }; sha(){ echo x; }\n" + funcs + make +
-                      "\nmake_env ndqgis ndqgis\nmake_env ndanuga ndqgis || echo built-fresh\n")
+                      "\nmake_env ndqgis ndqgis\nmake_env ndanuga ndqgis || echo built-fresh\n"
+                      "make_env ndvor ndqgis || echo vor-fresh\n")
             env = dict(os.environ, HOME=home, CONDA_BASE=os.path.join(home, "miniforge3"), HERE=t,
-                       P="osx-arm64", MAMBA_ROOT_PREFIX=os.path.join(home, "micromamba"))
+                       P="osx-arm64", MAMBA_ROOT_PREFIX=os.path.join(home, "micromamba"), MAMBA=mamba)
             out = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True).stdout
             link = os.path.join(home, "miniforge3", "envs", "ndqgis")
             self.assertTrue(os.path.islink(link), out)
@@ -144,6 +155,9 @@ class TestScripts(unittest.TestCase):
             self.assertIn("built-fresh", out)
             self.assertFalse(os.path.exists(os.path.join(home, "miniforge3", "envs", "ndanuga")))
             self.assertTrue(os.path.isdir(part))
+            self.assertIn("its check fails", out)
+            self.assertIn("vor-fresh", out)
+            self.assertFalse(os.path.lexists(os.path.join(home, "miniforge3", "envs", "ndvor")))
 
     @unittest.skipUnless(shutil.which("bash"), "no bash")
     def test_bash_scripts_parse(self):

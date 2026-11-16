@@ -118,12 +118,24 @@ lock_match() {
   done < "$2"
   echo "$have $want"
 }
+# env_works <prefix> <lock role>: the role's own check, run in that env (an env whose locked
+# packages are all recorded can still have had files replaced, e.g. by pip)
+env_works() {
+  case "$2" in
+    ndqgis)  env PYTHONPATH="$1/share/qgis/python:$1/share/qgis/python/plugins" QT_PLUGIN_PATH="$1/plugins" \
+               QGIS_PREFIX_PATH="$1" QT_QPA_PLATFORM=offscreen "$MAMBA" run -p "$1" python -c "import qgis.core" ;;
+    ndanuga) "$MAMBA" run -p "$1" python -c "import anuga, gmsh" ;;
+    ndbuild) "$MAMBA" run -p "$1" cmake --version ;;
+    *)       "$MAMBA" run -p "$1" python -c "import sys" ;;
+  esac >/dev/null 2>&1
+}
 # found_elsewhere <name>: each candidate env that exists and is not <conda base>/envs/<name>
 found_elsewhere() {
   local c seen=""
   while IFS= read -r c; do
-    c="${c%/}"
-    if [ -d "$c/conda-meta" ] && ! [ "$c" -ef "$(env_prefix "$1")" ]; then
+    [ -n "$c" ] && [ -d "$c/conda-meta" ] || continue
+    c="$(cd "$c" && pwd -P)" || continue
+    if ! [ "$c" -ef "$(env_prefix "$1")" ]; then
       case "$seen" in *"|$c|"*) continue ;; esac
       seen="$seen|$c|"; echo "$c"
     fi
@@ -232,18 +244,25 @@ make_env() {
   # search first: an env of this name elsewhere that has every locked package is used as it is,
   # through a link <conda base>/envs/<name> -> that env (nothing is moved, copied or deleted).
   # One that differs from the lock is left alone and a fresh one is built. DAMSUITE_REUSE_ENVS=0: never reuse.
+  if [ -e "$(env_prefix "$name")" ]; then
+    warn "$(env_prefix "$name") exists but is not a conda env (an interrupted build?): move it aside, then run this again"
+    return 1
+  fi
   if [ "${DAMSUITE_REUSE_ENVS:-1}" != 0 ]; then
     local other m
     while IFS= read -r other; do
       [ -n "$other" ] || continue
       m="$(lock_match "$other" "$lock")"
-      if [ "${m% *}" = "${m#* }" ]; then
+      if [ "${m% *}" = "${m#* }" ] && ! env_works "$other" "$role"; then
+        warn "found an env $name at $other with every locked package, but its check fails (files changed since?): left as it is, not used"
+      elif [ "${m% *}" = "${m#* }" ]; then
         mkdir -p "$CONDA_BASE/envs"
         ln -s "$other" "$(env_prefix "$name")" || { warn "could not link $(env_prefix "$name") -> $other"; continue; }
         ok "conda env $name: using the one at $other (all ${m#* } locked packages; linked from $(env_prefix "$name"))"
         return 0
+      else
+        warn "found an env $name at $other, but it is not the locked build (${m% *} of ${m#* } packages): left as it is, not used"
       fi
-      warn "found an env $name at $other, but it is not the locked build (${m% *} of ${m#* } packages): left as it is, not used"
     done <<EOF_O
 $(found_elsewhere "$name")
 EOF_O
@@ -269,7 +288,7 @@ qpy() { env PYTHONPATH="$QP/share/qgis/python:$QP/share/qgis/python/plugins" QT_
             "$MAMBA" run -p "$QP" python "$@"; }
 # `mamba run` activates the env. Calling $QP/bin/python directly works on Linux (RPATH $ORIGIN)
 # but fails on macOS, where dyld only resolves the QGIS dylibs with the env activated.
-qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis (see $LOG)"
+qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis$( [ -L "$QP" ] && echo " (a link to $(readlink "$QP")); remove the link with: rm \"$QP\" and run this again to build a fresh one") (see $LOG)"
 ANUGA_PY="$(env_prefix ndanuga)/bin/python"
 "$MAMBA" run -p "$(env_prefix ndanuga)" python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
 
