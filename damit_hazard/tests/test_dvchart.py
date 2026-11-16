@@ -270,5 +270,37 @@ def test_report_links_and_embeds_the_chart_and_says_unverified():
     assert report.DV_SECTION not in report.markdown(res, CAT)
 
 
+def test_chart_lines_are_drawn_smooth_and_zones_stay_on_the_table():
+    """0.4.1 (Nick 2026-11-16): the PNG draws a smoothed line through the table; the zones do not change."""
+    def rough(pts):
+        d = [p[1] for p in pts]
+        return sum(abs(d[i - 1] - 2 * d[i] + d[i + 1]) for i in range(1, len(d) - 1))
+    for cid, lim in (("houses", 0.03), ("mobile_homes", 0.01)):
+        c = CHARTS.charts[cid]
+        off = D.drawn_offset_ft(CHARTS, cid)
+        assert 0 < off <= lim, (cid, off)
+        for key in ("low_ft", "high_ft"):
+            s = D.smooth_points(c["v_fts"], c[key], c["d_max_ft"])
+            n = len(s)
+            vmax = c["v_fts"][-1]
+            t = [(vmax * k / (n - 1), D._table_at(c["v_fts"], c[key], vmax * k / (n - 1))) for k in range(n)]
+            assert rough(s) < 0.8 * rough(t), (cid, key)
+            assert all(0.0 <= d <= c["d_max_ft"] for _v, d in s)
+        p = D.drawn_polygons(CHARTS, cid)
+        assert p["high"][-2:] == [(float(c["v_fts"][-1]), c["d_max_ft"]), (float(c["v_fts"][0]), c["d_max_ft"])]
+        lo, hi = p["judgment"][:n], p["judgment"][n:][::-1]
+        assert all(a[1] <= b[1] for a, b in zip(lo, hi))
+    tail = [d for v, d in D.smooth_points(CHARTS.charts["houses"]["v_fts"], CHARTS.charts["houses"]["low_ft"])
+            if v >= 19.0]
+    assert tail and all(d == 0.0 for d in tail)                     # the table's zero tail stays on the axis
+    # the zones are still the table's: a depth on the table line keeps the higher zone
+    c = CHARTS.charts["houses"]
+    for v in (1.25, 7.3, 12.6):
+        lo_t, hi_t = CHARTS.thresholds("houses", v)
+        assert CHARTS.zone("houses", hi_t, v) == tm11.HIGH
+        assert CHARTS.zone("houses", lo_t, v) == tm11.JUDGMENT
+    assert "smoothed" in D.smoothing_note(CHARTS, ["houses", "mobile_homes"])
+
+
 if __name__ == "__main__":
     unittest.main()

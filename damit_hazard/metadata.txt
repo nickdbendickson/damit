@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.4.0
+version=0.4.1
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -17,6 +17,8 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.4.1 - 2026-11-16
+      * Depth-velocity chart lines are drawn smooth (Nick, 2026-11-16; NO number changes): the TM-11 tables are hand digitizations (a point every 0.5 ft/s for houses, 0.25 ft/s for mobile homes) and the chart joined their points with straight lines, so every digitizing step showed as a kink. The PNG now draws a smoothed line through the same table (Gaussian-weighted local-linear fit, the same method as DamSafety Core 1.5.2), within 0.021 ft of the table for houses and 0.004 ft for mobile homes, and the caption says so. Zones, counts, the class and the CSV still come from the table and do not change.
     0.4.0 - 2026-11-12
       * Habitable structures, chart (Nick's ruling): ONLY an ND 911 address point is habitable on the depth-velocity chart, until an engineer reviews a structure in Hazard. Every other wet structure (NSI, USA Structures, a layer with a type) is "unverified": counted in a note and listed in damit_hazard_dv_habitable_unverified.csv, not plotted. This replaces 0.3.0's "no type = presumed habitable" for the chart. A reviewed-habitable structure that is not a 911 point is plotted as an orange diamond, a 911 point as a blue circle. A 911 point is dropped from the chart only if it is marked habitable = false or has a type that is not habitable.
       * The review: new tool damit:reviewhabitable (Review habitable structures) saves reviewed_habitable = habitable / not habitable (or removes the review) for structure keys (the struct_key column of the worklist) with the engineer's name and a note, in habitable_review.json in the dam folder (a history is kept). classify, the chart and the Screener only READ that file (found beside the depth raster or up to two folders above it, or the new input HABITABLE_REVIEW); only the tool writes it. There is no review window yet.
