@@ -317,7 +317,12 @@ the default image list (the most recent NAIP only) a card reads "1 of 1" or "0 o
 a water history; list your state's yearly near-infrared images in `IMAGES` for that. Marks made
 with the evidence on the card are not an independent test of the evidence (`run_info` records
 `evidence`). The evidence tool also writes `review_order`, a second sort: score in bands 0.1 wide,
-then buildings and roads down the flow path, then score; its CSV is written in that order.
+then water in 2 or more image years first (0.7.1; with the default one-image list no fill has 2,
+so this needs your yearly images in `IMAGES`), then buildings and roads down the flow path, then
+score; its CSV is written in that order. How far down to look: on two North Dakota review sheets
+(Finder 0.7.0 fills) 55 of the 60 top-scored unlisted fills were dams, and the dams with no pool
+in the LiDAR scored 0.5 to 0.75 with the ND model, so work down to a score of about 0.5 there; in
+another state the score is the ND model's guess until your own marks say otherwise.
 
 A review sheet (an aerial and a hillshade chip per card; yes / no / unsure / offset, where offset is
 a real dam just off the point) gives the marks the score tool's `MARKS` takes, and

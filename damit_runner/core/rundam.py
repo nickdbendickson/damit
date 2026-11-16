@@ -49,6 +49,9 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 0.6.1: the ported engine is brought up to DamSafety Runner 3.20.5 (LISFLOOD-FP flow sections that stay on their gauge, a
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
+
+0.6.2: from DamSafety Runner 3.20.6, a resumed ANUGA run no longer computes its first pass again
+(workflow.anuga_passes keeps the first pass's result). No change to this module's run or its numbers.
 """
 import datetime
 import json
@@ -56,7 +59,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
