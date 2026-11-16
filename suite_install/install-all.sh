@@ -95,13 +95,41 @@ locate_conda
 # that once had micromamba - while the launchers, the QGIS settings (ANUGA python), `conda
 # activate`, --check and the local AIs all look in <conda base>/envs, so none of them found it.
 env_prefix() { echo "$CONDA_BASE/envs/$1"; }
-# other_env <name>: " (another in <root>/envs: not used)" when $MAMBA_ROOT_PREFIX holds a different
-# env of that name (not the same folder, and not the one a link in <conda base>/envs points to)
-other_env() {
-  local o="${MAMBA_ROOT_PREFIX:-}/envs/$1"
-  if [ -n "${MAMBA_ROOT_PREFIX:-}" ] && [ -d "$o/conda-meta" ] && ! [ "$o" -ef "$(env_prefix "$1")" ]; then
-    echo " (another in $MAMBA_ROOT_PREFIX/envs: not used)"
+# env_candidates <name>: other places an env of that name may already be (an older install, a
+# mamba root, Miniconda/Anaconda), one per line: $MAMBA_ROOT_PREFIX, the usual roots, then the envs
+# conda/mamba registered in ~/.conda/environments.txt. <conda base>/envs/<name> itself is not listed.
+env_candidates() {
+  local n="$1" r
+  for r in "${MAMBA_ROOT_PREFIX:-}" "$HOME/micromamba" "$HOME/.local/share/mamba" "$HOME/miniforge3" \
+           "$HOME/mambaforge" "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/opt/anaconda3" "$HOME/.conda"; do
+    [ -n "$r" ] && echo "$r/envs/$n"
+  done
+  if [ -f "$HOME/.conda/environments.txt" ]; then
+    grep -E "/$n/?\$" "$HOME/.conda/environments.txt" 2>/dev/null || true
   fi
+}
+# lock_match <prefix> <lock file>: "<have> <want>": how many of the locked packages are installed
+# in that env (conda-meta/<package file name without .conda/.tar.bz2>.json)
+lock_match() {
+  local pre="$1" url f have=0 want=0
+  while read -r url _; do case "$url" in ''|\#*) continue ;; esac
+    want=$((want + 1)); f="${url##*/}"; f="${f%.conda}"; f="${f%.tar.bz2}"
+    if [ -f "$pre/conda-meta/$f.json" ]; then have=$((have + 1)); fi
+  done < "$2"
+  echo "$have $want"
+}
+# found_elsewhere <name>: each candidate env that exists and is not <conda base>/envs/<name>
+found_elsewhere() {
+  local c seen=""
+  while IFS= read -r c; do
+    c="${c%/}"
+    if [ -d "$c/conda-meta" ] && ! [ "$c" -ef "$(env_prefix "$1")" ]; then
+      case "$seen" in *"|$c|"*) continue ;; esac
+      seen="$seen|$c|"; echo "$c"
+    fi
+  done <<EOF_C
+$(env_candidates "$1")
+EOF_C
 }
 
 # ---------------------------------------------------------------------------
@@ -109,7 +137,11 @@ if [ "$MODE" = check ]; then
   say "dam suite on $P"
   if [ -n "$CONDA_EXE" ]; then CONDA_BASE="$("$CONDA_EXE" info --base)"; echo "  conda: $CONDA_EXE"
     for e in ndqgis ndanuga ndvor ndheim ndbuild; do
-      echo "    env $e: $( [ -d "$CONDA_BASE/envs/$e/conda-meta" ] && echo present || echo missing)$(other_env "$e")"; done
+      if [ -L "$CONDA_BASE/envs/$e" ] && [ -d "$CONDA_BASE/envs/$e/conda-meta" ]; then st="present (link to $(readlink "$CONDA_BASE/envs/$e"))"
+      elif [ -d "$CONDA_BASE/envs/$e/conda-meta" ]; then st=present; else st=missing; fi
+      echo "    env $e: $st"
+      found_elsewhere "$e" | while IFS= read -r o; do echo "      another $e at $o"; done
+    done
   else echo "  conda: not found"; fi
   L="$PREFIX/bin/lisflood"
   echo "  LISFLOOD-FP: $L $( [ -x "$L" ] && { grep -aq inittm_depth "$L" && echo 'OK (Runner patch present)' || echo UNPATCHED; } || echo missing)"
@@ -196,10 +228,26 @@ make_env() {
   local name="$1" role="$2" lock="$HERE/locks/$P/$2.lock" spec url want md5 f enc
   if [ -d "$(env_prefix "$name")/conda-meta" ]; then ok "conda env $name already exists (kept)"; return 0; fi
   if [ -L "$(env_prefix "$name")" ]; then warn "removing the broken link $(env_prefix "$name")"; rm -f "$(env_prefix "$name")"; fi
-  if [ -n "$(other_env "$name")" ]; then
-    warn "an env $name exists in $MAMBA_ROOT_PREFIX/envs (left as it is; \`mamba ... -n $name\` still finds that one); building the suite's own in $(env_prefix "$name")"
-  fi
   [ -f "$lock" ] || { warn "no lock for $role on $P"; return 1; }
+  # search first: an env of this name elsewhere that has every locked package is used as it is,
+  # through a link <conda base>/envs/<name> -> that env (nothing is moved, copied or deleted).
+  # One that differs from the lock is left alone and a fresh one is built. DAMSUITE_REUSE_ENVS=0: never reuse.
+  if [ "${DAMSUITE_REUSE_ENVS:-1}" != 0 ]; then
+    local other m
+    while IFS= read -r other; do
+      [ -n "$other" ] || continue
+      m="$(lock_match "$other" "$lock")"
+      if [ "${m% *}" = "${m#* }" ]; then
+        mkdir -p "$CONDA_BASE/envs"
+        ln -s "$other" "$(env_prefix "$name")" || { warn "could not link $(env_prefix "$name") -> $other"; continue; }
+        ok "conda env $name: using the one at $other (all ${m#* } locked packages; linked from $(env_prefix "$name"))"
+        return 0
+      fi
+      warn "found an env $name at $other, but it is not the locked build (${m% *} of ${m#* } packages): left as it is, not used"
+    done <<EOF_O
+$(found_elsewhere "$name")
+EOF_O
+  fi
   spec="$(mktemp)"; echo "@EXPLICIT" > "$spec"
   while read -r url want md5; do case "$url" in ''|\#*) continue ;; esac
     f="$(pkg_path "$url")"

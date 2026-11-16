@@ -110,6 +110,42 @@ class TestScripts(unittest.TestCase):
         self.assertNotIn("activate ndqgis", ps)
 
     @unittest.skipUnless(shutil.which("bash"), "no bash")
+    def test_make_env_reuses_a_locked_env_found_elsewhere(self):
+        """make_env searches first: an env of that name elsewhere (here a mamba root) that has every
+        locked package is linked in and used; one that differs from the lock is left alone."""
+        import tempfile
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        funcs = sh[sh.index("env_prefix() {"):sh.index("# ----", sh.index("env_prefix() {"))]
+        make = re.search(r"^make_env\(\) \{.*?^\}", sh, re.S | re.M).group(0)
+        with tempfile.TemporaryDirectory() as t:
+            home = os.path.join(t, "home dir")
+            lock = os.path.join(t, "locks", "osx-arm64", "ndqgis.lock")
+            os.makedirs(os.path.dirname(lock))
+            with open(lock, "w") as fh:
+                fh.write("# c\nhttps://x/osx-arm64/a-1-0.conda s m\nhttps://x/noarch/b-2-py_0.tar.bz2 s m\n")
+            good = os.path.join(home, "micromamba", "envs", "ndqgis", "conda-meta")
+            part = os.path.join(home, "miniconda3", "envs", "ndanuga", "conda-meta")
+            for d in (good, part, os.path.join(home, "miniforge3")):
+                os.makedirs(d)
+            for f in ("a-1-0.json", "b-2-py_0.json"):
+                open(os.path.join(good, f), "w").close()
+            open(os.path.join(part, "a-1-0.json"), "w").close()
+            script = ("set -eo pipefail\nok(){ echo \"OK $*\"; }; warn(){ echo \"WARN $*\"; }; say(){ :; }\n"
+                      "pkg_path(){ echo /none; }; sha(){ echo x; }\n" + funcs + make +
+                      "\nmake_env ndqgis ndqgis\nmake_env ndanuga ndqgis || echo built-fresh\n")
+            env = dict(os.environ, HOME=home, CONDA_BASE=os.path.join(home, "miniforge3"), HERE=t,
+                       P="osx-arm64", MAMBA_ROOT_PREFIX=os.path.join(home, "micromamba"))
+            out = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True).stdout
+            link = os.path.join(home, "miniforge3", "envs", "ndqgis")
+            self.assertTrue(os.path.islink(link), out)
+            self.assertEqual(os.readlink(link), os.path.dirname(good))
+            self.assertIn("not the locked build (1 of 2", out)
+            self.assertIn("built-fresh", out)
+            self.assertFalse(os.path.exists(os.path.join(home, "miniforge3", "envs", "ndanuga")))
+            self.assertTrue(os.path.isdir(part))
+
+    @unittest.skipUnless(shutil.which("bash"), "no bash")
     def test_bash_scripts_parse(self):
         for f in ("install-all.sh", "download-all.sh", "tools/make_package.sh"):
             subprocess.run(["bash", "-n", os.path.join(SI, f)], check=True)
