@@ -90,14 +90,26 @@ locate_conda() {
   done
 }
 locate_conda
+# Every env is made and used BY PATH (-p), in <conda base>/envs. Made by name (-n), mamba 2 puts it
+# under $MAMBA_ROOT_PREFIX (or a .mambarc root) when one is set - e.g. ~/micromamba/envs on a Mac
+# that once had micromamba - while the launchers, the QGIS settings (ANUGA python), `conda
+# activate`, --check and the local AIs all look in <conda base>/envs, so none of them found it.
 env_prefix() { echo "$CONDA_BASE/envs/$1"; }
+# other_env <name>: " (another in <root>/envs: not used)" when $MAMBA_ROOT_PREFIX holds a different
+# env of that name (not the same folder, and not the one a link in <conda base>/envs points to)
+other_env() {
+  local o="${MAMBA_ROOT_PREFIX:-}/envs/$1"
+  if [ -n "${MAMBA_ROOT_PREFIX:-}" ] && [ -d "$o/conda-meta" ] && ! [ "$o" -ef "$(env_prefix "$1")" ]; then
+    echo " (another in $MAMBA_ROOT_PREFIX/envs: not used)"
+  fi
+}
 
 # ---------------------------------------------------------------------------
 if [ "$MODE" = check ]; then
   say "dam suite on $P"
   if [ -n "$CONDA_EXE" ]; then CONDA_BASE="$("$CONDA_EXE" info --base)"; echo "  conda: $CONDA_EXE"
     for e in ndqgis ndanuga ndvor ndheim ndbuild; do
-      echo "    env $e: $( [ -d "$CONDA_BASE/envs/$e/conda-meta" ] && echo present || echo missing)"; done
+      echo "    env $e: $( [ -d "$CONDA_BASE/envs/$e/conda-meta" ] && echo present || echo missing)$(other_env "$e")"; done
   else echo "  conda: not found"; fi
   L="$PREFIX/bin/lisflood"
   echo "  LISFLOOD-FP: $L $( [ -x "$L" ] && { grep -aq inittm_depth "$L" && echo 'OK (Runner patch present)' || echo UNPATCHED; } || echo missing)"
@@ -183,6 +195,10 @@ MAMBA="$CONDA_BASE/bin/mamba"
 make_env() {
   local name="$1" role="$2" lock="$HERE/locks/$P/$2.lock" spec url want md5 f enc
   if [ -d "$(env_prefix "$name")/conda-meta" ]; then ok "conda env $name already exists (kept)"; return 0; fi
+  if [ -L "$(env_prefix "$name")" ]; then warn "removing the broken link $(env_prefix "$name")"; rm -f "$(env_prefix "$name")"; fi
+  if [ -n "$(other_env "$name")" ]; then
+    warn "an env $name exists in $MAMBA_ROOT_PREFIX/envs (left as it is; \`mamba ... -n $name\` still finds that one); building the suite's own in $(env_prefix "$name")"
+  fi
   [ -f "$lock" ] || { warn "no lock for $role on $P"; return 1; }
   spec="$(mktemp)"; echo "@EXPLICIT" > "$spec"
   while read -r url want md5; do case "$url" in ''|\#*) continue ;; esac
@@ -192,7 +208,7 @@ make_env() {
     echo "file://$enc#$md5" >> "$spec"
   done < "$lock"
   say "Creating conda env $name from $(($(wc -l < "$spec") - 1)) local packages (no download)"
-  "$MAMBA" create -y --offline -n "$name" --file "$spec" || { rm -f "$spec"; return 1; }
+  "$MAMBA" create -y --offline -p "$(env_prefix "$name")" --file "$spec" || { rm -f "$spec"; return 1; }
   rm -f "$spec"
 }
 
@@ -202,12 +218,12 @@ make_env ndanuga ndanuga || warn "the ANUGA env could not be built: the ANUGA ti
 QP="$(env_prefix ndqgis)"
 qpy() { env PYTHONPATH="$QP/share/qgis/python:$QP/share/qgis/python/plugins" QT_PLUGIN_PATH="$QP/plugins" \
             QGIS_PREFIX_PATH="$QP" PROJ_DATA="$QP/share/proj" GDAL_DATA="$QP/share/gdal" QT_QPA_PLATFORM=offscreen \
-            "$MAMBA" run -n ndqgis python "$@"; }
+            "$MAMBA" run -p "$QP" python "$@"; }
 # `mamba run` activates the env. Calling $QP/bin/python directly works on Linux (RPATH $ORIGIN)
 # but fails on macOS, where dyld only resolves the QGIS dylibs with the env activated.
 qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis (see $LOG)"
 ANUGA_PY="$(env_prefix ndanuga)/bin/python"
-"$MAMBA" run -n ndanuga python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
+"$MAMBA" run -p "$(env_prefix ndanuga)" python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
 
 # ---------------------------------------------------------------------------
 # 3. plugins (zips in plugins/; Core first so every dependency is in place)
@@ -363,7 +379,7 @@ if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
       { echo '#!/bin/bash'
         echo "# DamIT Crest desk (conda env ndqgis). Written by $STAMP."
         printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
-        echo 'conda activate ndqgis || exit 1'
+        printf 'conda activate %q || exit 1\n' "$QP"
         printf 'cd %q || exit 1\n' "$PREFIX/damit_crest/desktop"
         printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
         echo 'exec python run.py "$@"'; } > "$PREFIX/open-damit-crest.sh"

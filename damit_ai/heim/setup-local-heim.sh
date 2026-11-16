@@ -2068,6 +2068,14 @@ def conda_exe():
 
 
 def env_prefix(conda, name):
+    # the suite's env is <conda base>/envs/<name> (made by path); a same-named env elsewhere (an
+    # older install's ~/micromamba/envs/<name>) sorts first in `env list`, so it is the fallback
+    try:
+        base = subprocess.run([conda, "info", "--base"], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        base = ""
+    if base and os.path.isdir(os.path.join(base, "envs", name, "conda-meta")):
+        return os.path.join(base, "envs", name)
     out = subprocess.run([conda, "env", "list", "--json"], capture_output=True, text=True)
     try:
         envs = json.loads(out.stdout)["envs"]
@@ -2417,6 +2425,14 @@ def conda_exe():
 
 
 def env_prefix(conda, name):
+    # the suite's env is <conda base>/envs/<name> (made by path); a same-named env elsewhere (an
+    # older install's ~/micromamba/envs/<name>) sorts first in `env list`, so it is the fallback
+    try:
+        base = subprocess.run([conda, "info", "--base"], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        base = ""
+    if base and os.path.isdir(os.path.join(base, "envs", name, "conda-meta")):
+        return os.path.join(base, "envs", name)
     out = subprocess.run([conda, "env", "list", "--json"], capture_output=True, text=True)
     try:
         for p in json.loads(out.stdout)["envs"]:

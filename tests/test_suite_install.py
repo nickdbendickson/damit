@@ -95,6 +95,20 @@ class TestScripts(unittest.TestCase):
         self.assertIn('[ "$OS" = Darwin ] && OFFLINE_ONLY=1', sh)
         self.assertNotIn("curl ", sh)
 
+    def test_envs_made_and_used_by_path(self):
+        """Made by name, mamba 2 puts an env under $MAMBA_ROOT_PREFIX (~/micromamba/envs on a Mac
+        that once had micromamba), where the launchers, the ANUGA setting and conda activate never
+        look. So every env is created and run by path, in <conda base>/envs."""
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        self.assertNotRegex(sh, r'"\$MAMBA" (create|run)[^\n]* -n ')
+        self.assertIn('"$MAMBA" create -y --offline -p "$(env_prefix "$name")"', sh)
+        self.assertNotIn("conda activate ndqgis", sh)
+        with open(os.path.join(SI, "install-all-windows.ps1"), encoding="utf-8") as fh:
+            ps = fh.read()
+        self.assertNotRegex(ps, r"\$Mamba (create|run)[^\n]* -n ")
+        self.assertNotIn("activate ndqgis", ps)
+
     @unittest.skipUnless(shutil.which("bash"), "no bash")
     def test_bash_scripts_parse(self):
         for f in ("install-all.sh", "download-all.sh", "tools/make_package.sh"):
