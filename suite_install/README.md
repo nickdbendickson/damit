@@ -11,7 +11,8 @@ and macOS (Apple Silicon or Intel, macOS 13+):
 | **ANUGA 4.1 + gmsh 4.15** (the Runners mesh with gmsh) | conda env `ndanuga` |
 | **LISFLOOD-FP 8.3** with the Runner patch (`inittm_depth`) | `~/dam-suite/bin` (Windows/Linux: shipped binary; macOS: built at install) |
 | **Local AIs**: Heim (code triage) and Vor (literature), with Ollama, models and library | `~/local-ai`, `~/Vor` (damit_ai's own installers) |
-| A launcher per profile, and the Absaraka Dam (DWR-2801) run folder | `~/dam-suite` |
+| **Crest desks**: DamIT Crest (damit) and North Dakota Crest (crest repo), on the `ndqgis` env; they open in the browser | `~/dam-suite/damit_crest`, `~/dam-suite/nd_crest` |
+| A launcher per profile, one per Crest desk, `build-offline-pack.sh`, and the Absaraka Dam (DWR-2801) run folder | `~/dam-suite` |
 
 Everything installs for you only: **no sudo or admin, no pip, no system packages.** Your data
 folders, offline packs and other QGIS profiles are not touched.
@@ -82,6 +83,17 @@ Open QGIS with a launcher: `~/dam-suite/open-damsafety-qgis.sh` or `open-damit-q
 Mac, also the `.command` files). On Windows, use `open-damsafety-qgis.cmd` /
 `open-damit-qgis.cmd` or the Desktop shortcuts. Keep the two sets in their own profiles.
 
+The Crest desks: `~/dam-suite/open-damit-crest.sh` and `open-nd-crest.sh` (Windows: `.cmd`). They
+use different ports, so both can be open at the same time. Their Report step calls `qgis_process`
+in the matching profile (North Dakota Crest: `damsafety`; DamIT Crest: `damit`): `qgis_process` has
+no profile option, so the launcher points `QGIS_CUSTOM_CONFIG_PATH` at
+`~/dam-suite/qgis-process/<profile>`, whose `profiles/default` is a link to the real profile.
+
+The DamSafety offline pack from Terminal, without opening QGIS:
+`~/dam-suite/build-offline-pack.sh` (default folder `~/ND_Suite_Data`; give another folder as the
+first argument). A stopped build picks up where it left off. When it finishes, the folder becomes the
+suite data folder.
+
 ## Package layout
 
 ```
@@ -89,6 +101,7 @@ install-all.sh, install-all-windows.ps1/.cmd   installers
 download-all.sh, download-all-windows.ps1/.cmd builders of offline/
 locks/<platform>/*.lock, locks/extra.lock      pinned files (url sha256 md5)
 plugins/damsafety, plugins/damit               plugin zips (VERSIONS.md, SHA256SUMS)
+nd_crest/                                      North Dakota Crest desk (crest repo crest-desktop/; COMMIT)
 lisflood/                                      LISFLOOD-FP binaries (GPL-3, see lisflood/README.txt) + macOS build script
 damit_ai/                                      the local AIs and their installers
 absaraka/                                      the DWR-2801 run folder
@@ -96,4 +109,5 @@ offline/ (from an offline set or download-all) conda/<platform>/, miniforge/, li
 ```
 
 Maintainers: `tools/make_locks.py` re-solves the conda envs (py-rattler), and
-`tools/make_package.sh --dwr <DWR_Plugins checkout> --out <dir> --zip` builds the package.
+`tools/make_package.sh --dwr <DWR_Plugins checkout> --crest <crest checkout> --out <dir> --zip`
+builds the package (without `--crest` there is no North Dakota Crest desk in it).
