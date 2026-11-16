@@ -60,3 +60,8 @@ OSM_HELP = ("Use a Geofabrik extract of your state (https://download.geofabrik.d
 # census with AUC 0.89. The Find fills tool uses it when no other model is given: a starting
 # point, not a model of your state. Relearn it with the score tool where you have a dam list.
 DEFAULT_MODEL = "models/nd_fill_score_trees_2026-11.json"
+# Shown at the end of the review batch tool's help (EVIDENCE on): with the default image list a
+# card has one look at the most recent image, not a water history.
+CARD_IMAGES_HELP = ("With the default image list a card reads '1 of 1' or '0 of 1': one look at the most recent "
+                    "image, not a water history. To see water year after year, list your state's yearly images "
+                    "with a near-infrared band in IMAGES, one per line.")

@@ -150,6 +150,30 @@ raised-ridge search for those. Sort by the score and check each candidate on ima
 the part done). Every output GeoPackage has a `run_info` table: the tool, the Finder version,
 GDAL, the time and every setting and input.
 
+**The same ground gives the same fills, whatever box you run** (0.7.0). The DEM is read in 5 km
+squares of a fixed lattice in EPSG:5070 (corners at whole multiples of 5 km), and every DEM window
+is grown out to whole multiples of 30 m, so the 3 m and 10 m cells fall on the same ground in every
+run. A fill inside two different run boxes has the same point, `find_id` and readings in both. Up
+to 0.6 the squares and cells started at the box's corner, and moving the box one metre changed
+most crest points and almost every `find_id`. So `find_id` is stable between runs of 0.7.0 and
+later on the same terrain, but not across versions: match marks made on 0.6 or earlier to the new
+fills by location (`lat` / `lon`), not by id. Fixing the grid makes the result steady, not better:
+a pond near a threshold (5 ft of height, 400 m2 of pool) that this grid misses is now missed every
+time.
+
+**The edge of the terrain data** (0.7.0). Where the DEM has no cells (outside a LiDAR project, a
+hole) the spill test cannot see the ground and the missing cells stand as a wall, so a spur beside
+the edge can read as a dam. Every fill has `edge_ft`, the distance from its crest to the nearest
+missing cell (holes under 100 m2 not counted; blank beyond 1,000 m). A fill within 150 m of missing
+terrain whose pool reaches the missing cells gets the kind **at the edge of the terrain data**: it
+is kept with a note, but it has no score, is not handed on as a candidate and is never put in a
+review batch. Run it again with terrain that covers both sides. (Distance alone was tried and not
+used: on an Iowa tile half outside its LiDAR it set aside 6 real pond dams of 10.)
+
+**Small ponds** (0.7.0). A flat water surface starts a pool line from 100 m2 (was 300 m2), and on
+such a line a pool of 100 to 400 m2 is enough when it holds that water. It finds a few more small
+pond dams on some ground and adds 1 to 2 % more fills, mostly at the bottom of the ranking.
+
 What it cannot find: a fill the DEM has been hydro-enforced through (a culvert cut through it), a
 breached dam (correctly: it no longer blocks the valley), a pond with no polygon (draw it from imagery with the fourth tool).
 
@@ -285,6 +309,16 @@ unreviewed pool (`pool_n` cards; the tile cap counted), so `evaluate.ht_share` t
 marks into the share of real dams among the unreviewed cards with an honest interval (a control
 with no dams still gives an upper bound, not 0 +/- 0). For the whole list, add the cards marked in
 earlier rounds at `incl_prob` 1: they are a census of what has been looked at.
+**Evidence on the cards** (`EVIDENCE`, on; 0.7.0). After the pick, the batch reads the water
+evidence of the evidence tool for the picked cards only: `water_years` ("6 of 10": water in 6 of
+the 10 image years read), the NWI code, the LiDAR drop-out in the pool and `evid_note`, which says
+in words why something is blank. The pick is made first and checked unchanged afterwards. With
+the default image list (the most recent NAIP only) a card reads "1 of 1" or "0 of 1": one look, not
+a water history; list your state's yearly near-infrared images in `IMAGES` for that. Marks made
+with the evidence on the card are not an independent test of the evidence (`run_info` records
+`evidence`). The evidence tool also writes `review_order`, a second sort: score in bands 0.1 wide,
+then buildings and roads down the flow path, then score; its CSV is written in that order.
+
 A review sheet (an aerial and a hillshade chip per card; yes / no / unsure / offset, where offset is
 a real dam just off the point) gives the marks the score tool's `MARKS` takes, and
 `core/dataset.py` files every reviewed card with its chips (a training set for an image model once
