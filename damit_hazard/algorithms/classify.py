@@ -63,6 +63,12 @@ def _stat(path, role, note=""):
         return {"role": role, "source": path, "modified": None, "size": None, "note": note}
 
 
+# E911 points merged onto a structure of another layer (DWR Hazard constants STRUCTURE_MERGE_DIST_FT and
+# ADDRESS_SNAP_FT): within 30 ft when the point is on the building (Placement Structure), within 100 ft when it
+# is placed at the driveway, parcel or property access.
+ADDRESS_MERGE_FT = 30.0
+ADDRESS_SNAP_FT = 100.0
+
 class _Style(QgsProcessingLayerPostProcessorInterface):
     instances = []
 
@@ -289,6 +295,16 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                     c = gm.centroid().asPoint()
                     areas[rid] = (bytes(gm.asWkb()), (c.x(), c.y()), None)
             hyd = {}
+            if key == "ADDRESS_POINTS":
+                # 0.4.2 review fix: an E911 point at a building that another structure layer already
+                # holds is that building's 911 tag, not a second structure (DWR Hazard merges the two
+                # sources within STRUCTURE_MERGE_DIST_FT, ADDRESS_SNAP_FT for a point placed at the
+                # driveway / parcel). Only unmatched points stay structures of their own.
+                merged = self._merge_address_points(areas, attrs, out, f2m, feedback)
+                for rid in merged:
+                    areas.pop(rid, None)
+                    attrs.pop(rid, None)
+                    geoms.pop(rid, None)       # written once, as the structure it tags
             if kind == "structure":
                 self._xy.update({rid: v[1] for rid, v in areas.items()})
             if areas:
@@ -302,6 +318,52 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 out.append(r)
             feedback.pushInfo("{}: {} receptor(s) sampled".format(key.lower(), len(attrs)))
         return out, geoms
+
+    def _merge_address_points(self, areas, attrs, out, f2m, feedback):
+        """Tag the structure receptors already in `out` with the E911 point at the same building.
+        Returns the address-point rids that were merged (they are not added as structures)."""
+        cand = [r for r in out if r.get("kind") == "structure" and r["id"] in self._xy]
+        if not cand or not areas:
+            if areas:
+                feedback.pushInfo("address points: no other structure layer; each E911 point is a structure")
+            return set()
+        near_ft, snap_ft = ADDRESS_MERGE_FT, ADDRESS_SNAP_FT
+        cell = snap_ft * f2m
+        grid = {}
+        for r in cand:
+            x, y = self._xy[r["id"]]
+            grid.setdefault((int(x // cell), int(y // cell)), []).append(r)
+        pairs = []
+        for rid, (_wkb, (x, y), _f) in areas.items():
+            a = {str(k).lower(): v for k, v in attrs[rid].items()}
+            placed = str(a.get("placement") or a.get("placed") or "").strip().lower()
+            lim = (near_ft if placed in ("", "structure", "911 address point") else snap_ft) * f2m
+            gx, gy = int(x // cell), int(y // cell)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for r in grid.get((gx + dx, gy + dy), ()):
+                        sx, sy = self._xy[r["id"]]
+                        d = ((sx - x) ** 2 + (sy - y) ** 2) ** 0.5
+                        if d <= lim:
+                            pairs.append((d, rid, r))
+        pairs.sort(key=lambda t: t[0])
+        used_pt, used_st = set(), set()
+        for _d, rid, r in pairs:
+            if rid in used_pt or r["id"] in used_st:
+                continue
+            used_pt.add(rid)
+            used_st.add(r["id"])
+            a = {str(k).lower(): v for k, v in attrs[rid].items()}
+            r["is_911"] = True
+            r["address_point"] = rid
+            for src, dst in (("site_nguid", "nguid"), ("nd_site_nguid", "nguid"), ("source", "address_source"),
+                             ("placement", "placed")):
+                if a.get(src) not in (None, "") and r.get(dst) in (None, ""):
+                    r[dst] = a[src]
+        feedback.pushInfo("address points: {} matched a structure already in the inventory (that structure "
+                          "is now its 911 point), {} are structures of their own".format(
+                              len(used_pt), len(areas) - len(used_pt)))
+        return used_pt
 
     # ------------------------------------------------------------------- main -----------
     def checkParameterValues(self, parameters, context):

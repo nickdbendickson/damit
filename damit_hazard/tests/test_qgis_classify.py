@@ -681,3 +681,34 @@ def test_official_e911_address_points_parameter_and_default_rule_stays_legacy():
     rep2 = json.load(open(os.path.join(out2, "damit_hazard_report.json"), encoding="utf-8"))
     assert rep2["habitable_rule"] == "reviewed"
     assert res2["CLASS"] == res["CLASS"]  # one 911 house in the high zone: both rules say High
+
+
+def test_an_e911_point_at_a_structure_tags_it_instead_of_adding_a_second_house():
+    """0.4.2 review fix: the official E911 point on house 1 is house 1's 911 tag (DWR merges the two sources),
+    not a second presumed home; a point with no structure nearby stays a structure of its own."""
+    _app()
+    d = tempfile.mkdtemp(prefix="damit_e911_merge_")
+    dep, vel = _rasters(d)
+    s = _nsi_layer(d)
+    addr = _official_e911_layer()                       # at house 1 (x 10-20, y 50-60)
+    from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsVectorLayer
+    f = QgsFeature(addr.fields())
+    f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(500015.0, 5200015.0)))   # nothing within 30 ft
+    f.setAttributes(["{11111111-2222-3333-4444-555555555555}", "SARGENT COUNTY 911", "Structure",
+                     1, "MAIN", "ST", "1 MAIN ST"])
+    assert addr.dataProvider().addFeatures([f])
+    from damit_hazard.engine import catalog as C
+    pids = [None] + list(C.load()["presets"])
+    base = {"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0, "DEPTH": dep, "VELOCITY": vel,
+            "METRES": True, "STRUCTURES": s, "DAM_NAME": "smoke"}
+    res0 = _alg_run(dict(base, OUTPUT=os.path.join(d, "no_addr")))
+    res = _alg_run(dict(base, ADDRESS_POINTS=addr, OUTPUT=os.path.join(d, "with_addr")))
+    st = QgsVectorLayer(res["GPKG"] + "|layername=structures", "s", "ogr")
+    ap = QgsVectorLayer(res["GPKG"] + "|layername=address_points", "a", "ogr")
+    assert st.featureCount() == 3
+    tagged = [g for g in st.getFeatures() if g["is_911"] == 1]
+    h1 = [g for g in st.getFeatures() if g["src_fid"] == 1][0]
+    assert h1["is_911"] == 1, [(g["src_fid"], g["is_911"]) for g in st.getFeatures()]
+    assert ap.featureCount() == 1                        # only the point with no structure nearby
+    assert res["CLASS"] == res0["CLASS"]
+    assert tagged
