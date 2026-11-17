@@ -113,7 +113,7 @@
    "from": "DamSafety_Runner/algorithms.py"
   },
   "damit_runner/compat/nodata_sample.py": {
-   "diff": "",
+   "diff": "8795133ddb37fdce23528e483861924bbcf2478cad4f8b0e04a74c0218f9df8a",
    "from": "DamSafety_Core/damsuite/nodata_sample.py"
   },
   "damit_runner/core/__init__.py": {
@@ -325,7 +325,7 @@
    "from": "DamSafety_Runner/core/hydrology.py"
   },
   "damit_runner/core/impacts.py": {
-   "diff": "0a6e43910cd73696b35db0aac67447f1d2006b674bf67d2a350bcf53604a51ec",
+   "diff": "d6ee36dda5266507aed19f08f8e09a3a886b77f54827b38bef733b543582c84d",
    "from": "DamSafety_Runner/core/impacts.py"
   },
   "damit_runner/core/lisflood.py": {

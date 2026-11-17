@@ -86,9 +86,10 @@ class Receptors:
     def apply_nodata_on_grid(self, grid, depth2d, vel2d=None, cell_m=None):
         """Sample depth (and velocity) on `grid` and apply the 20 m NoData-receptor rule.
 
-        A finite 0 stays dry. Peak depth and peak velocity may come from different wet
-        cells (option C). Returns (depth, vel, sampling, flags). `cell_m` defaults to
-        `grid.dx` (Runner grids are in metres).
+        Neighbourhood fill on a coarse grid applies only to a TRUE_HOLE. A finite 0 stays
+        dry; a flood-edge NoData cell is scored dry (centre_nodata_edge). Peak depth and
+        peak velocity may come from different wet cells (option C). Returns (depth, vel,
+        sampling, flags). `cell_m` defaults to `grid.dx` (Runner grids are in metres).
         """
         policy = NDS.nodata_policy(grid.dx if cell_m is None else float(cell_m))
         d = self.sample(grid, depth2d)
@@ -98,6 +99,7 @@ class Receptors:
         col = np.floor((self.x - grid.x0) / grid.dx).astype(int)
         row = np.floor((grid.y0 - self.y) / grid.dx).astype(int)
         ny, nx = depth2d.shape
+        holes = NDS.true_hole_mask_array(depth2d)
         for i in range(len(self.x)):
             r, c = int(row[i]), int(col[i])
             if not (0 <= r < ny and 0 <= c < nx):
@@ -110,14 +112,15 @@ class Receptors:
                 depths.append(depth2d[rr, cc])
                 vels.append(None if vel2d is None else vel2d[rr, cc])
             peak = NDS.peak_wet_cells(depths, vels)
-            decided = NDS.resolve_nodata(True, peak, policy)
+            decided = NDS.resolve_nodata(True, peak, policy,
+                                         is_true_hole=bool(holes[r][c]))
             sampling[i] = decided["sampling"]
             flags[i] = decided["flag"]
             if decided["flag"] == NDS.FLAG_NEIGHBOURHOOD:
                 d[i] = decided["depth"]
                 if v is not None and decided["velocity"] is not None:
                     v[i] = decided["velocity"]
-            elif decided["flag"] == NDS.FLAG_DRY_REVIEW:
+            elif decided["flag"] in (NDS.FLAG_DRY_REVIEW, NDS.FLAG_FLOOD_EDGE):
                 d[i] = 0.0
         return d, v, sampling, flags
 

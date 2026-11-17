@@ -364,5 +364,9 @@ class TestPackMatchesHazardNoDataRule(StrictCase):
                        "nodata_neighbourhood", "neighbourhood"):
             self.assertIn(needle, kb)
             self.assertIn(needle, code)                         # the pack names only what the code really writes
-        self.assertIn('"neighbourhood", True', src)             # sampling=neighbourhood
+        self.assertIn("SAMPLING_NEIGHBOURHOOD", src)
+        self.assertIn("TRUE_HOLE", src)
+        self.assertIn("centre_nodata_edge", src)
+        self.assertIn("TRUE_HOLE", kb)
+        self.assertIn("centre_nodata_edge", kb)
         self.assertNotIn("Hazard reads a NoData cell as dry (0 ft).", kb)

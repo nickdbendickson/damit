@@ -10,15 +10,20 @@ arrival are read at those cell centres (their own grids may differ). Roads / rai
 under every point of the line densified at the line step (default 10 ft).
 
 Per receptor: depth_ft (max), velocity_fps (max over wet cells, possibly a different cell
-than the peak depth), dv_ft2s (DV raster max, else the largest d x v of one cell: dv_source
-"cells"), cells [(d, v)] of the wet cells, wse_ft (max), rise_ft (max of depth - non-breach
+than the peak depth; Nick's option C, 1 Nov 2026), dv_ft2s (DV raster max, else peak depth
+x peak velocity: dv_source "peak_depth_x_peak_velocity"), dv_same_cell_ft2s (the largest
+d x v of one wet cell), dv_cells_differ (True when the two peaks do not share a cell),
+cells [(d, v)] of the wet cells, wse_ft (max), rise_ft (max of depth - non-breach
 depth), arrival_h (min), in_domain (False when the receptor lies outside the depth raster).
 When the cell under a point (or every cell in a footprint) is NoData and a neighbour is wet,
 the path depends on the depth-grid cell size (larger side, converted to metres;
-NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, strictly greater than):
-  * coarser than 20 m: the peak over wet cells in the 3x3 neighbourhood (and the footprint,
-    if there is one) is used, sampling is "neighbourhood", and the structure is flagged
-    (nodata_neighbourhood);
+NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, strictly greater than) and on whether the cell is a
+TRUE_HOLE (see true_hole_mask_from_array):
+  * coarser than 20 m, and the NoData cell is a true hole (enclosed by the wet footprint):
+    the peak over wet cells in the 3x3 neighbourhood (and the footprint, if there is one)
+    is used, sampling is "neighbourhood", and the structure is flagged (nodata_neighbourhood);
+  * coarser than 20 m, and the NoData cell is not a true hole (a dry flood-edge cell; the
+    Runner writes every dry cell as NoData): scored dry, sampling is "centre_nodata_edge";
   * at 20 m or finer: the NoData cell is still scored dry (0 ft), sampling is
     "centre_nodata_dry", and the structure is flagged for review (nodata_dry_review).
 A dry (finite 0) cell is left dry. A NoData cell with no wet neighbour is left dry and is
@@ -38,9 +43,13 @@ from . import fastsample as FS
 FT_PER_M = 3.280839895013123
 
 # Neighbourhood fill of a NoData receptor is used only when the depth-grid cell (larger side,
-# converted to metres) is strictly greater than this. At 20 m or finer, NoData still scores dry
-# and is flagged for review. Nick, 12 Nov 2026 (damit PR #67).
+# converted to metres) is strictly greater than this AND the cell is a TRUE_HOLE. At 20 m or
+# finer, NoData still scores dry and is flagged for review. Nick, 12 Nov 2026 (damit PR #67);
+# true-hole restriction 17 Nov 2026 (follow-up to #67).
 NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20.0
+SAMPLING_NEIGHBOURHOOD = "neighbourhood"
+SAMPLING_CENTRE_NODATA_DRY = "centre_nodata_dry"
+SAMPLING_CENTRE_NODATA_EDGE = "centre_nodata_edge"
 M_PER_DEG_LAT = 110540.0          # metres per degree of latitude (same as the Runner dam-line length)
 M_PER_DEG_LON_EQ = 111320.0       # metres per degree of longitude at the equator
 
@@ -136,25 +145,41 @@ def open_rasters(paths, metres=False):
 
 
 def _hyd(rs, xs, ys, d):
-    """Hydraulics of one receptor from depth values d at points xs, ys."""
+    """Hydraulics of one receptor from depth values d at points xs, ys.
+
+    Peak depth and peak velocity are independent maxima over wet cells (option C).
+    When there is no DV raster, dv_ft2s is peak depth x peak velocity
+    (dv_source='peak_depth_x_peak_velocity'), labelled consistently with those peaks.
+    dv_same_cell_ft2s keeps the largest d x v of one wet cell. dv_cells_differ is True
+    when no single wet cell holds both peaks.
+    """
     d = np.where(np.isfinite(d), d, 0.0)
     d = np.maximum(d, 0.0)
-    out = {"sampled": True, "in_domain": True, "depth_ft": float(d.max()) if d.size else 0.0,
-           "n_cells": int(d.size)}
+    d_peak = float(d.max()) if d.size else 0.0
+    out = {"sampled": True, "in_domain": True, "depth_ft": d_peak,
+           "n_cells": int(d.size), "dv_cells_differ": False,
+           "dv_peak_ft2s": 0.0, "dv_same_cell_ft2s": 0.0}
     wet = d > 0
     v = None
     if "velocity" in rs:
         v = rs["velocity"].values_at(xs, ys)
         v = np.where(np.isfinite(v), np.abs(v), 0.0)
-        out["velocity_fps"] = float(v[wet].max()) if wet.any() else 0.0
+        if wet.any():
+            v_peak = float(v[wet].max())
+            out["velocity_fps"] = v_peak
+            out["dv_peak_ft2s"] = d_peak * v_peak
+            out["dv_same_cell_ft2s"] = float((d[wet] * v[wet]).max())
+            out["dv_cells_differ"] = not bool(np.any(wet & (d == d_peak) & (v == v_peak)))
+        else:
+            out["velocity_fps"] = 0.0
     if "dv" in rs:
         dv = rs["dv"].values_at(xs, ys)
         dv = dv[np.isfinite(dv)]
         out["dv_ft2s"] = float(dv.max()) if dv.size else 0.0
         out["dv_source"] = "raster"
     elif v is not None:
-        out["dv_ft2s"] = float((d * v).max()) if d.size else 0.0
-        out["dv_source"] = "cells"
+        out["dv_ft2s"] = float(out["dv_peak_ft2s"])
+        out["dv_source"] = "peak_depth_x_peak_velocity"
     if v is None:
         out["cells"] = [(float(a), None) for a in d[wet]]
     else:
@@ -230,9 +255,101 @@ def nodata_policy(raster):
             "neighbourhood_allowed": neighbourhood_from_cell(cell)}
 
 
-def _stamp_nodata(hyd, policy, sampling, neighbourhood=False):
+def true_hole_mask_from_array(depth):
+    """Boolean mask of TRUE_HOLE NoData cells in a 2-d depth array (NaN = NoData).
+
+    Named, documented criterion TRUE_HOLE (also recorded as nodata_true_hole):
+
+      The wet footprint is every cell with a finite depth strictly greater than 0.
+      A NoData cell is a true hole when its 4-connected component of non-wet cells
+      (NoData or finite 0, or any depth <= 0) does not touch the raster border —
+      equivalently, the cell is enclosed by the wet footprint. Finite-0 cells
+      take part in that connectivity but are never themselves holes (already dry).
+      A NoData cell with a 4-connected non-wet path to the raster border is
+      exterior dry, including a dry edge cell next to water; it is scored dry.
+
+    4-connectivity is used for the non-wet components (the usual hole-fill
+    complement of an 8-connected wet object).
+    """
+    a = np.asarray(depth)
+    if a.ndim != 2 or a.size == 0:
+        return np.zeros(a.shape, dtype=bool)
+    wet = np.isfinite(a) & (a > 0)
+    nodata = ~np.isfinite(a)
+    nonwet = ~wet
+    nr, nc = a.shape
+    exterior = np.zeros((nr, nc), dtype=bool)
+    from collections import deque
+    q = deque()
+    def seed(r, c):
+        if nonwet[r, c] and not exterior[r, c]:
+            exterior[r, c] = True
+            q.append((r, c))
+    for c in range(nc):
+        seed(0, c)
+        if nr > 1:
+            seed(nr - 1, c)
+    for r in range(nr):
+        seed(r, 0)
+        if nc > 1:
+            seed(r, nc - 1)
+    while q:
+        r, c = q.popleft()
+        if r > 0 and nonwet[r - 1, c] and not exterior[r - 1, c]:
+            exterior[r - 1, c] = True
+            q.append((r - 1, c))
+        if r + 1 < nr and nonwet[r + 1, c] and not exterior[r + 1, c]:
+            exterior[r + 1, c] = True
+            q.append((r + 1, c))
+        if c > 0 and nonwet[r, c - 1] and not exterior[r, c - 1]:
+            exterior[r, c - 1] = True
+            q.append((r, c - 1))
+        if c + 1 < nc and nonwet[r, c + 1] and not exterior[r, c + 1]:
+            exterior[r, c + 1] = True
+            q.append((r, c + 1))
+    return nodata & ~exterior
+
+
+def _depth_array(dep):
+    """The full depth band as the Raster stores it (NoData as NaN, scaled), cached."""
+    a = getattr(dep, "_depth_array", None)
+    if a is None:
+        a = dep.window_values(0, 0, dep.xsize, dep.ysize)
+        if a is None:
+            a = np.full((dep.ysize, dep.xsize), np.nan)
+        dep._depth_array = a
+    return a
+
+
+def true_hole_mask(dep):
+    """TRUE_HOLE mask of a depth Raster, cached on the raster for the classify pass."""
+    m = getattr(dep, "_true_hole_mask", None)
+    if m is None:
+        m = true_hole_mask_from_array(_depth_array(dep))
+        dep._true_hole_mask = m
+    return m
+
+
+def receptor_is_true_hole(dep, points):
+    """True when every in-domain sample point of this receptor sits on a TRUE_HOLE cell."""
+    mask = true_hole_mask(dep)
+    seen = False
+    for x, y in points:
+        if not dep.inside(x, y):
+            continue
+        c, r = _cell_index(dep, x, y)
+        if not (0 <= r < mask.shape[0] and 0 <= c < mask.shape[1]):
+            continue
+        seen = True
+        if not mask[r, c]:
+            return False
+    return seen
+
+
+def _stamp_nodata(hyd, policy, sampling, neighbourhood=False, true_hole=False):
     hyd["sampling"] = sampling
     hyd["neighbourhood"] = bool(neighbourhood)
+    hyd["nodata_true_hole"] = bool(true_hole)
     hyd["cell_m"] = policy["cell_m"]
     hyd["nodata_neighbourhood_min_cell_m"] = policy["nodata_neighbourhood_min_cell_m"]
     return hyd
@@ -283,19 +400,29 @@ def _from_neighbourhood(rs, dep, points):
 
 
 def _nodata_or_plain(rs, dep, points, xs, ys, d, policy, plain_sampling):
-    """Hydraulics when every requested cell is NoData: neighbourhood fill on a coarse grid,
-    or scored dry (centre_nodata_dry) at 20 m or finer when a neighbour is wet."""
+    """Hydraulics when every requested cell is NoData.
+
+    Coarser than 20 m: neighbourhood fill only for a TRUE_HOLE receptor; a dry
+    flood-edge cell next to water is scored dry (centre_nodata_edge). At 20 m or
+    finer the 20 m rule is unchanged: NoData next to water is scored dry
+    (centre_nodata_dry) and flagged for review, hole or edge.
+    """
+    hole = receptor_is_true_hole(dep, points)
     if policy["neighbourhood_allowed"]:
-        hyd = _from_neighbourhood(rs, dep, points)
-        if hyd is not None:
-            return _stamp_nodata(hyd, policy, "neighbourhood", True)
+        if hole:
+            hyd = _from_neighbourhood(rs, dep, points)
+            if hyd is not None:
+                return _stamp_nodata(hyd, policy, SAMPLING_NEIGHBOURHOOD, True, True)
         hyd = _hyd(rs, xs, ys, d)
+        nb = _from_neighbourhood(rs, dep, points)
+        if nb is not None:
+            return _stamp_nodata(hyd, policy, SAMPLING_CENTRE_NODATA_EDGE, False, hole)
         hyd["sampling"] = plain_sampling
         return hyd
     hyd = _hyd(rs, xs, ys, d)
     nb = _from_neighbourhood(rs, dep, points)
     if nb is not None:
-        return _stamp_nodata(hyd, policy, "centre_nodata_dry", False)
+        return _stamp_nodata(hyd, policy, SAMPLING_CENTRE_NODATA_DRY, False, hole)
     hyd["sampling"] = plain_sampling
     return hyd
 

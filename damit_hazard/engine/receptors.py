@@ -3,7 +3,8 @@ environmental feature, with its attributes (normalised names and values) and the
 sampled at it.
 
     {"id", "kind", "type", <attributes>, "sampled", "depth_ft", "velocity_fps", "dv_ft2s",
-     "dv_source", "cells" [(depth ft, velocity ft/s), ...], "wse_ft", "rise_ft", "arrival_h",
+     "dv_source" (raster or peak_depth_x_peak_velocity), "dv_same_cell_ft2s", "dv_cells_differ",
+     "cells" [(depth ft, velocity ft/s), ...], "wse_ft", "rise_ft", "arrival_h",
      "in_domain"}
 
 Attribute names are matched case-insensitively against ALIASES (first match wins); a value the

@@ -35,13 +35,22 @@ def _nodata_sampling_lines(result):
         min_m = p.get("nodata_neighbourhood_min_cell_m", 20.0)
         allowed = p.get("neighbourhood_allowed")
         cell_s = "{:g} m".format(cell) if cell is not None else "unknown"
-        path = ("neighbourhood fill (sampling=neighbourhood, flag nodata_neighbourhood)"
-                if allowed else
-                "NoData scored dry (sampling=centre_nodata_dry, flag nodata_dry_review)")
+        if allowed:
+            path = ("neighbourhood fill only of a TRUE_HOLE (NoData enclosed by the wet "
+                    "footprint; sampling=neighbourhood, flag nodata_neighbourhood); a dry "
+                    "flood-edge cell written as NoData is scored dry "
+                    "(sampling=centre_nodata_edge, flag nodata_flood_edge)")
+        else:
+            path = ("NoData scored dry (sampling=centre_nodata_dry, flag nodata_dry_review), "
+                    "whether or not the cell is a true hole")
         who = p.get("scenario") or p.get("label") or "run"
         out.append("NoData receptors ({}): depth-grid cell {} (larger side, converted to metres); "
-                   "neighbourhood fill only when the cell is coarser than "
-                   "NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m (strictly greater than). This run: {}."
+                   "neighbourhood fill only of a TRUE_HOLE (nodata_true_hole: a NoData cell "
+                   "whose 4-connected non-wet component does not touch the raster border) and "
+                   "only when the cell is coarser than "
+                   "NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m (strictly greater than). A dry "
+                   "(finite 0) cell is scored dry. The Runner writes dry cells as NoData, so a "
+                   "flood-edge structure is not a hole. This run: {}."
                    .format(who, cell_s, min_m, path))
     return out
 

@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -1138,8 +1138,11 @@ def cached_points(path, wkt=None):
 def receptor_check(grid, points, th=THRESHOLDS):
     """points: [(id, x, y)] or a PointSet, in the raster's CRS; grid.data in ft with NaN = NoData.
 
-    nodata: the cell under the receptor is NoData and a neighbour is wet (the receptor sits in a hole in the
-    results, next to water); dry_next_to_wet: the cell is dry and a neighbour is at least near_wet_ft deep.
+    nodata: the cell under the receptor is NoData and a neighbour is wet. That is split into
+    true holes (NoData enclosed by the wet footprint; criterion TRUE_HOLE / nodata_true_hole)
+    and flood-edge cells (the Runner writes dry cells as NoData, so a cell next to water is
+    not a hole). dry_next_to_wet: the cell is a finite dry value and a neighbour is at least
+    near_wet_ft deep.
 
     Vectorised (1.3.1): one pass of numpy index arithmetic over all points, no per-point Python or GDAL call. A receptor can only
     be flagged within one cell of a wet cell, so only the points inside the wet extent's bounding box (grown by a cell) are
@@ -1150,12 +1153,12 @@ def receptor_check(grid, points, th=THRESHOLDS):
     nr, nc = a.shape
     n_all = len(ps)
     if n_all == 0:
-        return {"sampled": 0, "outside": 0, "nodata_next_to_wet": [], "dry_next_to_wet": []}
+        return {"sampled": 0, "outside": 0, "nodata_next_to_wet": [], "dry_next_to_wet": [], "nodata_true_hole": [], "nodata_flood_edge": []}
     rr = np.floor((grid.y0 - ps.y) / grid.cell).astype(np.int64)
     cc = np.floor((ps.x - grid.x0) / grid.cell).astype(np.int64)
     inside = (rr >= 0) & (rr < nr) & (cc >= 0) & (cc < nc)
     n = int(inside.sum())
-    out = {"sampled": n, "outside": n_all - n, "nodata_next_to_wet": [], "dry_next_to_wet": []}
+    out = {"sampled": n, "outside": n_all - n, "nodata_next_to_wet": [], "dry_next_to_wet": [], "nodata_true_hole": [], "nodata_flood_edge": []}
     with np.errstate(invalid="ignore"):
         wet = np.isfinite(a) & (a >= th["wet_ft"])
     rows = np.flatnonzero(wet.any(axis=1))
@@ -1182,6 +1185,30 @@ def receptor_check(grid, points, th=THRESHOLDS):
         dry = fin & (v < th["wet_ft"]) & (nb >= th["near_wet_ft"])
     out["nodata_next_to_wet"] = [(ps.ids[sel[i]], round(float(nb[i]), 2)) for i in np.flatnonzero(nod)]
     out["dry_next_to_wet"] = [(ps.ids[sel[i]], round(float(nb[i]), 2)) for i in np.flatnonzero(dry)]
+    # TRUE_HOLE vs flood edge (the Runner writes dry cells as NoData).
+    holes = np.zeros(a.shape, dtype=bool)
+    if nod.any():
+        try:
+            from damit_runner.compat.nodata_sample import true_hole_mask_array
+            holes = np.asarray(true_hole_mask_array(a), dtype=bool)
+        except Exception:
+            wetm = np.isfinite(a) & (a > 0)
+            # isolated fallback: all 4 cardinal neighbours wet (single-cell holes only)
+            padw = np.zeros((nr + 2, nc + 2), dtype=bool)
+            padw[1:-1, 1:-1] = wetm
+            holes = (~np.isfinite(a)
+                     & padw[0:nr, 1:nc+1] & padw[2:nr+2, 1:nc+1]
+                     & padw[1:nr+1, 0:nc] & padw[1:nr+1, 2:nc+2])
+    hole_ids, edge_ids = [], []
+    for i in np.flatnonzero(nod):
+        item = (ps.ids[sel[i]], round(float(nb[i]), 2))
+        rr, cc = int(r[i]), int(c[i])
+        if 0 <= rr < nr and 0 <= cc < nc and holes[rr, cc]:
+            hole_ids.append(item)
+        else:
+            edge_ids.append(item)
+    out["nodata_true_hole"] = hole_ids
+    out["nodata_flood_edge"] = edge_ids
     return out
 
 
@@ -1251,14 +1278,39 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     note = (" Sampled on %s." % grid_source) if grid_source else ""
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
     if nd:
-        fl.add("RECEPTOR_NODATA", WATCH, "receptors", "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
-               "ids: %s. The results have a hole at the receptor. Hazard's path depends on the depth-grid "
-               "cell size (larger side, converted to metres; NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, strictly "
-               "greater than): on a grid coarser than 20 m it takes the peak depth and velocity over neighbouring "
-               "wet cells (sampling=neighbourhood, flag nodata_neighbourhood); at 20 m or finer it still scores "
-               "the NoData cell dry (sampling=centre_nodata_dry) and flags nodata_dry_review. Check these by hand.%s" % (
-                   _ids("%s (neighbour %.2f ft)" % t for t in nd), note),
-               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd}, grid_source=grid_source)
+        holes = res.get("nodata_true_hole") or []
+        edges = res.get("nodata_flood_edge") or []
+        cell = getattr(depth_grid, "cell", None)
+        cell_s = ("%g map units" % cell) if cell is not None else "unknown"
+        detail = (
+            "ids: %s. Of these, %d sit in a true hole (TRUE_HOLE / nodata_true_hole: NoData "
+            "enclosed by the wet footprint; 4-connected non-wet component does not touch the "
+            "raster border)%s and %d sit on a dry flood-edge cell (the Runner writes every dry "
+            "cell as NoData, so this is not a hole in the results)%s. "
+            "Hazard's path depends on the depth-grid cell size (this raster's cell is %s; "
+            "larger side, converted to metres; NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, "
+            "strictly greater than). On a grid coarser than 20 m, a true hole is neighbourhood-"
+            "filled (sampling=neighbourhood, flag nodata_neighbourhood) and a flood-edge cell "
+            "is scored dry (sampling=centre_nodata_edge, flag nodata_flood_edge). At 20 m or "
+            "finer every NoData cell next to water is still scored dry "
+            "(sampling=centre_nodata_dry) and flagged nodata_dry_review. Check these by hand.%s"
+            % (
+                _ids("%s (neighbour %.2f ft)" % t for t in nd),
+                len(holes),
+                (": " + _ids("%s (neighbour %.2f ft)" % t for t in holes)) if holes else "",
+                len(edges),
+                (": " + _ids("%s (neighbour %.2f ft)" % t for t in edges)) if edges else "",
+                cell_s,
+                note,
+            )
+        )
+        fl.add("RECEPTOR_NODATA", WATCH, "receptors",
+               "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
+               detail,
+               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd},
+               grid_source=grid_source,
+               n_true_hole=len(holes), n_flood_edge=len(edges),
+               true_hole_ids=[t[0] for t in holes], flood_edge_ids=[t[0] for t in edges])
     if dn:
         fl.add("RECEPTOR_DRY_NEXT_TO_WET", WATCH, "receptors",
                "%d structure(s) are on a dry cell beside water at least %.1f ft deep" % (len(dn), th["near_wet_ft"]),
@@ -1282,8 +1334,9 @@ REVIEW_CODES = {
     "no_layer": "a receptor layer was not supplied (e.g. lifelines, M11a)",
     "outside_domain": "receptors outside the routed domain were not scored",
     "m13_guessed": "M13 descriptor guessed",
-    "nodata_neighbourhood": "a structure sits on a NoData cell on a grid coarser than 20 m; peak depth and velocity were taken from neighbouring wet cells and need review",
+    "nodata_neighbourhood": "a structure sits on a true hole (NoData enclosed by the wet footprint) on a grid coarser than 20 m; peak depth and velocity were taken from neighbouring wet cells and need review",
     "nodata_dry_review": "a structure sits on a NoData cell on a grid at or finer than 20 m; scored dry from the NoData cell and need review",
+    "nodata_flood_edge": "a structure sits on a dry flood-edge cell written as NoData on a grid coarser than 20 m; scored dry (not a hole)",
 }
 
 
