@@ -44,33 +44,66 @@ class TrueHole(unittest.TestCase):
         is_wt = [[NDS.is_wet(v) for v in row] for row in a]
         self.assertFalse(NDS.true_hole_mask(is_nd, is_wt)[2][2])
 
-    def test_resolve_nodata_fills_only_true_holes_on_a_coarse_grid(self):
+    def test_resolve_nodata_uses_physical_depth_never_raw_neighbour(self):
         pol = NDS.nodata_policy(50.0)
         self.assertTrue(pol["neighbourhood_allowed"])
         peak = (3.0, 2.0, 1)
-        filled = NDS.resolve_nodata(True, peak, pol, is_true_hole=True)
-        self.assertEqual(filled["sampling"], NDS.SAMPLING_NEIGHBOURHOOD)
-        self.assertEqual(filled["flag"], NDS.FLAG_NEIGHBOURHOOD)
-        self.assertEqual(filled["depth"], 3.0)
-        edge = NDS.resolve_nodata(True, peak, pol, is_true_hole=False)
-        self.assertEqual(edge["sampling"], NDS.SAMPLING_CENTRE_NODATA_EDGE)
-        self.assertEqual(edge["flag"], NDS.FLAG_FLOOD_EDGE)
-        self.assertEqual(edge["depth"], 0.0)
-        # 20 m rule is unchanged for a hole or an edge
+        # no ground: dry, never the 3 ft neighbour
+        nog = NDS.resolve_nodata(True, peak, pol, is_true_hole=True, has_ground=False)
+        self.assertEqual(nog["sampling"], NDS.SAMPLING_CENTRE_NODATA_NO_GROUND)
+        self.assertEqual(nog["flag"], NDS.FLAG_NO_GROUND)
+        self.assertEqual(nog["depth"], 0.0)
+        # with ground: physical 0.13, not 3.0; applies to edge and hole
+        for hole in (True, False):
+            filled = NDS.resolve_nodata(True, peak, pol, is_true_hole=hole,
+                                        has_ground=True, physical_depth=0.13,
+                                        physical_velocity=1.1)
+            self.assertEqual(filled["sampling"], NDS.SAMPLING_NEIGHBOURHOOD_WSE)
+            self.assertEqual(filled["flag"], NDS.FLAG_WSE_GROUND)
+            self.assertEqual(filled["depth"], 0.13)
+        dry = NDS.resolve_nodata(True, peak, pol, has_ground=True, physical_depth=0.0)
+        self.assertEqual(dry["sampling"], NDS.SAMPLING_NEIGHBOURHOOD_WSE)
+        self.assertEqual(dry["flag"], NDS.FLAG_WSE_DRY)
+        self.assertEqual(dry["depth"], 0.0)
+        over = NDS.resolve_nodata(True, peak, pol, is_oversize=True, has_ground=True,
+                                  physical_depth=0.13)
+        self.assertEqual(over["sampling"], NDS.SAMPLING_CENTRE_NODATA_OVERSIZE)
+        self.assertEqual(over["depth"], 0.0)
+        # 20 m rule is unchanged for a hole or an edge, even with a physical depth
         fine = NDS.nodata_policy(20.0)
         for hole in (True, False):
-            d = NDS.resolve_nodata(True, peak, fine, is_true_hole=hole)
+            d = NDS.resolve_nodata(True, peak, fine, is_true_hole=hole,
+                                   has_ground=True, physical_depth=0.13)
             self.assertEqual(d["sampling"], NDS.SAMPLING_CENTRE_NODATA_DRY)
             self.assertEqual(d["flag"], NDS.FLAG_DRY_REVIEW)
             self.assertEqual(d["depth"], 0.0)
 
-    def test_note_for_flag_names_a_true_hole(self):
-        n = NDS.note_for_flag(NDS.FLAG_NEIGHBOURHOOD, cell_m=50.0)
-        self.assertIn("true hole", n.lower())
-        self.assertIn("TRUE_HOLE", n)
-        e = NDS.note_for_flag(NDS.FLAG_FLOOD_EDGE, cell_m=50.0)
-        self.assertIn("flood edge", e.lower())
-        self.assertNotIn("have a hole", (e or "").lower())
+    def test_oversize_and_diagonal_and_cache(self):
+        cap = NDS.TRUE_HOLE_MAX_CELLS
+        import numpy as np
+        n = cap + 4
+        a = np.full((n + 4, n + 4), np.nan)
+        a[1:n + 3, 1:n + 3] = 1.0
+        a[2, 2:2 + cap + 1] = np.nan
+        a[4, 4] = np.nan
+        ana = NDS.analyze_nodata_array(a)
+        self.assertFalse(bool(ana["hole"][2, 2]))
+        self.assertTrue(bool(ana["oversize"][2, 2]))
+        self.assertTrue(bool(ana["hole"][4, 4]))
+        # diagonal-only link to the border: still enclosed (4-connectivity)
+        b = np.full((6, 6), np.nan)
+        b[1:5, 1:5] = 1.0
+        b[2, 2] = np.nan
+        b[1, 0] = np.nan
+        self.assertTrue(bool(NDS.true_hole_mask_array(b)[2, 2]))
+
+    def test_note_for_flag_names_physical_depth(self):
+        n = NDS.note_for_flag(NDS.FLAG_WSE_GROUND, cell_m=50.0)
+        self.assertIn("water surface", n.lower())
+        self.assertIn("ground", n.lower())
+        self.assertNotIn("have a hole", n.lower())
+        g = NDS.note_for_flag(NDS.FLAG_NO_GROUND, cell_m=50.0)
+        self.assertIn("raw neighbour", g.lower())
 
 
 if __name__ == "__main__":
