@@ -316,17 +316,16 @@ class Ctx(object):
 
     def dv(self, r, mid):
         if r.get("dv_ft2s") is not None:
-            if r.get("dv_source") in ("cells", "peak_depth_x_peak_velocity"):
+            if r.get("dv_source") == "cells":
                 self.flag(INFO, "dv_from_cells",
-                          "no DV raster: the reported depth x velocity is peak depth x "
-                          "peak velocity over the receptor's wet cells (option C; "
-                          "dv_source=peak_depth_x_peak_velocity)", mid)
+                          "no DV raster: depth x velocity is the largest product of one wet "
+                          "cell (dv_source=cells); peak depth x peak velocity is reported as "
+                          "dv_peak_ft2s", mid)
             return r["dv_ft2s"]
         if r.get("dv_peak_ft2s") is not None:
             self.flag(INFO, "dv_from_cells",
-                      "no DV raster: the reported depth x velocity is peak depth x "
-                      "peak velocity over the receptor's wet cells (option C; "
-                      "dv_source=peak_depth_x_peak_velocity)", mid)
+                      "no DV raster: depth x velocity is peak depth x peak velocity "
+                      "(dv_peak_ft2s; no same-cell value)", mid)
             return r["dv_peak_ft2s"]
         if r.get("velocity_fps") is not None and r.get("depth_ft") is not None:
             return r["depth_ft"] * r["velocity_fps"]
@@ -1383,17 +1382,18 @@ def _flag_nodata_neighbourhood(ctx):
 
 def _flag_dv_cells_differ(ctx):
     """Option C: classification uses peak depth and peak velocity over the structure's
-    wet cells, even from different cells. When they differ, record it and keep the
-    reported depth x velocity equal to peak depth x peak velocity."""
+    wet cells, even from different cells. When they differ, record it; dv_ft2s stays the
+    largest same-cell product (what the DV thresholds read) and dv_peak_ft2s is the product of
+    the two peaks."""
     recs = [r for r in (ctx.run.get("receptors") or []) if r.get("dv_cells_differ")]
     if not recs:
         return
     ctx.flag(INFO, "dv_cells_differ",
              "{} receptor(s) have peak depth and peak velocity from different wet "
-             "cells (option C, 1 Nov 2026). Classification uses those two peaks. "
-             "The reported depth x velocity (dv_ft2s, dv_source=peak_depth_x_peak_velocity) "
-             "is peak depth x peak velocity, not the largest same-cell product "
-             "(kept as dv_same_cell_ft2s)."
+             "cells (option C, 1 Nov 2026). The depth and velocity tests use those two peaks. "
+             "Depth x velocity (dv_ft2s, dv_source=cells; the DV thresholds) is the largest "
+             "product of one cell, so it is less than peak depth x peak velocity, which is "
+             "reported as dv_peak_ft2s."
              .format(len(recs)), None, [r["id"] for r in recs])
 
 

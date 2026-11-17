@@ -132,8 +132,9 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "dry (finite 0) cell is scored dry. Ground, the neighbour water surface used "
                 "and the path are recorded per receptor. Peak depth and peak velocity are "
                 "independent maxima over wet cells (option C); when they come from different "
-                "cells the receptor is flagged dv_cells_differ and the reported depth x "
-                "velocity is peak depth x peak velocity.<br><br>"
+                "cells the receptor is flagged dv_cells_differ; depth x velocity (what the DV "
+                "thresholds read) stays the largest product of one wet cell and peak depth x "
+                "peak velocity is reported as dv_peak_ft2s.<br><br>"
                 "Informational screening aid, not a regulatory determination: the engineer of "
                 "record and the regulating agency make the determination.")
 

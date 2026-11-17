@@ -10,9 +10,10 @@ arrival are read at those cell centres (their own grids may differ). Roads / rai
 under every point of the line densified at the line step (default 10 ft).
 
 Per receptor: depth_ft (max), velocity_fps (max over wet cells, possibly a different cell
-than the peak depth; Nick's option C, 1 Nov 2026), dv_ft2s (DV raster max, else peak depth
-x peak velocity: dv_source "peak_depth_x_peak_velocity"), dv_same_cell_ft2s (the largest
-d x v of one wet cell), dv_cells_differ (True when the two peaks do not share a cell),
+than the peak depth; Nick's option C, 1 Nov 2026), dv_ft2s (DV raster max, else the largest
+d x v of one wet cell: dv_source "cells", as before 0.4.3; the DV thresholds of M3 / M10b
+read it), dv_same_cell_ft2s (the same value), dv_peak_ft2s (peak depth x peak velocity, for
+the report), dv_cells_differ (True when the two peaks do not share a cell),
 cells [(d, v)] of the wet cells, wse_ft (max), rise_ft (max of depth - non-breach
 depth), arrival_h (min), in_domain (False when the receptor lies outside the depth raster).
 When the cell under a point (or every cell in a footprint) is NoData and a neighbour is wet,
@@ -414,10 +415,11 @@ def _hyd(rs, xs, ys, d):
     """Hydraulics of one receptor from depth values d at points xs, ys.
 
     Peak depth and peak velocity are independent maxima over wet cells (option C).
-    When there is no DV raster, dv_ft2s is peak depth x peak velocity
-    (dv_source='peak_depth_x_peak_velocity'), labelled consistently with those peaks.
-    dv_same_cell_ft2s keeps the largest d x v of one wet cell. dv_cells_differ is True
-    when no single wet cell holds both peaks.
+    When there is no DV raster, dv_ft2s is the largest d x v of one wet cell
+    (dv_source='cells', unchanged, so the DV thresholds score as before); dv_same_cell_ft2s
+    is the same value under a plain name. dv_peak_ft2s is peak depth x peak velocity (the
+    two peaks the class uses), reported only. dv_cells_differ is True when no single wet
+    cell holds both peaks.
     """
     d = np.where(np.isfinite(d), d, 0.0)
     d = np.maximum(d, 0.0)
@@ -444,8 +446,8 @@ def _hyd(rs, xs, ys, d):
         out["dv_ft2s"] = float(dv.max()) if dv.size else 0.0
         out["dv_source"] = "raster"
     elif v is not None:
-        out["dv_ft2s"] = float(out["dv_peak_ft2s"])
-        out["dv_source"] = "peak_depth_x_peak_velocity"
+        out["dv_ft2s"] = float(out["dv_same_cell_ft2s"])
+        out["dv_source"] = "cells"
     if v is None:
         out["cells"] = [(float(a), None) for a in d[wet]]
     else:

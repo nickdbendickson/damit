@@ -71,7 +71,7 @@ def test_structure_cells_and_values():
     # from the outline corner, inside the ring)
     assert out["poly"]["n_cells"] == 36, out["poly"]["n_cells"]
     assert abs(out["poly"]["dv_ft2s"] - 4.5) < 1e-9
-    assert out["poly"]["dv_source"] == "peak_depth_x_peak_velocity"
+    assert out["poly"]["dv_source"] == "cells"
     assert out["poly"]["dv_cells_differ"] is False
     assert abs(out["poly"]["dv_same_cell_ft2s"] - 4.5) < 1e-9
     assert out["pt"]["depth_ft"] == 3.0
