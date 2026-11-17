@@ -31,7 +31,7 @@ DEFAULT_SETTINGS = {
     "lisflood_exe": "",          # engine2d lisflood: the executable; "" = an installed one, else the built-in engine
     "grid_m": 20.0,              # model cell (m); 0 = automatic by reservoir size (CELL_TABLE)
     "simh": 12.0, "simmax": 96.0,   # first clock and the longest clock (h)
-    "larger_clips": 1,           # 0 first clip only, 1 (0.3.0) a fresh USGS 3DEP download, 2 from local_dem
+    "larger_clips": 1,           # 0 first clip only, 1 a fresh USGS 3DEP download, 2 from local_dem; settings_from / run_dam switch 1 to 2 when a configured pack DEM covers the dam
     "local_dem": "",             # larger_clips 2: the local DEM
     "timeout_s": 0,              # 0 = 0.8 x DAMIT_SCREENING_TIMEOUT_S, else 3600 s
     "z_units": "auto",           # DEM elevation units: auto | m | ft | us_ft
@@ -45,7 +45,8 @@ def settings_from(text_or_path):
     s = json.loads(json.dumps(DEFAULT_SETTINGS))
     t = (text_or_path or "").strip()
     if not t:
-        return s
+        from .pack_terrain import apply_offline_pack_terrain
+        return apply_offline_pack_terrain(s)
     if os.path.isfile(t):
         with open(t, encoding="utf-8") as fh:
             t = fh.read()
@@ -53,7 +54,8 @@ def settings_from(text_or_path):
     if not isinstance(loaded, dict):
         raise ValueError("settings must be a JSON object")
     s.update(loaded)
-    return s
+    from .pack_terrain import apply_offline_pack_terrain
+    return apply_offline_pack_terrain(s)
 
 
 def check(status, title, detail="", fix=""):
@@ -248,6 +250,16 @@ def build_handoff(cat, config, dam, results, settings, receptors_json=None):
 
 def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None, log=print, cancel=None):
     """All screening steps for one dam. Returns the per-step results dict (+ 'handoff_path')."""
+    from .pack_terrain import apply_offline_pack_terrain
+    xy = None
+    if isinstance(dam, dict):
+        lon, lat = dam.get("lon"), dam.get("lat")
+        if lon is not None and lat is not None:
+            try:
+                xy = (float(lon), float(lat))
+            except (TypeError, ValueError):
+                xy = None
+    settings = apply_offline_pack_terrain(dict(settings or {}), xy=xy, log=log)
     _, _, HO = CB.modules()
     nid_step = dam.get("nid_step") or ST.step(ST.STATUS_OK, "dam record prepared")
     res = {"prepare": ST.step(nid_step["status"], "dam record prepared; " + nid_step["detail"],

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run_digest.py 1.0.0 - a deterministic review of one DamIT Runner run (no LLM, no network).
+"""run_digest.py 1.3.6 - a deterministic review of one DamIT Runner run (no LLM, no network).
 
 The digest reads what the Runner already wrote (run_setup.json, run_report.json with its per-pass
 records, the per-pass LISFLOOD-FP results, the dam folder, the Hazard report) and answers the
@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -789,17 +789,41 @@ def check_bottom_raised(report, fl):
     return False
 
 
+# Trailing unit tokens Crest / the Runner append to a datum tag ("NAVD88 ft", "NAVD88 US survey ft").
+_DATUM_UNIT_SUFFIX = re.compile(
+    r"(?:(?:US(?:SURVEY|STATUTE)?|INT(?:ERNATIONAL)?)?(?:FEET|FOOT|FT|METERS|METRES|M))$"
+)
+
+
+def normalize_stated_datum(text):
+    """Compact a stated-datum string and drop a trailing units suffix so 'NAVD88 ft' compares as NAVD88.
+
+    Spaces, hyphens and punctuation are removed first ('NAVD 88', 'NAVD88 (ft)'). Real mismatches
+    such as NGVD29 or NGVD29 ft stay NGVD29. This does not treat 'DEM' or 'LiDAR' as NAVD88.
+    """
+    s = re.sub(r"[\s_,./()[\]-]+", "", str(text or "").strip().upper())
+    while True:
+        trimmed = _DATUM_UNIT_SUFFIX.sub("", s)
+        if trimmed == s:
+            return s
+        s = trimmed
+
+
 def check_datum(f, fl, th=THRESHOLDS):
     """DWR elevations are NAVD88 only. Evidence of another datum is a flag. A top of dam in the NAVD88 range with no
     datum stated is NOT an alarm (the Runner never writes a stated datum itself). Only when the elevation cannot be
-    judged at all (no top of dam) is the datum reported, as an INFO note."""
+    judged at all (no top of dam) is the datum reported, as an INFO note.
+
+    DamIT Crest and the Runner write the tag as 'NAVD88 ft' (vdatum.NAVD88_TAG). A units suffix is
+    not a datum mismatch; NGVD29 or a local-range elevation still is."""
     top = f["top_ft"]
-    datum = (f["stated_datum"] or "").upper().replace(" ", "")
+    datum = normalize_stated_datum(f["stated_datum"])
     dwr = (f["top_source"] or "").upper() == "DWR"
     local = top is not None and 0.0 <= top <= th["local_datum_max_ft"]
     navd_range = top is not None and th["local_datum_max_ft"] < top <= NAVD88_RANGE_MAX_FT
     info = {"top_ft": top, "stated_datum": f["stated_datum"], "source": f["top_source"], "local_datum": local,
             "has_dam_record": f["has_record"],
+            "normalized_datum": datum or None,
             "basis": ("stated NAVD88" if datum == "NAVD88" else "stated " + str(f["stated_datum"]) if datum else
                       "NAVD88 range (no datum stated)" if navd_range else "unknown")}
     if local or (datum and datum != "NAVD88"):

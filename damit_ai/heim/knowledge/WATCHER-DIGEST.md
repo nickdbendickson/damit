@@ -83,7 +83,7 @@ file, with the Runner's formula (signed sum of the interval errors over the inje
 | `STOPPED_MOVING` | WATCH | the run ended (clock / MAX_RUNS cap) while the flood still moved |
 | `HEIGHT_MISMATCH` | WATCH (PROBLEM over 5 ft or 15 %) | crest minus streambed differs from the inventory height (e.g. 39 vs 37 ft). With no streambed in the dam record the title says `breach bottom used as streambed (no streambed in dam record)`: BOTTOM_FT stands in for it |
 | `BREACH_BOTTOM_RAISED` | WATCH | the Runner raised the breach bottom to the reservoir bottom (usually the height mismatch showing up) |
-| `DATUM` | PROBLEM for DWR (INFO when unknown) | not NAVD88, or 0-300 ft (a local datum). A top of dam above 300 ft with no datum stated is taken as NAVD88-range and raises nothing; with no elevation at all it is INFO `unknown datum (no dam record)` |
+| `DATUM` | PROBLEM for DWR (INFO when unknown) | not NAVD88, or 0-300 ft (a local datum). A units suffix on a NAVD88 tag (`NAVD88 ft`, feet, m, US survey ft) is still NAVD88 (DamIT Crest writes that tag). A top of dam above 300 ft with no datum stated is taken as NAVD88-range and raises nothing; with no elevation at all it is INFO `unknown datum (no dam record)` |
 | `START_WSE` | PROBLEM | starting WSE is not the top of dam (= DWR max pool) |
 | `OUTLET_FLOW` | PROBLEM | a boundary source besides the breach (outlet, spillway, inflow); not a sunny day |
 | `TOE_INFLOW` | PROBLEM | the breach inflow is outside the toe band |

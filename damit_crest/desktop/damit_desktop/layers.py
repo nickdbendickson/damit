@@ -101,6 +101,8 @@ def write_settings(
     if dem_file:
         data["terrain_source"] = 1
         data["local_dem"] = str(Path(dem_file).resolve().parent)
+        # Growing clips must use the same local / pack DEM; the screening default (1) is a fresh 3DEP download.
+        data["larger_clips"] = 2
         # DamIT Screener's key: the terrain raster itself.
         data["terrain"] = str(Path(dem_file).resolve())
     if isinstance(classification, dict) and classification:
