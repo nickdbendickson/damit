@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.4.2
+version=0.4.3
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -17,9 +17,9 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
-    0.4.2 - 2026-11-17
+    0.4.3 - 2026-11-17 (numbered after the E911 0.4.2 of damit #110)
       * NoData neighbourhood fill on a grid coarser than 20 m applies only to a TRUE_HOLE (follow-up to #67). A NoData cell is a true hole when its 4-connected component of non-wet cells (NoData or finite 0) does not touch the raster border — it is enclosed by the wet footprint. A dry flood-edge cell written as NoData (the Runner writes every dry cell as NoData) is scored dry (sampling=centre_nodata_edge, flag nodata_flood_edge). At 20 m or finer the 20 m rule is unchanged: NoData is scored dry and flagged nodata_dry_review. A dry (finite 0) cell is still scored dry. DWR-2659 at 50 m: houses 104270496, 104270724 and 104270725 sat on the flood edge and were filled from a wet neighbour; they are now dry.
-      * When peak depth and peak velocity come from different wet cells (option C, 1 Nov 2026), the receptor is flagged dv_cells_differ. The reported depth x velocity is peak depth x peak velocity (dv_source=peak_depth_x_peak_velocity); the largest same-cell product is kept as dv_same_cell_ft2s. Classification still uses the two peaks, not a same-cell pair.
+      * When peak depth and peak velocity come from different wet cells (option C, 1 Nov 2026), the receptor is flagged dv_cells_differ and peak depth x peak velocity is reported as dv_peak_ft2s. Depth x velocity itself (dv_ft2s, dv_source=cells, read by the DV thresholds of M3 / M10b) is unchanged: the largest product of one wet cell, also kept as dv_same_cell_ft2s. No classification change from this item.
     0.4.1 - 2026-11-16
       * Depth-velocity chart lines are drawn smooth (Nick, 2026-11-16; NO number changes): the TM-11 tables are hand digitizations (a point every 0.5 ft/s for houses, 0.25 ft/s for mobile homes) and the chart joined their points with straight lines, so every digitizing step showed as a kink. The PNG now draws a smoothed line through the same table (Gaussian-weighted local-linear fit, the same method as DamSafety Core 1.5.2), within 0.021 ft of the table for houses and 0.004 ft for mobile homes, and the caption says so. Zones, counts, the class and the CSV still come from the table and do not change.
     0.4.0 - 2026-11-12

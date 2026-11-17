@@ -71,7 +71,7 @@ def test_structure_cells_and_values():
     # from the outline corner, inside the ring)
     assert out["poly"]["n_cells"] == 36, out["poly"]["n_cells"]
     assert abs(out["poly"]["dv_ft2s"] - 4.5) < 1e-9
-    assert out["poly"]["dv_source"] == "peak_depth_x_peak_velocity"
+    assert out["poly"]["dv_source"] == "cells"
     assert out["poly"]["dv_cells_differ"] is False
     assert abs(out["poly"]["dv_same_cell_ft2s"] - 4.5) < 1e-9
     assert out["pt"]["depth_ft"] == 3.0
@@ -219,9 +219,10 @@ def test_nodata_at_30m_uses_neighbourhood_peak():
     assert h["depth_ft"] == 3.0
     assert h["velocity_fps"] == 4.0          # peak velocity over wet cells, possibly another cell
     assert h["dv_cells_differ"] is True
-    assert abs(h["dv_ft2s"] - 12.0) < 1e-9    # peak depth x peak velocity, labelled consistently
-    assert h["dv_source"] == "peak_depth_x_peak_velocity"
-    assert abs(h["dv_same_cell_ft2s"] - 8.0) < 1e-9  # 2 ft x 4 fps on the north cell
+    assert abs(h["dv_ft2s"] - 8.0) < 1e-9     # largest same-cell product (2 ft x 4 fps): DV thresholds unchanged
+    assert h["dv_source"] == "cells"
+    assert abs(h["dv_same_cell_ft2s"] - 8.0) < 1e-9
+    assert abs(h["dv_peak_ft2s"] - 12.0) < 1e-9     # peak depth x peak velocity, reported
     assert h.get("nodata_true_hole") is True
     assert h["cell_m"] == 30.0
     assert h["nodata_neighbourhood_min_cell_m"] == 20.0
@@ -313,7 +314,8 @@ def test_dry_as_nodata_edge_stays_dry_and_true_hole_is_filled():
     assert h["sampling"] == "neighbourhood" and h.get("nodata_true_hole") is True
     assert h["depth_ft"] == 3.0 and h["velocity_fps"] == 4.0
     assert h["dv_cells_differ"] is True
-    assert abs(h["dv_ft2s"] - 12.0) < 1e-9
+    assert abs(h["dv_peak_ft2s"] - 12.0) < 1e-9          # reported; dv_ft2s stays the same-cell product
+    assert h["dv_ft2s"] == h["dv_same_cell_ft2s"] and h["dv_source"] == "cells"
     # coarse, flood edge
     e, _pol = _nodata_grid(cell=30.0, dry_as_nodata=True, surround=False)
     assert e["sampling"] == "centre_nodata_edge" and e.get("neighbourhood") is not True

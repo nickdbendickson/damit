@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.6"
+VERSION = "1.3.7"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
