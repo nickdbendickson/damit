@@ -6,6 +6,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CANONICAL = os.path.join(ROOT, "damit_core", "lib", "true_hole.py")
 COPIES = (
     os.path.join(ROOT, "damit_hazard", "lib", "true_hole.py"),
+    os.path.join(ROOT, "damit_runner", "lib", "true_hole.py"),
     os.path.join(ROOT, "damit_ai", "heim", "tools", "true_hole.py"),
 )
 

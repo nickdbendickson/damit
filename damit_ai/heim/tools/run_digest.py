@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.8"
+VERSION = "1.3.9"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -1343,11 +1343,32 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     res = receptor_check(depth_grid, points)
     note = (" Sampled on %s." % grid_source) if grid_source else ""
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
-    holes, overs, edges = split_nodata_true_holes(depth_grid, points, nd)
+    helper_err = None
+    try:
+        holes, overs, edges = split_nodata_true_holes(depth_grid, points, nd)
+    except TrueHoleHelperMissing as e:
+        helper_err = e
+        holes, overs, edges = [], [], []
     res["nodata_true_hole"] = holes
     res["nodata_oversize"] = overs
     res["nodata_flood_edge"] = edges
-    if nd:
+    if nd and helper_err is not None:
+        ids_s = _ids("%s (neighbour %.2f ft)" % t for t in nd)
+        fl.add("RECEPTOR_NODATA", WATCH, "receptors",
+               "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
+               "ids: %s. The true-hole / oversize / flood-edge split was not done: "
+               "the true-hole helper is missing (%s). Check these by hand.%s"
+               % (ids_s, helper_err, note),
+               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd},
+               grid_source=grid_source)
+        fl.add("TRUE_HOLE_HELPER_MISSING", WATCH, "receptors",
+               "could not classify NoData receptors: the true-hole helper is missing",
+               "%s. Re-run setup-local-heim.sh (it copies true_hole.py next to run_digest.py) "
+               "or install DamIT Core. This is not a missing raster. NoData receptor ids: %s."
+               % (helper_err, _ids(t[0] for t in nd)),
+               error_type=type(helper_err).__name__,
+               ids=[t[0] for t in nd])
+    elif nd:
         holes = res.get("nodata_true_hole") or []
         overs = res.get("nodata_oversize") or []
         edges = res.get("nodata_flood_edge") or []

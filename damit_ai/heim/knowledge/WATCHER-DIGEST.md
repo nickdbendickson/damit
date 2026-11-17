@@ -98,7 +98,7 @@ file, with the Runner's formula (signed sum of the interval errors over the inje
 | `ROADS_UNSCORED` | WATCH | roads with unknown class/AADT not scored by M8a |
 | `HAZARD_REVIEW` | WATCH | sole-access (M8b) not scored, missing receptor layers, judgment-zone hits, guessed M13 |
 | `RAIL_TRAINS` | WATCH | a rail line has no trains/day, or the lookup's BNSF KO row is not 15 |
-| `TRUE_HOLE_HELPER_MISSING` | WATCH | the true-hole helper (`true_hole.py`) is not next to `run_digest.py` and DamIT Core is not installed; re-run `setup-local-heim.sh`. This is not a missing raster (`NO_RUN_FILES`). |
+| `TRUE_HOLE_HELPER_MISSING` | WATCH | the true-hole helper (`true_hole.py`) is not next to `run_digest.py` and DamIT Core is not installed; re-run `setup-local-heim.sh`. This is not a missing raster (`NO_RUN_FILES`). NoData receptor IDs are still listed on this flag and on `RECEPTOR_NODATA` (without the true-hole / oversize / flood-edge split). |
 | `NO_RUN_FILES` | PROBLEM / WATCH | nothing to read, or a raster could not be read (the message names the exception type and a traceback tail, and hints at PROJ_DATA when the PROJ database cannot be opened) |
 | `DAM_RECORD_MISSING` | INFO | no `dam.json` in the dam folder: streambed and datum unknown; the dam id comes from the run, the report, the hand-off or the folder name |
 | `RECEPTORS_UNCHECKED` | INFO | the structure layer could not be sampled (GDAL/OGR or numpy missing) |

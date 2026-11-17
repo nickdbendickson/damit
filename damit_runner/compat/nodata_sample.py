@@ -27,23 +27,34 @@ import os
 
 
 def _true_hole_mod():
-    """Load the TRUE_HOLE helper from damit_core, or the checkout copy."""
+    """Load the TRUE_HOLE helper: bundled copy first, then damit_core, then checkout.
+
+    The Runner plugin ships damit_runner/lib/true_hole.py so it loads with only
+    damit_runner and damit_catalog installed (no damit_core).
+    """
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "..", "lib", "true_hole.py"),
+        os.path.join(here, "..", "..", "damit_core", "lib", "true_hole.py"),
+    ]
+    for path in candidates:
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            continue
+        spec = importlib.util.spec_from_file_location("damit_true_hole", path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
     try:
         from damit_core.lib import true_hole as m
         return m
     except ImportError:
         pass
-    import importlib.util
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..',
-                                        'damit_core', 'lib', 'true_hole.py'))
-    if os.path.isfile(path):
-        spec = importlib.util.spec_from_file_location('damit_true_hole', path)
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        return m
     raise FileNotFoundError(
-        "the true-hole helper was not found: expected damit_core.lib.true_hole "
-        "or damit_core/lib/true_hole.py in the checkout"
+        "the true-hole helper was not found: expected damit_runner/lib/true_hole.py "
+        "inside the Runner plugin (a bundled copy of damit_core/lib/true_hole.py), "
+        "or an installed damit_core package"
     )
 
 

@@ -113,7 +113,7 @@
    "from": "DamSafety_Runner/algorithms.py"
   },
   "damit_runner/compat/nodata_sample.py": {
-   "diff": "9dbd937ad3f12c8379d2f215428e6a62486cdb4820ac274a37194dbec001aa5c",
+   "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
    "from": "DamSafety_Core/damsuite/nodata_sample.py"
   },
   "damit_runner/core/__init__.py": {

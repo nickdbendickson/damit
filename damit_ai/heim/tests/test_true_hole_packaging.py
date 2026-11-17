@@ -81,9 +81,14 @@ d = RD.build_digest(run, dam_folder=dam, points=[('h1', 3.5, 3.5)])
 ids = [f['id'] for f in d['flags']]
 assert 'TRUE_HOLE_HELPER_MISSING' in ids, ids
 assert 'NO_RUN_FILES' not in ids, ids
+assert 'RECEPTOR_NODATA' in ids, ids
 titles = ' '.join(f['title'] for f in d['flags'] if f['id'] == 'TRUE_HOLE_HELPER_MISSING')
 assert 'could not read the result rasters' not in titles
 assert 'true-hole helper' in titles.lower()
+rec = [f for f in d['flags'] if f['id'] == 'RECEPTOR_NODATA'][0]
+assert 'h1' in ((rec.get('data') or {}).get('ids') or [])
+helper = [f for f in d['flags'] if f['id'] == 'TRUE_HOLE_HELPER_MISSING'][0]
+assert 'h1' in ((helper.get('data') or {}).get('ids') or [])
 print('heim_nohelper_ok')
 """
         env = dict(os.environ, MIN_AI=tmp, PYTHONPATH=tmp + os.pathsep + HERE)
@@ -118,6 +123,14 @@ print('heim_nohelper_ok')
         title = [f["title"] for f in d["flags"] if f["id"] == "TRUE_HOLE_HELPER_MISSING"][0]
         self.assertNotIn("could not read the result rasters", title)
         self.assertIn("true-hole helper", title.lower())
+        rec_flags = [f for f in d["flags"] if f["id"] == "RECEPTOR_NODATA"]
+        self.assertTrue(rec_flags, ids)
+        rec_ids = (rec_flags[0].get("data") or {}).get("ids") or []
+        self.assertIn("h1", rec_ids)
+        helper = [f for f in d["flags"] if f["id"] == "TRUE_HOLE_HELPER_MISSING"][0]
+        helper_ids = (helper.get("data") or {}).get("ids") or []
+        self.assertIn("h1", helper_ids)
+        self.assertIn("h1", helper.get("detail") or "")
 
 
 if __name__ == "__main__":
