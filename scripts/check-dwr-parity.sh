@@ -59,7 +59,10 @@ for f in "${SHARED_FILES[@]}"; do
         echo "  OK: $f"
     else
         echo "  DIFFERS: $f"
-        diff --unified=0 "$b" "$a" | head -20
+        # `diff` exits 1 precisely because the file differs, which is the case this
+        # arm exists to report. Under `set -o pipefail` that status becomes the
+        # pipeline's, and errexit then kills the script before the count below.
+        diff --unified=0 "$b" "$a" | head -20 || true
         ((warn++)) || true
     fi
 done
@@ -70,7 +73,11 @@ for f in "${DIVERGED_FILES[@]}"; do
     a="$DAMIT/damit_runner/core/$f"
     b="$DWR/DamSafety_Runner/core/$f"
     if [ -f "$a" ] && [ -f "$b" ]; then
-        lines=$(diff "$a" "$b" 2>/dev/null | grep "^[<>]" | wc -l)
+        # Every file here is EXPECTED to differ, so `diff` exits 1 every time; and when
+        # two happen to match, `grep` exits 1 instead. Either way pipefail makes the
+        # substitution fail and errexit kills the script. The `|| true` has to be INSIDE
+        # the substitution, otherwise the count is lost along with the error.
+        lines=$(diff "$a" "$b" 2>/dev/null | grep -c "^[<>]" || true)
         echo "  $f: $lines line differences (expected)"
     else
         echo "  $f: one side missing"
@@ -79,7 +86,11 @@ done
 
 echo ""
 echo "=== Compat shims (damit-only, no DWR counterpart) ==="
-ls "$DAMIT/damit_runner/compat/"*.py | while read f; do
+# A plain glob loop rather than `ls | while`: a pipeline's last stage carries its status
+# out to errexit, so an empty compat/ would otherwise kill the script here. The -e guard
+# covers the glob staying literal when nothing matches.
+for f in "$DAMIT/damit_runner/compat/"*.py; do
+    [ -e "$f" ] || continue
     echo "  $(basename "$f")"
 done
 

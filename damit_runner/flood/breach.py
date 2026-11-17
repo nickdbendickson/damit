@@ -1,4 +1,4 @@
-# Vendored from nickdbendickson/DWR_Plugins 591f48d (DamSafety Runner core/breach.py), unchanged except where marked "DamIT:".
+# Vendored from nickdbendickson/DWR_Plugins 27db606 (DamSafety Runner core/breach.py), unchanged except where marked "DamIT:".
 """Breach hydrograph, following North Dakota Dam Safety Standards Policy
 REG_05.2026, Section 5.1.1:
 
@@ -60,9 +60,18 @@ WEIR_C_SIDE_SI = 2.45 * FT ** 0.5           # ~1.353
 VW_CURVE_TOL = 0.05     # 3.16.2: curve vs maximum storage, note above 5 %
 # 3.16.4: where Vw (breach equations) comes from: sunny day = maximum storage, PMF = the pool
 VW_MAX_STORAGE, VW_POOL = "max_storage", "pool"
-VW_SOURCES = (VW_MAX_STORAGE, VW_POOL)
+# 3.19.0: a sunny-day run whose starting pool the user STATED (normal pool, an elevation): the
+# storage at that pool. The default sunny day (top of dam, ND 5.1.1) keeps VW_MAX_STORAGE.
+VW_START = "start_pool"
+VW_SOURCES = (VW_MAX_STORAGE, VW_POOL, VW_START)
 VW_SOURCE_TEXT = {VW_MAX_STORAGE: "maximum storage (DWR), sunny day",
-                  VW_POOL: "storage at the pool when the breach starts (PMF, ND standards)"}
+                  VW_POOL: "storage at the pool when the breach starts (PMF, ND standards)",
+                  VW_START: "storage at the stated starting pool (sunny day, your choice)"}
+# what the starting pool of a sunny-day run is (DamData.start_wse_rule)
+START_TOP, START_NORMAL, START_STATED = "top", "normal", "stated"
+START_POOLS = (START_TOP, START_NORMAL, START_STATED)
+START_POOL_TEXT = {START_NORMAL: "normal pool, your choice",
+                   START_STATED: "stated elevation, your choice"}
 # Froehlich (2008) coefficients by failure mode.
 FROEHLICH_2008 = {
     "piping": {"ko": 1.0, "z": 0.7},
@@ -94,6 +103,12 @@ class DamData:
     valley_width_ft: Optional[float] = None      # TR-60 narrow-valley check
     name: str = ""
     crest_length_ft: Optional[float] = None      # embankment crest length (overtopping)
+    # 3.19.0: a sunny-day starting pool the user stated instead of the ND 5.1.1 rule (top of
+    # dam), as its depth BELOW the top of dam (ft). Relative on purpose: a vertical-datum
+    # conversion or a DEM-estimated crest moves the top of dam and the pool together. None =
+    # the rule. start_wse_rule is START_NORMAL or START_STATED (the report text).
+    start_below_top_ft: Optional[float] = None
+    start_wse_rule: str = ""
 
     def validate(self):
         problems = []
@@ -105,6 +120,10 @@ class DamData:
             problems.append("top of dam elevation is required")
         if self.surface_area_top_ac is not None and self.surface_area_top_ac <= 0:
             problems.append("surface area must be greater than 0 when given")
+        if self.start_below_top_ft is not None and self.start_below_top_ft < -0.005:
+            problems.append("the starting pool is {:.2f} ft above the top of dam; a pool above "
+                            "the crest needs the flood scenario (an inflow)".format(
+                                -self.start_below_top_ft))
         if problems:
             raise BreachInputError("{}: {}".format(self.dam_id, "; ".join(problems)))
 
@@ -415,7 +434,12 @@ def tr60_peak_cfs(vs_acft, hw_ft, a_ft2=None, valley_width_ft=None):
 # Context shared by the hydrograph methods
 # ----------------------------------------------------------------------------
 def starting_wse_ft(dam):
-    """ND 5.1.1: top of dam, or the PMF maximum reservoir level if lower."""
+    """ND 5.1.1: top of dam, or the PMF maximum reservoir level if lower. A starting pool the
+    user stated (DamData.start_below_top_ft: normal pool or an elevation, held as its depth
+    below the top of dam) replaces the rule."""
+    if getattr(dam, "start_below_top_ft", None) is not None:
+        return (dam.top_of_dam_ft - max(0.0, dam.start_below_top_ft),
+                START_POOL_TEXT.get(dam.start_wse_rule, START_POOL_TEXT[START_STATED]))
     if dam.pmf_max_wse_ft is not None and dam.pmf_max_wse_ft < dam.top_of_dam_ft:
         return dam.pmf_max_wse_ft, "PMF maximum reservoir level (lower than top of dam)"
     return dam.top_of_dam_ft, "top of dam"
@@ -442,6 +466,10 @@ def _common(dam, wse0_m=None, wse0_rule=None, vw_source=None):
     if wse0_m is None:
         wse0_ft, wse0_rule = starting_wse_ft(dam)
         c.wse0_m = wse0_ft * FT
+        # 3.19.0: a STATED sunny-day pool states the storage too (Vw = storage at that pool);
+        # the default top-of-dam start keeps the DWR maximum storage below
+        if vw_source is None and getattr(dam, "start_below_top_ft", None) is not None:
+            vw_source = VW_START
     else:
         c.wse0_m = float(wse0_m)
         wse0_ft = c.wse0_m / FT
@@ -460,7 +488,7 @@ def _common(dam, wse0_m=None, wse0_rule=None, vw_source=None):
         raise BreachInputError("vw_source must be one of {} (got {!r})".format(
             ", ".join(VW_SOURCES), vw_source))
     c.vw_source = vw_source
-    c.vw = c.vs if vw_source == VW_POOL else float(dam.storage_top_acft) * ACFT
+    c.vw = c.vs if vw_source in (VW_POOL, VW_START) else float(dam.storage_top_acft) * ACFT
     c.v_dead = float(c.res.volume(c.bottom_m))             # below the breach bottom
     c.v_release = c.vs - c.v_dead
     c.notes = list(c.res.notes)
@@ -472,6 +500,13 @@ def _common(dam, wse0_m=None, wse0_rule=None, vw_source=None):
                        "which holds {:,.0f} acre-ft on the elevation-volume curve "
                        "({:+.0f} %).".format(c.vw / ACFT, c.wse0_m / FT, c.vs / ACFT,
                                              100.0 * (c.vs / c.vw - 1.0)))
+    if vw_source == VW_START:
+        c.notes.append("Sunny day from a starting pool you chose: {:.1f} ft ({}), {:.1f} ft below "
+                       "the top of dam, holding {:,.0f} acre-ft on the elevation-volume curve. The "
+                       "breach equations use that storage as Vw. ND 5.1.1 has the sunny-day "
+                       "breach start at the top of dam; this run is NOT that case, so do not "
+                       "use it alone for a hazard classification under the ND standards.".format(
+                           c.wse0_m / FT, wse0_rule, (c.top_m - c.wse0_m) / FT, c.vs / ACFT))
     if bottom_ft * FT < res_bottom_m - 1e-6:
         c.notes.append("The breach bottom is below the reservoir bottom (top of dam minus dam "
                        "height); it was raised to the reservoir bottom.")
@@ -639,6 +674,14 @@ def make_opening(method, c, dam, ov, wse_start_m):
                      "side slope; bottom width set to 0.")
         b_bottom = 0.0
     tf = max(tf, 60.0)
+    if mode == "overtopping" and wse_start_m < c.top_m - 0.03:
+        notes.append("Overtopping breach parameters with the pool {:.1f} ft BELOW the crest when "
+                     "the breach starts: water cannot overtop the dam from there, so this is "
+                     "the overtopping breach size and time applied to a pool that could not "
+                     "cause it (a sensitivity case). "
+                     "Use the flood scenario (an inflow that raises the pool over the crest) for "
+                     "an overtopping failure, or a piping method for a pool below the crest."
+                     .format((c.top_m - wse_start_m) / FT))
     pipe = None
     p = {}
     if method == METHOD_PIPING_ORIFICE:
@@ -786,15 +829,23 @@ def tr60_hydrograph(dam, overrides=None, shape="triangular", wse0_m=None, wse0_r
         _, tr, _ = froehlich_2008(c.vw, top_m - bottom_m, "piping")
     tb = 2.0 * c.v_release / qp
     notes = list(c.notes)
-    # M15 (disclosure): TR-60's breach factor Br = Vs*Hw/A divides by the embankment cross-section,
-    # taken over the FULL dam height. A raised breach bottom (partial breach) shrinks Hw but not A,
-    # so the TR-60 peak and Br are biased LOW. TR-60 is defined for a breach to the foundation; the
-    # area is NOT re-measured over the breach depth without ND DWR sign-off.
+    # M15 (disclosure, corrected 2026-11-10 to NRCS TR-210-60): TR-60 DEFINES A (the Br = Vs*Hw/A
+    # denominator) as "the cross-sectional area of embankment at the assumed location of breach,
+    # usually the template section" - the dam's full design cross-section at the breach, a fixed
+    # geometric property, NOT re-measured over the breach depth. So the full-height A is the
+    # method-correct value, not a low bias (unlike MLM, whose A is the genuinely eroded breach
+    # cross-section); the reduced head Hw already lowers the partial-breach peak. TR-60's regression
+    # is calibrated for a breach to the foundation, so a raised-bottom breach is an application
+    # OUTSIDE its basis - an extrapolation, not an error to correct. A stays the full section.
     if (top_m - bottom_m) < dam.dam_height_ft * FT - 0.03:
-        notes.append("Partial breach ({:.1f} ft deep vs the {:.0f} ft dam): the TR-60 breach "
-                     "factor Br and peak use the full dam cross-section, so both are biased LOW "
-                     "(TR-60 is defined for a breach to the foundation). Confirm the partial-breach "
-                     "basis with ND DWR.".format((top_m - bottom_m) / FT, dam.dam_height_ft))
+        notes.append("Partial breach ({:.1f} ft deep vs the {:.0f} ft dam): TR-60 defines the "
+                     "breach factor Br = Vs*Hw/A with A the dam's template (full-height) cross-"
+                     "section at the breach - held at the full section by the method, not "
+                     "re-measured over the breach depth - while the reduced head Hw lowers the "
+                     "peak. TR-60 is calibrated for a breach to the foundation, so this partial "
+                     "breach is outside its basis; treat the TR-60 peak as an extrapolation and "
+                     "confirm the basis with ND DWR.".format((top_m - bottom_m) / FT,
+                                                             dam.dam_height_ft))
     if tr >= tb:
         tr = 0.25 * tb
         notes.append("Rise time longer than the triangle base allowed by the volume; set to "
@@ -869,4 +920,39 @@ def dam_from_dict(d):
 
 
 def dam_to_dict(dam):
-    return asdict(dam)
+    """The dam as a dict. The stated starting pool is left out when it is not used, so the
+    record (and the checkpoint key made from it) of a default run is what it was before 3.19.0."""
+    d = asdict(dam)
+    if d.get("start_below_top_ft") is None:
+        d.pop("start_below_top_ft", None)
+        d.pop("start_wse_rule", None)
+    return d
+
+
+def set_start_pool(dam, kind, wse_ft=None, top_ft=None):
+    """Set the sunny-day starting pool of `dam` from the user's choice. kind: START_TOP (the
+    ND 5.1.1 rule, nothing is set), START_NORMAL or START_STATED with the pool elevation
+    wse_ft. top_ft is the top of dam ON THE SAME DATUM as wse_ft (default: dam.top_of_dam_ft);
+    the pool is held as its depth below it."""
+    if kind in (None, "", START_TOP):
+        dam.start_below_top_ft, dam.start_wse_rule = None, ""
+        return dam
+    if kind not in START_POOLS:
+        raise BreachInputError("starting pool must be one of {} (got {!r})".format(
+            ", ".join(START_POOLS), kind))
+    what = "normal pool" if kind == START_NORMAL else "starting pool"
+    if wse_ft is None:
+        raise BreachInputError("{}: give the {} elevation (ft) to start the breach there".format(
+            dam.dam_id, what))
+    top = dam.top_of_dam_ft if top_ft is None else top_ft
+    if top is None:
+        raise BreachInputError(
+            "{}: give the top of dam elevation too. The {} is taken as its depth below the top "
+            "of dam, so both must be stated on the same datum.".format(dam.dam_id, what))
+    below = float(top) - float(wse_ft)
+    if below < -0.005:
+        raise BreachInputError(
+            "{}: the {} ({:.2f} ft) is above the top of dam ({:.2f} ft); a pool above the crest "
+            "needs the flood scenario (an inflow)".format(dam.dam_id, what, wse_ft, top))
+    dam.start_below_top_ft, dam.start_wse_rule = max(0.0, below), kind
+    return dam

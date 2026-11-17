@@ -18,6 +18,7 @@ in feet, storage in acre-feet, areas in acres (the US practice); the engine work
 GDAL's exception mode is never switched (it is process-wide in QGIS): every call is checked.
 """
 import csv
+import json
 import math
 import os
 import re
@@ -29,6 +30,7 @@ from osgeo import gdal, ogr, osr
 from scipy import ndimage as ndi
 
 from .core import crossings as cx
+from .core import evidence as ev
 from .core import embankments as em
 from .core import lidar as li
 from .core import listed as ls
@@ -40,7 +42,7 @@ from .core import water as wt
 
 WORK_EPSG = 5070                     # CONUS Albers equal area: metres, areas true
 FT, AF_M3, AC_M2 = 0.3048, 1233.4818375, 4046.8564224
-VERSION = "0.4.4"
+VERSION = "0.7.1"
 
 
 # ------------------------------------------------------------------------------------- GDAL --
@@ -133,10 +135,15 @@ def read_lines(src, bbox=None):
 
 
 def _id_of(f, id_field):
+    """A known structure's id: the field you name, else the first of the usual id fields that holds
+    a value (field names in any case), else its name, else its feature number. An NID id comes
+    first when a row has one (what people look a dam up by), then a SARP barrier layer's own id
+    (SARPID): a SARP row with no NID id - among them the dams SARP estimated itself, on no list -
+    gets its SARPID, never a dam name such as 'Wetland 2' that many rows share."""
     names = [f.GetFieldDefnRef(i).GetName() for i in range(f.GetFieldCount())]
     want = [id_field] if id_field else []
-    want += ["structure_id", "structure_", "nidid", "nid_id", "dam_id", "federal_id", "STRUCTURE_NUMBER_008",
-             "BRIDGE_ID", "id", "ID", "name"]
+    want += ["structure_id", "structure_", "nidid", "nid_id", "sarpid", "dam_id", "federal_id",
+             "STRUCTURE_NUMBER_008", "BRIDGE_ID", "id", "ID", "name"]
     low = {n.lower(): n for n in names}
     for w in want:
         n = low.get(str(w).lower())
@@ -147,7 +154,9 @@ def _id_of(f, id_field):
 
 def read_known(layers):
     """core.listed.Known of every feature of the known-structure layers: [(src, label, id field)]
-    or plain paths. Points as they are; lines and polygons by their centroid (a DWR dam line)."""
+    or plain paths. Points as they are; lines and polygons by their centroid (a DWR dam line).
+    A layer with a 'status' field (the DWR dam list: Intact, Breached, Not Built ...) gives each
+    point its state, carried to the fills as known_state."""
     pts = []
     dst = _srs(WORK_EPSG)
     for item in layers or []:
@@ -160,6 +169,9 @@ def read_known(layers):
         ds, lyr = open_layer(src)
         label = label or lyr.GetName()
         ct = _transform(lyr, dst)
+        dfn = lyr.GetLayerDefn()
+        stf = next((dfn.GetFieldDefn(i).GetName() for i in range(dfn.GetFieldCount())
+                    if dfn.GetFieldDefn(i).GetName().lower() == "status"), None)
         for f in lyr:
             g = f.GetGeometryRef()
             if g is None:
@@ -169,7 +181,8 @@ def read_known(layers):
             c = g if ogr.GT_Flatten(g.GetGeometryType()) == ogr.wkbPoint else g.Centroid()
             if c is None or c.IsEmpty():
                 continue
-            pts.append((c.GetX(), c.GetY(), _id_of(f, idf), label))
+            state = str(f.GetField(stf) or "").strip() if stf else ""
+            pts.append((c.GetX(), c.GetY(), _id_of(f, idf), label, state))
         ds = None
     return ls.Known(pts)
 
@@ -327,14 +340,86 @@ def check_dem_unit(dem, z_feet, log=print):
     return z_feet
 
 
+# ------------------------------------------------------------------------ the fixed lattice --
+# Finder 0.7: where a cell falls on the ground never depends on the box a run was given. Every
+# raster the engine resamples (the DEM at the fill cell size and at the routing cell size, the
+# imagery, the water mosaics) is read on a grid whose cell edges are whole multiples of the cell
+# size in EPSG:5070, and a run is cut into squares whose corners are whole multiples of the square
+# size. Up to 0.6 both started at the south-west corner of the run's box, so moving the box by one
+# metre moved every cell and with it most crest points (and the ids made from them).
+LATTICE_MAX_M = 300.0                 # the longest common lattice the two DEM grids are snapped to
+
+
+def _floor_to(v, step):
+    q = v / step
+    r = round(q)
+    return (r if abs(q - r) <= 1e-6 else math.floor(q)) * step
+
+
+def _ceil_to(v, step):
+    q = v / step
+    r = round(q)
+    return (r if abs(q - r) <= 1e-6 else math.ceil(q)) * step
+
+
+def snap_out(ext, step):
+    """ext (xmin, ymin, xmax, ymax) grown outward to whole multiples of step (a box already on
+    them stays as it is); at least one step wide and high."""
+    x0, y0 = _floor_to(ext[0], step), _floor_to(ext[1], step)
+    return (x0, y0, max(_ceil_to(ext[2], step), x0 + step), max(_ceil_to(ext[3], step), y0 + step))
+
+
+def grid_lattice(*cells):
+    """The spacing (m) of the lattice the DEM windows of one run are snapped to: the smallest
+    length every one of the cell sizes divides (30 m for 3 m fill cells and 10 m routing cells),
+    so the grids of one square cover exactly the same ground. None when the cell sizes have no
+    common multiple of LATTICE_MAX_M or less (3.3 m and 10 m meet only every 330 m; a cell size
+    that is not a whole millimetre): each grid is then snapped to whole multiples of its own cell
+    size (warp_dem does that in any case), which fixes where its cells fall just the same - the
+    two windows then only end up to one routing cell apart."""
+    step = None
+    for c in cells:
+        mm = float(c) * 1000.0
+        k = int(round(mm))
+        if k <= 0 or abs(mm - k) > 1e-6:
+            return None
+        step = k if step is None else step * k // math.gcd(step, k)
+    if step is None or step / 1000.0 > LATTICE_MAX_M:
+        return None
+    return step / 1000.0
+
+
+def lattice_squares(ext, size):
+    """The squares (xmin, ymin, xmax, ymax) of the fixed lattice - corners at whole multiples of
+    `size` in the working CRS - that the box ext overlaps, west to east, then south to north. A
+    square is always whole: the same square is the same ground whatever box asked for it."""
+    i0, j0 = int(round(_floor_to(ext[0], size) / size)), int(round(_floor_to(ext[1], size) / size))
+    i1 = max(int(round(_ceil_to(ext[2], size) / size)), i0 + 1)
+    j1 = max(int(round(_ceil_to(ext[3], size) / size)), j0 + 1)
+    return [(i * size, j * size, (i + 1) * size, (j + 1) * size)
+            for i in range(i0, i1) for j in range(j0, j1)]
+
+
+def _inside(x, y, b):
+    """The point is in the box (xmin, ymin, xmax, ymax), its west and south edges included."""
+    return b[0] <= x < b[2] and b[1] <= y < b[3]
+
+
+def _grid_size(ext, cell):
+    """(ext snapped outward to whole multiples of cell, columns, rows)."""
+    ext = snap_out(ext, cell)
+    return (ext, max(1, int(round((ext[2] - ext[0]) / cell))), max(1, int(round((ext[3] - ext[1]) / cell))))
+
+
 def warp_dem(dem, ext, cell, z_feet=None):
     """(array m, NaN = no data; geotransform) of the DEM over ext (EPSG:5070) at cell metres,
     averaged from the full-resolution cells (no overviews), values as stored (no vertical shift).
+    ext is grown outward to whole multiples of cell first, so the cells fall on the same ground
+    whatever box is asked for (the fixed lattice above).
     z_feet None = what the DEM records (dem_unit; refused when it records nothing)."""
     if z_feet is None:
         z_feet = dem_in_feet(dem)
-    n_x = max(1, int(math.ceil((ext[2] - ext[0]) / cell)))
-    n_y = max(1, int(math.ceil((ext[3] - ext[1]) / cell)))
+    ext, n_x, n_y = _grid_size(ext, cell)
     ds = _checked(gdal.Open(str(dem)), "opening the DEM {}".format(dem))
     nod = ds.GetRasterBand(1).GetNoDataValue()
     opts = dict(format="MEM", dstSRS="EPSG:{}".format(WORK_EPSG),
@@ -360,8 +445,7 @@ def write_hillshade(dem, ext, cell, path, z_feet=None, max_cells=400e6):
     have to fit in memory. None (nothing written) when it would exceed max_cells."""
     if z_feet is None:
         z_feet = dem_in_feet(dem)
-    n_x = int(math.ceil((ext[2] - ext[0]) / cell))
-    n_y = int(math.ceil((ext[3] - ext[1]) / cell))
+    ext, n_x, n_y = _grid_size(ext, cell)
     if n_x * n_y > max_cells:
         return None
     src = _checked(gdal.Open(str(dem)), "opening the DEM {}".format(dem))
@@ -597,25 +681,34 @@ def _summary(rows, what):
 
 # ------------------------------------------------------------------------------ embankments --
 EMB_FIELDS = [("find_id", "str"), ("kind", "str"), ("status", "str"), ("is_new", "str"), ("known_id", "str"),
-              ("known_layer", "str"), ("known_ft", "float"), ("height_ft", "float"),
+              ("known_layer", "str"), ("known_state", "str"), ("known_ft", "float"), ("height_ft", "float"),
               ("crest_height_ft", "float"), ("head_ft", "float"), ("valley_drop_ft", "float"), ("spill_ft", "float"),
               ("crest_ft", "float"), ("toe_ft", "float"), ("length_ft", "float"), ("ridge_len_ft", "float"),
               ("storage_af", "float"), ("area_ac", "float"), ("pool", "str"), ("open_pool", "str"),
-              ("on_road", "str"), ("line_source", "str"), ("spillway", "str"),
+              ("on_road", "str"), ("line_source", "str"), ("rescued", "str"), ("spillway", "str"),
               ("spill_dist_ft", "float"), ("spill_width_ft", "float"), ("score", "float"),
+              ("score_note", "str"),
+              # Finder 0.5 evidence (core/embankments.py steps 7-10)
+              ("outlet_dist_ft", "float"), ("spill_on_fill", "str"), ("same_pool", "int"),
+              ("drain_ac", "float"), ("drain_ratio", "float"), ("ag_head_ft", "float"),
+              ("below_frac", "float"), ("rect", "float"), ("elong", "float"), ("wall_slope", "float"),
+              ("mounds", "int"), ("top_w_ft", "float"), ("side_sum", "float"), ("relief_ft", "float"),
+              ("slope_pct", "float"), ("fill_road", "str"), ("pool_lat", "float"), ("pool_lon", "float"),
+              # Finder 0.7 (step 13): crest to the nearest missing terrain (blank: none within the search)
+              ("edge_ft", "float"),
               ("confidence", "str"), ("notes", "str"), ("lat", "float"), ("lon", "float")]
 SPILL_FIELDS = [("find_id", "str"), ("kind", "str"), ("spill_ft", "float"), ("width_ft", "float"),
                 ("dist_ft", "float"), ("lat", "float"), ("lon", "float")]
 RIDGE_FIELDS = [("find_id", "str"), ("kind", "str"), ("status", "str"), ("is_new", "str"), ("known_id", "str"),
-                ("known_layer", "str"), ("known_ft", "float"), ("height_ft", "float"),
+                ("known_layer", "str"), ("known_state", "str"), ("known_ft", "float"), ("height_ft", "float"),
                 ("length_ft", "float"), ("width_ft", "float"), ("head_ft", "float"),
                 ("lat", "float"), ("lon", "float")]
 DUG_FIELDS = [("find_id", "str"), ("kind", "str"), ("status", "str"), ("is_new", "str"), ("known_id", "str"),
-              ("known_layer", "str"), ("known_ft", "float"), ("depth_ft", "float"),
+              ("known_layer", "str"), ("known_state", "str"), ("known_ft", "float"), ("depth_ft", "float"),
               ("area_ac", "float"), ("length_ft", "float"), ("width_ft", "float"),
               ("rectangularity", "float"), ("spoil_ft", "float"), ("volume_af", "float"),
               ("lat", "float"), ("lon", "float")]
-LINE_STREAM, LINE_DEM = "stream line", "DEM drainage"
+LINE_STREAM, LINE_DEM, LINE_POOL = "stream line", "DEM drainage", "DEM pool outlet"
 
 
 @_records_run("embankments")
@@ -623,8 +716,9 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
                     z_feet=None, params=None, match_ft=500.0, unsure_factor=2.0, tile_m=5000.0,
                     road_buffer_m=6.0, hillshade=True, drainage_ac=0.0, drain_cell=10.0,
                     ridges=False, dugouts=False, dikes=True, dike_near_m=200.0,
-                    ridge_params=None, model=None, log=print,
-                    progress=None, cancelled=None):
+                    ridge_params=None, model=None, contrib=True, log=print,
+                    progress=None, cancelled=None, pool_lines=None, pool_reach_m=50.0,
+                    pool_max_drain_ac=50.0, pool_margin_m=300.0, pool_opts=None):
     """Fills across the stream lines in the DEM, checked against the known structures, and (with
     `hillshade`) a multi-direction hillshade of the area beside the GeoPackage for the review.
     drainage_ac > 0: also walk every draw of the DEM draining that many acres (core/terrain.py,
@@ -635,14 +729,66 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
     These go into the 'ridges' layer and screening_dams. The whole-DEM ridge search (ridges) finds
     them too, so the dike pass is skipped when ridges is on.
     model: a score model (core/score.py JSON) - each fill gets its score.
+    contrib (on by default): the contributing area at each fill (drain_ac, and drain_ratio = acres
+    drained per acre-foot stored), routed at drain_cell metres over the tile and its pad (a basin
+    larger than the pad reads as a minimum).
+    pool_lines (None = on whenever drainage_ac is): also walk a short line out of every pool the
+    DEM shows - a closed depression or a flat water surface (core/terrain.py pool_seeds) - through
+    its outlet, routed as the draws are, so a pond that drains less than drainage_ac still has its
+    fill profiled (line_source "DEM pool outlet"; core/embankments.py step 11). On such a line only
+    a hump starting within pool_reach_m below where the line leaves the pool is tested, it must
+    hold a pool of params.min_pool_m2 or more (params.own_pool_m2, 100 m2, when the line comes
+    out of a flat water surface that pool holds: 0.7), not stand on a road, and drain under
+    pool_max_drain_ac at its crest (a bigger draw is walked by the draws); a pool whose seed
+    already drains pool_max_drain_ac gets no line. pool_margin_m: pools are looked for this far
+    round each tile's core; pool_opts: keyword overrides for terrain.pool_seeds. Where a pool line
+    and another line read the same fill, the other line's reading is kept.
+    THE FIXED LATTICE (0.7): the run works square by square, the squares being those of side
+    tile_m whose corners are whole multiples of tile_m in EPSG:5070 (lattice_squares), each read
+    with its pad on DEM grids snapped to grid_lattice(cell, drain_cell) (30 m for 3 m and 10 m).
+    A square bbox only touches is still searched whole; one fill per pool and per dedupe_m are
+    settled over the whole squares, then the fills outside bbox are left out. So a fill does not
+    depend on where bbox is - except near a lattice line whose other square is not in the run
+    (two squares can read one fill or pool; counts['dropped_between_squares'] says how many
+    readings were dropped between the squares of this run).
+    THE EDGE OF THE TERRAIN DATA (0.7, core/embankments.py step 13): edge_ft = how far the crest is
+    from the nearest missing DEM cell; a fill within params.edge_m_max (150 m) of one
+    whose pool reaches the missing cells has the kind em.K_EDGE: it is written, but it is not
+    scored, not handed to Screening and not picked for a review batch (the ground past the end
+    of the DEM file counts as missing too).
     Returns {'rows', 'counts', 'gpkg', 'csv', 'hillshade', ...}."""
     p = params or em.FinderParams()
     rp = ridge_params or rd.RidgeParams()
+    if 0 < p.window_m < p.edge_m_max:
+        log("warning: window_m {:g} m is under edge_m_max {:g} m: the edge rule sees a fill's pool only inside "
+            "the window, so a pool that reaches missing terrain beyond it is not set aside".format(p.window_m, p.edge_m_max))
+    if pool_lines is None:
+        pool_lines = bool(drainage_ac)
     progress = progress or _noop
     cancelled = cancelled or _noop
     z_feet = check_dem_unit(dem, z_feet, log)
-    lines = read_lines(streams, bbox) if streams else []
     dem_only = bool(drainage_ac or ridges or dugouts)
+    pad = p.window_m + p.toe_search_m + p.max_len_m + 2 * cell
+    if drainage_ac:
+        pad = max(pad, 3000.0)                      # most of a draw's basin is in the tile
+    # The fixed lattice (Finder 0.7): the run is cut into the squares of side tile_m whose corners
+    # are whole multiples of tile_m, each read whole with its pad whatever part of it the box
+    # covers, on DEM grids whose cells are whole multiples of the cell sizes. A square's fills are
+    # therefore the same in every run that touches it; the box only chooses which are written.
+    snap = grid_lattice(cell, max(drain_cell, cell))
+
+    def window(sq):
+        b = (sq[0] - pad, sq[1] - pad, sq[2] + pad, sq[3] + pad)
+        return snap_out(b, snap) if snap else b
+
+    lines = []
+    if streams:
+        if bbox is None:
+            lines = read_lines(streams, None)
+        else:                                       # every line a touched square's window reads
+            wins = [window(sq) for sq in lattice_squares(bbox, tile_m)]
+            lines = read_lines(streams, (min(w[0] for w in wins), min(w[1] for w in wins),
+                                         max(w[2] for w in wins), max(w[3] for w in wins)))
     if not lines and not dem_only:
         raise RuntimeError("no stream lines in the area (or turn on the DEM drainage lines)")
     ext = bbox or (layer_extent(lines) if lines else _image_box(dem))
@@ -650,22 +796,12 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
     kn = read_known(known)
     log("{} stream line(s), {} road / rail line(s), {} known structure(s)".format(
         len(lines), len(road_lines), len(kn)))
-    pad = p.window_m + p.toe_search_m + p.max_len_m + 2 * cell
-    tiles = []
-    x = ext[0]
-    while x < ext[2]:
-        y = ext[1]
-        while y < ext[3]:
-            tiles.append((x, y, min(x + tile_m, ext[2]), min(y + tile_m, ext[3])))
-            y += tile_m
-        x += tile_m
-    if drainage_ac:
-        pad = max(pad, 3000.0)                      # most of a draw's basin is in the tile
+    tiles = _squares_on(dem, lattice_squares(ext, tile_m))
     found, ridge_rows, dug_rows, t0 = [], [], [], time.time()
     for ti, core_box in enumerate(tiles):
         if cancelled():
             break
-        box = (core_box[0] - pad, core_box[1] - pad, core_box[2] + pad, core_box[3] + pad)
+        box = window(core_box)
         tl = [ln for ln in lines if _meets(ln, box)]
         if not tl and not dem_only:
             continue
@@ -683,18 +819,24 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
             k = max(1, int(round(road_buffer_m / cell)))
             rmask = ndi.binary_dilation(rmask, iterations=k)
 
-        def keep(xx, yy, b=core_box):
-            return b[0] <= xx < b[2] and b[1] <= yy < b[3]
+        def keep(xx, yy, b=core_box):               # the whole square, not only its part in the box
+            return _inside(xx, yy, b)
 
-        dl, deep = [], None
-        if drainage_ac or ridges or dikes:
+        dl, deep, darea, pls, pex, pdr, psd = [], None, None, [], [], [], []
+        if drainage_ac or ridges or dikes or contrib or pool_lines:
             z10, gt10 = warp_dem(dem, box, max(drain_cell, cell), z_feet)
-            if drainage_ac:
+            if drainage_ac or contrib or pool_lines:
                 # routed over the DEM with narrow raised features opened away, so a draw runs
                 # straight through a dam or a road fill (as a stream line does), not round it
                 rec, order, _f = tr.flow(tr.open_ridges(z10, abs(gt10[1]), rp.width_m))
                 area, _len = tr.accumulate(rec, order, z10.shape, abs(gt10[1]))
+                darea = _area_at(area, gt10)
+            if drainage_ac:
                 dl = tr.drainage_lines(rec, area, gt10, drainage_ac * AC_M2)
+            if pool_lines and not cancelled():
+                pls, pex, pdr, psd = _pool_lines(z, gt, core_box, pool_margin_m, rec, gt10, area,
+                                       pool_max_drain_ac * AC_M2 if pool_max_drain_ac else None,
+                                       pool_opts or {})
             if ridges or dikes:
                 _r, _o, filled = tr.flow(z10)
                 d10 = tr.depth(z10, filled)
@@ -703,12 +845,24 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
                 cc = np.clip(((gt[0] + (np.arange(z.shape[1]) + 0.5) * gt[1]) - gt10[0]) / gt10[1],
                              0, z10.shape[1] - 1).astype(int)
                 deep = d10[np.ix_(rr, cc)]
-        got = em.find(z, gt, tl + dl, road_mask=rmask, params=p, keep=keep, cancelled=cancelled)
+        lim = {len(tl) + len(dl) + i: x + pool_reach_m for i, x in enumerate(pex)} if pls else None
+        rules = dict(min_area_m2=p.min_pool_m2, skip_road=True,
+                     max_drain_m2=pool_max_drain_ac * AC_M2 if pool_max_drain_ac else None,
+                     line_area={len(tl) + len(dl) + i: _line_area(ln, area, gt10) for i, ln in enumerate(pls)},
+                     pool_drain={len(tl) + len(dl) + i: v for i, v in enumerate(pdr)},
+                     seed={len(tl) + len(dl) + i: [(sd[0], sd[1], sd[3]) for sd in sds]
+                           for i, sds in enumerate(psd)},
+                     inflow=(lambda xs, ys, near=None, rec=rec, area=area, g=gt10, c3=abs(gt[1]):
+                             _held_inflow(xs, ys, near, rec, area, g, c3)) if pls else None)
+        got = em.find(z, gt, tl + dl + pls, road_mask=rmask, params=p, keep=keep, cancelled=cancelled,
+                      drain_area=darea, line_lim=lim, pool_rules=rules)
         for e in got:
-            e.line_src = LINE_STREAM if e.line < len(tl) else LINE_DEM
+            e.line_src = (LINE_STREAM if e.line < len(tl) else
+                          LINE_DEM if e.line < len(tl) + len(dl) else LINE_POOL)
         found.extend(got)
-        msg = "tile {}/{}: {} line(s){}, {} fill(s)".format(
-            ti + 1, len(tiles), len(tl), " + {} DEM draw(s)".format(len(dl)) if drainage_ac else "", len(got))
+        msg = "tile {}/{}: {} line(s){}{}, {} fill(s)".format(
+            ti + 1, len(tiles), len(tl), " + {} DEM draw(s)".format(len(dl)) if drainage_ac else "",
+            " + {} pool outlet(s)".format(len(pls)) if pool_lines else "", len(got))
         wide = None
         if rmask is not None:                  # a road embankment's base, not just its centreline
             wide = ndi.binary_dilation(rmask, iterations=max(1, int(round(0.5 * rp.width_m / cell))))
@@ -733,14 +887,27 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
             msg += ", {} dug pit(s)".format(len(dg))
         log(msg + " ({:.0f} s)".format(time.time() - t0))
         progress(100.0 * (ti + 1) / len(tiles))
+    n_sq = len(found)
+    if p.one_per_pool:
+        found = em.one_per_pool(found, cell)
     found = em.dedupe(found, p.dedupe_m)
+    n_seam = n_sq - len(found)
+    # only now the box: one fill per pool and one per dedupe_m were settled over the whole squares,
+    # so a fill near the box edge is the same fill a larger box would have reported there
+    found = [e for e in found if _inside(e.x, e.y, ext)]
+    log("{} lattice square(s) of {:g} m: {} fill(s) in them, {} dropped where two squares read the same "
+        "fill or pool, {} outside the box".format(len(tiles), tile_m, n_sq, n_seam, n_sq - n_seam - len(found)))
+    ridge_rows = [g for g in ridge_rows if _inside(g["x"], g["y"], ext)]
+    dug_rows = [g for g in dug_rows if _inside(g["x"], g["y"], ext)]
     ll = osr.CoordinateTransformation(_srs(WORK_EPSG), _srs(4326))
     rows = []
     for e in found:
         st = ls.check(e.x, e.y, kn, match_ft * FT, unsure_factor)
         lon, lat = _lonlat(e.x, e.y, ll)
+        plon, plat = _lonlat(e.pool_xy[0], e.pool_xy[1], ll) if e.pool_xy else (None, None)
         rows.append({"x": e.x, "y": e.y, "find_id": find_id("FIND", e.x, e.y), "kind": e.kind,
                      "status": st["status"], "known_id": st["known_id"], "known_layer": st["known_src"],
+                     "known_state": st.get("known_state", ""),
                      "known_ft": None if st["known_m"] is None else round(st["known_m"] / FT, 0),
                      "height_ft": round(e.height_m / FT, 1), "crest_height_ft": round(e.crest_height_m / FT, 1),
                      "head_ft": round(e.head_m / FT, 1),
@@ -751,15 +918,31 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
                      "storage_af": round(e.storage_m3 / AF_M3, 2), "area_ac": round(e.pool_area_m2 / AC_M2, 2),
                      "pool": "yes" if e.pool else "no", "open_pool": "yes" if e.open_pool else "no",
                      "on_road": "yes" if e.on_road else "no", "line_source": e.line_src or LINE_STREAM,
+                     "rescued": "yes" if e.rescued else "no",
                      "spillway": _spillway(e), "spill_dist_ft": round(e.spill_dist_m / FT, 0) if e.spill_xy else None,
                      "spill_width_ft": round(e.spill_width_m / FT, 0) if e.spill_xy else None,
+                     "outlet_dist_ft": _rnd(e.outlet_dist_m / FT, 0),
+                     "spill_on_fill": "yes" if e.spill_on_fill else "no", "same_pool": e.same_pool,
+                     "drain_ac": _rnd(e.drain_m2 / AC_M2, 1),
+                     "drain_ratio": _rnd((e.drain_m2 / AC_M2) / max(e.storage_m3 / AF_M3, 0.1), 2),
+                     "ag_head_ft": _rnd(e.ag_head_m / FT, 1), "below_frac": _rnd(e.below_frac, 2),
+                     "rect": _rnd(e.rect, 2), "elong": _rnd(e.elong, 2), "wall_slope": _rnd(e.wall_slope, 3),
+                     "mounds": e.mounds, "top_w_ft": _rnd(e.top_w_m / FT, 0), "side_sum": _rnd(e.side_sum, 1),
+                     "relief_ft": _rnd(e.relief_m / FT, 1), "slope_pct": _rnd(e.slope_pct, 2),
+                     "fill_road": "yes" if e.fill_road else "no", "edge_ft": _rnd(e.edge_m / FT, 0),
+                     "pool_lat": None if plat is None else round(plat, 6),
+                     "pool_lon": None if plon is None else round(plon, 6),
                      "confidence": e.confidence,
                      "notes": "; ".join(e.notes), "lat": round(lat, 6), "lon": round(lon, 6)})
     if model:
         from .core import score as sc
         m = sc.load(model) if isinstance(model, str) else model
-        for r, s_ in zip(rows, sc.score(m, rows)):
+        for r, (s_, why) in zip(rows, sc.score_detail(m, rows)):
+            if r["kind"] == em.K_EDGE:              # not a candidate: its readings lean on a wall
+                r["score"], r["score_note"] = None, "not scored: at the edge of the terrain data"
+                continue
             r["score"] = round(float(s_), 3)
+            r["score_note"] = why
     rows.sort(key=lambda r: ({"new": 0, "unsure": 1, "listed": 2}[r["status"]],
                              -(r.get("score") or 0.0), -r["height_ft"]))
     out_csv = os.path.splitext(out_gpkg)[0] + "_embankments.csv"
@@ -796,8 +979,15 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
     write_points(out_gpkg, "screening_dams", SCREEN_FIELDS, dams, epsg=WORK_EPSG)
     counts = {"kinds": em.kind_counts(found), "status": ls.status_counts(rows),
               "ridges": len(extra), "dugouts": len(dugs),
-              "dem_drainage": sum(1 for r in rows if r["line_source"] == LINE_DEM)}
+              "dem_drainage": sum(1 for r in rows if r["line_source"] == LINE_DEM),
+              "pool_outlet": sum(1 for r in rows if r["line_source"] == LINE_POOL),
+              "rescued": sum(1 for r in rows if r["rescued"] == "yes"),
+              "squares": len(tiles), "dropped_between_squares": n_seam,
+              "data_edge": sum(1 for r in rows if r["kind"] == em.K_EDGE)}
     log(_summary(rows, "fill(s) across streams"))
+    if counts["data_edge"]:
+        log("{} of them at the edge of the terrain data (missing terrain acts as a wall there): kept, "
+            "not candidates".format(counts["data_edge"]))
     hs = None
     if hillshade and not cancelled():
         w = p.window_m if bbox is None else 0.0             # the stream box plus the search window
@@ -808,6 +998,132 @@ def run_embankments(dem, streams, out_gpkg, roads=None, rails=None, known=None, 
     return {"rows": rows, "counts": counts, "gpkg": out_gpkg, "csv": out_csv, "screening": len(dams),
             "hillshade": hs, "ridges": extra, "dugouts": dugs, "spillways": spills,
             "cancelled": bool(cancelled())}
+
+
+def _rnd(v, nd):
+    """v rounded to nd places, None when not a finite number (not measured)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(v, nd) if math.isfinite(v) else None
+
+
+def _pool_lines(z, gt, core_box, margin_m, rec, gt10, area, max_area=None, opts=None):
+    """(lines, exits, drains, seeds) of one tile: the pools of the DEM z (grid gt) over the core box plus
+    margin_m (terrain.pool_seeds), each walked out through its outlet down the opened routing `rec`
+    (grid gt10, the draws' receivers); exits = the distance along each line at which it leaves its
+    own pool; drains = the ground draining into that pool (m2, terrain.pool_inflow over `area` on
+    gt10): flat routing can split a pool's water over many outlet cells, so no one cell on the line
+    holds it all; seeds = for each line the pool seeds (x, y, area m2, 'flat' or 'depression') it
+    starts from: its own, then any flat water surface whose seed lies in the same routing cell
+    (which got no line of its own). A pool is the seed's own (its flat or depression), on the 10 m cells at least
+    40 % of whose 3 m cells it covers, so a creek or another pond beside it is not part of it. A pool
+    whose seed already drains max_area gets no line: the draws walk it."""
+    c0 = max(0, int((core_box[0] - margin_m - gt[0]) / gt[1]))
+    c1 = min(z.shape[1], int(math.ceil((core_box[2] + margin_m - gt[0]) / gt[1])))
+    r0 = max(0, int((core_box[3] + margin_m - gt[3]) / gt[5]))
+    r1 = min(z.shape[0], int(math.ceil((core_box[1] - margin_m - gt[3]) / gt[5])))
+    if r1 <= r0 or c1 <= c0:
+        return [], [], [], []
+    sub = z[r0:r1, c0:c1]
+    gs = (gt[0] + c0 * gt[1], gt[1], 0.0, gt[3] + r0 * gt[5], 0.0, gt[5])
+    seeds, _mask, cells = tr.pool_seeds(sub, gs, cells=True, **(opts or {}))
+    H10, W10 = area.shape
+    per = (abs(gt10[1]) / abs(gs[1])) ** 2              # 3 m cells in a 10 m cell
+
+    def rc10(x, y):
+        return int((y - gt10[3]) / gt10[5]), int((x - gt10[0]) / gt10[1])
+
+    def own10(sd, idx):
+        rr, cc = np.divmod(np.asarray(idx, np.int64), sub.shape[1])
+        R = np.floor((gs[3] + (rr + 0.5) * gs[5] - gt10[3]) / gt10[5]).astype(np.int64)
+        C = np.floor((gs[0] + (cc + 0.5) * gs[1] - gt10[0]) / gt10[1]).astype(np.int64)
+        ok = (R >= 0) & (R < H10) & (C >= 0) & (C < W10)
+        u, n = np.unique(R[ok] * W10 + C[ok], return_counts=True)
+        got = set(u[n >= 0.4 * per].tolist())
+        r, c = rc10(sd[0], sd[1])
+        if 0 <= r < H10 and 0 <= c < W10:
+            got.add(r * W10 + c)
+        return got
+
+    pairs = list(zip(seeds, cells))
+    if max_area:
+        def drains(sd):
+            r, c = rc10(sd[0], sd[1])
+            return area[r, c] if 0 <= r < H10 and 0 <= c < W10 else 0.0
+        pairs = [pc for pc in pairs if drains(pc[0]) < max_area]
+    pairs.sort(key=lambda pc: -pc[0][2])          # a seed sharing a cell with a bigger pool's is dropped
+    seeds = [pc[0] for pc in pairs]
+    pools = [own10(*pc) for pc in pairs]
+    lines, exits, index = tr.pool_lines(seeds, rec, gt10, (H10, W10), pools=pools, with_index=True)
+    # A small pond is usually both a flat water surface and a closed depression, and the two seeds
+    # often fall in one 10 m routing cell: only the bigger (the depression) then starts a line. The
+    # line out of that cell comes out of the flat water all the same, so it carries that seed too.
+    sds = [[seeds[i]] for i in index]
+    start = {rc10(seeds[i][0], seeds[i][1]): k for k, i in enumerate(index)}
+    lined = set(index)
+    for i, sd in enumerate(seeds):
+        if i not in lined and sd[3] == "flat":
+            k = start.get(rc10(sd[0], sd[1]))
+            if k is not None:
+                sds[k].append(sd)
+    return lines, exits, [tr.pool_inflow(pools[i], rec, area) for i in index], sds
+
+
+def _cells10(xs, ys, gt, shape, share=0.0, cell=None):
+    """The flat indices of the cells of a grid (geotransform gt, shape) holding the points xs, ys;
+    with share and cell (the points' own cell size), only the cells they cover at least that share
+    of (a creek cell a pool's edge just reaches is not part of the pool)."""
+    c = np.floor((np.asarray(xs, float) - gt[0]) / gt[1]).astype(np.int64)
+    r = np.floor((np.asarray(ys, float) - gt[3]) / gt[5]).astype(np.int64)
+    ok = (r >= 0) & (r < shape[0]) & (c >= 0) & (c < shape[1])
+    u, n = np.unique(r[ok] * shape[1] + c[ok], return_counts=True)
+    if share and cell:
+        u = u[n * float(cell) ** 2 >= share * abs(gt[1] * gt[5])]
+    return u.tolist()
+
+
+def _held_inflow(xs, ys, near, rec, area, gt10, cell):
+    """The ground (m2, `area` on the 10 m routing grid gt10, receivers `rec`) draining into the pool
+    at the points xs, ys (cell: their own cell size) whose water the routing takes out of it within
+    near = (x, y, radius m): the 10 m cells the pool covers at least 40 % of (a creek cell its edge
+    brushes is not part of it)."""
+    return tr.pool_inflow(_cells10(xs, ys, gt10, area.shape, 0.4, cell), rec, area, near=_near10(near, gt10))
+
+
+def _near10(near, gt):
+    """(x, y, radius m) -> (row, col, radius) in cells of a grid with geotransform gt (None stays)."""
+    if near is None:
+        return None
+    x, y, rad = near
+    return ((y - gt[3]) / gt[5] - 0.5, (x - gt[0]) / gt[1] - 0.5, rad / abs(gt[1]))
+
+
+def _line_area(line, area, gt):
+    """The contributing area (m2) of `area` (grid gt) at each point of `line` (a pool line: the
+    centres of the cells of its own routing path)."""
+    h, w = area.shape
+    out = []
+    for x, y in line:
+        c = int(math.floor((x - gt[0]) / gt[1]))
+        r = int(math.floor((y - gt[3]) / gt[5]))
+        out.append(float(area[r, c]) if 0 <= r < h and 0 <= c < w else float("nan"))
+    return out
+
+
+def _area_at(area, gt, snap=2):
+    """f(x, y) -> the largest contributing area (m2) of the cells of `area` (grid of geotransform
+    gt) within `snap` cells of the point: the draw itself, not a cell just off it."""
+    h, w = area.shape
+
+    def at(x, y):
+        c = int(math.floor((x - gt[0]) / gt[1]))
+        r = int(math.floor((y - gt[3]) / gt[5]))
+        if not (0 <= r < h and 0 <= c < w):
+            return float("nan")
+        return float(area[max(0, r - snap):r + snap + 1, max(0, c - snap):c + snap + 1].max())
+    return at
 
 
 def _spillway(e):
@@ -823,6 +1139,7 @@ def _status_row(x, y, prefix, kn, match_ft, unsure_factor, ll):
     lon, lat = _lonlat(x, y, ll)
     return {"x": x, "y": y, "find_id": find_id(prefix, x, y), "status": st["status"],
             "known_id": st["known_id"], "known_layer": st["known_src"],
+            "known_state": st.get("known_state", ""),
             "known_ft": None if st["known_m"] is None else round(st["known_m"] / FT, 0),
             "lat": round(lat, 6), "lon": round(lon, 6)}
 
@@ -861,7 +1178,8 @@ def _meets(line, box):
 
 # ------------------------------------------------------------------------------------ ponds --
 POND_FIELDS = [("find_id", "str"), ("kind", "str"), ("status", "str"), ("is_new", "str"), ("known_id", "str"),
-               ("known_layer", "str"), ("known_ft", "float"), ("wb_id", "str"), ("wb_type", "str"),
+               ("known_layer", "str"), ("known_state", "str"), ("known_ft", "float"), ("wb_id", "str"),
+               ("wb_type", "str"),
                ("height_ft", "float"), ("head_ft", "float"), ("freeboard_ft", "float"),
                ("arc_deg", "float"), ("storage_af", "float"), ("above_grade_af", "float"),
                ("area_ac", "float"), ("no_flood", "str"), ("pool_method", "str"),
@@ -1005,6 +1323,7 @@ def run_ponds(waterbodies, dem, out_gpkg, known=None, bbox=None, cell=2.0, z_fee
         lon, lat = _lonlat(px, py, ll)
         rows.append({"x": px, "y": py, "find_id": find_id("POND", px, py), "kind": kind,
                      "status": st["status"], "known_id": st["known_id"], "known_layer": st["known_src"],
+                     "known_state": st.get("known_state", ""),
                      "known_ft": None if st["known_m"] is None else round(st["known_m"] / FT, 0),
                      "wb_id": wb_id, "wb_type": wb_type,
                      "height_ft": round(res.height_m / FT, 1) if not res.no_flood else None,
@@ -1034,7 +1353,7 @@ def run_ponds(waterbodies, dem, out_gpkg, known=None, bbox=None, cell=2.0, z_fee
 
 # -------------------------------------------------------------------------------- crossings --
 CROSS_FIELDS = [("find_id", "str"), ("status", "str"), ("is_new", "str"), ("known_id", "str"), ("known_layer", "str"),
-                ("known_ft", "float"), ("angle_deg", "float"), ("fill_kind", "str"),
+                ("known_state", "str"), ("known_ft", "float"), ("angle_deg", "float"), ("fill_kind", "str"),
                 ("fill_height_ft", "float"), ("drainage_ac", "float"), ("flow_len_ft", "float"),
                 ("slope_pct", "float"), ("tc_min", "float"), ("q_cfs", "float"), ("pipe_in", "float"),
                 ("pipe_size", "str"), ("size_note", "str"), ("lat", "float"), ("lon", "float")]
@@ -1045,12 +1364,10 @@ def _size_crossings(rows, dem, z_feet, c_runoff, intensity, v_fps, drain_cell, t
     if not rows:
         return
     pad = 4000.0
-    xs, ys = [r["x"] for r in rows], [r["y"] for r in rows]
-    x0 = min(xs)
-    y0 = min(ys)
-    groups = {}
+    x0 = y0 = 0.0                       # squares of the fixed lattice: the same crossing is routed
+    groups = {}                         # on the same DEM cells whatever else is in the run
     for r in rows:
-        groups.setdefault((int((r["x"] - x0) // tile_m), int((r["y"] - y0) // tile_m)), []).append(r)
+        groups.setdefault((int(math.floor(r["x"] / tile_m)), int(math.floor(r["y"] / tile_m))), []).append(r)
     snap = max(1, int(round(30.0 / drain_cell)))
     cancelled = cancelled or _noop
     for (i, j), rs in groups.items():
@@ -1127,6 +1444,7 @@ def run_crossings(roads, streams, out_gpkg, known=None, rails=None, bbox=None, f
         lon, lat = _lonlat(h["x"], h["y"], ll)
         row = {"x": h["x"], "y": h["y"], "find_id": find_id("XING", h["x"], h["y"]), "status": st["status"],
                "known_id": st["known_id"], "known_layer": st["known_src"],
+               "known_state": st.get("known_state", ""),
                "known_ft": None if st["known_m"] is None else round(st["known_m"] / FT, 0),
                "angle_deg": h["angle"], "lat": round(lat, 6), "lon": round(lon, 6)}
         if fk is not None:
@@ -1163,14 +1481,70 @@ def is_service(src):
     return s.startswith("http://") or s.startswith("https://")
 
 
-def fetch_imageserver(url, ext, cell, folder, tile_px=2000, log=print, opener=None):
+class NoAnswer(RuntimeError):
+    """The service gave no answer: it could not be reached, the connection dropped, the wait for
+    it ran out, or it said it is unavailable (HTTP 502, 503, 504). Only this counts towards
+    leaving an image host or year alone (_fetch_years); an answer about the place asked for (an
+    HTTP error such as 500 over a gap in the imagery, a page that is not an image) does not."""
+
+
+def _http_get(req, timeout=300.0):
+    """The bytes a web address answers with; RuntimeError when it refuses, NoAnswer when it
+    does not answer (`timeout`: how long to wait to connect, and then for each further part of
+    the answer). urllib honours the proxy environment."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:                  # the service answered, with an error
+        kind = NoAnswer if e.code in (502, 503, 504) else RuntimeError
+        raise kind("the image service refused {}: {}".format(req, e)) from None
+    except Exception as e:                               # URLError, time-out, connection dropped
+        raise NoAnswer("the image service refused {}: {}".format(req, e)) from None
+
+
+def _tile_is(path, x, y, w, h, cell):
+    """True when the GeoTIFF at path is the w x h tile of cell metres whose lower-left corner is
+    (x, y), to a hundredth of a cell. False when there is no such file, it cannot be opened, or
+    it covers other ground."""
+    if not os.path.exists(path):
+        return False
+    try:
+        gdal.PushErrorHandler("CPLQuietErrorHandler")
+        try:
+            ds = gdal.Open(str(path))
+        finally:
+            gdal.PopErrorHandler()
+        if ds is None:
+            return False
+        gt, nx, ny = ds.GetGeoTransform(), ds.RasterXSize, ds.RasterYSize
+        ds = None
+    except RuntimeError:
+        return False
+    tol = 0.01 * cell
+    return ((nx, ny) == (w, h) and gt[2] == 0.0 and gt[4] == 0.0
+            and abs(gt[0] - x) <= tol and abs(gt[3] - (y + h * cell)) <= tol
+            and abs(gt[1] * w - cell * w) <= tol and abs(-gt[5] * h - cell * h) <= tol)
+
+
+def fetch_imageserver(url, ext, cell, folder, tile_px=2000, log=print, opener=None, timeout=300.0,
+                      snap=False):
     """Download an ArcGIS ImageServer (exportImage) over ext (EPSG:5070) at cell metres as
     GeoTIFF tiles in folder (2000 px: the ND GIS Hub image services answer 500 to 3000 px);
     returns a VRT of them. `url` is the service address
-    (.../ImageServer). Tiles already there are reused (a rerun resumes). urllib honours the
-    proxy environment; `opener(url) -> bytes` replaces it in tests."""
+    (.../ImageServer). A tile already there is reused (a rerun resumes) only when it is the tile
+    this request asks for: its corner and size within a hundredth of a cell (_tile_is). A tile of
+    the same file name laid out from another corner (the name rounds the corner to the metre: a
+    tile kept from an older run whose box was not snapped), or one that cannot be opened, is
+    downloaded again. `timeout` is how long to wait for the service to connect, and then for
+    each further part of its answer. urllib honours the proxy environment;
+    `opener(url) -> bytes` replaces it in tests. snap: ext is grown outward to whole multiples of
+    cell first, so the service resamples on to the same cells whatever box is asked for (the
+    open-water tool; the fixed lattice of warp_dem)."""
     import urllib.parse
-    import urllib.request
+    if snap:
+        ext = snap_out(ext, cell)
     base = url.rstrip("/")
     if base.lower().endswith("/exportimage"):
         base = base[: -len("/exportImage")]
@@ -1185,20 +1559,13 @@ def fetch_imageserver(url, ext, cell, folder, tile_px=2000, log=print, opener=No
             w = max(1, int(round((x1 - x) / cell)))
             h = max(1, int(round((y1 - y) / cell)))
             path = os.path.join(folder, "img_{:.0f}_{:.0f}_{:g}.tif".format(x, y, cell))
-            if not os.path.exists(path):
+            if not _tile_is(path, x, y, w, h, cell):
                 q = urllib.parse.urlencode({
                     "bbox": "{},{},{},{}".format(x, y, x + w * cell, y + h * cell), "bboxSR": WORK_EPSG,
                     "imageSR": WORK_EPSG, "size": "{},{}".format(w, h), "format": "tiff",
                     "interpolation": "RSP_BilinearInterpolation", "f": "image"})
                 req = base + "/exportImage?" + q
-                if opener is not None:
-                    data = opener(req)
-                else:
-                    try:
-                        with urllib.request.urlopen(req, timeout=300) as r:
-                            data = r.read()
-                    except Exception as e:                       # HTTPError, URLError, timeout
-                        raise RuntimeError("the image service refused {}: {}".format(req, e)) from None
+                data = opener(req) if opener is not None else _http_get(req, timeout)
                 if not data[:4] in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"):
                     raise RuntimeError("the image service did not return a GeoTIFF for {}: {}".format(
                         req, data[:200]))
@@ -1214,10 +1581,16 @@ def fetch_imageserver(url, ext, cell, folder, tile_px=2000, log=print, opener=No
     return vrt
 
 
-def read_bands(image, ext, cell, bands):
-    """{band number: array} of a raster over ext (EPSG:5070) at cell metres (averaged)."""
-    n_x = max(1, int(math.ceil((ext[2] - ext[0]) / cell)))
-    n_y = max(1, int(math.ceil((ext[3] - ext[1]) / cell)))
+def read_bands(image, ext, cell, bands, snap=True):
+    """{band number: array} of a raster over ext (EPSG:5070) at cell metres (averaged); ext is
+    grown outward to whole multiples of cell first (the fixed lattice, as warp_dem). snap False:
+    the grid starts at ext's own corner (the evidence tool, whose windows are centred on each
+    fill's pool and whose downloaded image tiles are laid out from that corner)."""
+    if snap:
+        ext, n_x, n_y = _grid_size(ext, cell)
+    else:
+        n_x = max(1, int(math.ceil((ext[2] - ext[0]) / cell)))
+        n_y = max(1, int(math.ceil((ext[3] - ext[1]) / cell)))
     ds = _checked(gdal.Open(str(image)), "opening the image {}".format(image))
     if max(bands) > ds.RasterCount:
         raise RuntimeError("the image has {} band(s); band {} was asked for (a near-infrared band "
@@ -1237,6 +1610,37 @@ def read_bands(image, ext, cell, bands):
         a[a <= -9998.0] = np.nan
         res[b] = a
     return res, out.GetGeoTransform()
+
+
+def _outline_box(image, n=64):
+    """The EPSG:5070 box of a raster's whole outline: each of its four edges is followed at n + 1
+    points, not only its corners. A DEM in geographic coordinates has curved edges in EPSG:5070:
+    one 2 x 1 degree across the -96 meridian bulges 408 m south of the box of its four corners."""
+    ds = _checked(gdal.Open(str(image)), "opening the image {}".format(image))
+    gt, nx, ny = ds.GetGeoTransform(), ds.RasterXSize, ds.RasterYSize
+    s = osr.SpatialReference()
+    s.ImportFromWkt(ds.GetProjection())
+    ds = None
+    if hasattr(s, "SetAxisMappingStrategy"):
+        s.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    ct = osr.CoordinateTransformation(s, _srs(WORK_EPSG))
+    pts = []
+    for k in range(n + 1):
+        t = float(k) / n
+        for px, py in ((t * nx, 0.0), (t * nx, ny), (0.0, t * ny), (nx, t * ny)):
+            pts.append(ct.TransformPoint(gt[0] + px * gt[1] + py * gt[2], gt[3] + px * gt[4] + py * gt[5])[:2])
+    return (min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts))
+
+
+def _squares_on(dem, squares, margin=100.0):
+    """The squares that meet the DEM's outline grown by margin metres (a square the DEM file
+    does not reach holds no fill and is not read). All of them when the outline cannot be read."""
+    try:
+        db = _outline_box(dem)
+    except Exception:                                                   # noqa - a saving only
+        return list(squares)
+    db = (db[0] - margin, db[1] - margin, db[2] + margin, db[3] + margin)
+    return [t for t in squares if t[0] < db[2] and t[2] > db[0] and t[1] < db[3] and t[3] > db[1]]
 
 
 def _image_box(image):
@@ -1341,7 +1745,7 @@ def run_water(image, out_gpkg, bbox=None, cell=1.0, green_band=2, nir_band=4, th
             if len(srcs) > 1:
                 folder = os.path.join(folder, "{:08x}".format(zlib.crc32(src.encode("utf-8")) & 0xFFFFFFFF))
             log("downloading imagery from {} at {:g} m into {}".format(src, cell, folder))
-            src = fetch_imageserver(src, bbox, cell, folder, log=log, opener=opener)
+            src = fetch_imageserver(src, bbox, cell, folder, log=log, opener=opener, snap=True)
         got.append((src, int(gb), int(nb)))
     srcs = got
     image = srcs[0][0]
@@ -1359,21 +1763,12 @@ def run_water(image, out_gpkg, bbox=None, cell=1.0, green_band=2, nir_band=4, th
     kinds = {"str": ogr.OFTString, "float": ogr.OFTReal, "int": ogr.OFTInteger}
     for name, t in WATER_FIELDS:
         lyr.CreateField(ogr.FieldDefn(name, kinds[t]))
-    tiles = []
-    x = ext[0]
-    while x < ext[2]:
-        y = ext[1]
-        while y < ext[3]:
-            tiles.append((x, y, min(x + tile_m, ext[2]), min(y + tile_m, ext[3])))
-            y += tile_m
-        x += tile_m
+    tiles = _water_tiles(ext, tile_m, cell)
     rows = []
     mem = ogr.GetDriverByName("Memory") or ogr.GetDriverByName("MEM")      # GDAL < / >= 3.11
-    for ti, core in enumerate(tiles):
+    for ti, (core, box) in enumerate(tiles):
         if cancelled():
             break
-        pad = 300.0                                 # a pond across a tile edge is whole in one tile
-        box = (core[0] - pad, core[1] - pad, core[2] + pad, core[3] + pad)
         if len(srcs) == 1:
             bands, gt = read_bands(image, box, cell, (srcs[0][1], srcs[0][2]))
             idx = wt.ndwi(bands[srcs[0][1]], bands[srcs[0][2]])
@@ -1403,6 +1798,20 @@ def run_water(image, out_gpkg, bbox=None, cell=1.0, green_band=2, nir_band=4, th
         len(rows), min_ac, unm, "" if mapped else " (no water-body layer given)"))
     return {"rows": rows, "counts": {"water": len(rows), "unmapped": unm}, "gpkg": out_gpkg,
             "csv": out_csv, "image": image}
+
+
+def _water_tiles(ext, tile_m, cell, pad=300.0):
+    """[(core, window)] of an open-water run over ext: the squares of the fixed lattice (side
+    tile_m) that ext overlaps. The window is the whole square plus pad (a pond across a square's
+    edge is whole in one window), snapped to the cell lattice, whatever part of the square ext
+    covers; the core is the part of the square inside ext, and a patch is written by the square
+    whose core holds its first cell. So a patch has the same outline, area and id in every run
+    whose box holds that cell."""
+    out = []
+    for sq in lattice_squares(ext, tile_m):
+        core = (max(sq[0], ext[0]), max(sq[1], ext[1]), min(sq[2], ext[2]), min(sq[3], ext[3]))
+        out.append((core, snap_out((sq[0] - pad, sq[1] - pad, sq[2] + pad, sq[3] + pad), cell)))
+    return out
 
 
 def _emit_water_patches(lab, n, idx, frac, gt, core, cell, mapped, box, max_ac, n_images,
@@ -1492,21 +1901,12 @@ def _run_water_las(sources, out_gpkg, bbox, cell, src_epsg, classes, min_pts, op
     kinds = {"str": ogr.OFTString, "float": ogr.OFTReal, "int": ogr.OFTInteger}
     for name, t in WATER_FIELDS:
         lyr.CreateField(ogr.FieldDefn(name, kinds[t]))
-    tiles = []
-    x = ext[0]
-    while x < ext[2]:
-        y = ext[1]
-        while y < ext[3]:
-            tiles.append((x, y, min(x + tile_m, ext[2]), min(y + tile_m, ext[3])))
-            y += tile_m
-        x += tile_m
+    tiles = _water_tiles(ext, tile_m, cell)
     rows = []
     mem = ogr.GetDriverByName("Memory") or ogr.GetDriverByName("MEM")
-    for ti, core in enumerate(tiles):
+    for ti, (core, box) in enumerate(tiles):
         if cancelled():
             break
-        pad = 300.0
-        box = (core[0] - pad, core[1] - pad, core[2] + pad, core[3] + pad)
         grid = gt = None
         for path, bb in bounds:
             if bb[2] <= box[0] or bb[0] >= box[2] or bb[3] <= box[1] or bb[1] >= box[3]:
@@ -1553,21 +1953,12 @@ def _run_water_raster(src, band, count_min, out_gpkg, bbox, cell, open_px, min_a
     kinds = {"str": ogr.OFTString, "float": ogr.OFTReal, "int": ogr.OFTInteger}
     for name, t in WATER_FIELDS:
         lyr.CreateField(ogr.FieldDefn(name, kinds[t]))
-    tiles = []
-    x = ext[0]
-    while x < ext[2]:
-        y = ext[1]
-        while y < ext[3]:
-            tiles.append((x, y, min(x + tile_m, ext[2]), min(y + tile_m, ext[3])))
-            y += tile_m
-        x += tile_m
+    tiles = _water_tiles(ext, tile_m, cell)
     rows = []
     mem = ogr.GetDriverByName("Memory") or ogr.GetDriverByName("MEM")
-    for ti, core in enumerate(tiles):
+    for ti, (core, box) in enumerate(tiles):
         if cancelled():
             break
-        pad = 300.0
-        box = (core[0] - pad, core[1] - pad, core[2] + pad, core[3] + pad)
         bands, gt = read_bands(src, box, cell, (band,))
         counts = bands[band]
         idx = np.where(np.isnan(counts), np.nan, np.where(counts >= count_min, 1.0, 0.0))
@@ -1621,7 +2012,7 @@ def _write_grid(path, arr, gt, epsg, gdal_type, nodata):
 
 
 def build_water_mosaic(sources, out_dir, cell=1.0, classes=(li.WATER_CLASS,), mosaic_epsg=WORK_EPSG,
-                       src_epsg=None, prefix="water", log=print, progress=lambda p: None,
+                       src_epsg=None, prefix="water", point_counts=False, log=print, progress=lambda p: None,
                        cancelled=lambda: False):
     """Turn a folder of classified LiDAR tiles (ASPRS class 9) into the prebuilt water mosaic the
     open-water tool reads with its WATER_RASTER input: a per-tile **water-count** GeoTIFF (how many
@@ -1636,20 +2027,35 @@ def build_water_mosaic(sources, out_dir, cell=1.0, classes=(li.WATER_CLASS,), mo
     DamIT build). `count` 0 is stored as the count raster's nodata and the mean-elevation nodata is
     -999999, so dry land and the gaps between tiles both read back as no water.
 
-    Returns {"count_vrt", "elev_vrt", "tiles": [per-tile dicts], "n_tiles", "n_wet_tiles"}.
+    point_counts (Finder 0.5): also a per-tile count of ALL returns per cell and `point_count.vrt`
+    over them - water swallows the pulses, so a pond under 2 acres (neither flattened nor classed
+    water in 3DEP) shows as a patch of empty cells; the evidence tool reads it (LiDAR drop-out).
+
+    Returns {"count_vrt", "elev_vrt", "tiles": [per-tile dicts], "n_tiles", "n_wet_tiles",
+    "points_vrt" (None without point_counts)}.
     """
     os.makedirs(out_dir, exist_ok=True)
     srcs = [sources] if isinstance(sources, str) else list(sources)
-    count_tifs, elev_tifs, tiles = [], [], []
+    count_tifs, elev_tifs, tiles, point_tifs = [], [], [], []
     for si, path in enumerate(srcs):
         if cancelled():
             break
         name = os.path.splitext(os.path.basename(str(path)))[0]
         try:
-            x, y, z, cls = li.tile_points(path, mosaic_epsg, tuple(classes), src_epsg)
+            x, y, z, cls = li.tile_points(path, mosaic_epsg, None if point_counts else tuple(classes), src_epsg)
         except Exception as e:
             log("skipping {}: {}".format(os.path.basename(str(path)), e))
             continue
+        if point_counts and x.size:
+            pbox = _snap_box((float(np.min(x)), float(np.min(y)), float(np.max(x)), float(np.max(y))),
+                             cell, margin=2)
+            pnx, pny, pgt = li._grid_for(pbox, cell)
+            total, _mz = li.rasterize_counts(x, y, z, cls, tuple(int(c) for c in np.unique(cls)), pgt, (pny, pnx))
+            p_tif = os.path.join(out_dir, "points_count_{}.tif".format(name))
+            _write_grid(p_tif, total, pgt, mosaic_epsg, gdal.GDT_Int32, 0)
+            point_tifs.append(p_tif)
+            keep = np.isin(cls, np.asarray(list(classes), dtype=cls.dtype))
+            x, y, z, cls = x[keep], y[keep], z[keep], cls[keep]
         if x.size == 0:
             log("{}: no class-{} points".format(name, ",".join(str(c) for c in classes)))
             continue
@@ -1671,7 +2077,15 @@ def build_water_mosaic(sources, out_dir, cell=1.0, classes=(li.WATER_CLASS,), mo
         tiles.append({"tile": name, "wet_cells": wet, "count": c_tif, "elev": e_tif})
         log("{}: {} water cell(s)".format(name, wet))
         progress(100.0 * (si + 1) / max(1, len(srcs)))
+    points_vrt = None
+    if point_tifs:
+        points_vrt = os.path.join(out_dir, "point_count.vrt")
+        _checked(gdal.BuildVRT(points_vrt, point_tifs), "mosaicking the return-count tiles")
+        log("return-count mosaic: {} tile(s) -> {}".format(len(point_tifs), os.path.basename(points_vrt)))
     if not count_tifs:
+        if points_vrt:
+            return {"count_vrt": None, "elev_vrt": None, "tiles": tiles, "n_tiles": len(srcs),
+                    "n_wet_tiles": 0, "points_vrt": points_vrt}
         raise RuntimeError("no water tiles were built (no readable tiles with class-{} points)".format(
             ",".join(str(c) for c in classes)))
     count_vrt = os.path.join(out_dir, "water_count.vrt")
@@ -1681,7 +2095,997 @@ def build_water_mosaic(sources, out_dir, cell=1.0, classes=(li.WATER_CLASS,), mo
     log("water mosaic: {} tile(s) with water of {} read; {} -> {} and {}".format(
         len(count_tifs), len(srcs), out_dir, os.path.basename(count_vrt), os.path.basename(elev_vrt)))
     return {"count_vrt": count_vrt, "elev_vrt": elev_vrt, "tiles": tiles,
-            "n_tiles": len(srcs), "n_wet_tiles": len(count_tifs)}
+            "n_tiles": len(srcs), "n_wet_tiles": len(count_tifs), "points_vrt": points_vrt}
+
+
+# --------------------------------------------------------------------------------- evidence --
+EVID_FIELDS = [("img_years", "int"), ("wet_years", "int"), ("wet_share", "float"), ("first_wet", "int"),
+               ("wet_list", "str"), ("bare_share", "float"), ("nwi_code", "str"), ("nwi_h", "str"),
+               ("nwi_x", "str"), ("nwi_regime", "str"), ("in_quarry", "str"), ("pasture_share", "float"),
+               ("soil_rating", "str"), ("lidar_pool_empty", "float"), ("lidar_ring_empty", "float"),
+               ("lidar_contrast", "float"), ("lidar_class9", "float"), ("bld_1mi", "int"), ("bld_3mi", "int"),
+               ("bld_5mi", "int"), ("roads_1mi", "int"), ("roads_3mi", "int"), ("roads_5mi", "int"),
+               ("conseq", "float"), ("permit_check", "str")]
+# CDL classes a stock pond sits among: 176 grassland / pasture, 37 other hay, 36 alfalfa,
+# 152 shrubland, 195 herbaceous wetlands
+PASTURE_CLASSES = (176, 37, 36, 152, 195)
+_IMG_KEYS = ("green", "nir", "red", "blue")
+
+
+def parse_images(text):
+    """Imagery for the water history, one per line: 'YEAR | source | green=G nir=N [red=R blue=B]'
+    (source = a raster file or an ArcGIS ImageServer address). Returns [{year, src, green, nir,
+    red, blue}]. Check a service's band order (its keyProperties): the ND GIS Hub colour-infrared
+    years are NIR, green, blue (nir=1 green=2), not the classic NIR, red, green; 4-band NAIP is
+    red=1 green=2 blue=3 nir=4."""
+    out = []
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [q.strip() for q in line.split("|")]
+        if len(parts) < 3:
+            raise ValueError("an image line needs 'YEAR | source | green=G nir=N': {}".format(line))
+        d = {"year": int(parts[0]), "src": parts[1]}
+        for kv in parts[2].replace(",", " ").split():
+            k, _, v = kv.partition("=")
+            if k.strip().lower() in _IMG_KEYS:
+                d[k.strip().lower()] = int(v)
+        if "green" not in d or "nir" not in d:
+            raise ValueError("an image line needs green= and nir= bands: {}".format(line))
+        out.append(d)
+    return out
+
+
+def _read_grid(src, ext, cell, alg="near"):
+    """(band-1 array, NaN = no data; geotransform) of a raster over ext (EPSG:5070) - class
+    rasters (land cover) and count rasters keep their values (nearest), not an average. Only the
+    evidence tool reads this way, in windows centred on each fill (not on a run's box), so the
+    grid starts at ext's own corner."""
+    n_x = max(1, int(math.ceil((ext[2] - ext[0]) / cell)))
+    n_y = max(1, int(math.ceil((ext[3] - ext[1]) / cell)))
+    ds = _checked(gdal.Open(str(src)), "opening {}".format(src))
+    nod = ds.GetRasterBand(1).GetNoDataValue()
+    opts = dict(format="MEM", dstSRS="EPSG:{}".format(WORK_EPSG),
+                outputBounds=(ext[0], ext[1], ext[0] + n_x * cell, ext[1] + n_y * cell),
+                width=n_x, height=n_y, resampleAlg=alg, dstNodata=-999999.0,
+                outputType=gdal.GDT_Float64)
+    if nod is not None:
+        opts["srcNodata"] = nod
+    wo.no_vshift(gdal, wo.no_overviews(gdal, opts))
+    out = _checked(gdal.Warp("", ds, **opts), "warping {}".format(src))
+    a = out.GetRasterBand(1).ReadAsArray().astype("float64")
+    a[(a <= -999998.0) | ~np.isfinite(a)] = np.nan
+    return a, out.GetGeoTransform()
+
+
+def _data_px(path, depth=0, missing=None):
+    """[(x0, y0, x1, y1, leaf)] pixel boxes of a raster that hold data, each with the file that
+    holds them: the whole raster (itself), or for a VRT each source's DstRect (the whole raster
+    when a source has none) - and for a source that is itself a VRT, its own sources' boxes mapped
+    through SrcRect -> DstRect (a VRT of per-project VRTs keeps the gaps between tiles). A VRT
+    with no sources (a warped VRT) is one box. A nested VRT that cannot be opened adds no box
+    (named in `missing`): the other sources still count."""
+    ds = _checked(gdal.Open(str(path)), "opening {}".format(path))
+    nx, ny = float(ds.RasterXSize), float(ds.RasterYSize)
+    whole = [(0.0, 0.0, nx, ny, str(path))]
+    if ds.GetDriver().ShortName != "VRT" or depth > 8:
+        return whole
+    import xml.etree.ElementTree as ET
+    band = ET.fromstring(ds.GetMetadata("xml:VRT")[0]).find("VRTRasterBand")
+    srcs = [el for el in (band if band is not None else []) if el.find("SourceFilename") is not None]
+    if not srcs:
+        return whole
+    base, out = os.path.dirname(os.path.abspath(str(path))), []
+    for el in srcs:
+        fn = el.find("SourceFilename")
+        name = (fn.text or "").strip()
+        if fn.get("relativeToVRT") == "1":
+            name = os.path.join(base, name)
+        dr, sr = el.find("DstRect"), el.find("SrcRect")
+        dx, dy, dw, dh = ((float(dr.get(k)) for k in ("xOff", "yOff", "xSize", "ySize")) if dr is not None
+                          else (0.0, 0.0, nx, ny))
+        if not name.lower().endswith(".vrt"):
+            out.append((dx, dy, dx + dw, dy + dh, name))
+            continue
+        try:
+            inner = _data_px(name, depth + 1, missing)
+            ids = gdal.Open(name)
+            iw, ih = float(ids.RasterXSize), float(ids.RasterYSize)
+            ids = None
+        except Exception:
+            if missing is not None:
+                missing.add(name)
+            continue
+        sx, sy, sw, sh = ((float(sr.get(k)) for k in ("xOff", "yOff", "xSize", "ySize")) if sr is not None
+                          else (0.0, 0.0, iw, ih))
+        if sw <= 0 or sh <= 0:
+            continue
+        fx, fy = dw / sw, dh / sh
+        for x0, y0, x1, y1, leaf in inner:
+            x0, y0, x1, y1 = max(x0, sx), max(y0, sy), min(x1, sx + sw), min(y1, sy + sh)
+            if x0 < x1 and y0 < y1:
+                out.append((dx + (x0 - sx) * fx, dy + (y0 - sy) * fy, dx + (x1 - sx) * fx, dy + (y1 - sy) * fy, leaf))
+    return out
+
+
+def _layout(src, cache):
+    """([(box in the raster's CRS (xa, ya, xb, yb), leaf file)], work -> raster CRS transform) of
+    a raster, parsed once per run (cache: a dict kept for one run)."""
+    key = str(src)
+    if key not in cache:
+        ds = _checked(gdal.Open(key), "opening {}".format(src))
+        gt = ds.GetGeoTransform()
+        leaves = []
+        for x0, y0, x1, y1, leaf in _data_px(key, missing=cache.setdefault("_missing", set())):
+            xa, xb = gt[0] + x0 * gt[1], gt[0] + x1 * gt[1]
+            ya, yb = gt[3] + y0 * gt[5], gt[3] + y1 * gt[5]
+            leaves.append(((min(xa, xb), min(ya, yb), max(xa, xb), max(ya, yb)), leaf))
+        srs = osr.SpatialReference()
+        srs.ImportFromWkt(ds.GetProjection() or _srs(WORK_EPSG).ExportToWkt())
+        srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        cache[key] = (leaves, osr.CoordinateTransformation(_srs(WORK_EPSG), srs))
+        ds = None
+    return cache[key]
+
+
+def _cell_points(ext, cell, ct):
+    """The cell centres of the grid _read_grid lays over ext, in the raster's CRS, and its shape."""
+    n_x = max(1, int(math.ceil((ext[2] - ext[0]) / cell)))
+    n_y = max(1, int(math.ceil((ext[3] - ext[1]) / cell)))
+    cxs = ext[0] + (np.arange(n_x) + 0.5) * cell
+    cys = ext[1] + n_y * cell - (np.arange(n_y) + 0.5) * cell
+    gx, gy = np.meshgrid(cxs, cys)
+    return np.array(ct.TransformPoints(np.c_[gx.ravel(), gy.ravel()].tolist()))[:, :2], (n_y, n_x)
+
+
+def _in_box(pts, b):
+    return (pts[:, 0] >= b[0]) & (pts[:, 0] <= b[2]) & (pts[:, 1] >= b[1]) & (pts[:, 1] <= b[3])
+
+
+def _near_leaves(leaves, pts):
+    lo, hi = pts.min(axis=0), pts.max(axis=0)
+    return [(b, leaf) for b, leaf in leaves if b[2] >= lo[0] and b[0] <= hi[0] and b[3] >= lo[1] and b[1] <= hi[1]]
+
+
+def _coverage(src, ext, cell, cache=None):
+    """Bool grid (as _read_grid lays it out over ext) of the cells a raster has data for: inside
+    one of a VRT's source tiles (from the VRT's layout, nested VRTs followed), or inside the
+    raster. A count raster stores 0 as nodata (or has none, and a VRT fills its gaps with 0), so
+    the values alone cannot tell a cell with no returns from a cell no survey reached. cache: a
+    dict kept for one run (the layout is parsed once per source, and a rebuilt VRT is re-read
+    on the next run)."""
+    leaves, ct = _layout(src, {} if cache is None else cache)
+    pts, shape = _cell_points(ext, cell, ct)
+    inside = np.zeros(len(pts), bool)
+    for b, _leaf in _near_leaves(leaves, pts):
+        inside |= _in_box(pts, b)
+    return inside.reshape(shape)
+
+
+def _surveyed(src, box, reach, shape, cache=None):
+    """Bool grid (1 m, as _read_grid lays it out over box) of the cells a LiDAR survey covered:
+    for each source tile, the cells inside its box AND inside a closing (radius `reach`) of ITS
+    OWN cells with returns; any tile's. A tile's box also holds its nodata margin, the
+    unsurveyed part of a tile cut by a project edge and the slivers of a tile warped from
+    another UTM zone; the closing fills a void (a pond the pool and ring could hold stays
+    surveyed-but-empty) and leaves those out - and, taken tile by tile, it never bridges a gap
+    between two surveys. Read over a window 2 x reach wider, so the closing is exact on box."""
+    cache = {} if cache is None else cache
+    g = int(math.ceil(2.0 * reach))
+    wbox = (box[0] - g, box[1] - g, box[2] + g, box[3] + g)
+    leaves, ct = _layout(src, cache)
+    pts, wshape = _cell_points(wbox, 1.0, ct)
+    cov = np.zeros(wshape, bool)
+    pad = int(math.ceil(2.0 * reach)) + 1
+    for b, leaf in _near_leaves(leaves, pts):
+        inb = _in_box(pts, b).reshape(wshape)
+        if not inb.any():
+            continue
+        try:
+            pw, _gw = _read_grid(leaf, wbox, 1.0)
+        except Exception:
+            cache.setdefault("_missing", set()).add(leaf)
+            continue
+        if pw.shape != wshape:
+            continue
+        occ = np.isfinite(pw) & (pw > 0) & inb
+        if not occ.any():
+            continue
+        rr, cc = np.nonzero(inb)
+        r0, r1 = max(0, rr.min() - pad), min(wshape[0], rr.max() + pad + 1)
+        c0, c1 = max(0, cc.min() - pad), min(wshape[1], cc.max() + pad + 1)
+        o = occ[r0:r1, c0:c1]
+        dil = ndi.distance_transform_edt(~o) <= reach
+        foot = ndi.distance_transform_edt(np.pad(dil, 1))[1:-1, 1:-1] > reach
+        cov[r0:r1, c0:c1] |= foot & inb[r0:r1, c0:c1]
+    out = cov[g:g + shape[0], g:g + shape[1]]
+    if out.shape != tuple(shape):                       # a rounding cell at the edge
+        o2 = np.zeros(shape, bool)
+        o2[:out.shape[0], :out.shape[1]] = out[:shape[0], :shape[1]]
+        out = o2
+    return out
+
+
+def _code_field(names, field=None):
+    """The field of a polygon layer to report: the one asked for, else the NWI code's."""
+    if field is None:
+        for cand in ("ATTRIBUTE", "attribute", "WETLAND_TYPE"):
+            if cand in names:
+                return cand
+    return field
+
+
+def _filter_to(lyr, box, pad=30.0):
+    """Limit an open layer to the features near box (EPSG:5070) with its own spatial index, so
+    a statewide layer is not read whole for one small area. The filter is a box in the layer's
+    CRS round the corners and edge mid-points of box widened by pad metres (and 1 % of its
+    size: the edges of a box bend a little between two CRSs)."""
+    src = lyr.GetSpatialRef()
+    if src is None:
+        raise RuntimeError("layer {} has no CRS".format(lyr.GetName()))
+    src = src.Clone()
+    if hasattr(src, "SetAxisMappingStrategy"):
+        src.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    pad = max(pad, 0.01 * max(box[2] - box[0], box[3] - box[1]))
+    x0, y0, x1, y1 = box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad
+    xm, ym = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    pts = osr.CoordinateTransformation(_srs(WORK_EPSG), src).TransformPoints(
+        [(x0, y0), (xm, y0), (x1, y0), (x1, ym), (x1, y1), (xm, y1), (x0, y1), (x0, ym)])
+    lyr.SetSpatialFilterRect(min(q[0] for q in pts), min(q[1] for q in pts),
+                             max(q[0] for q in pts), max(q[1] for q in pts))
+
+
+def _polys_with(src, box, field=None):
+    """[(rings, value of `field` (or ''), envelope)] of the polygons of a layer meeting box."""
+    if not src:
+        return []
+    ds, lyr = open_layer(src)
+    ct = _transform(lyr, _srs(WORK_EPSG))
+    names = [lyr.GetLayerDefn().GetFieldDefn(i).GetName() for i in range(lyr.GetLayerDefn().GetFieldCount())]
+    field = _code_field(names, field)
+    out = []
+    for f in lyr:
+        g = f.GetGeometryRef()
+        if g is None:
+            continue
+        g = g.Clone()
+        g.Transform(ct)
+        e = g.GetEnvelope()
+        if e[1] < box[0] or e[0] > box[2] or e[3] < box[1] or e[2] > box[3]:
+            continue
+        val = f.GetField(field) if field and field in names else ""
+        for rings in _rings(g):
+            out.append((rings, "" if val is None else str(val), e))
+    ds = None
+    return out
+
+
+def _declared_type(k):
+    """The type a field of the Finder's own layers is declared with ('str' when none is)."""
+    for fl in ("EMB_FIELDS", "EVID_FIELDS", "REVIEW_FIELDS", "CARD_FIELDS"):
+        t = dict(globals().get(fl, ())).get(k)
+        if t:
+            return t
+    return "str"
+
+
+def _fields_of(rows, skip=(), first=()):
+    """[(name, type)] of every key the rows carry (after `first`), each typed by its first value
+    that is not None (a field blank in row 1 is not written as text), or by its declared type
+    when no row has a value (a numeric field all blank this run stays numeric)."""
+    fields = list(first)
+    have = set(skip) | {k for k, _t in fields}
+    for r in rows:
+        for k in r:
+            if k in have:
+                continue
+            have.add(k)
+            v = next((q[k] for q in rows if q.get(k) is not None), None)
+            if v is None:                               # blank in every row: the declared type
+                fields.append((k, _declared_type(k)))
+                continue
+            fields.append((k, "float" if isinstance(v, float) else
+                           ("int" if isinstance(v, int) and not isinstance(v, bool) else "str")))
+    return fields
+
+
+def _poly_at(polys, x, y, near_m=0.0):
+    """The value of the polygon holding (x, y); else of the nearest one whose box is within
+    near_m; None when none."""
+    best, bd = None, None
+    for rings, val, e in polys:
+        if e[0] - near_m <= x <= e[1] + near_m and e[2] - near_m <= y <= e[3] + near_m:
+            if ls.point_in_polygon(x, y, rings):
+                return val
+            if near_m > 0:
+                d = ls.dist_to_polygon(x, y, rings)
+                if d <= near_m and (bd is None or d < bd):
+                    best, bd = val, d
+    return best
+
+
+def _points_of(src, box):
+    """[(x, y)] in EPSG:5070 of a point / polygon layer (polygons by their centroid) in box,
+    read through the layer's spatial index (a statewide structure inventory is not read whole
+    for each 10 km tile)."""
+    if not src:
+        return []
+    ds, lyr = open_layer(src)
+    ct = _transform(lyr, _srs(WORK_EPSG))
+    _filter_to(lyr, box)
+    out = []
+    for f in lyr:
+        g = f.GetGeometryRef()
+        if g is None:
+            continue
+        g = g.Clone()
+        g.Transform(ct)
+        c = g.Centroid() if ogr.GT_Flatten(g.GetGeometryType()) != ogr.wkbPoint else g
+        x, y = c.GetX(), c.GetY()
+        if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+            out.append((x, y))
+    ds = None
+    return out
+
+
+IMAGE_THREADS = 6           # the image years of one fill are asked for together, this many at a time
+IMAGE_GIVE_UP = 3           # failures in a row before an image host, or one image year, is left alone
+
+
+def _host(src):
+    import urllib.parse
+    return urllib.parse.urlsplit(str(src)).netloc.lower()
+
+
+def _fetch_years(imgs, box, cell, cache, state, pool=None, timeout=300.0, give_up=IMAGE_GIVE_UP,
+                 retry_s=None, log=print):
+    """{index in imgs: the VRT of that image over box, or the error its service gave} for the
+    image lines that are services, asked for together (`pool`: a thread pool; None = one at a
+    time). Each year and service has its own cache folder (two services of one year, the
+    colour-infrared and the 4-band, must not read each other's tiles), and tiles already there
+    are not asked for again.
+
+    Two things are left alone once they give no answer (NoAnswer: not reached, timed out, HTTP
+    502 / 503 / 504) `give_up` times in a row, with one log line each instead of one per fill
+    and year, for the rest of the run - or for retry_s seconds when that is given (a long run
+    gets its imagery back after an outage):
+      * a host, when no request sent to it for this fill was answered, they were all asked once
+        more, and again none was answered (no network, the server down);
+      * one service address (one image year), when it gave no answer for `give_up` fills in a
+        row while the host's other years answered (a year that is down does not cost its
+        time-out on every fill, and never stops the other years).
+    An answer that is an error about the place asked for (HTTP 500 over a gap in a year's
+    imagery, a page that is not an image) is no image for that fill only, and counts as an
+    answer: a regional gap never takes a year away from the fills beyond it. What is left alone
+    is left out of the result. state: a dict kept for one run."""
+    strikes = state.setdefault("strikes", {})
+    dead = state.setdefault("dead", {})                 # host or service address -> when given up on
+    asked = state.setdefault("asked", [])               # one entry per request sent
+
+    def left_alone(key):
+        return key in dead and (retry_s is None or time.monotonic() - dead[key] < retry_s)
+
+    def stop(key, n, why):
+        if key not in dead:
+            log("warning: the image service {} did not answer {} time(s) in a row ({}): not asked again {} - "
+                "the fills after this one have no water history from it".format(
+                    key, n, why, "this run" if retry_s is None else "for {:g} minute(s)".format(retry_s / 60.0)))
+        dead[key] = time.monotonic()
+
+    def answered(key):
+        strikes[key] = 0
+        if dead.pop(key, None) is not None:
+            log("the image service {} answers again".format(key))
+    jobs, slot = [], {}
+    for im in imgs:
+        src = str(im["src"])
+        if not is_service(src) or left_alone(_host(src)) or left_alone(src):
+            continue
+        if (im["year"], src) not in slot:               # two lines of one year and service: one folder
+            slot[(im["year"], src)] = len(jobs)
+            jobs.append(im)
+
+    def opener(url):
+        asked.append(1)
+        return _http_get(url, timeout)
+
+    def fetch(im):
+        tag = "{}_{:08x}".format(im["year"], zlib.crc32(str(im["src"]).encode()) & 0xFFFFFFFF)
+        try:
+            return fetch_imageserver(im["src"], box, cell, os.path.join(cache, tag), log=_noop, opener=opener)
+        except Exception as e:                           # a gap in the service, a dead tile, no network
+            return e
+
+    def ask(todo):
+        return list(pool.map(fetch, todo)) if pool is not None and len(todo) > 1 else [fetch(im) for im in todo]
+    res = ask(jobs)
+    by_host = {}
+    for j, im in enumerate(jobs):
+        by_host.setdefault(_host(im["src"]), []).append(j)
+    for h, js in by_host.items():
+        if not all(isinstance(res[j], NoAnswer) for j in js):
+            answered(h)
+            continue
+        again = ask([jobs[j] for j in js])              # nothing came back from this host: once more
+        for j, v in zip(js, again):
+            res[j] = v
+        bad = [res[j] for j in js if isinstance(res[j], NoAnswer)]
+        if len(bad) < len(js):
+            answered(h)
+            continue
+        strikes[h] = strikes.get(h, 0) + 2 * len(js)
+        if strikes[h] >= give_up:
+            stop(h, strikes[h], bad[-1])
+    for im, v in zip(jobs, res):
+        src = str(im["src"])
+        if _host(src) in dead:                          # said for the host: not again year by year
+            continue
+        if not isinstance(v, NoAnswer):                 # an image, or an answer about this place
+            answered(src)
+            continue
+        strikes[src] = strikes.get(src, 0) + 1
+        if strikes[src] >= give_up:
+            stop(src, strikes[src], v)
+    return {k: res[slot[(im["year"], str(im["src"]))]] for k, im in enumerate(imgs)
+            if (im["year"], str(im["src"])) in slot}
+
+
+def _forget_tiles(vrt):
+    """Remove the downloaded image tiles a VRT is made of. A service can answer with an image
+    that holds no data (seen, it appears, from a slow ND GIS Hub, 2026-11: tiles on disk that
+    gave no reading and read normally once downloaded again): kept, such a tile would be read
+    as 'no reading' on every later run, so it is asked for again instead."""
+    try:
+        ds = gdal.Open(str(vrt))
+        files = (ds.GetFileList() or [])[1:] if ds is not None else []
+        ds = None
+        for path in files:
+            os.remove(path)
+    except (OSError, RuntimeError):
+        pass
+
+
+def _forget_broken_tiles(vrt):
+    """Remove the downloaded image tiles of a VRT that cannot be read whole (a file cut short:
+    the header opens, the pixels do not). Kept, such a tile would make that year 'not read' on
+    every later run, since a tile on disk is not asked for again. Returns how many were removed."""
+    n = 0
+    gdal.PushErrorHandler("CPLQuietErrorHandler")
+    try:
+        ds = gdal.Open(str(vrt))
+        files = (ds.GetFileList() or [])[1:] if ds is not None else []
+        ds = None
+        for path in files:
+            try:
+                t = gdal.Open(str(path))
+                ok = t is not None and all(t.GetRasterBand(b + 1).ReadRaster() is not None
+                                           for b in range(t.RasterCount))
+            except RuntimeError:
+                ok = False
+            t = None
+            if not ok:
+                try:
+                    os.remove(path)
+                    n += 1
+                except OSError:
+                    pass
+    except RuntimeError:
+        pass
+    finally:
+        gdal.PopErrorHandler()
+    return n
+
+
+class _PolyLayer:
+    """A polygon layer asked one small box at a time through its own spatial index (a statewide
+    NWI layer is not read whole for 90 review cards). near(box) gives what _polys_with gives for
+    the polygons meeting box, in the layer's order."""
+
+    def __init__(self, src, field=None):
+        self.ds, self.lyr = open_layer(src)
+        self.ct = _transform(self.lyr, _srs(WORK_EPSG))
+        d = self.lyr.GetLayerDefn()
+        self.names = [d.GetFieldDefn(i).GetName() for i in range(d.GetFieldCount())]
+        self.field = _code_field(self.names, field)
+
+    def near(self, box):
+        _filter_to(self.lyr, box)
+        out = []
+        for f in sorted(self.lyr, key=lambda q: q.GetFID()):
+            g = f.GetGeometryRef()
+            if g is None:
+                continue
+            g = g.Clone()
+            g.Transform(self.ct)
+            e = g.GetEnvelope()
+            if e[1] < box[0] or e[0] > box[2] or e[3] < box[1] or e[2] > box[3]:
+                continue
+            val = f.GetField(self.field) if self.field and self.field in self.names else ""
+            for rings in _rings(g):
+                out.append((rings, "" if val is None else str(val), e))
+        return out
+
+
+def _fill_evidence(rows, images=None, image_cell=1.0, ndwi_threshold=0.15, nwi=None, nwi_field=None,
+                   quarries=None, landcover=None, pasture_classes=PASTURE_CLASSES, soils=None, soil_field=None,
+                   lidar_points=None, lidar_water=None, cache=None, cards=False, timeout=300.0,
+                   give_up=IMAGE_GIVE_UP, threads=IMAGE_THREADS, retry_s=None, span=100.0, log=print,
+                   progress=None, cancelled=None):
+    """The one reader of the evidence a fill gets from imagery, NWI, quarries, land cover, soils
+    and the LiDAR counts, written on the rows in place. run_evidence reads it for every fill;
+    run_review_batch for the picked cards (cards=True). The image years of one fill that come
+    from a service are asked for together (`threads` at a time), each request waits `timeout`
+    seconds, and a host or an image year that stops answering is left alone (_fetch_years). A
+    service image with no data over the pool is not kept as a tile (_forget_tiles).
+
+    cards=True is the same reading, shown for a reviewer:
+      * only CARD_FIELDS are written, with water_years ('6 of 10': years with water of the image
+        years read) and evid_note (in words, why something is blank);
+      * a card with no image year read has wet_years blank, not 0: nothing was seen, which is
+        not 'no water in any year';
+      * a card whose image year was not asked (its service had given no answer for 3 fills in
+        a row) says so in evid_note;
+      * a card that already carries a water history or LiDAR drop-out (the fills came from an
+        'evidence' layer) keeps it, and nothing is asked for;
+      * the NWI layer is asked one small box a card, and an NWI layer that cannot be read is a
+        warning and a note on the cards, not a failed run.
+
+    Returns {'fills' (how many were read before a cancel), 'with_water_years', 'with_nwi',
+    'with_lidar', 'requests' (image requests sent), 'dead_services'}."""
+    from concurrent.futures import ThreadPoolExecutor
+    progress = progress or _noop
+    cancelled = cancelled or _noop
+    imgs = parse_images(images) if isinstance(images, str) else list(images or [])
+    ll = osr.CoordinateTransformation(_srs(4326), _srs(WORK_EPSG))
+    xs = [r["x"] for r in rows]
+    ys = [r["y"] for r in rows]
+    ext = (min(xs) - 1000.0, min(ys) - 1000.0, max(xs) + 1000.0, max(ys) + 1000.0)
+    nwi_p, nwi_lyr, nwi_err = [], None, False
+    if nwi and cards:
+        try:
+            nwi_lyr = _PolyLayer(nwi, nwi_field)
+        except Exception as e:
+            nwi_err = True
+            log("warning: the NWI layer could not be read ({}): the cards have no NWI code".format(e))
+    elif nwi:
+        nwi_p = _polys_with(nwi, ext, nwi_field)
+    q_p = _polys_with(quarries, ext) if quarries else []
+    s_p = _polys_with(soils, ext, soil_field) if soils else []
+    if not cards:
+        log("{} fill(s); {} image year(s), {} NWI polygon(s), {} quarry polygon(s), {} soil polygon(s)".format(
+            len(rows), len(imgs), len(nwi_p), len(q_p), len(s_p)))
+    cover = {}                                          # LiDAR layouts, parsed once this run
+    web = {}                                            # image hosts: failures in a row, given up on
+    card_names = {k for k, _t in CARD_FIELDS}
+    pool = None
+    if threads and int(threads) > 1 and sum(1 for im in imgs if is_service(im["src"])) > 1:
+        pool = ThreadPoolExecutor(int(threads))
+    done = 0
+    try:
+        for i, r in enumerate(rows):
+            if cancelled():
+                break
+            cx, cy = r["x"], r["y"]
+            try:
+                if r.get("pool_lat") is not None and r.get("pool_lon") is not None:
+                    cx, cy = ll.TransformPoint(float(r["pool_lon"]), float(r["pool_lat"]))[:2]
+            except (TypeError, ValueError):
+                pass
+            try:
+                area = float(r.get("area_ac") or 0.0) * AC_M2
+            except (TypeError, ValueError):
+                area = 0.0
+            rad = min(150.0, max(10.0, math.sqrt(area / math.pi)))
+            box = (cx - rad - 40.0, cy - rad - 40.0, cx + rad + 40.0, cy + rad + 40.0)
+            new, notes = {}, []
+            has_water = cards and bool(r.get("img_years") or 0)
+            if imgs and not has_water:
+                got = _fetch_years(imgs, box, image_cell, cache, web, pool, timeout, give_up, retry_s, log)
+                seen, skipped = {}, set()
+                for k, im in enumerate(imgs):
+                    bands = [im[q] for q in _IMG_KEYS if q in im]
+                    yr = im["year"]
+                    try:
+                        src = im["src"]
+                        if is_service(src):
+                            if k not in got:                # left alone after giving no answer: said once
+                                seen.setdefault(yr, None)
+                                skipped.add(yr)
+                                continue
+                            src = got[k]
+                            if isinstance(src, Exception):
+                                raise src
+                        b, gt = read_bands(src, box, image_cell, bands, snap=False)
+                    except Exception as e:                  # a gap in the service, a dead tile
+                        log("{} {}: no image ({})".format(r.get("find_id"), yr, e))
+                        seen.setdefault(yr, None)
+                        if is_service(im["src"]) and k in got and not isinstance(got[k], Exception) \
+                                and _forget_broken_tiles(got[k]):   # a tile cut short: asked for again
+                            log("{} {}: an image tile on disk could not be read (asked for again on the "
+                                "next run)".format(r.get("find_id"), yr))
+                        continue
+                    m = ev.disk(b[im["nir"]].shape, gt, cx, cy, rad)
+                    w, _sh = ev.wet(ev.ndwi(b[im["green"]], b[im["nir"]]), m, ndwi_threshold)
+                    if w is not None and not seen.get(yr):  # one year, two images: water in either
+                        seen[yr] = bool(w)
+                    else:
+                        seen.setdefault(yr, None)
+                    if w is None and k in got:              # a blank answer is not kept as a tile
+                        _forget_tiles(got[k])
+                        log("{} {}: the image holds no data over the pool (asked for again on the next "
+                            "run)".format(r.get("find_id"), yr))
+                    if "red" in im and "blue" in im:
+                        v = ev.bare_share(b[im["red"]], b[im["green"]], b[im["blue"]], b[im["nir"]],
+                                          ev.disk(m.shape, gt, cx, cy, rad + 20.0))
+                        if math.isfinite(v):                # an image with no data here keeps the last
+                            new["bare_share"] = round(v, 3)
+                h = ev.water_history(seen)
+                new.update({"img_years": h["years"], "wet_years": h["wet_years"],
+                            "wet_share": None if not h["years"] else round(h["wet_share"], 3),
+                            "first_wet": h["first_wet"], "wet_list": h["wet_list"]})
+                listed = len({im["year"] for im in imgs})
+                if cards and not h["years"]:
+                    new["wet_years"] = None                 # no year was seen: not '0 years with water'
+                    notes.append("no image year could be read")
+                elif h["years"] < listed:
+                    notes.append("{} of {} image years could not be read".format(listed - h["years"], listed))
+                skipped = sorted(y for y in skipped if seen.get(y) is None)
+                if skipped:                                 # not asked: its service had stopped answering
+                    notes.append("image year {} not asked (its service gave no answer earlier in this run)".format(
+                        ", ".join(str(y) for y in skipped)))
+                    if not cards:
+                        new[SKIP_FIELD[0]] = ",".join(str(y) for y in skipped)
+            elif not imgs and not has_water:
+                notes.append("no imagery given")
+            if nwi and not nwi_err:
+                if nwi_lyr is not None:                     # the polygons near this card only
+                    reach = max(rad, abs(cx - r["x"]) + 30.0, abs(cy - r["y"]) + 30.0)
+                    nwi_p = nwi_lyr.near((cx - reach, cy - reach, cx + reach, cy + reach))
+                code = _poly_at(nwi_p, cx, cy, rad)
+                if code is None and (cx, cy) != (r["x"], r["y"]):
+                    code = _poly_at(nwi_p, r["x"], r["y"], 30.0)
+                if code is not None:
+                    nw = ev.nwi_parse(code)
+                    new.update({"nwi_code": nw["code"], "nwi_h": "yes" if nw["h"] else "no",
+                                "nwi_x": "yes" if nw["x"] else "no", "nwi_regime": nw["regime"]})
+                else:
+                    new.update({"nwi_code": "", "nwi_h": "no", "nwi_x": "no", "nwi_regime": ""})
+            elif r.get("nwi_code") is None:
+                notes.append("the NWI layer could not be read" if nwi else "no NWI layer given")
+            if quarries:
+                new["in_quarry"] = "yes" if _poly_at(q_p, r["x"], r["y"], 50.0) is not None else "no"
+            if soils:
+                v = _poly_at(s_p, r["x"], r["y"])
+                new["soil_rating"] = v if v is not None else ""
+            if landcover:
+                try:
+                    lc, gl = _read_grid(landcover, (r["x"] - 260.0, r["y"] - 260.0, r["x"] + 260.0, r["y"] + 260.0), 10.0)
+                    new["pasture_share"] = round(ev.share_of_classes(lc, ev.disk(lc.shape, gl, r["x"], r["y"], 250.0)
+                                                                     & np.isfinite(lc), pasture_classes), 3)
+                except Exception as e:
+                    log("{}: no land cover ({})".format(r.get("find_id"), e))
+            has_lidar = cards and r.get("lidar_pool_empty") is not None
+            if lidar_points and not has_lidar:
+                try:
+                    lbox = (cx - rad - 30.0, cy - rad - 30.0, cx + rad + 30.0, cy + rad + 30.0)
+                    pc, gp = _read_grid(lidar_points, lbox, 1.0)
+                    cov = _surveyed(lidar_points, lbox, rad + 25.0, pc.shape, cover)
+                    pc[np.isnan(pc) & cov] = 0.0            # a count raster stores 0 as nodata
+                    pc[~cov] = np.nan                       # no survey here: no evidence, not 'empty'
+                    wc = None
+                    if lidar_water:
+                        wc, _g = _read_grid(lidar_water, lbox, 1.0)
+                        wc[np.isnan(wc)] = 0.0              # the water mosaic skips dry tiles
+                        wc[~cov] = np.nan
+                    d = ev.dropout(pc, ev.disk(pc.shape, gp, cx, cy, rad), ev.ring(pc.shape, gp, cx, cy, rad + 5.0, rad + 25.0), wc)
+                    new.update({"lidar_pool_empty": _rnd(d["pool_empty"], 3), "lidar_ring_empty": _rnd(d["ring_empty"], 3),
+                                "lidar_contrast": _rnd(d["contrast"], 3), "lidar_class9": _rnd(d["class9"], 3)})
+                    if new["lidar_pool_empty"] is None:
+                        notes.append("no LiDAR survey over the pool")
+                except Exception as e:
+                    notes.append("the LiDAR count raster could not be read")
+                    log("{}: no LiDAR counts ({})".format(r.get("find_id"), e))
+            elif not lidar_points and not has_lidar:
+                notes.append("no LiDAR count raster given")
+            try:
+                st = float(r.get("storage_af"))
+                new["permit_check"] = "yes" if st > ev.PERMIT_AF else "no"
+            except (TypeError, ValueError):
+                pass
+            if imgs and not cards:
+                r.pop(SKIP_FIELD[0], None)                  # a note from an earlier run is not this run's
+            if cards:
+                r.update({k: v for k, v in new.items() if k in card_names})
+                if not r.get("img_years"):                  # no image year seen, here or in the evidence
+                    r["wet_years"] = r["wet_share"] = None  # layer the fills came from: not 0 years
+                if r.get("img_years"):
+                    r["water_years"] = "{} of {}".format(int(r.get("wet_years") or 0), int(r["img_years"]))
+                r["evid_note"] = "; ".join(notes)
+            else:
+                r.update(new)
+            done += 1
+            progress(span * (i + 1) / len(rows))
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
+    for name in sorted(cover.get("_missing", ())):
+        log("warning: LiDAR source {} could not be read: the fills over it have no LiDAR evidence".format(name))
+    return {"fills": done, "with_water_years": sum(1 for r in rows if r.get("img_years")),
+            "with_nwi": sum(1 for r in rows if r.get("nwi_code")),
+            "with_lidar": sum(1 for r in rows if r.get("lidar_pool_empty") is not None),
+            "requests": len(web.get("asked", ())), "dead_services": sorted(web.get("dead", ()))}
+
+
+IMAGE_RETRY_S = 600.0       # 'Add evidence to fills' asks a host it gave up on again after this long
+ORDER_FIELD = ("review_order", "int")
+# written by the evidence tool only when an image year was not asked for some fill because its
+# service had stopped answering earlier in the run (the years, e.g. '2013'); absent otherwise
+SKIP_FIELD = ("img_skipped", "str")
+
+
+def _lines_in(src, box):
+    """read_lines(src, box) through the layer's spatial index: a statewide road layer is not
+    read whole for each 10 km tile of the consequence pass."""
+    if not src:
+        return []
+    ds, lyr = open_layer(src)
+    ct = _transform(lyr, _srs(WORK_EPSG))
+    _filter_to(lyr, box)
+    out = []
+    for f in sorted(lyr, key=lambda q: q.GetFID()):
+        g = f.GetGeometryRef()
+        if g is None:
+            continue
+        g = g.Clone()
+        g.Transform(ct)
+        for p in _parts(g):
+            if ogr.GT_Flatten(p.GetGeometryType()) != ogr.wkbLineString:
+                continue
+            pts = [(p.GetX(i), p.GetY(i)) for i in range(p.GetPointCount())]
+            if len(pts) < 2:
+                continue
+            xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+            if max(xs) < box[0] or min(xs) > box[2] or max(ys) < box[1] or min(ys) > box[3]:
+                continue
+            out.append(pts)
+    ds = None
+    return out
+
+
+@_records_run("evidence")
+def run_evidence(fills, out_gpkg, images=None, image_cell=1.0, ndwi_threshold=0.15, nwi=None, nwi_field=None,
+                 quarries=None, landcover=None, pasture_classes=PASTURE_CLASSES, soils=None, soil_field=None,
+                 lidar_points=None, lidar_water=None, dem=None, z_feet=None, buildings=None, roads=None,
+                 reach_m=ev.CONSEQ_BINS_M[-1], flow_cell=30.0, cache=None, log=print,
+                 progress=None, cancelled=None):
+    """Evidence the DEM cannot give for each fill of an 'embankments' layer (core/evidence.py):
+    open water in the pool year by year (`images`: parse_images lines or dicts), bright bare
+    ground, the NWI code (h / x modifiers, water regime), a quarry layer, the pasture share of a
+    land-cover raster (CDL classes) within 250 m, a soil rating, LiDAR return drop-out in the
+    pool (`lidar_points`: a per-cell count of all returns; `lidar_water`: the class-9 count
+    mosaic) and, with a `dem`, the buildings and roads down the flow path (consequence, a second
+    sort). Every source is optional. Writes the fills with the evidence fields to layer 'evidence'
+    (and a CSV). When the fills carry a score, each also gets review_order (1 = look at this
+    first; core/evidence.py review_order: score in bands 0.1 wide, then water in 2 or more image
+    years, then what is below, then the score) and the CSV is written in that order; the layer
+    keeps the fills' own order.
+    An image host or image year that gives no answer (not reached, timed out, HTTP 502 / 503 /
+    504) 3 times in a row is left alone for 10 minutes, with one log line, and each fill whose
+    year was not asked meanwhile carries img_skipped (the years; the field is written only when
+    that happened). An error answer over a gap in one year's imagery is a missing year for that
+    fill only.
+    Returns {'rows', 'gpkg', 'csv', 'counts'}."""
+    progress = progress or _noop
+    cancelled = cancelled or _noop
+    rows = read_rows(fills)
+    if not rows:
+        raise RuntimeError("no fills in {}".format(fills))
+    _fill_evidence(rows, images=images, image_cell=image_cell, ndwi_threshold=ndwi_threshold, nwi=nwi,
+                   nwi_field=nwi_field, quarries=quarries, landcover=landcover, pasture_classes=pasture_classes,
+                   soils=soils, soil_field=soil_field, lidar_points=lidar_points, lidar_water=lidar_water,
+                   cache=cache or (os.path.splitext(out_gpkg)[0] + "_imagery"), retry_s=IMAGE_RETRY_S, span=80.0,
+                   log=log, progress=progress, cancelled=cancelled)
+    if dem and (buildings or roads) and not cancelled():
+        _consequences(rows, dem, z_feet, buildings, roads, reach_m, flow_cell, log, cancelled)
+    fields = _fields_of(rows, skip={"x", "y", ORDER_FIELD[0], SKIP_FIELD[0]} | set(dict(EVID_FIELDS))) + EVID_FIELDS
+    if any(r.get(SKIP_FIELD[0]) for r in rows):
+        fields = fields + [SKIP_FIELD]
+    in_order = rows
+    for r in rows:
+        r.pop(ORDER_FIELD[0], None)                     # an order from an earlier run is not this run's
+    if any(r.get("score") is not None for r in rows):
+        for r, k in zip(rows, ev.review_order([r.get("score") for r in rows], [r.get("conseq") for r in rows],
+                                              wet_years=[r.get("wet_years") for r in rows])):
+            r[ORDER_FIELD[0]] = k
+        fields = fields + [ORDER_FIELD]
+        in_order = sorted(rows, key=lambda r: r[ORDER_FIELD[0]])
+        log("review_order: 1 = look at this fill first (score in bands of {:g}, then water in {} or more image "
+            "years, then what is below, then the score); the CSV is in that order, the layer keeps the fills' "
+            "own order".format(ev.SCORE_BAND, ev.WET_MIN_YEARS))
+    out_csv = os.path.splitext(out_gpkg)[0] + "_evidence.csv"
+    write_points(out_gpkg, "evidence", fields, rows)
+    write_csv(out_csv, fields, in_order)
+    counts = {"fills": len(rows),
+              "wet_any": sum(1 for r in rows if (r.get("wet_years") or 0) > 0),
+              "nwi_h": sum(1 for r in rows if r.get("nwi_h") == "yes"),
+              "nwi_x": sum(1 for r in rows if r.get("nwi_x") == "yes"),
+              "permit_check": sum(1 for r in rows if r.get("permit_check") == "yes")}
+    log("evidence: {} fill(s); water seen in at least one year at {}; NWI impounded (h) {}, excavated (x) {}; "
+        "{} over 12.5 ac-ft (check for a water permit)".format(counts["fills"], counts["wet_any"], counts["nwi_h"],
+                                                             counts["nwi_x"], counts["permit_check"]))
+    progress(100.0)
+    return {"rows": rows, "gpkg": out_gpkg, "csv": out_csv, "counts": counts, "cancelled": bool(cancelled())}
+
+
+def _consequences(rows, dem, z_feet, buildings, roads, reach_m, flow_cell, log, cancelled, tile_m=10000.0):
+    """Buildings and roads down the flow path of each fill (core/evidence.py), routed over the
+    DEM at flow_cell metres a 10 km square of the fixed lattice (plus the reach) at a time."""
+    z_feet = check_dem_unit(dem, z_feet, log)
+    groups = {}                         # squares of the fixed lattice: a fill's flow path is routed
+    for k, r in enumerate(rows):        # on the same DEM cells whatever other fills are in the layer
+        groups.setdefault((int(math.floor(r["x"] / tile_m)), int(math.floor(r["y"] / tile_m))), []).append(k)
+    for (gi, gj), ks in groups.items():
+        if cancelled():
+            break
+        x0, y0 = gi * tile_m, gj * tile_m
+        box = (x0 - reach_m, y0 - reach_m, x0 + tile_m + reach_m, y0 + tile_m + reach_m)
+        z, gt = warp_dem(dem, box, flow_cell, z_feet)
+        if not np.isfinite(z).any():
+            continue
+        rec, _order, _filled = tr.flow(z)
+        blds = _points_of(buildings, box) if buildings else []
+        bz = []
+        for bx, by in blds:
+            c = int((bx - gt[0]) / gt[1])
+            rr = int((by - gt[3]) / gt[5])
+            bz.append((bx, by, float(z[rr, c]) if 0 <= rr < z.shape[0] and 0 <= c < z.shape[1] else float("nan")))
+        rl = _lines_in(roads, box) if roads else []
+        for k in ks:
+            r = rows[k]
+            c = int((r["x"] - gt[0]) / gt[1])
+            rr = int((r["y"] - gt[3]) / gt[5])
+            if not (0 <= rr < z.shape[0] and 0 <= c < z.shape[1]):
+                continue
+            path = ev.flow_path(rec, z.shape, rr * z.shape[1] + c)
+            pxy, pd = ev.path_xy(path, z.shape, gt)
+            keep = pd <= reach_m
+            pxy, pd = pxy[keep], pd[keep]
+            pz = z.ravel()[np.asarray(path)[keep]]
+            try:
+                h = float(r.get("height_ft") or 0.0) * FT
+            except (TypeError, ValueError):
+                h = 0.0
+            bd = ev.flooded_buildings(pxy, pd, pz, bz, h, reach_m) if bz else []
+            rd_ = ev.road_crossings(pxy, pd, rl) if rl else []
+            try:
+                saf = float(r.get("storage_af"))
+            except (TypeError, ValueError):
+                saf = float("nan")
+            c_ = ev.consequence(bd, rd_, saf)
+            c_.pop("permit_check", None)                # set from the storage alone, in run_evidence
+            r.update(c_)
+
+
+# ----------------------------------------------------------------------------- review batch --
+REVIEW_FIELDS = [("n", "int"), ("find_id", "str"), ("stratum", "str"), ("rank", "int"), ("incl_prob", "float"),
+                 ("second", "str"), ("kind", "str"), ("status", "str"), ("score", "float"), ("height_ft", "float"),
+                 ("storage_af", "float"), ("area_ac", "float"), ("lat", "float"), ("lon", "float"),
+                 ("list_n", "int"), ("pool_n", "int")]
+# the evidence a card shows, right after the batch's own fields: water_years is the card line
+# ('6 of 10' = water in 6 of the 10 image years read; '6/10' would open as a date in a
+# spreadsheet), evid_note says in words why something is blank; the rest are the evidence
+# tool's own fields
+CARD_FIELDS = [("water_years", "str"), ("wet_years", "int"), ("img_years", "int"), ("wet_share", "float"),
+               ("wet_list", "str"), ("nwi_code", "str"), ("nwi_h", "str"), ("nwi_x", "str"),
+               ("lidar_pool_empty", "float"), ("lidar_contrast", "float"), ("evid_note", "str")]
+# what is below a card, shown after CARD_FIELDS when the fills came with it (an 'evidence' layer
+# made with a DEM and buildings / roads); the batch never computes it
+BELOW_FIELDS = [("bld_1mi", "int"), ("roads_1mi", "int"), ("conseq", "float")]
+# what the pick decided: the evidence step must leave every one of these as it was
+PICK_FIELDS = ("n", "find_id", "stratum", "rank", "incl_prob", "second", "score", "list_n", "pool_n")
+
+
+def _pick_of(rows):
+    return [tuple(r.get(k) for k in PICK_FIELDS) for r in rows]
+
+
+@_records_run("review")
+def run_review_batch(fills, out_gpkg, n=90, random_frac=0.18, top_frac=0.37, second_frac=0.12,
+                     kinds=(em.K_DAM, em.K_DRY), reviewed=None, tile_m=5000.0, per_tile_cap=3, seed=0,
+                     log=print, evidence=True, images=None, ndwi_threshold=0.15, nwi=None, lidar_points=None,
+                     image_timeout=30.0, cache=None, progress=None, cancelled=None):
+    """A review batch (core/review.py) from scored fills: a fixed random control, the top-ranked
+    unreviewed cards and cards near the cut, each with the chance it had of being picked, a share
+    flagged for a blind second reviewer, in shuffled order. Only unlisted fills of `kinds` (every
+    kind when it is empty), and never a fill at the edge of the terrain data (em.K_EDGE: not a
+    candidate, whatever `kinds` says). reviewed: find_ids already marked (a list, or a CSV / text file of them). Writes layer
+    'review_batch' and a CSV.
+
+    evidence (on by default): after the batch is picked AND written, the water evidence of the
+    picked cards only is read (`images`: parse_images lines or dicts, each request waiting
+    image_timeout seconds; `nwi`: a wetland polygon layer; `lidar_points`: a return-count
+    raster) and the layer and CSV are written again with CARD_FIELDS right after the batch's own
+    fields (and BELOW_FIELDS when the fills came with what is below them). With no source given
+    and no evidence on the fills, or evidence=False, the batch is the plain one and nothing is
+    asked for: `images` is None here, so a script stays offline (the QGIS tool's default is the
+    brand's image list). The evidence never picks: the pick reads find_id, x, y and score only,
+    it is made first, and PICK_FIELDS are checked unchanged afterwards (RuntimeError, with the
+    batch as picked left on disk). A source that cannot be read, or any error in the evidence
+    step, is a warning and a note on the cards. The image tiles are kept in `cache` (default
+    <out>_imagery beside the GeoPackage), so a second run asks for nothing it has.
+    Once the evidence is on the card the reviewer's marks are no longer an independent test of
+    that evidence; the run_info table records evidence = True for such a batch.
+    Returns {'rows', 'gpkg', 'csv', 'counts', 'evidence' (None, or how many cards got what and
+    how many image requests were sent), 'cancelled'}."""
+    from .core import review as rv
+    cancelled = cancelled or _noop
+    rows = [r for r in read_rows(fills) if r.get("status") != "listed" and r.get("kind") != em.K_EDGE
+            and (not kinds or r.get("kind") in kinds)]
+    if not rows:
+        raise RuntimeError("no unlisted fills{} in {} (a fill at the edge of the terrain data is never "
+                           "picked)".format(" of kind " + ", ".join(kinds) if kinds else "", fills))
+    if not any(r.get("score") is not None for r in rows):
+        log("the fills have no score: the top and near-the-cut slices are by height")
+        for r in rows:
+            r["score"] = float(r.get("height_ft") or 0.0) / 100.0
+    done = set()
+    if isinstance(reviewed, str) and reviewed.strip():
+        if not os.path.exists(reviewed):            # not a list of ids: a path that is not there
+            raise RuntimeError("the reviewed-cards file {} does not exist".format(reviewed))
+        with open(reviewed, encoding="utf-8-sig") as fh:
+            done = {m.group(0) for m in re.finditer(r"FIND-[0-9A-F]{8}", fh.read())}
+        if not done:
+            log("{} holds no card ids (FIND-XXXXXXXX): nothing is left out as reviewed".format(reviewed))
+    elif reviewed and not isinstance(reviewed, str):
+        done = set(reviewed)
+    got = rv.pick_batch(rows, n, random_frac, top_frac, second_frac, tile_m=tile_m, per_tile_cap=per_tile_cap,
+                        seed=seed, reviewed=done)
+    got.sort(key=lambda r: r["n"])
+    for r in got:
+        r["list_n"] = len(rows)
+    # the batch fields first, then everything else the fills carry (a sheet shows them)
+    fields = _fields_of(got, skip={"x", "y"}, first=REVIEW_FIELDS)
+    out_csv = os.path.splitext(out_gpkg)[0] + "_review_batch.csv"
+    write_points(out_gpkg, "review_batch", fields, got)
+    write_csv(out_csv, fields, got)
+    counts = {k: sum(1 for r in got if r["stratum"] == k) for k in ("random", "top", "near")}
+    counts["second"] = sum(1 for r in got if r["second"] == "yes")
+    want = min(int(n), len(rows) - sum(1 for r in rows if r.get("find_id") in done))
+    if len(got) < want:
+        log("warning: the batch has {} card(s), not {}: too few unreviewed candidates near the cut "
+            "(or a per-tile cap of {} too tight for this area)".format(len(got), want, per_tile_cap))
+    log("review batch: {} card(s) of {} candidate(s) - {} random control, {} top-ranked, {} near the cut; "
+        "{} for a second reviewer".format(len(got), len(rows), counts["random"], counts["top"], counts["near"],
+                                          counts["second"]))
+    res = {"rows": got, "gpkg": out_gpkg, "csv": out_csv, "counts": counts, "evidence": None, "cancelled": False}
+    # ---- the evidence of the picked cards: the batch above is already on disk, and stays the pick
+    carried = any(r.get(k) is not None for r in got for k in ("img_years", "nwi_code", "lidar_pool_empty", "conseq"))
+    if not got or not evidence or not (images or nwi or lidar_points or carried):
+        return res
+    cards = [dict(r) for r in got]
+    try:
+        c = _fill_evidence(cards, images=images, ndwi_threshold=ndwi_threshold, nwi=nwi, lidar_points=lidar_points,
+                           cache=cache or (os.path.splitext(out_gpkg)[0] + "_imagery"), cards=True,
+                           timeout=image_timeout, log=log, progress=progress, cancelled=cancelled)
+    except Exception as e:
+        log("warning: the evidence could not be added ({}): the batch is written without it".format(e))
+        return res
+    if _pick_of(cards) != _pick_of(got):
+        raise RuntimeError("the evidence step changed the pick: the batch on disk is the one picked, without "
+                           "the evidence")
+    below = BELOW_FIELDS if any(r.get("conseq") is not None for r in cards) else []
+    fields = _fields_of(cards, skip={"x", "y"}, first=REVIEW_FIELDS + CARD_FIELDS + below)
+    write_points(out_gpkg, "review_batch", fields, cards)
+    write_csv(out_csv, fields, cards)
+    c["cards"] = c.pop("fills")
+    res.update({"rows": cards, "evidence": c, "cancelled": bool(cancelled())})
+    log("evidence on the cards: water years on {} of {}, an NWI code on {}, LiDAR drop-out on {} "
+        "({} image request(s) sent)".format(c["with_water_years"], len(cards), c["with_nwi"], c["with_lidar"],
+                                           c["requests"]))
+    if res["cancelled"]:
+        log("cancelled: the batch holds every card; the evidence is on the first {} only".format(c["cards"]))
+    return res
 
 
 # ----------------------------------------------------------------------------- OpenStreetMap --
@@ -1790,13 +3194,51 @@ def read_rows(src):
     return out
 
 
+SCORE_KINDS = ("v1", "0.5", "0.5-terrain", "0.5-trees")
+
+
+def _marks_of(src):
+    """Reviewers' marks: a folder of <find_id>.json ({"mark": ...}) or a CSV with find_id and mark
+    columns -> {find_id: {"mark": ...}}."""
+    out = {}
+    if not src:
+        return out
+    if os.path.isdir(src):
+        for f in os.listdir(src):
+            if f.endswith(".json"):
+                with open(os.path.join(src, f), encoding="utf-8") as fh:
+                    out[f[:-5]] = json.load(fh)
+        return out
+    if not os.path.exists(src):
+        raise RuntimeError("the marks file {} does not exist".format(src))
+    with open(src, newline="", encoding="utf-8-sig") as fh:      # -sig: a spreadsheet's BOM
+        rd_ = csv.DictReader(fh)
+        cols = {c.strip().lower(): c for c in (rd_.fieldnames or [])}
+        if "find_id" not in cols or "mark" not in cols:
+            raise RuntimeError("the marks file {} needs find_id and mark columns (it has {})".format(
+                src, ", ".join(rd_.fieldnames or []) or "none"))
+        for r in rd_:
+            fid = (r.get(cols["find_id"]) or "").strip()
+            if fid:
+                out[fid] = {"mark": (r.get(cols["mark"]) or "").strip().lower()}
+    return out
+
+
 @_records_run("score")
 def run_score(fills, out_gpkg, positive_words=("dam",), model_in=None, model_out=None, folds=5,
-              log=print):
+              kind="v1", marks=None, marks_weight=20.0, log=print):
     """Learn a fill score from the fills already on a dam list (core/score.py) and score every
     fill. `fills`: one or more 'embankments' layers (runs over different areas). With model_in
-    (a model JSON), score with it instead of learning. Writes 'scored_fills' and the model JSON
-    (model_out, default beside the GeoPackage). Returns {'rows', 'model', 'auc', 'cv_auc', ...}."""
+    (a model JSON), score with it instead of learning. kind: 'v1' (the 11 measurements),
+    '0.5' (every 0.5 measurement, one fill per listed dam) or '0.5-terrain' (also hinge terms and
+    flat / rolling / cut copies) or '0.5-trees' (bagged PU boosted trees on the 0.5
+    measurements). marks: reviewers' marks (a folder of <find_id>.json or a CSV of find_id, mark)
+    - yes / no / unsure of fills in these layers become trusted labels at weight marks_weight
+    (an unsure one as half a dam, half not; a mark replaces the fill's own listed / unlisted
+    label; with trees the marks join every bag at that weight); learn them per region (a prairie
+    model, a breaks model), not statewide.
+    Writes 'scored_fills' and the model JSON (model_out, default beside the GeoPackage). Returns
+    {'rows', 'model', 'auc', 'cv_auc', ...}."""
     from .core import score as sc
     srcs = [fills] if isinstance(fills, str) else list(fills)
     rows = []
@@ -1804,21 +3246,53 @@ def run_score(fills, out_gpkg, positive_words=("dam",), model_in=None, model_out
         for r in read_rows(s_):
             r["source"] = s_
             rows.append(r)
+    # a fill at the edge of the terrain data is not learned from and not scored: its height and pool
+    # lean on missing terrain standing as a wall
+    edge = [r for r in rows if r.get("kind") == em.K_EDGE]
+    rows = [r for r in rows if r.get("kind") != em.K_EDGE]
+    if edge:
+        log("{} fill(s) at the edge of the terrain data: not learned from and not scored".format(len(edge)))
     if not rows:
         raise RuntimeError("no fills in the layers given")
     y = sc.labels(rows, positive_words)
+    ok = np.array([not sc.off_ground(r, positive_words) for r in rows], bool)  # the list says: not there
+    if not ok.all():
+        log("{} fill(s) are on listed dams the list says are not there (breached, not built, removed ...): "
+            "left out of training and of the checks".format(int((~ok).sum())))
     cv = float("nan")
     if model_in:
         model = sc.load(model_in)
         log("scoring {} fill(s) with {}".format(len(rows), model_in))
     else:
-        note = "trained on {} fill(s) from {} layer(s)".format(len(rows), len(srcs))
+        if kind not in SCORE_KINDS:
+            raise RuntimeError("score kind {} is not one of {}".format(kind, ", ".join(SCORE_KINDS)))
+        opts = {} if kind == "v1" else {"features": sc.ALL_FEATURES, "bags": True}
+        if kind == "0.5-terrain":
+            opts.update(splines=True, groups=True)
+        if kind == "0.5-trees":
+            opts["learner"] = "trees"
+        mk = _marks_of(marks)
+        extra = []
+        by = {r.get("find_id"): r for r in rows}
+        for fid, m in mk.items():
+            v = (m or {}).get("mark")
+            if fid in by and v in ("yes", "no", "unsure"):
+                extra.append((by[fid], {"yes": 1.0, "no": 0.0, "unsure": 0.5}[v], float(marks_weight)))
+        if mk and not extra:
+            log("warning: none of the {} mark(s) in {} is a yes / no / unsure on a fill in these layers: "
+                "trained without them".format(len(mk), marks))
+        elif mk:
+            log("{} of {} mark(s) matched a fill in these layers".format(len(extra), len(mk)))
+        if extra:
+            opts["extra"] = extra
+        note = "trained on {} fill(s) from {} layer(s), kind {}{}".format(
+            len(rows), len(srcs), kind, ", {} reviewed mark(s)".format(len(extra)) if extra else "")
         try:
-            model = sc.train(rows, positive_words, note=note)
+            model = sc.train(rows, positive_words, note=note, **opts)
         except ValueError as e:
             raise RuntimeError(str(e)) from None
         # k-fold cross-validated AUC: how well it ranks listed dams it has not seen
-        if folds and y.sum() >= folds:
+        if folds and y[ok].sum() >= folds:
             rng = np.random.default_rng(0)
             fold = rng.integers(0, folds, len(rows))
             out = np.zeros(len(rows))
@@ -1826,21 +3300,26 @@ def run_score(fills, out_gpkg, positive_words=("dam",), model_in=None, model_out
                 tr_ = [r for r, f in zip(rows, fold) if f != k]
                 te = [i for i, f in enumerate(fold) if f == k]
                 try:
-                    mk = sc.train(tr_, positive_words)
+                    mf = sc.train(tr_, positive_words, **{k: v for k, v in opts.items() if k != "extra"})
                 except ValueError:
                     continue
-                out[te] = sc.score(mk, [rows[i] for i in te])
-            cv = sc.ranked_auc(out, y)
+                out[te] = sc.score(mf, [rows[i] for i in te])
+            cv = sc.ranked_auc(out[ok], y[ok])
         model["cv_auc"] = None if not np.isfinite(cv) else round(cv, 3)
         model_out = model_out or os.path.splitext(out_gpkg)[0] + "_score_model.json"
         sc.save(model, model_out)
         log("score model: {} listed dam(s) against {} other fill(s); cross-validated AUC {} -> {}".format(
             model["n_listed"], model["n_other"], "n/a" if not np.isfinite(cv) else "{:.2f}".format(cv), model_out))
-    s_all = sc.score(model, rows)
-    auc = sc.ranked_auc(s_all, y)
-    for r, v in zip(rows, s_all):
+    det = sc.score_detail(model, rows)
+    s_all = np.array([v for v, _w in det])
+    auc = sc.ranked_auc(s_all[ok], y[ok])
+    for r, (v, why) in zip(rows, det):
         r["score"] = round(float(v), 3)
+        r["score_note"] = why
     rows.sort(key=lambda r: ({"new": 0, "unsure": 1, "listed": 2}.get(r.get("status"), 3), -r["score"]))
+    for r in edge:                                      # written last, with no score
+        r["score"], r["score_note"] = None, "not scored: at the edge of the terrain data"
+    rows = rows + edge
     fields = [f for f in EMB_FIELDS] + [("source", "str")]
     write_points(out_gpkg, "scored_fills", fields, rows)
     write_csv(os.path.splitext(out_gpkg)[0] + "_scored_fills.csv", fields, rows)

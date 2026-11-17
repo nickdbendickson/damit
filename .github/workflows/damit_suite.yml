@@ -27,7 +27,7 @@ jobs:
         env:
           DAMIT_SETTINGS: ${{ runner.temp }}/damit_settings.json
         run: >-
-          python3 -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup
+          python3 -m unittest -v damit_core.tests.test_core damit_core.tests.test_shared_defaults damit_setup.tests.test_setup
           damit_data.tests.test_data damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 damit_pmp.tests.test_gis_rain damit_pmp.tests.test_runner_shared_sync
           tests.test_metadata_suite tests.test_hazard_screener_agree tests.test_suite_install
 

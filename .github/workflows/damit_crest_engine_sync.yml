@@ -1,0 +1,51 @@
+name: damit_crest engine sync
+
+# damit_crest's engine files (engine.ts, spread.ts, outline.ts, routing.ts, warnings.ts) must match crest's copy
+# (nickdbendickson/crest, src/lib/crest) line for line, apart from the pairs in
+# damit_crest/scripts/engine-sync-allow.json. Runs on damit_crest changes, and daily so a crest-side change shows here.
+on:
+  push:
+    paths: ["damit_crest/src/lib/crest/**", "damit_crest/scripts/**", ".github/workflows/damit_crest_engine_sync.yml"]
+  pull_request:
+    paths: ["damit_crest/src/lib/crest/**", "damit_crest/scripts/**", ".github/workflows/damit_crest_engine_sync.yml"]
+  schedule:
+    - cron: "23 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # An engine change lands as a pair of PRs, one in each repo, on branches with the same name. A PR is compared
+      # with crest's branch of that name when there is one (so the pair is green together), with crest main otherwise.
+      - name: Pick the crest branch to compare with
+        id: other
+        env:
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          ref=main
+          if [ -n "$HEAD_REF" ] && git ls-remote --exit-code --heads https://github.com/nickdbendickson/crest.git "refs/heads/$HEAD_REF" >/dev/null 2>&1; then
+            ref="$HEAD_REF"
+          fi
+          echo "Comparing with crest $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Check out crest (engine only)
+        uses: actions/checkout@v4
+        with:
+          repository: nickdbendickson/crest
+          ref: ${{ steps.other.outputs.ref }}
+          path: .crest
+          sparse-checkout: src/lib/crest
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compare engine files with crest
+        run: node damit_crest/scripts/check-engine-sync.mjs --other .crest
+      - name: Sync check unit tests
+        run: node --test damit_crest/scripts/check-engine-sync.test.mjs

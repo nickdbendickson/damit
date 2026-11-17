@@ -12,9 +12,12 @@
 #   * QGIS 3.34 (conda env ndqgis), ANUGA 4.1 + gmsh 4.15 (env ndanuga)
 #   * LISFLOOD-FP 8.3 with the Runner patch: shipped binary on Linux; built from the
 #     official source with conda's clang on macOS (needs Apple's Command Line Tools)
-#   * the local AIs from damit_ai: Pierre (code triage) and dam-research (literature),
+#   * the local AIs from damit_ai: Heim (code triage) and vor (literature),
 #     with Ollama, their conda env, the models and the reference library
-#   * one launcher per profile, and the Absaraka Dam (DWR-2801) run folder
+#   * the DamIT Crest desk (damit_crest) and the North Dakota Crest desk (nd_crest, from the
+#     crest repo), both run on the ndqgis env; they open in the browser and can run side by side
+#   * one launcher per profile, build-offline-pack.sh (the DamSafety offline pack from
+#     Terminal), and the Absaraka Dam (DWR-2801) run folder
 #
 # OFFLINE: if offline/ is filled (an offline set unzipped here, or download-all.sh run on
 # any networked machine), NOTHING is downloaded. On Linux, missing files are otherwise
@@ -25,7 +28,7 @@
 #   bash install-all.sh                  # everything
 #   bash install-all.sh --offline        # refuse to download anything
 #   bash install-all.sh --check          # report what is installed
-#   options: --no-damsafety --no-damit --no-ai --no-pierre --no-research --skip-lisflood
+#   options: --no-damsafety --no-damit --no-crest (both desks) --no-ai --no-heim --no-vor --skip-lisflood
 #
 # It never touches your data folders (~/ND_Suite_Data, DamIT data), offline packs, or
 # any QGIS profile other than "damsafety" and "damit".
@@ -40,13 +43,13 @@ DI_PROFILE="${DAMIT_PROFILE:-damit}"
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
-DO_DS=1; DO_DI=1; DO_PIERRE=1; DO_RESEARCH=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
+DO_DS=1; DO_DI=1; DO_HEIM=1; DO_VOR=1; DO_CREST=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
 while [ $# -gt 0 ]; do
   case "$1" in
-    --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;
-    --no-ai) DO_PIERRE=0; DO_RESEARCH=0 ;;  --no-pierre) DO_PIERRE=0 ;;  --no-research) DO_RESEARCH=0 ;;
+    --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;  --no-crest) DO_CREST=0 ;;
+    --no-ai) DO_HEIM=0; DO_VOR=0 ;;  --no-heim) DO_HEIM=0 ;;  --no-vor) DO_VOR=0 ;;
     --skip-lisflood) SKIP_LISFLOOD=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac; shift
 done
@@ -69,7 +72,14 @@ case "$OS-$ARCH" in
   *) die "Unsupported system $OS $ARCH (supported: Linux x86_64, macOS Apple Silicon or Intel; Windows: install-all-windows.cmd)." ;;
 esac
 [ "$(id -u)" != 0 ] || [ "${DAMSUITE_ALLOW_ROOT:-0}" = 1 ] || die "Do not run this with sudo; run it as yourself."
+# QGIS's own settings file inside a profile. Qt names the folder after the organisation DOMAIN on
+# macOS (qgis.org) and after the organisation NAME elsewhere (QGIS). Up to 2026-11-16 this wrote
+# QGIS/QGIS3.ini on a Mac too, which QGIS there never reads: the LISFLOOD-FP and ANUGA paths, the
+# threads and the enabled plugins written here were ignored, and older values in qgis.org/QGIS3.ini
+# (an earlier install's) stayed in force. Seen on Nick's MacBook: the Runner used ~/nd-dam-suite.
+QINI="QGIS/QGIS3.ini"
 if [ "$OS" = Darwin ]; then
+  QINI="qgis.org/QGIS3.ini"
   PROFILES="$HOME/Library/Application Support/QGIS/QGIS3/profiles"
   NCPU="$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.ncpu)"
   case "$HERE" in "$HOME/Downloads"*|"$HOME/Desktop"*|"$HOME/Documents"*)
@@ -89,14 +99,70 @@ locate_conda() {
   done
 }
 locate_conda
+# Every env is made and used BY PATH (-p), in <conda base>/envs. Made by name (-n), mamba 2 puts it
+# under $MAMBA_ROOT_PREFIX (or a .mambarc root) when one is set - e.g. ~/micromamba/envs on a Mac
+# that once had micromamba - while the launchers, the QGIS settings (ANUGA python), `conda
+# activate`, --check and the local AIs all look in <conda base>/envs, so none of them found it.
 env_prefix() { echo "$CONDA_BASE/envs/$1"; }
+# env_candidates <name>: other places an env of that name may already be (an older install, a
+# mamba root, Miniconda/Anaconda), one per line: $MAMBA_ROOT_PREFIX, the usual roots, then the envs
+# conda/mamba registered in ~/.conda/environments.txt. <conda base>/envs/<name> itself is not listed.
+env_candidates() {
+  local n="$1" r
+  for r in "${MAMBA_ROOT_PREFIX:-}" "$HOME/micromamba" "$HOME/.local/share/mamba" "$HOME/miniforge3" \
+           "$HOME/mambaforge" "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/opt/anaconda3" "$HOME/.conda"; do
+    [ -n "$r" ] && echo "$r/envs/$n"
+  done
+  if [ -f "$HOME/.conda/environments.txt" ]; then
+    grep -E "/$n/?\$" "$HOME/.conda/environments.txt" 2>/dev/null || true
+  fi
+}
+# lock_match <prefix> <lock file>: "<have> <want>": how many of the locked packages are installed
+# in that env (conda-meta/<package file name without .conda/.tar.bz2>.json)
+lock_match() {
+  local pre="$1" url f have=0 want=0
+  while read -r url _; do case "$url" in ''|\#*) continue ;; esac
+    want=$((want + 1)); f="${url##*/}"; f="${f%.conda}"; f="${f%.tar.bz2}"
+    if [ -f "$pre/conda-meta/$f.json" ]; then have=$((have + 1)); fi
+  done < "$2"
+  echo "$have $want"
+}
+# env_works <prefix> <lock role>: the role's own check, run in that env (an env whose locked
+# packages are all recorded can still have had files replaced, e.g. by pip)
+env_works() {
+  case "$2" in
+    ndqgis)  env PYTHONPATH="$1/share/qgis/python:$1/share/qgis/python/plugins" QT_PLUGIN_PATH="$1/plugins" \
+               QGIS_PREFIX_PATH="$1" QT_QPA_PLATFORM=offscreen "$MAMBA" run -p "$1" python -c "import qgis.core" ;;
+    ndanuga) "$MAMBA" run -p "$1" python -c "import anuga, gmsh" ;;
+    ndbuild) "$MAMBA" run -p "$1" cmake --version ;;
+    *)       "$MAMBA" run -p "$1" python -c "import sys" ;;
+  esac >/dev/null 2>&1
+}
+# found_elsewhere <name>: each candidate env that exists and is not <conda base>/envs/<name>
+found_elsewhere() {
+  local c seen=""
+  while IFS= read -r c; do
+    [ -n "$c" ] && [ -d "$c/conda-meta" ] || continue
+    c="$(cd "$c" && pwd -P)" || continue
+    if ! [ "$c" -ef "$(env_prefix "$1")" ]; then
+      case "$seen" in *"|$c|"*) continue ;; esac
+      seen="$seen|$c|"; echo "$c"
+    fi
+  done <<EOF_C
+$(env_candidates "$1")
+EOF_C
+}
 
 # ---------------------------------------------------------------------------
 if [ "$MODE" = check ]; then
   say "dam suite on $P"
   if [ -n "$CONDA_EXE" ]; then CONDA_BASE="$("$CONDA_EXE" info --base)"; echo "  conda: $CONDA_EXE"
-    for e in ndqgis ndanuga ndresearch ndpierre ndbuild; do
-      echo "    env $e: $( [ -d "$CONDA_BASE/envs/$e/conda-meta" ] && echo present || echo missing)"; done
+    for e in ndqgis ndanuga ndvor ndheim ndbuild; do
+      if [ -L "$CONDA_BASE/envs/$e" ] && [ -d "$CONDA_BASE/envs/$e/conda-meta" ]; then st="present (link to $(readlink "$CONDA_BASE/envs/$e"))"
+      elif [ -d "$CONDA_BASE/envs/$e/conda-meta" ]; then st=present; else st=missing; fi
+      echo "    env $e: $st"
+      found_elsewhere "$e" | while IFS= read -r o; do echo "      another $e at $o"; done
+    done
   else echo "  conda: not found"; fi
   L="$PREFIX/bin/lisflood"
   echo "  LISFLOOD-FP: $L $( [ -x "$L" ] && { grep -aq inittm_depth "$L" && echo 'OK (Runner patch present)' || echo UNPATCHED; } || echo missing)"
@@ -109,14 +175,22 @@ fi
 
 mkdir -p "$PREFIX/logs"
 LOG="$PREFIX/logs/install_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "$LOG") 2>&1
+# Mirror everything to the log. Process substitution needs /dev/fd, which a few minimal
+# containers do not mount; there the redirect itself kills the shell ("/dev/fd/63: No such
+# file or directory"), so probe first and keep going without the log rather than dying for it.
+if [ -d /dev/fd ]; then
+  exec > >(tee -a "$LOG") 2>&1
+else
+  LOG="(not written: this system has no /dev/fd)"
+  warn "no /dev/fd here, so the install log cannot be written; the output below is all on screen"
+fi
 say "$STAMP on $P ($OS $ARCH).  Log: $LOG"
 
 # ---------------------------------------------------------------------------
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
 ROLES="ndqgis ndanuga"
-[ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ] && ROLES="$ROLES ndresearch"
+[ $((DO_HEIM + DO_VOR)) -gt 0 ] && ROLES="$ROLES ndvor"
 # a locked package's local copy: offline/conda/<P>/<channel subdir>/<file> (noarch kept apart,
 # so conda reads each package's own subdir from the file:// URL)
 pkg_path() { local u="${1%/*}"; echo "$CONDA_PKGS/${u##*/}/${1##*/}"; }
@@ -140,7 +214,7 @@ if [ "$MISS" -gt 0 ]; then
     die "$MISS file(s) are missing from offline/. Unzip offline-$P.zip in this folder, or run  bash download-all.sh --platform $P  first (on this or any networked machine), then run this again."
   fi
   say "$MISS file(s) not in offline/ yet: fetching them (pinned, sha256-checked)."
-  LIBFLAG=""; [ "$DO_RESEARCH" = 1 ] || LIBFLAG="--no-library"
+  LIBFLAG=""; [ "$DO_VOR" = 1 ] || LIBFLAG="--no-library"
   # models are pulled later by the AI installer itself if offline/models is empty
   bash "$HERE/download-all.sh" --platform "$P" --no-models $LIBFLAG || warn "download-all reported problems (continuing; checked below)"
 else
@@ -174,7 +248,34 @@ MAMBA="$CONDA_BASE/bin/mamba"
 make_env() {
   local name="$1" role="$2" lock="$HERE/locks/$P/$2.lock" spec url want md5 f enc
   if [ -d "$(env_prefix "$name")/conda-meta" ]; then ok "conda env $name already exists (kept)"; return 0; fi
+  if [ -L "$(env_prefix "$name")" ]; then warn "removing the broken link $(env_prefix "$name")"; rm -f "$(env_prefix "$name")"; fi
   [ -f "$lock" ] || { warn "no lock for $role on $P"; return 1; }
+  # search first: an env of this name elsewhere that has every locked package is used as it is,
+  # through a link <conda base>/envs/<name> -> that env (nothing is moved, copied or deleted).
+  # One that differs from the lock is left alone and a fresh one is built. DAMSUITE_REUSE_ENVS=0: never reuse.
+  if [ -e "$(env_prefix "$name")" ]; then
+    warn "$(env_prefix "$name") exists but is not a conda env (an interrupted build?): move it aside, then run this again"
+    return 1
+  fi
+  if [ "${DAMSUITE_REUSE_ENVS:-1}" != 0 ]; then
+    local other m
+    while IFS= read -r other; do
+      [ -n "$other" ] || continue
+      m="$(lock_match "$other" "$lock")"
+      if [ "${m% *}" = "${m#* }" ] && ! env_works "$other" "$role"; then
+        warn "found an env $name at $other with every locked package, but its check fails (files changed since?): left as it is, not used"
+      elif [ "${m% *}" = "${m#* }" ]; then
+        mkdir -p "$CONDA_BASE/envs"
+        ln -s "$other" "$(env_prefix "$name")" || { warn "could not link $(env_prefix "$name") -> $other"; continue; }
+        ok "conda env $name: using the one at $other (all ${m#* } locked packages; linked from $(env_prefix "$name"))"
+        return 0
+      else
+        warn "found an env $name at $other, but it is not the locked build (${m% *} of ${m#* } packages): left as it is, not used"
+      fi
+    done <<EOF_O
+$(found_elsewhere "$name")
+EOF_O
+  fi
   spec="$(mktemp)"; echo "@EXPLICIT" > "$spec"
   while read -r url want md5; do case "$url" in ''|\#*) continue ;; esac
     f="$(pkg_path "$url")"
@@ -183,7 +284,7 @@ make_env() {
     echo "file://$enc#$md5" >> "$spec"
   done < "$lock"
   say "Creating conda env $name from $(($(wc -l < "$spec") - 1)) local packages (no download)"
-  "$MAMBA" create -y --offline -n "$name" --file "$spec" || { rm -f "$spec"; return 1; }
+  "$MAMBA" create -y --offline -p "$(env_prefix "$name")" --file "$spec" || { rm -f "$spec"; return 1; }
   rm -f "$spec"
 }
 
@@ -193,10 +294,12 @@ make_env ndanuga ndanuga || warn "the ANUGA env could not be built: the ANUGA ti
 QP="$(env_prefix ndqgis)"
 qpy() { env PYTHONPATH="$QP/share/qgis/python:$QP/share/qgis/python/plugins" QT_PLUGIN_PATH="$QP/plugins" \
             QGIS_PREFIX_PATH="$QP" PROJ_DATA="$QP/share/proj" GDAL_DATA="$QP/share/gdal" QT_QPA_PLATFORM=offscreen \
-            "$QP/bin/python" "$@"; }
-qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis (see $LOG)"
+            "$MAMBA" run -p "$QP" python "$@"; }
+# `mamba run` activates the env. Calling $QP/bin/python directly works on Linux (RPATH $ORIGIN)
+# but fails on macOS, where dyld only resolves the QGIS dylibs with the env activated.
+qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis$( [ -L "$QP" ] && echo " (a link to $(readlink "$QP")); remove the link with: rm \"$QP\" and run this again to build a fresh one") (see $LOG)"
 ANUGA_PY="$(env_prefix ndanuga)/bin/python"
-"$ANUGA_PY" -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
+"$MAMBA" run -p "$(env_prefix ndanuga)" python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
 
 # ---------------------------------------------------------------------------
 # 3. plugins (zips in plugins/; Core first so every dependency is in place)
@@ -205,7 +308,11 @@ install_set() {  # install_set <profile dir> <zip folder> <plugin names in order
   local dest="$1/python/plugins" zdir="$2" p z; shift 2
   mkdir -p "$dest"
   for p in "$@"; do
-    z="$(ls "$zdir/${p}_"[0-9]*.zip 2>/dev/null | head -1)"
+    # Without `|| true` a missing zip exits `ls` non-zero, pipefail carries that to the
+    # assignment, and errexit kills install_set — and, because the function's death
+    # propagates to its caller, the whole installer. The plugin list would just stop
+    # partway through with no error, and the warning below would never print.
+    z="$(ls "$zdir/${p}_"[0-9]*.zip 2>/dev/null | head -1 || true)"
     [ -n "$z" ] || { warn "no zip for $p in $zdir"; continue; }
     rm -rf "${dest:?}/$p"; unzip -q -o "$z" -d "$dest"
     printf '    %-22s %s\n' "$p" "$(ver_of "$dest/$p")"
@@ -237,20 +344,24 @@ else
     [ -f "$PATCHER" ] || PATCHER="$HERE/lisflood/build/patch_lisflood.py"
     if [ -f "$SRCZIP" ] && make_env ndbuild ndbuild; then
       say "Building LISFLOOD-FP 8.3 with the Runner patch (conda compilers)"
-      BARGS="--conda $CONDA_EXE --env ndbuild --out $PREFIX --zip $SRCZIP --python $QP/bin/python --patcher $PATCHER"
-      # shellcheck disable=SC2086
-      BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" $BARGS | tail -n 1)" || BUILT=""
+      # An array, not a string: on macOS the patcher sits under
+      # "~/Library/Application Support/QGIS/...", and a string split that path at the space
+      # ("build_lisflood.sh: unknown option Support/QGIS/..."), so the build never started.
+      BARGS=(--conda "$CONDA_EXE" --env ndbuild --out "$PREFIX" --zip "$SRCZIP" --python "$QP/bin/python" --patcher "$PATCHER")
+      BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" | tail -n 1)" || BUILT=""
       if [ -z "$BUILT" ] && [ "$OS" = Darwin ]; then
         warn "conda clang failed; retrying with Apple's clang (Command Line Tools)"
-        # shellcheck disable=SC2086
-        BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" $BARGS --apple-clang | tail -n 1)" || BUILT=""
+        BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" --apple-clang | tail -n 1)" || BUILT=""
       fi
       if [ -n "$BUILT" ] && [ -x "$BUILT" ]; then
         cp "$BUILT" "$PREFIX/bin/lisflood"; chmod +x "$PREFIX/bin/lisflood"
+        # the Metal kernels (built only when Apple's Metal compiler works) are loaded from the
+        # folder of the executable
+        if [ -f "$(dirname "$BUILT")/metal_fv1_kernels.metallib" ]; then cp "$(dirname "$BUILT")/metal_fv1_kernels.metallib" "$PREFIX/bin/"; fi
         lf_ok "$PREFIX/bin/lisflood" && LISFLOOD_EXE="$PREFIX/bin/lisflood"
       fi
     fi
-    [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (macOS: install Apple's Command Line Tools with  xcode-select --install  and re-run). The Runners use their built-in engine meanwhile."
+    [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (the build's own messages are above; macOS needs Apple's Command Line Tools:  xcode-select --install ). The Runners use their built-in engine meanwhile."
   fi
   [ -n "$LISFLOOD_EXE" ] && ok "LISFLOOD-FP: $LISFLOOD_EXE ($("$LISFLOOD_EXE" -version 2>&1 | grep -o 'LISFLOOD-FP [0-9.]*' | head -1), Runner patch present)"
 fi
@@ -262,7 +373,13 @@ RUN="$PREFIX/absaraka-run"
 if [ -d "$HERE/absaraka" ]; then
   mkdir -p "$RUN"
   (cd "$HERE/absaraka" && find . -type d -exec mkdir -p "$RUN/{}" \; )
-  (cd "$HERE/absaraka" && find . -type f | while IFS= read -r f; do [ -e "$RUN/$f" ] || cp -p "$f" "$RUN/$f"; done)
+  # The trailing `|| warn` matters: a failing `cp` is the loop body's last command, so its
+  # status becomes the loop's and then the pipeline's, and errexit would end the install
+  # with nothing on screen. Process substitution is deliberately avoided here — this script
+  # already has to cope with hosts that have no /dev/fd (see the logging setup above).
+  (cd "$HERE/absaraka" && find . -type f | while IFS= read -r f; do
+     [ -e "$RUN/$f" ] || cp -p "$f" "$RUN/$f" || warn "could not copy absaraka/$f"
+   done)
   mkdir -p "$RUN/work"
 fi
 
@@ -308,46 +425,165 @@ mk_launcher() {  # mk_launcher <file> <profile>
   chmod +x "$1"
   if [ "$OS" = Darwin ]; then cp "$1" "${1%.sh}.command"; chmod +x "${1%.sh}.command"; fi
 }
+# mk_pack_builder <file>: the DamSafety offline pack from Terminal, without opening QGIS. It runs
+# DamSafety_Data.pack_build from the profile's plugins folder (DamSafety_Core must be importable),
+# resumes a stopped build, and then makes the folder the suite data folder (~/.ndsuite/config.json,
+# which the plugins read when the profile has no data folder of its own). Usage:
+#   build-offline-pack.sh [folder, default ~/ND_Suite_Data] [more pack_build options, e.g. --list]
+# The folder may also be given as --out; a relative one is taken from where the script was run
+# (it is made absolute before the cd). --list, --verify and --help never change the data folder.
+mk_pack_builder() {
+  { echo '#!/bin/bash'
+    echo "# DamSafety offline pack from Terminal (conda env ndqgis, profile '$DS_PROFILE'). Written by $STAMP."
+    echo '# usage: build-offline-pack.sh [folder (default ~/ND_Suite_Data)] [pack_build options]'
+    printf '. %q || exit 1\n' "$CONDA_BASE/etc/profile.d/conda.sh"
+    printf 'conda activate %q || exit 1\n' "$QP"
+    echo 'OUT="$HOME/ND_Suite_Data"; ARGS=()'
+    echo 'case "${1:-}" in ""|-*) ;; *) OUT="$1"; shift ;; esac'
+    echo 'while [ $# -gt 0 ]; do case "$1" in'
+    echo '  --out) [ $# -gt 1 ] && OUT="$2"; shift; [ $# -gt 0 ] && shift ;;'
+    echo '  --out=*) OUT="${1#--out=}"; shift ;;'
+    echo '  *) ARGS+=("$1"); shift ;;'
+    echo 'esac; done'
+    echo 'case "$OUT" in "~") OUT="$HOME" ;; "~/"*) OUT="$HOME/${OUT#"~/"}" ;; /*) ;; *) OUT="$PWD/$OUT" ;; esac'
+    printf 'cd %q || exit 1\n' "$DS_DIR/python/plugins"
+    echo 'unset PYTHONPATH; export PYTHONUNBUFFERED=1'
+    printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+    echo 'KEEP_AWAKE=""; command -v caffeinate >/dev/null 2>&1 && KEEP_AWAKE="caffeinate -i"'
+    echo 'echo "Building the offline pack in $OUT (a stopped build picks up where it left off)"'
+    echo '$KEEP_AWAKE python -m DamSafety_Data.pack_build --out "$OUT" ${ARGS[@]+"${ARGS[@]}"} || exit 1'
+    echo 'case " ${ARGS[*]-} " in *" --list "*|*" --verify "*|*" -h "*|*" --help "*) exit 0 ;; esac'
+    echo 'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "$OUT"'
+  } > "$1"
+  chmod +x "$1"
+  if [ "$OS" = Darwin ]; then cp "$1" "${1%.sh}.command"; chmod +x "${1%.sh}.command"; fi
+}
 say "Settings and launchers"
 if [ "$DO_DS" = 1 ]; then
   # shellcheck disable=SC2086
-  write_settings "$DS_DIR/QGIS/QGIS3.ini" damsafety $DS_PLUGINS; mk_launcher "$PREFIX/open-damsafety-qgis.sh" "$DS_PROFILE"; fi
+  write_settings "$DS_DIR/$QINI" damsafety $DS_PLUGINS; mk_launcher "$PREFIX/open-damsafety-qgis.sh" "$DS_PROFILE"
+  mk_pack_builder "$PREFIX/build-offline-pack.sh"; fi
 if [ "$DO_DI" = 1 ]; then
   # shellcheck disable=SC2086
-  write_settings "$DI_DIR/QGIS/QGIS3.ini" damit $DI_PLUGINS; mk_launcher "$PREFIX/open-damit-qgis.sh" "$DI_PROFILE"; fi
+  write_settings "$DI_DIR/$QINI" damit $DI_PLUGINS; mk_launcher "$PREFIX/open-damit-qgis.sh" "$DI_PROFILE"; fi
+
+# DamIT Crest desktop. It runs on the ndqgis env: that env already has pyproj (Crest's only
+# third-party import) and puts qgis_process on PATH, which Crest's Report step calls. The launcher
+# activates the env with conda.sh rather than `mamba run`, so dyld resolves pyproj's libraries on
+# macOS and Crest's own output (the URL it prints) is not captured. pywebview is not installed, so
+# the desk opens in the browser, which is Crest's documented fallback.
+#
+# The tree layout matters: damit_desktop/nid_rule.py loads DamIT Catalog's NID-ID rule from
+# <parents[3]>/damit_catalog/handoff.py and refuses to start without it, so Crest has to keep its
+# damit_crest/desktop/ nesting and get a damit_catalog/handoff.py beside it. That one file is
+# extracted from the Catalog plugin zip we just installed, so the rule always matches the plugin.
+# `|| true` inside the substitution: with no match the glob stays literal, `ls` exits 2,
+# and pipefail would make this assignment kill the whole install — silently, because the
+# stderr is discarded. The "no DamIT Catalog zip" warning below could never be reached.
+# qgis_process_profile <profile> <profile dir>: the line a Crest launcher needs so the desk's
+# Report step finds that profile's plugins. qgis_process (3.34) has no --profile option and always
+# loads the profile named "default" under QGIS_CUSTOM_CONFIG_PATH (or the usual QGIS3 folder), so
+# without this it saw neither "damsafety" nor "damit". The launcher points QGIS_CUSTOM_CONFIG_PATH
+# at $PREFIX/qgis-process/<profile>, whose profiles/default is a link to the real profile. Only
+# Crest's own qgis_process calls see it; QGIS opened with the launchers is unchanged.
+qgis_process_profile() {
+  local root="$PREFIX/qgis-process/$1"
+  [ -d "$2" ] || return 0
+  local link="$root/profiles/default"
+  mkdir -p "$root/profiles"
+  # A real folder there is a profile qgis_process made itself when the link was missing: keep it.
+  if [ -e "$link" ] && [ ! -L "$link" ]; then mv "$link" "$link.bak-$(date +%Y%m%d%H%M%S)"; fi
+  rm -f "$link"; ln -s "$2" "$link"
+  if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$2" ]; then
+    warn "Could not link $link to $2: Crest's Report step will not see the $1 plugins."
+    printf '# QGIS_CUSTOM_CONFIG_PATH not set: the link %q was not made\n' "$link"; return 0
+  fi
+  printf 'export QGIS_CUSTOM_CONFIG_PATH=%q\n' "$root"
+}
+CREST_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1 || true)"
+if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
+  if [ -z "$CREST_ZIP" ]; then
+    warn "no DamIT Catalog zip: the Crest desk needs its NID-ID rule, so Crest was skipped"
+  else
+    say "DamIT Crest desk -> $PREFIX/damit_crest"
+    mkdir -p "$PREFIX/damit_crest" "$PREFIX/damit_catalog"
+    cp -R "$HERE/damit_crest/." "$PREFIX/damit_crest/"
+    if unzip -p "$CREST_ZIP" 'damit_catalog/handoff.py' > "$PREFIX/damit_catalog/handoff.py" 2>/dev/null \
+       && [ -s "$PREFIX/damit_catalog/handoff.py" ]; then
+      { echo '#!/bin/bash'
+        echo "# DamIT Crest desk (conda env ndqgis). Written by $STAMP."
+        printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
+        printf 'conda activate %q || exit 1\n' "$QP"
+        printf 'cd %q || exit 1\n' "$PREFIX/damit_crest/desktop"
+        printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+        qgis_process_profile "$DI_PROFILE" "$DI_DIR"
+        echo 'exec python run.py "$@"'; } > "$PREFIX/open-damit-crest.sh"
+      chmod +x "$PREFIX/open-damit-crest.sh"
+      if [ "$OS" = Darwin ]; then cp "$PREFIX/open-damit-crest.sh" "$PREFIX/open-damit-crest.command"
+        chmod +x "$PREFIX/open-damit-crest.command"; fi
+      ok "Crest desk (open: $PREFIX/open-damit-crest.sh)"
+    else
+      rm -f "$PREFIX/damit_catalog/handoff.py"
+      warn "could not read damit_catalog/handoff.py from $(basename "$CREST_ZIP"): Crest was skipped"
+    fi
+  fi
+fi
+
+# North Dakota Crest desk (nickdbendickson/crest, crest-desktop/). Same engine as DamIT Crest, with
+# the ND inventory (DWR dams + NID + other structures), ND VERTCON grid and the DamSafety hand-off
+# (nddam:preflight / nddam:runchain / ndbreach:rundam in profile "damsafety"). It is self-contained
+# (no Catalog rule) and only needs the standard library, so it runs on the ndqgis env like DamIT
+# Crest. The two desks use different ports (47231 and 47241), so both can be open at once.
+if [ "$DO_CREST" = 1 ] && [ -f "$HERE/nd_crest/crest-desktop/run.py" ]; then
+  say "North Dakota Crest desk -> $PREFIX/nd_crest"
+  rm -rf "$PREFIX/nd_crest"; mkdir -p "$PREFIX/nd_crest"
+  cp -R "$HERE/nd_crest/." "$PREFIX/nd_crest/"
+  { echo '#!/bin/bash'
+    echo "# North Dakota Crest desk (conda env ndqgis). Written by $STAMP."
+    printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
+    printf 'conda activate %q || exit 1\n' "$QP"
+    printf 'cd %q || exit 1\n' "$PREFIX/nd_crest/crest-desktop"
+    printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+    qgis_process_profile "$DS_PROFILE" "$DS_DIR"
+    echo 'exec python run.py "$@"'; } > "$PREFIX/open-nd-crest.sh"
+  chmod +x "$PREFIX/open-nd-crest.sh"
+  if [ "$OS" = Darwin ]; then cp "$PREFIX/open-nd-crest.sh" "$PREFIX/open-nd-crest.command"
+    chmod +x "$PREFIX/open-nd-crest.command"; fi
+  ok "North Dakota Crest desk (open: $PREFIX/open-nd-crest.sh)"
+fi
 
 # ---------------------------------------------------------------------------
 # 6. the local AIs (damit_ai's own installers; envs + Ollama + models from offline/)
 # ---------------------------------------------------------------------------
 AI_OK=""
-if [ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ]; then
-  say "Local AIs (Pierre $( [ "$DO_PIERRE" = 1 ] && echo on || echo off), dam-research $( [ "$DO_RESEARCH" = 1 ] && echo on || echo off))"
+if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then
+  say "Local AIs (Heim $( [ "$DO_HEIM" = 1 ] && echo on || echo off), vor $( [ "$DO_VOR" = 1 ] && echo on || echo off))"
   # both AIs reuse these envs when they exist, so they come from the locked local packages
-  [ "$DO_RESEARCH" = 1 ] && { make_env ndresearch ndresearch || warn "ndresearch env not built from offline/ (the AI installer will try conda-forge)"; }
-  [ "$DO_PIERRE" = 1 ] && { make_env ndpierre ndresearch || warn "ndpierre env not built from offline/ (the AI installer will try conda-forge)"; }
+  [ "$DO_VOR" = 1 ] && { make_env ndvor ndvor || warn "ndvor env not built from offline/ (the AI installer will try conda-forge)"; }
+  [ "$DO_HEIM" = 1 ] && { make_env ndheim ndvor || warn "ndheim env not built from offline/ (the AI installer will try conda-forge)"; }
   if [ -d "$HERE/damit_ai/offline/models/manifests" ]; then
     mkdir -p "$HOME/local-ai/models"
     cp -R -n "$HERE/damit_ai/offline/models/." "$HOME/local-ai/models/" 2>/dev/null || true
     ok "models copied to ~/local-ai/models (no pull needed)"
   fi
-  if [ "$DO_RESEARCH" = 1 ] && [ -d "$HERE/damit_ai/offline/DamResearch/library" ]; then
-    mkdir -p "$HOME/DamResearch/library"
-    cp -R -n "$HERE/damit_ai/offline/DamResearch/library/." "$HOME/DamResearch/library/" 2>/dev/null || true
-    ok "reference library copied to ~/DamResearch/library"
+  if [ "$DO_VOR" = 1 ] && [ -d "$HERE/damit_ai/offline/Vor/library" ]; then
+    mkdir -p "$HOME/Vor/library"
+    cp -R -n "$HERE/damit_ai/offline/Vor/library/." "$HOME/Vor/library/" 2>/dev/null || true
+    ok "reference library copied to ~/Vor/library"
   fi
   export CONDA_EXE
   if [ "$OS" = Linux ]; then
-    AIF=""; [ "$DO_PIERRE" = 1 ] || AIF="--no-pierre"; [ "$DO_RESEARCH" = 1 ] || AIF="--no-research"
+    AIF=""; [ "$DO_HEIM" = 1 ] || AIF="--no-heim"; [ "$DO_VOR" = 1 ] || AIF="--no-vor"
     # shellcheck disable=SC2086
     if PATH="$CONDA_BASE/bin:$PATH" bash "$HERE/damit_ai/install-local-ai-linux.sh" $AIF; then AI_OK=yes
     else warn "local AI setup failed (the plugin sets are installed anyway); re-run: bash damit_ai/install-local-ai-linux.sh"; fi
   else
     command -v zsh >/dev/null 2>&1 || die "zsh is needed for the macOS AI installers"
     AI_OK=yes
-    [ "$DO_PIERRE" = 1 ] && { PATH="$CONDA_BASE/bin:$PATH" zsh "$HERE/damit_ai/pierre/setup-local-pierre.sh" \
-      || { AI_OK=""; warn "Pierre setup failed; re-run: zsh damit_ai/pierre/setup-local-pierre.sh"; }; }
-    [ "$DO_RESEARCH" = 1 ] && { PATH="$CONDA_BASE/bin:$PATH" zsh "$HERE/damit_ai/research/setup-dam-research.zsh" \
-      || { AI_OK=""; warn "dam-research setup failed; re-run: zsh damit_ai/research/setup-dam-research.zsh"; }; }
+    [ "$DO_HEIM" = 1 ] && { PATH="$CONDA_BASE/bin:$PATH" zsh "$HERE/damit_ai/heim/setup-local-heim.sh" \
+      || { AI_OK=""; warn "Heim setup failed; re-run: zsh damit_ai/heim/setup-local-heim.sh"; }; }
+    [ "$DO_VOR" = 1 ] && { PATH="$CONDA_BASE/bin:$PATH" zsh "$HERE/damit_ai/vor/setup-vor.zsh" \
+      || { AI_OK=""; warn "vor setup failed; re-run: zsh damit_ai/vor/setup-vor.zsh"; }; }
   fi
 fi
 
@@ -356,7 +592,10 @@ fi
 # ---------------------------------------------------------------------------
 say "Self-check"
 FAIL=0
-QV="$(qpy -c 'import qgis.core as q, numpy; print(q.Qgis.QGIS_VERSION, "| numpy", numpy.__version__)' 2>/dev/null | tail -n 1)"
+# `|| true`: if that python exits non-zero the discarded stderr plus pipefail would end
+# the install right here, with every plugin in place but no INSTALLED.txt, no "Done" and
+# nothing on screen. The case below is what should report it.
+QV="$(qpy -c 'import qgis.core as q, numpy; print(q.Qgis.QGIS_VERSION, "| numpy", numpy.__version__)' 2>/dev/null | tail -n 1 || true)"
 case "$QV" in 3.34.*) ok "QGIS $QV" ;; *) warn "QGIS 3.34 does not import"; FAIL=1 ;; esac
 [ -n "$ANUGA_PY" ] && ok "ANUGA $("$ANUGA_PY" -c 'import anuga,gmsh;print(anuga.__version__,"| gmsh",gmsh.__version__)' 2>/dev/null | tail -n 1)"
 [ -n "$ANUGA_PY" ] || { warn "no ANUGA tier"; FAIL=1; }
@@ -367,13 +606,16 @@ chk() { local dir="$1" p; shift; for p in "$@"; do
 [ "$DO_DS" = 1 ] && chk "$DS_DIR" $DS_PLUGINS
 # shellcheck disable=SC2086
 [ "$DO_DI" = 1 ] && chk "$DI_DIR" $DI_PLUGINS
-if [ $((DO_PIERRE + DO_RESEARCH)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs installed" || FAIL=1; fi
+if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs installed" || FAIL=1; fi
 
 { echo "Installed by $STAMP on $(date)"
-  [ -f "$HERE/plugins/VERSIONS.md" ] && grep -E '^Source|^- ' "$HERE/plugins/VERSIONS.md" | head -4
+  if [ -f "$HERE/plugins/VERSIONS.md" ]; then grep -E '^Source|^- ' "$HERE/plugins/VERSIONS.md" | head -4 || true; fi
   echo "  platform $P | QGIS ${QV:-?} | ANUGA python ${ANUGA_PY:-none} | LISFLOOD-FP ${LISFLOOD_EXE:-built-in engine}"
   [ "$DO_DS" = 1 ] && echo "  DamSafety -> profile $DS_PROFILE  (open: $PREFIX/open-damsafety-qgis.sh)"
   [ "$DO_DI" = 1 ] && echo "  DamIT     -> profile $DI_PROFILE  (open: $PREFIX/open-damit-qgis.sh)"
+  [ -f "$PREFIX/open-damit-crest.sh" ] && echo "  DamIT Crest desk              (open: $PREFIX/open-damit-crest.sh)"
+  [ -f "$PREFIX/open-nd-crest.sh" ] && echo "  North Dakota Crest desk       (open: $PREFIX/open-nd-crest.sh)"
+  [ -f "$PREFIX/build-offline-pack.sh" ] && echo "  DamSafety offline pack        (build: $PREFIX/build-offline-pack.sh)"
   true; } > "$PREFIX/INSTALLED.txt"
 
 say "Done$( [ "$FAIL" = 0 ] && echo ': all checks passed.' || echo ", with warnings (see above and $LOG).")"

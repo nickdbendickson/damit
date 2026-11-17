@@ -28,6 +28,7 @@ missing or broken matplotlib skips the PNG with a clear note (the CSV is still w
 """
 import base64
 import csv
+import math
 import os
 
 from . import core, habitable_review, receptors as R, tm11
@@ -263,6 +264,93 @@ def zone_polygons(charts, cid):
     return {"low": low, "judgment": jud, "high": high}
 
 
+# Drawing only (0.4.1, Nick 2026-11-16): the chart lines looked bumpy. The tables are hand
+# digitizations (houses every 0.5 ft/s, mobile homes every 0.25 ft/s), and straight lines between
+# their points show every small digitizing step as a kink. The PNG now DRAWS a smoothed line through
+# the same table (Gaussian-weighted local-linear fit, DRAW_SMOOTH_WIDTH x the table spacing; a line
+# that reaches the velocity axis stays on it). Zones and counts still come from tm11 on the table.
+# Same method as DamSafety Core 1.5.2 damsuite.tm11_curves.smooth_points.
+DRAW_SMOOTH_WIDTH = 1.5
+DRAW_POINTS = 241
+
+
+def _local_linear(xs, ys, x, h):
+    sw = sx = sy = sxx = sxy = 0.0
+    for xi, yi in zip(xs, ys):
+        u = (xi - x) / h
+        if abs(u) > 4.0:
+            continue
+        w = math.exp(-0.5 * u * u)
+        dx = xi - x
+        sw += w
+        sx += w * dx
+        sy += w * yi
+        sxx += w * dx * dx
+        sxy += w * dx * yi
+    den = sw * sxx - sx * sx
+    return (sxx * sy - sx * sxy) / den if den > 1e-12 else sy / sw
+
+
+def smooth_points(v, d, d_max=None, n=DRAW_POINTS, width=DRAW_SMOOTH_WIDTH):
+    """[(velocity, depth), ...] n points of a smoothed line through the table points (v, d), for drawing only."""
+    v = [float(x) for x in v]
+    d = [float(x) for x in d]
+    if len(v) < 3:
+        return list(zip(v, d))
+    gaps = sorted(b - a for a, b in zip(v, v[1:]))
+    h = max(1e-9, width * gaps[len(gaps) // 2])
+    iz = len(d)
+    while iz > 1 and d[iz - 1] <= 0.0 and d[iz - 2] <= 0.0:
+        iz -= 1
+    vs, ds = v[:iz], d[:iz]
+    tail = iz < len(d)
+    out = []
+    for k in range(n):
+        x = v[0] + (v[-1] - v[0]) * k / (n - 1)
+        y = 0.0 if (tail and x >= vs[-1]) else _local_linear(vs, ds, x, h)
+        y = max(0.0, y)
+        if d_max is not None:
+            y = min(float(d_max), y)
+        out.append((x, y))
+    return out
+
+
+def drawn_polygons(charts, cid):
+    """{"low", "judgment", "high"} polygons the PNG DRAWS: the smoothed lines through the chart's table."""
+    c = charts.charts[cid]
+    v, dm = c["v_fts"], c["d_max_ft"]
+    lo = smooth_points(v, c["low_ft"], dm)
+    hi = smooth_points(v, c["high_ft"], dm)
+    return {"low": [(x, 0.0) for x, _d in lo] + lo[::-1], "judgment": lo + hi[::-1],
+            "high": hi + [(float(v[-1]), dm), (float(v[0]), dm)]}
+
+
+def drawn_offset_ft(charts, cid):
+    """The largest depth (ft) between the drawn (smoothed) lines and the table the zones are decided on."""
+    c = charts.charts[cid]
+    worst = 0.0
+    for key in ("low_ft", "high_ft"):
+        for x, d in smooth_points(c["v_fts"], c[key], c["d_max_ft"]):
+            worst = max(worst, abs(d - _table_at(c["v_fts"], c[key], x)))
+    return worst
+
+
+def _table_at(xs, ys, x):
+    if x <= xs[0]:
+        return float(ys[0])
+    for i in range(1, len(xs)):
+        if x <= xs[i]:
+            t = (x - xs[i - 1]) / (xs[i] - xs[i - 1])
+            return ys[i - 1] + t * (ys[i] - ys[i - 1])
+    return float(ys[-1])
+
+
+def smoothing_note(charts, cids):
+    worst = max([drawn_offset_ft(charts, c) for c in cids] or [0.0])
+    return ("Zone lines are drawn smoothed through the digitized TM-11 table, within {:.2f} ft of the table the "
+            "zones are decided on".format(max(0.01, worst)))
+
+
 # ------------------------------------------------------------------ csv --
 def write_csv(points, path, columns=CSV_COLUMNS, key=None):
     with open(path, "w", newline="", encoding="utf-8") as fh:
@@ -312,7 +400,7 @@ def draw(points, meta, charts, path, dpi=130):
         for ax, (cid, zoom, pts) in zip(axs, panels):
             ch = charts.charts[cid]
             vm, dm = ch["v_max_fts"], ch["d_max_ft"]
-            poly = zone_polygons(charts, cid)
+            poly = drawn_polygons(charts, cid)
             ax.add_patch(Polygon([(0, 0), (vm, 0), (vm, dm), (0, dm)], fc=COLORS["high"], ec="none"))
             ax.add_patch(Polygon(poly["judgment"], fc=COLORS["judgment"], ec="#b58400", lw=0.8))
             ax.add_patch(Polygon(poly["low"], fc=COLORS["low"], ec="#4d7a2b", lw=0.8))
@@ -357,6 +445,7 @@ def draw(points, meta, charts, path, dpi=130):
                           label="Reviewed habitable, not 911 ({})".format(c["n_reviewed"])),
                    Line2D([], [], marker="^", ls="", mfc="white", mec="k", label="Trace depth (0.00 ft)")]
         fig.legend(handles=handles, loc="lower center", ncol=6, frameon=False, fontsize=8, bbox_to_anchor=(0.5, 0.0))
+        third += ". " + smoothing_note(charts, sorted({cid for cid, _z, _p in panels}))
         fig.text(0.5, 0.075, third, ha="center", fontsize=8, color="#333")
         note = unverified_text(meta.get("unverified"))
         if note:

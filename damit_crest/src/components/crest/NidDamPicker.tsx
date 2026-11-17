@@ -29,6 +29,8 @@ import {
 import { EXAMPLE_STATE, isNidState, loadNidState, NID_STATES, rememberedState, rememberState, stateName } from "@/lib/crest/nid-state";
 import { deskBundles, staleBundleBanner } from "@/lib/crest/data-provenance";
 import { blankDam } from "@/lib/crest/samples";
+import { applyDefaults } from "@/lib/crest/settings";
+import { sharedNow } from "@/lib/crest/settings-store";
 import { useDesk } from "@/lib/crest/store";
 import type { DamRecord } from "@/lib/crest/types";
 
@@ -282,7 +284,7 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
               className="h-10 rounded-sm border border-line bg-paper px-3"
               onClick={() => {
                 const patch = newRecordPatch(picked, data, dam);
-                const base = blankDam();
+                const base = applyDefaults(blankDam(), sharedNow().values);
                 addDam({ ...base, ...patch, id: `nid-${picked.nid.toLowerCase()}-${base.id.slice(5)}` });
                 setPicked(null);
               }}

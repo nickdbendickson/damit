@@ -845,7 +845,17 @@ def write_run_rasters(folder, grid, writer, arrays):
     hours; NaN = dry), on the base run's grid, with the study's raster writer."""
     os.makedirs(folder, exist_ok=True)
     out = {}
+    # M21 follow-up: a build that wrote no .maxVc leaves this run's velocity all-NaN; omit its
+    # velocity raster (drop any stale copy) so a Hazard classification of the run folder refuses
+    # rather than using velocity 0 off the v=0 ACER TM-11 curves.
+    no_velocity = not np.isfinite(np.asarray(arrays.get("velocity"))).any()
     for kind, p in _run_raster_paths(folder).items():
+        if kind == "velocity" and no_velocity:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+            continue
         a = np.asarray(arrays[kind], dtype=np.float64)
         writer(grid.like(workflow._to_us(kind, a), np.nan), p)
         out[kind] = p
@@ -996,6 +1006,7 @@ def run_probabilistic(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_x
     out.seed, out.n = int(seed), n
 
     # --- the base run: its plan (domain, inflow point, duration) is every run's -----------
+    workflow.require_breach(st, "The probabilistic analysis")          # 3.19.0
     base_st = copy.copy(st)
     base_st.grid_refine = False          # 3.15.0: every run of this tool keeps its own cell
     base_st.keep_arrays = False
@@ -1205,6 +1216,10 @@ def run_probabilistic(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_x
     tags = ["run_{:03d}".format(r["run"]) for r in ok_rows]
     stacks = {k: [np.load(_npy(out.work_folder, t, k), mmap_mode="r") for t in tags]
               for k in KINDS}
+    # M21 follow-up: if no finished run produced any velocity (every sample's velocity all-NaN -
+    # a build with no .maxVc, or all no-breach), omit the ensemble velocity percentile product so a
+    # Hazard classification of it refuses rather than reading the zeros the percentile would give.
+    ens_no_velocity = not any(np.isfinite(np.asarray(s)).any() for s in stacks["velocity"])
     stats = blockwise_stats(stacks["depth"], stacks["velocity"], stacks["arrival"], shape,
                             [t * FT for t in thresholds_ft])
     # per-run receptor counts from the stored arrays (so resumed runs count the same way)
@@ -1239,8 +1254,14 @@ def run_probabilistic(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_x
         a = stats["depth"][q]
         _put(out, writer, grid, names[("depth", q)], np.where(a > 1e-4, a / FT, np.nan))
     v, dp = stats["velocity"], stats["depth"][DEPTH_Q[-1]]
-    _put(out, writer, grid, names[("velocity", VELOCITY_Q)],
-         np.where((v > 1e-6) | (dp > 1e-4), v / FT, np.nan))
+    if not ens_no_velocity:
+        _put(out, writer, grid, names[("velocity", VELOCITY_Q)],
+             np.where((v > 1e-6) | (dp > 1e-4), v / FT, np.nan))
+    else:                           # M21 follow-up: no run wrote velocity -> no zeros ensemble product
+        try:
+            os.remove(os.path.join(out.folder, names[("velocity", VELOCITY_Q)]))
+        except OSError:
+            pass
     _put(out, writer, grid, names[("arrival", ARRIVAL_Q)], stats["arrival"])
     write_outputs(out, st, dam, grid, stats, thresholds_ft, rep, plan, t_study)
     progress(100, "done")
@@ -1522,7 +1543,7 @@ def _write_report(out, st, dam, grid, thresholds_ft, plan, srows):
                "the last run is indicative.", ""]
         with open(out.convergence_svg, encoding="utf-8") as f:
             extra = f.read()
-    text = "\n".join(md)
+    text = workflow._display_units_md("\n".join(md))      # 3.20.2: in SI when the suite shows SI
     out.report_md = os.path.join(out.folder, "Probabilistic_Report.md")
     with open(out.report_md, "w", encoding="utf-8", newline="") as f:
         f.write(text)

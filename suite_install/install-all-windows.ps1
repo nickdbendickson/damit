@@ -12,21 +12,24 @@ Installs, for you only (no admin, no pip, no system packages):
     PMP)                                               -> QGIS profile "damit"
   * QGIS 3.34 (conda env ndqgis), ANUGA 4.1 + gmsh 4.15 (env ndanuga)
   * LISFLOOD-FP 8.3 with the Runner patch (lisflood\windows-x64\lisflood.exe, no DLLs)
-  * the local AIs from damit_ai: Pierre and dam-research (Ollama, env, models, library)
-  * a launcher per profile (in %USERPROFILE%\dam-suite and on the Desktop)
+  * the local AIs from damit_ai: Heim and vor (Ollama, env, models, library)
+  * the DamIT Crest desk (damit_crest) and the North Dakota Crest desk (nd_crest, from the crest
+    repo), both run on the ndqgis env; they open in the browser and can run side by side
+  * a launcher per profile (in %USERPROFILE%\dam-suite and on the Desktop), and
+    build-offline-pack.cmd (the DamSafety offline pack without opening QGIS)
 
 OFFLINE: if offline\ is filled (an offline set unzipped here, or download-all run on any
 networked machine), NOTHING is downloaded. Otherwise the missing files are fetched first
 by download-all-windows.ps1, each checked against the sha256 pinned in locks\.
 
-Options: -Offline (refuse to download)  -Check  -NoDamSafety  -NoDamIT  -NoAI  -NoPierre
-         -NoResearch  -SkipLisflood  -NoShortcuts
+Options: -Offline (refuse to download)  -Check  -NoDamSafety  -NoDamIT  -NoAI  -NoHeim
+         -NoVor  -SkipLisflood  -NoShortcuts
 It never touches your data folders, offline packs, or other QGIS profiles.
 =============================================================================
 #>
 param(
-  [switch]$Offline, [switch]$Check, [switch]$NoDamSafety, [switch]$NoDamIT, [switch]$NoAI,
-  [switch]$NoPierre, [switch]$NoResearch, [switch]$SkipLisflood, [switch]$NoShortcuts
+  [switch]$Offline, [switch]$Check, [switch]$NoDamSafety, [switch]$NoDamIT, [switch]$NoCrest,
+  [switch]$NoAI, [switch]$NoHeim, [switch]$NoVor, [switch]$SkipLisflood, [switch]$NoShortcuts
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -41,8 +44,8 @@ $DsProfile = 'damsafety'; $DiProfile = 'damit'
 $DsDir = Join-Path $Profiles $DsProfile; $DiDir = Join-Path $Profiles $DiProfile
 $DsPlugins = @('DamSafety_Core','DamSafety_Setup','DamSafety_Data','DamSafety_Screening','DamSafety_Runner','DamSafety_Hazard','DamSafety_HazardLite','DamSafety_PMP','DamSafety_Finder')
 $DiPlugins = @('damit_core','damit_catalog','damit_setup','damit_data','damit_screener','damit_runner','damit_hazard','damit_hazardlite','damit_pmp','damit_finder')
-$DoDs = -not $NoDamSafety; $DoDi = -not $NoDamIT
-$DoPierre = -not ($NoAI -or $NoPierre); $DoResearch = -not ($NoAI -or $NoResearch)
+$DoDs = -not $NoDamSafety; $DoDi = -not $NoDamIT; $DoCrest = -not $NoCrest
+$DoHeim = -not ($NoAI -or $NoHeim); $DoVor = -not ($NoAI -or $NoVor)
 $Threads = if ($env:DAMSUITE_THREADS) { $env:DAMSUITE_THREADS } else { [Environment]::ProcessorCount }
 $CondaPkgs = Join-Path $Here "offline\conda\$P"
 
@@ -75,7 +78,7 @@ $Conda = Find-Conda
 if ($Check) {
   Say "dam suite on $P"
   if ($Conda) { $base = (& $Conda info --base).Trim(); Write-Host "  conda: $Conda"
-    foreach ($e in 'ndqgis','ndanuga','ndresearch','ndpierre') { Write-Host ("    env {0}: {1}" -f $e, $(if (Test-Path "$base\envs\$e\conda-meta") {'present'} else {'missing'})) } }
+    foreach ($e in 'ndqgis','ndanuga','ndvor','ndheim') { Write-Host ("    env {0}: {1}" -f $e, $(if (Test-Path "$base\envs\$e\conda-meta") {'present'} else {'missing'})) } }
   else { Write-Host '  conda: not found' }
   $lf = Join-Path $Prefix 'bin\lisflood.exe'
   Write-Host ("  LISFLOOD-FP: $lf " + $(if (Test-Path $lf) { if (HasText $lf 'inittm_depth') {'OK (Runner patch present)'} else {'UNPATCHED'} } else {'missing'}))
@@ -93,7 +96,7 @@ Say "$Stamp on $P.  Log: $Log"
 # ---------------------------------------------------------------------------
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
-$Roles = @('ndqgis','ndanuga'); if ($DoPierre -or $DoResearch) { $Roles += 'ndresearch' }
+$Roles = @('ndqgis','ndanuga'); if ($DoHeim -or $DoVor) { $Roles += 'ndvor' }
 $miss = 0
 foreach ($r in $Roles) {
   foreach ($l in (LockLines (Join-Path $Here "locks\$P\$r.lock"))) {
@@ -102,7 +105,7 @@ foreach ($l in ExtraLines) { if (-not (Test-Path (Join-Path $Here $l[2]))) { $mi
 if ($miss -gt 0) {
   if ($Offline) { Die "$miss file(s) are missing from offline\ and -Offline was given. Unzip offline-$P.zip here, or run download-all-windows.cmd" }
   Say "$miss file(s) not in offline\ yet: fetching them (pinned, sha256-checked)."
-  $dl = @{ Platform = $P; NoModels = $true }; if (-not $DoResearch) { $dl.NoLibrary = $true }
+  $dl = @{ Platform = $P; NoModels = $true }; if (-not $DoVor) { $dl.NoLibrary = $true }
   & (Join-Path $Here 'download-all-windows.ps1') @dl
   if (-not $?) { Warn 'download-all reported problems (continuing; checked below)' }
 } else { Ok 'every installer file is in offline\ (nothing will be downloaded)' }
@@ -142,7 +145,7 @@ function Make-Env($name, $role) {
   $tmp = Join-Path $env:TEMP "damsuite-$name.txt"
   [IO.File]::WriteAllLines($tmp, $spec)
   Say "Creating conda env $name from $($spec.Count - 1) local packages (no download)"
-  & $Mamba create -y --offline -n $name --file $tmp
+  & $Mamba create -y --offline -p (EnvPrefix $name) --file $tmp
   $okc = ($LASTEXITCODE -eq 0); Remove-Item $tmp -ErrorAction SilentlyContinue
   return $okc
 }
@@ -243,6 +246,7 @@ print("  wrote", ini)
 '@ | Set-Content -LiteralPath $SettingsPy -Encoding ASCII
 
 function Write-Settings($profileDir, $which, $names) {
+  # Windows: Qt names the folder after the organisation name (QGIS); only macOS uses qgis.org
   $ini = Join-Path $profileDir 'QGIS\QGIS3.ini'
   New-Item -ItemType Directory -Force -Path (Split-Path $ini) | Out-Null
   QPy $SettingsPy $ini $which "$AnugaPy" "$Lisflood" "$Threads" (Join-Path $Run 'Dams') $Stamp @names
@@ -251,7 +255,7 @@ function Make-Launcher($file, $profile) {
   $lines = @(
     '@echo off',
     "rem QGIS 3.34 (conda env ndqgis) in profile '$profile'. Written by $Stamp.",
-    "call `"$CondaBat`" activate ndqgis",
+    "call `"$CondaBat`" activate `"$QP`"",
     'set NDBREACH_ANUGA_MESHER=gmsh',
     "set `"NDBREACH_ANUGA_PYTHON=$AnugaPy`"",
     "set `"NDBREACH_LISFLOOD=$Lisflood`"",
@@ -267,30 +271,122 @@ function Make-Launcher($file, $profile) {
     } catch { Warn "could not make the Desktop shortcut for $profile" }
   }
 }
+# build-offline-pack.cmd [folder]: the DamSafety offline pack without opening QGIS (default folder
+# %USERPROFILE%\ND_Suite_Data). A stopped build picks up where it left off; when it finishes the
+# folder becomes the suite data folder (~\.ndsuite\config.json, read when the profile has none).
+function Make-PackBuilder($file) {
+  $lines = @(
+    '@echo off',
+    "rem DamSafety offline pack (conda env ndqgis, profile '$DsProfile'). Written by $Stamp.",
+    "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+    'set "OUT=%USERPROFILE%\ND_Suite_Data"',
+    'if not "%~1"=="" set "OUT=%~f1"',
+    'if "%OUT:~-1%"=="\" set "OUT=%OUT%."',
+    "pushd `"$DsDir\python\plugins`" || exit /b 1",
+    'set PYTHONUNBUFFERED=1',
+    'echo Building the offline pack in %OUT% (a stopped build picks up where it left off)',
+    'python -m DamSafety_Data.pack_build --out "%OUT%" || exit /b 1',
+    'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "%OUT%"')
+  [IO.File]::WriteAllLines($file, $lines)
+}
 Say 'Settings and launchers'
-if ($DoDs) { Write-Settings $DsDir 'damsafety' $DsPlugins; Make-Launcher (Join-Path $Prefix 'open-damsafety-qgis.cmd') $DsProfile }
+if ($DoDs) { Write-Settings $DsDir 'damsafety' $DsPlugins; Make-Launcher (Join-Path $Prefix 'open-damsafety-qgis.cmd') $DsProfile
+             Make-PackBuilder (Join-Path $Prefix 'build-offline-pack.cmd') }
 if ($DoDi) { Write-Settings $DiDir 'damit' $DiPlugins;     Make-Launcher (Join-Path $Prefix 'open-damit-qgis.cmd') $DiProfile }
+
+# DamIT Crest desk. It runs on the ndqgis env: that env already has pyproj (Crest's only
+# third-party import) and puts qgis_process on PATH, which Crest's Report step calls. pywebview is
+# not installed, so the desk opens in the browser, which is Crest's documented fallback.
+#
+# The tree layout matters: damit_desktop\nid_rule.py loads DamIT Catalog's NID-ID rule from
+# <parents[3]>\damit_catalog\handoff.py and refuses to start without it, so Crest keeps its
+# damit_crest\desktop nesting and gets a damit_catalog\handoff.py beside it, taken from the
+# Catalog plugin zip we just installed so the rule always matches the plugin.
+# QgisProcessProfile <profile> <profile dir>: the line a Crest launcher needs so the desk's Report
+# step finds that profile's plugins. qgis_process (3.34) has no profile option and always loads the
+# profile named "default" under QGIS_CUSTOM_CONFIG_PATH, so the launcher points that at
+# <prefix>\qgis-process\<profile>, whose profiles\default is a junction to the real profile (a
+# junction needs no admin rights; `rmdir` removes only the junction, never the profile).
+function QgisProcessProfile($profile, $dir) {
+  if (-not (Test-Path $dir)) { return 'rem (no QGIS profile folder yet for ' + $profile + ')' }
+  $root = Join-Path $Prefix "qgis-process\$profile"
+  $link = Join-Path $root 'profiles\default'
+  New-Item -ItemType Directory -Force -Path (Join-Path $root 'profiles') | Out-Null
+  $old = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+  if ($old) {
+    # A real folder there is a profile qgis_process made itself when the junction was missing: keep it.
+    if ($old.Attributes -band [IO.FileAttributes]::ReparsePoint) { cmd /c rmdir "`"$link`"" | Out-Null }
+    else { Rename-Item -LiteralPath $link -NewName ('default.bak-' + (Get-Date -Format 'yyyyMMddHHmmss')) }
+  }
+  cmd /c mklink /J "`"$link`"" "`"$dir`"" | Out-Null
+  $made = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+  if (-not $made -or -not ($made.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path (Join-Path $link 'python'))) {
+    Warn "could not link ${link} -> ${dir}: Crest's Report step will not find the $profile plugins"
+    return "rem QGIS_CUSTOM_CONFIG_PATH not set: the junction $link was not made"
+  }
+  return "set `"QGIS_CUSTOM_CONFIG_PATH=$root`""
+}
+$CrestSrc = Join-Path $Here 'damit_crest'
+$CatZip = Get-ChildItem (Join-Path $Here 'plugins\damit') -Filter 'damit_catalog_*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($DoCrest -and (Test-Path (Join-Path $CrestSrc 'desktop'))) {
+  if (-not $CatZip) { Warn "no DamIT Catalog zip: the Crest desk needs its NID-ID rule, so Crest was skipped" }
+  else {
+    Say "DamIT Crest desk -> $Prefix\damit_crest"
+    $CrestDir = Join-Path $Prefix 'damit_crest'
+    New-Item -ItemType Directory -Force -Path $CrestDir, (Join-Path $Prefix 'damit_catalog') | Out-Null
+    Copy-Item -Recurse -Force (Join-Path $CrestSrc '*') $CrestDir
+    $ho = Join-Path $Prefix 'damit_catalog\handoff.py'
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zf = [System.IO.Compression.ZipFile]::OpenRead($CatZip.FullName)
+    try {
+      $ent = $zf.Entries | Where-Object { $_.FullName -eq 'damit_catalog/handoff.py' } | Select-Object -First 1
+      if ($ent) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($ent, $ho, $true) }
+    } finally { $zf.Dispose() }
+    if (Test-Path $ho) {
+      $cl = Join-Path $Prefix 'open-damit-crest.cmd'
+      @("@echo off", "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+        (QgisProcessProfile $DiProfile $DiDir),
+        "cd /d `"$CrestDir\desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
+      Ok "Crest desk (open: $cl)"
+    } else { Warn "could not read damit_catalog/handoff.py from $($CatZip.Name): Crest was skipped" }
+  }
+}
+# North Dakota Crest desk (crest repo, crest-desktop\). Same engine as DamIT Crest with the ND
+# inventory and the DamSafety hand-off (profile damsafety). Standard library only; its port differs
+# from DamIT Crest's, so both desks can be open at once.
+$NdCrestSrc = Join-Path $Here 'nd_crest'
+if ($DoCrest -and (Test-Path (Join-Path $NdCrestSrc 'crest-desktop\run.py'))) {
+  Say "North Dakota Crest desk -> $Prefix\nd_crest"
+  $NdCrestDir = Join-Path $Prefix 'nd_crest'
+  New-Item -ItemType Directory -Force -Path $NdCrestDir | Out-Null
+  Copy-Item -Recurse -Force (Join-Path $NdCrestSrc '*') $NdCrestDir
+  $cl = Join-Path $Prefix 'open-nd-crest.cmd'
+  @("@echo off", "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+    (QgisProcessProfile $DsProfile $DsDir),
+    "cd /d `"$NdCrestDir\crest-desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
+  Ok "North Dakota Crest desk (open: $cl)"
+}
 Remove-Item $SettingsPy -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
 # 6. the local AIs (damit_ai's own installer; envs, Ollama and models from offline\)
 # ---------------------------------------------------------------------------
 $AiOk = $true
-if ($DoPierre -or $DoResearch) {
-  Say "Local AIs (Pierre $(if ($DoPierre) {'on'} else {'off'}), dam-research $(if ($DoResearch) {'on'} else {'off'}))"
-  if ($DoResearch -and -not (Make-Env 'ndresearch' 'ndresearch')) { Warn 'ndresearch env not built from offline\ (the AI installer will try conda-forge)' }
-  if ($DoPierre -and -not (Make-Env 'ndpierre' 'ndresearch')) { Warn 'ndpierre env not built from offline\ (the AI installer will try conda-forge)' }
+if ($DoHeim -or $DoVor) {
+  Say "Local AIs (Heim $(if ($DoHeim) {'on'} else {'off'}), vor $(if ($DoVor) {'on'} else {'off'}))"
+  if ($DoVor -and -not (Make-Env 'ndvor' 'ndvor')) { Warn 'ndvor env not built from offline\ (the AI installer will try conda-forge)' }
+  if ($DoHeim -and -not (Make-Env 'ndheim' 'ndvor')) { Warn 'ndheim env not built from offline\ (the AI installer will try conda-forge)' }
   $om = Join-Path $Here 'damit_ai\offline\models'
   if (Test-Path (Join-Path $om 'manifests')) {
     $md = Join-Path $env:USERPROFILE 'local-ai\models'; New-Item -ItemType Directory -Force -Path $md | Out-Null
     robocopy $om $md /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'models copied to ~\local-ai\models (no pull needed)'
   }
-  $ol = Join-Path $Here 'damit_ai\offline\DamResearch\library'
-  if ($DoResearch -and (Test-Path $ol)) {
-    $ld = Join-Path $env:USERPROFILE 'DamResearch\library'; New-Item -ItemType Directory -Force -Path $ld | Out-Null
-    robocopy $ol $ld /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'reference library copied to ~\DamResearch\library'
+  $ol = Join-Path $Here 'damit_ai\offline\Vor\library'
+  if ($DoVor -and (Test-Path $ol)) {
+    $ld = Join-Path $env:USERPROFILE 'Vor\library'; New-Item -ItemType Directory -Force -Path $ld | Out-Null
+    robocopy $ol $ld /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'reference library copied to ~\Vor\library'
   }
-  $ai = @{}; if (-not $DoPierre) { $ai.NoPierre = $true }; if (-not $DoResearch) { $ai.NoResearch = $true }
+  $ai = @{}; if (-not $DoHeim) { $ai.NoHeim = $true }; if (-not $DoVor) { $ai.NoVor = $true }
   $env:Path = "$CondaBase\Scripts;$CondaBase\condabin;$env:Path"
   try { & (Join-Path $Here 'damit_ai\install-local-ai-windows.ps1') @ai }
   catch { $AiOk = $false; Warn "local AI setup failed ($_); the plugin sets are installed anyway. Re-run: damit_ai\install-local-ai-windows.ps1" }
@@ -309,12 +405,15 @@ foreach ($pair in @(@($DoDs, $DsDir, $DsPlugins), @($DoDi, $DiDir, $DiPlugins)))
   if (-not $pair[0]) { continue }
   foreach ($p in $pair[2]) { $d = Join-Path $pair[1] "python\plugins\$p"
     if (Test-Path (Join-Path $d 'metadata.txt')) { Ok "$p $(VerOf $d)" } else { Warn "$p missing"; $Fail = $true } } }
-if (($DoPierre -or $DoResearch) -and -not $AiOk) { $Fail = $true }
+if (($DoHeim -or $DoVor) -and -not $AiOk) { $Fail = $true }
 
 $rec = @("Installed by $Stamp on $(Get-Date)",
          "  platform $P | QGIS $qv | ANUGA python $(if ($AnugaPy) {$AnugaPy} else {'none'}) | LISFLOOD-FP $(if ($Lisflood) {$Lisflood} else {'built-in engine'})")
 if ($DoDs) { $rec += "  DamSafety -> profile $DsProfile  (open: $Prefix\open-damsafety-qgis.cmd)" }
 if ($DoDi) { $rec += "  DamIT     -> profile $DiProfile  (open: $Prefix\open-damit-qgis.cmd)" }
+if (Test-Path (Join-Path $Prefix 'open-damit-crest.cmd')) { $rec += "  DamIT Crest desk              (open: $Prefix\open-damit-crest.cmd)" }
+if (Test-Path (Join-Path $Prefix 'open-nd-crest.cmd')) { $rec += "  North Dakota Crest desk       (open: $Prefix\open-nd-crest.cmd)" }
+if (Test-Path (Join-Path $Prefix 'build-offline-pack.cmd')) { $rec += "  DamSafety offline pack        (build: $Prefix\build-offline-pack.cmd)" }
 $rec | Set-Content (Join-Path $Prefix 'INSTALLED.txt')
 Say $(if ($Fail) { "Done, with warnings (see above and $Log)." } else { 'Done: all checks passed.' })
 $rec | ForEach-Object { Write-Host $_ }

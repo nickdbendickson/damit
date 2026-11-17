@@ -1,0 +1,50 @@
+name: damit_heim
+
+# Heim (damit_ai/heim) as a DamIT run watcher: the deterministic run digest, the Ollama streaming client (against a
+# mock server; no model is run), the knowledge pack and the installers.
+on:
+  push:
+    paths: ["damit_ai/**", "damit_runner/**", ".github/workflows/damit_heim.yml"]
+  pull_request:
+    paths: ["damit_ai/**", "damit_runner/**", ".github/workflows/damit_heim.yml"]
+
+jobs:
+  pure:
+    name: Run digest, watcher, knowledge pack (no QGIS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install numpy
+      - name: zsh (the rename tests run the real move blocks cut out of setup-vor.zsh and first-run.zsh)
+        run: (sudo apt-get update -qq && sudo apt-get install -y -qq zsh) >/dev/null
+      - name: Heim tests (synthetic fixtures only; Ollama is a local mock)
+        run: python3 -W error -m unittest discover -v -s damit_ai/heim/tests
+      - name: vor tests (retrieval only; embeddings are stubbed, no Ollama)
+        env:
+          REQUIRE_ZSH: "1"      # a missing zsh must fail here, not skip the move tests
+        run: python3 -W error -m unittest discover -v -s damit_ai/vor/tests
+      - name: Installer scripts parse
+        run: |
+          bash -n damit_ai/install-local-ai-linux.sh
+          bash -n damit_ai/heim/setup-local-heim.sh
+
+  qgis:
+    name: ALGORITHM-HELP is current, GDAL receptor check (QGIS 3.34 offscreen)
+    runs-on: ubuntu-latest
+    container: qgis/qgis:3.34
+    steps:
+      - uses: actions/checkout@v4
+      - name: curl (the qgis image has none; the GGUF fallback tests download from a local server)
+        run: (apt-get update -qq && apt-get install -y -qq curl) >/dev/null
+      - name: QGIS Python is importable (else the QGIS tests would only skip)
+        run: python3 -c "import qgis.core, osgeo.gdal, numpy"
+      - name: Heim tests with QGIS (includes the ALGORITHM-HELP-DAMIT.md freshness check)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          GDAL_PAM_ENABLED: "NO"
+        run: |
+          export QGIS_CUSTOM_CONFIG_PATH="$(mktemp -d)" DAMIT_SETTINGS="$(mktemp -d)/s.json"
+          python3 -m unittest discover -v -s damit_ai/heim/tests

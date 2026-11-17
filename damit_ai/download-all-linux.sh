@@ -4,8 +4,8 @@
 # damit_ai/offline/, so install-local-ai-linux.sh can then run with no network:
 #
 #   offline/ollama/ollama-linux-amd64.tar.zst (+ SHA256SUMS)   the Ollama runtime
-#   offline/models/                                        the AI models (Pierre + dam-research)
-#   offline/DamResearch/library/                           the dam-research PDF library + url list
+#   offline/models/                                        the AI models (Heim + vor)
+#   offline/Vor/library/                           the vor PDF library + url list
 #
 # Run this on a machine WITH network, then carry the whole damit_ai/ folder to the
 # target and run ./install-local-ai-linux.sh there (it picks up offline/ automatically).
@@ -82,7 +82,9 @@ if (( DO_MODELS )); then
   TMPOL="$(mktemp -d)"
   case "$ASSET" in *.zst) TARF=(--zstd -xf) ;; *) TARF=(-xzf) ;; esac
   tar "${TARF[@]}" "$OFFLINE/ollama/$ASSET" -C "$TMPOL" 2>/dev/null || warn "could not extract Ollama to pull models"
-  OL="$TMPOL/bin/ollama"; [[ -x "$OL" ]] || OL="$(find "$TMPOL" -name ollama -type f -perm -u+x 2>/dev/null | head -1)"
+  # final element of the `||` list, so not exempt: `|| true` keeps a non-zero `find` from
+  # ending the download under pipefail (the `-x` test below is what should decide)
+  OL="$TMPOL/bin/ollama"; [[ -x "$OL" ]] || OL="$(find "$TMPOL" -name ollama -type f -perm -u+x 2>/dev/null | head -1 || true)"
   if [[ -x "$OL" ]]; then
     export OLLAMA_HOST=127.0.0.1:11499 OLLAMA_MODELS="$MDIR"
     "$OL" serve >"$MDIR/.serve.log" 2>&1 &
@@ -100,14 +102,14 @@ fi
 
 # ---------------------------------------------------------------------------
 if (( DO_LIBRARY )); then
-  say "dam-research library -> offline/DamResearch/library"
-  LIB="$OFFLINE/DamResearch"; mkdir -p "$LIB/library"
-  if [[ -f "$HERE/research/fetch_asdso.py" ]]; then
-    DAMRESEARCH_HOME="$LIB" "$PY" "$HERE/research/fetch_asdso.py" --urls "$LIB/library/library-urls.txt" || true
-    DAMRESEARCH_HOME="$LIB" "$PY" "$HERE/research/fetch_asdso.py" --catalog --asdso || warn "some library files failed (see its sources.csv / log)"
+  say "vor library -> offline/Vor/library"
+  LIB="$OFFLINE/Vor"; mkdir -p "$LIB/library"
+  if [[ -f "$HERE/vor/fetch_asdso.py" ]]; then
+    VOR_HOME="$LIB" "$PY" "$HERE/vor/fetch_asdso.py" --urls "$LIB/library/library-urls.txt" || true
+    VOR_HOME="$LIB" "$PY" "$HERE/vor/fetch_asdso.py" --catalog --asdso || warn "some library files failed (see its sources.csv / log)"
     ok "library in $LIB/library"
   else
-    warn "research/fetch_asdso.py not found; skipped"
+    warn "vor/fetch_asdso.py not found; skipped"
   fi
 fi
 

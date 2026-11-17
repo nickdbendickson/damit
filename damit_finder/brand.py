@@ -23,11 +23,21 @@ CROSS_HELP = ("Known structures for crossings: NBI bridges (DamIT Data), state D
 # Image services with a near-infrared band for the water outlines: (label, ImageServer address,
 # green band, near-infrared band). USGS NAIP Plus is red, green, blue, near-infrared (the most
 # recent NAIP of each place, 60 cm or finer). A state's own 4-band or colour-infrared service
-# goes in as an address (colour-infrared is NIR, red, green: green 3, NIR 1).
+# goes in as an address: check its band order (the service's keyProperties). A classic
+# colour-infrared composite is NIR, red, green (green 3, NIR 1), but some state services are NIR,
+# green, blue (North Dakota's GIS Hub: green 2, NIR 1).
 IMAGE_SERVICES = [
     ("USGS NAIP Plus (the most recent NAIP; 4-band)",
      "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer", 2, 4),
 ]
+# 'Add evidence to fills': the default imagery for the water history, one per line (YEAR | source |
+# bands). USGS NAIP Plus is only the most recent NAIP of each place; for a history give your state's
+# yearly 4-band or colour-infrared NAIP services or files (check each service's band order: a classic
+# colour-infrared composite is nir=1 red=2 green=3; North Dakota's GIS Hub CIR years are nir=1 green=2).
+EVIDENCE_IMAGES = ("0 | https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer | "
+                   "red=1 green=2 blue=3 nir=4")
+EVIDENCE_IMAGES_HELP = ("The default is USGS NAIP Plus, the most recent NAIP only (year shown as 0): add "
+                        "one line per older NAIP year your state serves for a water history.")
 WATER_HELP = ("Layers: 3DHP / NHD waterbodies or the NWI as the mapped water bodies. The 'water' "
               "polygons with mapped = no are the ponds no layer has: give them to 'Find ponds and "
               "dugouts' as its water bodies to ask the LiDAR whether each is held above the ground.")
@@ -44,3 +54,14 @@ MOSAIC_HELP = ("Point it at a folder of classified LiDAR tiles (USGS 3DEP .las/.
                "need their EPSG. Dry land and the gaps between tiles read back as no water.")
 OSM_HELP = ("Use a Geofabrik extract of your state (https://download.geofabrik.de, <state>-latest.osm.pbf). "
             "Give the output to the other tools as a known-structure layer.")
+# The starter fill score model shipped with the plugin (core/score.py; the same file as DamSafety
+# Finder's default). It was learned from listed dams on USGS 1 m LiDAR in 7 North Dakota regions
+# and, with nothing from Iowa in it, ranked the fills on 15 Iowa 1 m tiles against Iowa's pond-dam
+# census with AUC 0.89. The Find fills tool uses it when no other model is given: a starting
+# point, not a model of your state. Relearn it with the score tool where you have a dam list.
+DEFAULT_MODEL = "models/nd_fill_score_trees_2026-11.json"
+# Shown at the end of the review batch tool's help (EVIDENCE on): with the default image list a
+# card has one look at the most recent image, not a water history.
+CARD_IMAGES_HELP = ("With the default image list a card reads '1 of 1' or '0 of 1': one look at the most recent "
+                    "image, not a water history. To see water year after year, list your state's yearly images "
+                    "with a near-infrared band in IMAGES, one per line.")

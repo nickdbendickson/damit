@@ -1,4 +1,4 @@
-# DamIT Core 0.1.0
+# DamIT Core 0.3.0
 
 Shared library of the DamIT plugins (`damit_core.lib`). As a QGIS plugin it adds one menu entry,
 **Plugins > DamIT > About DamIT Core…**, which lists the DamIT plugins found and their versions.
@@ -12,6 +12,7 @@ It has no Processing provider and depends on no DamSafety plugin.
 | `dam_record` | DamIT Screener dam field names, a field-name alias table (NID export and generic spellings) and `suggest_field_map()` / `field_map_string()` for `damit_screen:*` `FIELD_MAP`. |
 | `catalog_access` | Loads DamIT Catalog (installed plugin, or the sibling folder in a checkout), lists presets, proposes the preset whose ID is a state's postal code (none otherwise: DamIT never assumes a jurisdiction), resolves preset / custom configs. |
 | `http` | `get_bytes` (QGIS network settings inside QGIS, urllib outside), `head`, streamed `download_file` with a size limit and cancel. |
+| `shared_defaults` | The shared defaults file (`data/defaults.json`, format `dam-defaults`, the same as DamSafety Core 1.2.0 and Crest): sunny-day starting pool, PMF Vw rule, failure mode, breach equation, Manning's n. Your values in `~/DamIT/defaults.json` (setting `defaults_file`, env `DAMIT_DEFAULTS`) hold only the keys you changed. `load()`, `value()`, `save_user()`, `assumptions()` for dam.json. DamIT Runner 0.4.0 reads it. |
 | `qtcompat` | `QAction`, `exec_dialog`, field types for QGIS 3.28 – 4.x. |
 
 No jurisdiction threshold lives here; those are DamIT Catalog data.

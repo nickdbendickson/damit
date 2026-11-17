@@ -19,14 +19,15 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import type { Plugin } from "vite";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import viteReact from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { crestVersion } from "./scripts/crest-version.mjs";
+import { contentSecurityPolicy, SECURITY_HEADERS } from "./src/lib/crest/csp.ts";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const ROOT = r("./");
@@ -59,6 +60,50 @@ function buildInfo(moduleIds: Iterable<string>, builtBy = "npm run build:desktop
   const sorted = Object.fromEntries(Object.entries(sources).sort(([a], [b]) => a.localeCompare(b)));
   const pkg = JSON.parse(readFileSync(r("./package.json"), "utf8")) as { name?: string };
   return JSON.stringify({ app: pkg.name ?? "damit-crest", builtBy, sources: sorted }, null, 2) + "\n";
+}
+
+/** The build's VITE_CREST_TILE_URL (basemap.ts), read the way Vite reads it for the bundle, so the policy allows it. */
+function configuredTileUrl(mode: string): string | undefined {
+  return loadEnv(mode, r("./src/desktop"), "VITE_").VITE_CREST_TILE_URL || undefined;
+}
+
+/** `sha384-…` / `sha256-…` of a string or bytes, as Subresource Integrity and CSP hash sources write it. */
+function integrity(algo: "sha256" | "sha384", data: string | Uint8Array): string {
+  return `${algo}-${createHash(algo).update(data).digest("base64")}`;
+}
+
+/**
+ * Desktop bundle security files (2026-11-13):
+ *  - security-headers.json: the Content-Security-Policy (src/lib/crest/csp.ts) and the other security headers; the
+ *    Python server (desktop/damit_desktop/__main__.py) sends them with every response, so the policy has one source.
+ *  - `integrity="sha384-…"` on index.html's entry script, its preloads and its stylesheet (Subresource Integrity): the
+ *    window refuses a bundle file that does not match the index.html it shipped with. The repo's .gitattributes keeps
+ *    git from rewriting line endings in the bundle, which would change the hashes on a Windows checkout.
+ */
+function desktopSecurityPlugin(mode: string): Plugin {
+  return {
+    name: "damit-desktop:security",
+    apply: "build",
+    enforce: "post",
+    // After the files are written: Vite still rewrites the entry chunk (its preload list) after generateBundle, so the
+    // hashes are taken from the bytes on disk, the bytes the window will load.
+    writeBundle(options) {
+      const out = options.dir ?? r("./desktop/damit_desktop/web");
+      const index = join(out, "index.html");
+      let n = 0;
+      const text = readFileSync(index, "utf8").replace(
+        /<(?:script|link)\b[^>]*?\s(?:src|href)="\.\/(assets\/[^"]+\.(?:js|css))"[^>]*>/g,
+        (tag, name: string) => {
+          n++;
+          return tag.replace(/\s*\/?>$/, (end: string) => ` integrity="${integrity("sha384", readFileSync(join(out, name)))}"${end}`);
+        },
+      );
+      if (!n) throw new Error("security: index.html has no script or stylesheet to put an integrity hash on");
+      writeFileSync(index, text);
+      const headers = { "Content-Security-Policy": contentSecurityPolicy({ tileUrl: configuredTileUrl(mode) }), ...SECURITY_HEADERS };
+      writeFileSync(join(out, "security-headers.json"), JSON.stringify(headers, null, 2) + "\n");
+    },
+  };
 }
 
 /**
@@ -95,7 +140,7 @@ function packedDataPlugin(): Plugin {
 }
 
 /** Inline the one JS chunk and the CSS into the HTML and emit it as DamIT.html (what vite-plugin-singlefile does). */
-function singleFilePlugin(): Plugin {
+function singleFilePlugin(mode: string): Plugin {
   return {
     name: "damit-desktop:single-file",
     apply: "build",
@@ -123,6 +168,14 @@ function singleFilePlugin(): Plugin {
         delete bundle[name];
       }
       if (/(src|href)="\.\/assets\//.test(text)) throw new Error("single-file: a reference to ./assets/ is left");
+      // Content-Security-Policy for the one file (src/lib/crest/csp.ts): only the script inlined above may run, by
+      // its SHA-256, and the page may reach only the tile and lookup services the desk names. Opened from disk the
+      // file has no origin of its own to trust, so 'self' is left out.
+      const scripts = [...text.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+      if (scripts.length !== 1) throw new Error(`single-file: expected one inline script, found ${scripts.length}`);
+      const csp = contentSecurityPolicy({ delivery: "meta", self: false, tileUrl: configuredTileUrl(mode), scriptHashes: [integrity("sha256", scripts[0])] });
+      text = text.replace("<head>", `<head>\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`);
+      if (!text.includes("Content-Security-Policy")) throw new Error("single-file: no <head> to carry the policy");
       const info = buildInfo(this.getModuleIds(), "npm run build:html").replace(/--/g, "- -");
       delete bundle[html.fileName];
       writeFileSync(
@@ -133,12 +186,12 @@ function singleFilePlugin(): Plugin {
   };
 }
 
-export default defineConfig(({ mode }) => (mode === "singlefile" ? singleFile : desktop));
+export default defineConfig(({ mode }) => (mode === "singlefile" ? singleFile(mode) : desktop(mode)));
 
 /** Chunks the groups below name; kept at their own names (a group chunk is not a dynamic entry). */
 const LAZY_CHUNKS = ["nid_dams", "geotiff"];
 
-const desktop = defineConfig({
+const desktop = (mode: string) => defineConfig({
   root: r("./src/desktop"),
   base: "./",
   publicDir: false,
@@ -146,7 +199,7 @@ const desktop = defineConfig({
   // timestamp, so the committed bundle stays reproducible from the same tree.
   define: { __CREST_VERSION__: JSON.stringify(crestVersion()) },
   resolve: { alias: { "@": r("./src") } },
-  plugins: [tailwindcss(), viteReact(), buildInfoPlugin()],
+  plugins: [tailwindcss(), viteReact(), buildInfoPlugin(), desktopSecurityPlugin(mode)],
   build: {
     outDir: r("./desktop/damit_desktop/web"),
     emptyOutDir: true,
@@ -179,9 +232,9 @@ const desktop = defineConfig({
 });
 
 /** DamIT.html: the desk alone (no engine facade), everything in one file. */
-const singleFile = defineConfig({
-  ...desktop,
-  plugins: [packedDataPlugin(), tailwindcss(), viteReact(), singleFilePlugin()],
+const singleFile = (mode: string) => defineConfig({
+  ...desktop(mode),
+  plugins: [packedDataPlugin(), tailwindcss(), viteReact(), singleFilePlugin(mode)],
   build: {
     outDir: r("./node_modules/.cache/damit-html"), // stays empty: the plugin writes DamIT.html in this folder
     emptyOutDir: true,

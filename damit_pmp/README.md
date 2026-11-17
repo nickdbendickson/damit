@@ -1,4 +1,4 @@
-# DamIT PMP 0.4.1 – NOAA Atlas 14 only
+# DamIT PMP 0.4.4 – NOAA Atlas 14 only
 
 Processing provider `damit_pmp`. Depends on DamIT Core. **The only data source is NOAA Atlas 14**,
 read from the NOAA/NWS Precipitation Frequency Data Server (PFDS, https://hdsc.nws.noaa.gov/pfds/), or
@@ -254,7 +254,7 @@ real LISFLOOD-FP for five simulated minutes) and `PMPPatternsLossesWatershedLisf
 `GAUGE_B` so positive is away from that point (downstream), the same sign as the LISFLOOD-FP gauge of `lisfloodrain`;
 without it the ends are used as given. The magnitude was never affected.
 
-## 0.4.2: bed sampling, stream refinement, principal outlet, stage probes
+## 0.4.4: bed sampling, stream refinement, principal outlet, stage probes
 
 All new options are off by default; a job made without them is unchanged.
 

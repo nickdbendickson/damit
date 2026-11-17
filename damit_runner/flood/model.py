@@ -61,7 +61,22 @@ DEFAULTS = dict(method=BR.METHOD_PIPING, tier=TIER_LISFLOOD, force_anuga=False, 
                 duration_max_hr=96.0, grid_refine=True, grid_check_cell_m=0.0, lisflood_exe="", anuga_python="",
                 anuga_fine_m2=100.0, anuga_coarse_m2=1000.0, anuga_near_mi=1.0, anuga_buffer_m=500.0, threads=0,
                 keep_files=True, products=True, contours_hr=(0.25, 0.5, 1.0, 2.0, 4.0, 8.0), z_units="auto",
-                pipe_fraction=0.5, pipe_dia_ft=0.5)
+                pipe_fraction=0.5, pipe_dia_ft=0.5,
+                # 0.5.0: the scenario. The preset is the sunny day from the top of dam with a piping breach.
+                scenario="sunny", start_pool="top", trigger="peak")
+# 0.5.0: the scenarios (the ids of the ported engine's core/workflow.py)
+SCENARIO_SUNNY, SCENARIO_FLOOD, SCENARIO_FLOOD_NO_BREACH = "sunny", "flood", "flood_no_breach"
+SCENARIOS = (SCENARIO_SUNNY, SCENARIO_FLOOD, SCENARIO_FLOOD_NO_BREACH)
+SCENARIO_LABELS = {
+    SCENARIO_SUNNY: "Sunny day: no inflow; the breach starts at the top of dam unless you choose another pool",
+    SCENARIO_FLOOD: "Flood (PMP/PMF inflow) with a breach",
+    SCENARIO_FLOOD_NO_BREACH: "Flood (PMP/PMF inflow), NO breach: through the spillways and over the crest"}
+START_POOLS = ("top", "normal", "stated")           # breach.START_POOLS
+START_POOL_LABELS = {"top": "Top of dam (the preset)", "normal": "Normal pool (NORMAL_POOL_FT)",
+                     "stated": "An elevation I state (START_WSE_FT)"}
+TRIGGERS = ("peak", "time", "wse")                  # core/flood.py TRIGGERS
+TRIGGER_LABELS = {"peak": "at the highest pool level", "time": "at a set time (hours after the inflow starts)",
+                  "wse": "when the pool reaches an elevation (ft)"}
 
 
 class RunError(RuntimeError):
@@ -174,28 +189,117 @@ def site(p, wkt, log):
             "dam_point": dam_point, "z_how": z_how, "z_to_m": getattr(fine, "z_to_m", None)}
 
 
-def hydrograph_for(p):
-    dam = BR.DamData(dam_id=str(p["dam_id"]), dam_height_ft=float(p["height_ft"]),
-                     storage_top_acft=float(p["storage_acft"]), top_of_dam_ft=float(p["top_ft"]),
-                     surface_area_top_ac=p.get("area_ac") or None,
-                     pmf_max_wse_ft=None,        # sunny day: the reservoir starts at the top of dam
-                     breach_bottom_ft=p.get("bottom_ft") or None, crest_width_ft=p.get("crest_width") or None,
-                     us_slope_h=p.get("us_slope") or None, ds_slope_h=p.get("ds_slope") or None,
-                     crest_length_ft=p.get("crest_length_ft") or None, name=str(p.get("name") or ""))
+def _num(v):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if x == x else None
+
+
+def flood_inputs(p, dam):
+    """0.5.0: the flood (PMP/PMF) inputs of a flood scenario from the run parameters: the inflow hydrograph CSV
+    (hours, cfs), a spillway rating CSV (ft, cfs) and/or the normal pool, an auxiliary spillway weir, and when the
+    dam fails. The routing is the ported engine's core/flood.py (the same code as the DamSafety Runner)."""
+    from ..core import flood as FL
+    inflow = p.get("inflow_csv")
+    if not inflow or not os.path.isfile(str(inflow)):
+        raise RunError("the flood scenario needs the inflow hydrograph CSV (INFLOW_CSV: time hr, discharge cfs; "
+                       "DamIT PMP writes one): {}".format(inflow))
+    spill = p.get("spillway_csv") or None
+    if spill and not os.path.isfile(str(spill)):
+        raise RunError("the spillway rating CSV does not exist: {}".format(spill))
+    trig = str(p.get("trigger") or "peak")
+    val = _num(p.get("trigger_value"))
+    if p.get("scenario") == SCENARIO_FLOOD and trig != "peak" and val is None:
+        raise RunError("give TRIGGER_VALUE (the failure time in hours or the pool elevation in ft) for the chosen "
+                       "trigger")
+    fi = FL.FloodInputs.from_files(str(inflow), str(spill) if spill else None,
+                                   normal_pool_ft=_num(p.get("normal_pool_ft")),
+                                   crest_length_ft=dam.crest_length_ft, trigger=trig, trigger_value=val)
+    fi.set_aux_weir(_num(p.get("aux_crest_ft")), _num(p.get("aux_length_ft")), _num(p.get("aux_c")))
+    return fi
+
+
+def scenario_hydrograph(p):
+    """(dam, hydrograph the model runs, flood result or None) for the run's scenario.
+
+    sunny            no inflow; the pool starts at the top of dam (the preset), the normal pool or a stated
+                     elevation (start_pool); any breach method.
+    flood            the inflow is routed through the reservoir, the spillways and over the crest, and the dam
+                     breaches (trigger); the outflow WITH the breach is modelled. Arrival times count from breach
+                     initiation (hydrograph.t_ref_s).
+    flood_no_breach  the same routing with no failure; that outflow is modelled."""
+    scen = str(p.get("scenario") or SCENARIO_SUNNY)
+    if scen not in SCENARIOS:
+        raise RunError("scenario must be one of {} (got {!r})".format(", ".join(SCENARIOS), scen))
+    # the flood scenarios run on the ported engine's breach module (core/, the same source as flood/breach.py)
+    B = BR
+    if scen != SCENARIO_SUNNY:
+        from ..core import breach as B                          # noqa: N812
+    dam = B.DamData(dam_id=str(p["dam_id"]), dam_height_ft=float(p["height_ft"]),
+                    storage_top_acft=float(p["storage_acft"]), top_of_dam_ft=float(p["top_ft"]),
+                    surface_area_top_ac=p.get("area_ac") or None,
+                    pmf_max_wse_ft=None,        # the PMF level is not a starting pool here: start_pool is
+                    breach_bottom_ft=p.get("bottom_ft") or None, crest_width_ft=p.get("crest_width") or None,
+                    us_slope_h=p.get("us_slope") or None, ds_slope_h=p.get("ds_slope") or None,
+                    crest_length_ft=p.get("crest_length_ft") or None, name=str(p.get("name") or ""))
     dam.validate()
-    ov = BR.BreachOverrides(pipe_time_fraction=float(p.get("pipe_fraction", 0.5)),
-                            pipe_initial_dia_ft=float(p.get("pipe_dia_ft", 0.5)))
-    hy = BR.make_hydrograph(dam, p["method"], ov, user_csv=p.get("user_csv") or None)
+    ov = B.BreachOverrides(pipe_time_fraction=float(p.get("pipe_fraction", 0.5)),
+                           pipe_initial_dia_ft=float(p.get("pipe_dia_ft", 0.5)))
+    try:
+        if scen == SCENARIO_SUNNY:
+            kind = str(p.get("start_pool") or "top")
+            if kind != "top":
+                B.set_start_pool(dam, kind, _num(p.get("normal_pool_ft")) if kind == "normal"
+                                 else _num(p.get("start_wse_ft")))
+            return dam, B.make_hydrograph(dam, p["method"], ov, user_csv=p.get("user_csv") or None), None
+        from ..core import flood as FL
+        fi = flood_inputs(p, dam)
+        if scen == SCENARIO_FLOOD_NO_BREACH:
+            fr = FL.route_flood(dam, p["method"], ov, fi, breach=False)
+            return dam, fr.no_breach, fr
+        if p["method"] == B.METHOD_USER:
+            raise RunError("the flood scenario with a breach routes the breach itself: choose a breach method, not "
+                           "'my own hydrograph' (or run your hydrograph as a sunny day)")
+        fr = FL.route_flood(dam, p["method"], ov, fi)
+        if not fr.failed:
+            raise RunError("the dam does not fail in this flood: " + " ".join(fr.notes[-1:]) + " Choose another "
+                           "trigger, or run the flood with no breach.")
+        return dam, fr.with_breach, fr
+    except B.BreachInputError as e:
+        raise RunError(str(e))
+
+
+def hydrograph_for(p):
+    """(dam, hydrograph) of the run's scenario; see scenario_hydrograph."""
+    dam, hy, _fr = scenario_hydrograph(p)
     return dam, hy
 
 
-def _hydrograph_record(hy, dam):
+def scenario_rule(p, hy):
+    """One line: what the hydrograph is."""
+    scen = str(p.get("scenario") or SCENARIO_SUNNY)
+    if scen == SCENARIO_FLOOD_NO_BREACH:
+        return "flood inflow routed through the spillways, outlets and over the crest; NO breach"
+    if scen == SCENARIO_FLOOD:
+        return "flood inflow with a breach {} ({:.2f} h into the flood)".format(
+            TRIGGER_LABELS.get(str(p.get("trigger") or "peak"), p.get("trigger")), hy.t_ref_s / 3600.0)
+    kind = str(p.get("start_pool") or "top")
+    return "sunny day, no outlet or spillway flow, starting at {}".format(
+        "the top of dam" if kind == "top" else "{} ({:.2f} ft)".format(
+            "the normal pool" if kind == "normal" else "a stated elevation", hy.params.get("starting_wse_ft")))
+
+
+def _hydrograph_record(hy, dam, p=None):
     """The breach the run used, including the width and formation time, so a later HEC-RAS
     export writes that opening and not a recomputed one."""
     rec = hy.summary()
-    rec["label"] = BR.METHOD_LABELS.get(hy.method)
-    rec["starting_wse_ft"] = dam.top_of_dam_ft
-    rec["rule"] = "sunny day, no outlet or spillway flow, starting at the top of dam"
+    rec["label"] = BR.METHOD_LABELS.get(hy.method, hy.method)
+    start = hy.params.get("starting_wse_ft")
+    rec["starting_wse_ft"] = dam.top_of_dam_ft if start is None else start
+    rec["rule"] = scenario_rule(p or {}, hy)
+    rec["breach_initiation_hr"] = round(float(getattr(hy, "t_ref_s", 0.0) or 0.0) / 3600.0, 3)
     rec["notes"] = list(hy.notes)
     return rec
 
@@ -436,9 +540,15 @@ def run_breach(p, out_dir, log=print, cancel=None):
     if not lonlat:
         raise RunError("no dam position")
     wkt = R.model_wkt(p["dem"], lonlat)
-    dam, hy = hydrograph_for(p)
-    log("Breach hydrograph: {} (sunny day, from the top of dam {:.2f} ft); peak {:,.0f} cfs, {:.1f} h".format(
-        BR.METHOD_LABELS.get(p["method"], p["method"]), dam.top_of_dam_ft, hy.peak_cfs, hy.duration_s / 3600.0))
+    dam, hy, flood_res = scenario_hydrograph(p)
+    scen = str(p.get("scenario") or SCENARIO_SUNNY)
+    log("{}: {} ({}; top of dam {:.2f} ft); peak {:,.0f} cfs, {:.1f} h".format(
+        "Flood outflow, no breach" if scen == SCENARIO_FLOOD_NO_BREACH else "Breach hydrograph",
+        BR.METHOD_LABELS.get(hy.method, hy.method), scenario_rule(p, hy), dam.top_of_dam_ft, hy.peak_cfs,
+        hy.duration_s / 3600.0))
+    if scen != SCENARIO_SUNNY or str(p.get("start_pool") or "top") != "top":
+        for n in hy.notes:                                       # what the choice means, where the user sees it
+            log("Note: " + n)
     hy.to_csv(os.path.join(outputs, "breach_hydrograph.csv"))
     s = site(p, wkt, log)
     cell = float(p["cell_m"])
@@ -453,6 +563,14 @@ def run_breach(p, out_dir, log=print, cancel=None):
     path, plen = G.trace_downstream(plan, s["inflow_xy"], L)
     bounds = G.path_bounds(path + [s["dam_xy"]], W, snap=cell)
     warnings = list(s["checks"]) + ([sel["warning"]] if sel["warning"] else [])
+    if scen == SCENARIO_FLOOD_NO_BREACH:
+        warnings.append("NO breach is modelled: the flood is the routed outflow through the spillways and outlets and "
+                        "over the crest, put in at the toe of the dam. The rasters are not a dam failure flood; do "
+                        "not classify the dam's hazard from this run alone.")
+    elif scen == SCENARIO_FLOOD:
+        warnings.append("Flood with a breach: this run models the outflow WITH the breach only. For the incremental "
+                        "effect of the failure run the same flood with no breach and compare (or use Run breach "
+                        "model, DamSafety engine, which runs both).")
     d_end = math.hypot(path[-1][0] - s["dam_xy"][0], path[-1][1] - s["dam_xy"][1])
     if plen < 0.25 * L:
         warnings.append("The steepest-descent path from the breach inflow is only {:.0f} m long and ends {:.0f} m from "
@@ -504,6 +622,12 @@ def run_breach(p, out_dir, log=print, cancel=None):
         warnings += [n for n in res.get("notes") or [] if n not in warnings]
         out = {k: res[k] for k in ("depth", "velocity", "arrival_hr", "wse")}
         final_engine = "ANUGA"
+    t_ref_hr = float(getattr(hy, "t_ref_s", 0.0) or 0.0) / 3600.0
+    if t_ref_hr > 0:
+        # 0.5.0, flood with a breach: arrival times count from breach initiation, not from the start of the inflow
+        # (ground the spillway flow wetted before the breach gets 0), as the DamSafety Runner reports them
+        arr = np.asarray(out["arrival_hr"], float)
+        out["arrival_hr"] = np.where(np.isfinite(arr), np.clip(arr - t_ref_hr, 0.0, None), np.nan)
     files = write_outputs(outputs, dem, wkt, out, p, s)
     stats = flood_stats(dem, out["depth"], p["arrival_ft"] * FT)
     record = {"dam_id": p["dam_id"], "engine": final_engine, "extent_engine": g["info"]["engine"],
@@ -513,7 +637,9 @@ def run_breach(p, out_dir, log=print, cancel=None):
               "sim_time_hr": round(g["sim_s"] / 3600.0, 2), "bounds": [round(b, 1) for b in g["bounds"]],
               "crs_wkt": wkt, "passes": g["passes"], "stop_reason": g["stop"], "warnings": warnings + g["warnings"],
               "grid_refine": refine, "grid_check": check, "anuga": anuga, "stats": stats,
-              "hydrograph": _hydrograph_record(hy, dam),
+              "hydrograph": _hydrograph_record(hy, dam, p),
+              "scenario": scen, "breach_occurs": scen != SCENARIO_FLOOD_NO_BREACH,
+              "flood": dict(flood_res.summary) if flood_res is not None else None,
               "dam": BR.dam_to_dict(dam),
               "dam_xy": [float(s["dam_xy"][0]), float(s["dam_xy"][1])],
               "work_crs": wkt,

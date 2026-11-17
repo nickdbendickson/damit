@@ -18,7 +18,7 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 | [`damit_hazard/`](../damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 19 jurisdiction presets or a custom method set (`damit:classify`) |
 | [`damit_core/`](../damit_core/README.md) | DamIT Core | none | Shared library: suite settings, DamIT plugin list and version check, US state table, dam-record field helpers, catalog access, HTTP helper. Menu: About only |
 | [`damit_setup/`](../damit_setup/README.md) | DamIT Setup | none | Start here: suite data folder, work folder, state / preset, suite check, settings fill, hand-off to `damit_screen:preflight` |
-| [`damit_data/`](../damit_data/README.md) | DamIT Data | `damit_data` | 9 national data sources: NSI, Microsoft footprints, OSM, USA Structures, HPMS roads, FRA rail, Census TIGER counties, NBI bridges, HIFLD facilities (`damit_data:download`, `:status`) |
+| [`damit_data/`](../damit_data/README.md) | DamIT Data | `damit_data` | 9 national data sources: NSI, Microsoft footprints, OSM, USA Structures, HPMS roads, FRA rail, Census TIGER counties, NBI bridges, HIFLD facilities (`damit_data:download`, `:status`; `get_data.py` runs the same download from a terminal with no QGIS) |
 | [`damit_hazardlite/`](../damit_hazardlite/README.md) | DamIT Hazard Lite | `damit_lite` | One tool, `damit_lite:classify`: suggested class from depth / velocity rasters at structures, roads and rail with DamIT Catalog presets or custom methods |
 | [`damit_pmp/`](../damit_pmp/README.md) | DamIT PMP | `damit_pmp` | NOAA Atlas 14 only: point / basin precipitation-frequency tables, Atlas 14 GIS grids fetched from NOAA for any return period and duration, alternating-block hyetograph, grid basin statistics, LISFLOOD-FP / ANUGA rain-on-grid files, an ANUGA rain-on-grid job on the runner's gmsh mesh (no PMP values; launches nothing unless asked) |
 | [`damit_finder/`](../damit_finder/README.md) | DamIT Finder | `damit_find` | Structures not on the lists: fills across streams in the LiDAR (dams, dry dams, road fills), ponds and dugouts in a water-body layer, road / rail stream crossings (culverts); each listed / unsure / new against the NID and the other layers you give |
@@ -177,6 +177,35 @@ low-confidence cases say so) instead of a gap, and `terrain` checks coverage in 
 |---|---|
 | `damit_run:rundam` | Accepts a hand-off package (or equivalent parameters), validates it against the catalog, creates a **new** run folder and runs the breach model there (DRY_RUN off, the default), then copies the final rasters and vectors into `<DAMS_FOLDER>/<dam id>/`. DRY_RUN on: `run_setup.json`, the package, `README_run.md` and the expected-output contract only. |
 | `damit_run:checkhandoff` | Validates a package and lists what a run still needs. |
+| `damit_run:hecrasexport` | Writes a HEC-RAS project from a finished run. It does not run HEC-RAS. |
+| `damit_run:batch` | The ported DamSafety batch: a layer of dams, one breach run each, with a summary CSV. Since 0.6.0 `WORKERS` above 1 runs that many dams at the same time, each in its own `qgis_process` worker with a share of the cores. |
+| `damit_run:sensitivity`, `damit_run:cascade` | The ported sensitivity runs for one dam, and the failure of dams in a chain. |
+| `damit_run:hydrograph`, `damit_run:estimate`, `damit_run:check` | Breach hydrograph only; run-time estimate for one dam; check of the LISFLOOD-FP / ANUGA installation. |
+| `damit_run:finishanuga`, `damit_run:delineate` | Finish an ANUGA run after QGIS closed; delineate the watershed of a dam (USGS StreamStats). |
+
+The eight tools from `batch` down are the DamSafety Runner's own (`algorithms/engine.py`, `core/`), registered since
+0.4.1. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
+DamSafety's dam-folder layout; `damit_run:rundam` stays the tool the Screener hand-off and DamIT Crest call.
+
+**Batch workers (0.6.0).** One dam gains little from more LISFLOOD-FP threads, so a long batch is shortened by running
+dams side by side. Workers need `qgis_process` (set `NDBREACH_QGIS_PROCESS` to its full path if it is not found), layers
+that are files, and DamIT Runner enabled for `qgis_process` in the profile. When they cannot be used the log says why
+and the dams run one after another. Each worker's log and one-row summary are kept in `<Dams folder>/_batch_workers/`.
+The rows are the same as one dam after another.
+
+**ANUGA checkpoints are signed (0.6.0).** A checkpoint is a Python pickle, and loading one runs the code inside it, so a
+dam folder from somewhere else could run anything when resumed. The worker signs each checkpoint it saves
+(`<checkpoint>.pickle.sig`, HMAC-SHA256 under a key in your own settings folder, `DamIT/anuga_checkpoint.key`) and loads
+only one that verifies. Unsigned, signed on another computer, or changed since: the run stops, says why and keeps the
+checkpoints. `NDBREACH_ANUGA_RESUME_TRUST=1` loads your own older ones for one run; `NDBREACH_CKPT_KEY_FILE` names a key
+file to share between your own computers.
+
+**Engine parity with DamSafety.** `core/`, `algorithms/engine.py`, `flood/breach.py` and DamIT Finder are ports of
+the DamSafety plugins ([DWR_Plugins](https://github.com/nickdbendickson/DWR_Plugins)). `scripts/check_engine_parity.py`
+compares every ported file with its original: identical, differing exactly as recorded in `damit_runner/PARITY.json`
+(DamIT's names, imports and wording), or drifted, which fails. CI runs it on pull requests against the recorded
+DamSafety commit and daily against DamSafety's `main`. After porting a DamSafety change run
+`python3 scripts/check_engine_parity.py --dwr <DWR_Plugins checkout> --update` and commit `PARITY.json` with it.
 
 0.2.0 runs the model like the DamSafety Runner's `rundam` (`ndbreach:rundam`, DWR_Plugins main), with its parameter
 names and defaults: `METHOD` (Froehlich 2008 piping by default; TR-60, MacDonald, Von Thun & Gillette, Froehlich
@@ -186,8 +215,17 @@ names and defaults: `METHOD` (Froehlich 2008 piping by default; TR-60, MacDonald
 `LISFLOOD_MAX_TOTAL_WALL_S` 0, `DURATION_HR` 0 (automatic), `DURATION_MAX_HR` 96, `ANUGA_FINE` 100 m²,
 `ANUGA_COARSE` 1000 m², `ANUGA_NEAR_MI` 1, `ANUGA_BUFFER` 500 m, `THREADS` 0, `LISFLOOD_EXE` (empty = `lisflood` on
 PATH; `builtin` = the built-in numpy engine, never chosen by itself), `ANUGA_PYTHON`, `KEEP_FILES`, `PRODUCTS`,
-`CONTOURS_HR` "0.25, 0.5, 1, 2, 4, 8", `PIPE_FRACTION` 0.5, `PIPE_DIA_FT` 0.5, `DEM_Z`. Sunny day: no outlet or
-spillway flow, the reservoir starts at the top of dam (`PMF_FT` is recorded only). The inflow is the toe band rule
+`CONTOURS_HR` "0.25, 0.5, 1, 2, 4, 8", `PIPE_FRACTION` 0.5, `PIPE_DIA_FT` 0.5, `DEM_Z`. The preset is a sunny day:
+no outlet or spillway flow, the reservoir starts at the top of dam, a piping breach (`PMF_FT` is recorded only).
+Since 0.5.0 the scenario can be changed: `START_POOL` (top of dam / normal pool, `NORMAL_POOL_FT` or dam.json /
+a stated elevation, `START_WSE_FT`) moves the sunny-day pool, held as its depth below the top of dam, and the breach
+equations then use the storage at that pool; `SCENARIO` = flood routes a PMP/PMF inflow hydrograph (`INFLOW_CSV`,
+hours and cfs) through the reservoir, the spillway rating (`SPILLWAY_CSV`), an auxiliary spillway weir
+(`AUX_CREST_FT`, `AUX_LENGTH_FT`, `AUX_C` 2.6) and over the crest, and breaches the dam at the highest pool, at a
+time or at a pool elevation (`TRIGGER`, `TRIGGER_VALUE`; arrival times count from breach initiation); `SCENARIO` =
+flood with no breach models that routed outflow with the dam standing, and `run_report.json` then says
+`breach_occurs: false`. The flood run with a breach models the with-breach outflow only; `damit_run:batch` and the
+other ported tools run the baseline and the incremental rasters too. The inflow is the toe band rule
 above. Outputs (US units) in `<run>/outputs/` and the dam folder: `Depth (Max).tif`, `Velocity (Max).tif`,
 `WSE (Max).tif`, `Arrival Time.tif`, `hmax_ft.tif` (+ `vmax_fps`, `arr_hr`, `wsemax_ft`), `Flood Polygons (Max
 Depth).geojson`, `Flood Extent.geojson`, `Arrival Zones.geojson`, `breach_hydrograph.csv`. It never starts HEC-RAS,

@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from damit_desktop import WEB_DIR_NAME
+from damit_desktop import defaults
 from damit_desktop import localdem
 from damit_desktop import nid
 from damit_desktop import qgis_run
@@ -185,7 +186,40 @@ def check_bundle(root: Path | None = None) -> Path:
     return root
 
 
+#: Sent when the bundle has no security-headers.json (an older bundle): scripts and data from this server only.
+_FALLBACK_SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; worker-src 'self' blob:; "
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def load_security_headers(root: Path) -> dict[str, str]:
+    """The response headers the desktop build wrote beside the bundle (web/security-headers.json).
+
+    The Content-Security-Policy there is built from src/lib/crest/csp.ts, the same source as DamIT.html's meta tag:
+    scripts from this server only, and the named tile and lookup services. DAMIT_NO_CSP=1 drops the policy (not the
+    other headers), for a webview that turns out to need something the policy does not allow.
+    """
+    try:
+        loaded = json.loads((root / "security-headers.json").read_text(encoding="utf-8"))
+        headers = {str(k): str(v) for k, v in loaded.items()} if isinstance(loaded, dict) else {}
+    except (OSError, ValueError):
+        headers = {}
+    if "Content-Security-Policy" not in headers:
+        headers = dict(_FALLBACK_SECURITY_HEADERS)
+    # A header value is one line: a newline in the file must not become a second header.
+    headers = {k: v for k, v in headers.items() if "\n" not in k + v and "\r" not in k + v}
+    if os.environ.get("DAMIT_NO_CSP") == "1":
+        headers.pop("Content-Security-Policy", None)
+    return headers
+
+
 class _Handler(SimpleHTTPRequestHandler):
+    #: Set per server by serve() from the bundle's security-headers.json.
+    security_headers: dict[str, str] = dict(_FALLBACK_SECURITY_HEADERS)
+
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
         ".js": "text/javascript",
@@ -413,13 +447,16 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
+        for name, value in self.security_headers.items():
+            self.send_header(name, value)
         super().end_headers()
 
 
 def serve(root: Path | None = None, port: int = PREFERRED_PORT) -> ThreadingHTTPServer:
     """Serve the bundle on 127.0.0.1 in a daemon thread. Port 0 means any free port."""
     root = check_bundle(root)
-    handler = partial(_Handler, directory=str(root))
+    bundle_handler = type("_BundleHandler", (_Handler,), {"security_headers": load_security_headers(root)})
+    handler = partial(bundle_handler, directory=str(root))
     try:
         server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     except OSError as e:
@@ -523,6 +560,14 @@ class Api:
         if self._settings_file:
             localdem.write_dem_path(self._settings_file, None)
         return {"path": None, "gdalwarp": localdem.find_gdalwarp()}
+
+    def get_defaults(self) -> dict:
+        """Your shared defaults file (defaults.py): its path and text, text None when you have none yet."""
+        return defaults.read_user()
+
+    def save_defaults(self, text: str) -> dict:
+        """Write your shared defaults file, the one the DamIT plugins read too."""
+        return defaults.write_user(text)
 
     def save_file(self, name: str, text: str) -> dict:
         import webview

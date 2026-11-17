@@ -8,6 +8,11 @@ routed once more with no breach. Both outflow hydrographs go to the flood
 models; the difference between the two floods is the incremental effect of the
 failure.
 
+3.19.0: the flood can also be routed with NO breach at all (`route_flood(..., breach=False)`,
+workflow.SCENARIO_FLOOD_NO_BREACH): the outflow through the spillways and outlets and over the
+crest is the flood that goes downstream. `FloodInputs.aux_spillway` is an auxiliary (emergency)
+spillway given as a weir, added to the principal spillway rating in every routing.
+
 Time zero of both hydrographs is the start of the inflow record; the breach
 starts at `t_ref_s` (`Hydrograph.t_ref_s`), and arrival times count from there.
 """
@@ -25,7 +30,10 @@ TRIGGER_PEAK = "peak"          # at the highest pool level of the no-breach rout
 TRIGGER_TIME = "time"          # trigger_value hours after the start of the inflow
 TRIGGER_WSE = "wse"            # when the pool first reaches trigger_value (ft)
 TRIGGERS = (TRIGGER_PEAK, TRIGGER_TIME, TRIGGER_WSE)
+METHOD_NO_BREACH = "no breach (routed flood outflow)"     # Hydrograph.method of a no-breach flood
 CREST_C_US = 2.6               # broad-crested weir coefficient for the embankment crest (US)
+AUX_C_US = 2.6                 # the same for an auxiliary spillway given as a weir (a starting
+#                                value: an earth/grass channel control section; state your own)
 
 
 @dataclass
@@ -78,6 +86,23 @@ class Spillway:
         return float(self.elev_m[max(0, nz[0] - 1)]) if len(nz) else float(self.elev_m[0])
 
 
+# DamIT Core 0.3.0: shared_defaults pmf_breach_volume -> breach.VW_*
+PMF_VW = {"storage_at_start_pool": br.VW_POOL, "max_storage": br.VW_MAX_STORAGE}
+
+
+def pmf_vw_source(fi=None):
+    """The Vw rule of a PMF / flood-inflow breach: FloodInputs.vw_source when set, else the shared
+    defaults file (pmf_breach_volume, DamIT Core), else the storage at the starting pool."""
+    v = getattr(fi, "vw_source", None)
+    if v in br.VW_SOURCES:
+        return v
+    try:
+        from damit_core.lib import shared_defaults as SD
+        return PMF_VW.get(SD.value("pmf_breach_volume"), br.VW_POOL)
+    except Exception:                                           # noqa - no DamIT Core
+        return br.VW_POOL
+
+
 @dataclass
 class FloodInputs:
     inflow_t_s: np.ndarray
@@ -91,6 +116,29 @@ class FloodInputs:
     crest_c_us: float = CREST_C_US
     outlets: list = field(default_factory=list)      # outlets.Conduit: low-level outlet works
     spillway_schedule: Optional[list] = None          # [(t_s, fraction)] gate on the spillway rating
+    # DamIT Core 0.3.0: Vw in the breach equations (breach.VW_POOL / VW_MAX_STORAGE); None = the
+    # shared defaults file's pmf_breach_volume (damit_core.lib.shared_defaults), else VW_POOL
+    vw_source: Optional[str] = None
+    # 3.19.0: auxiliary (emergency) spillway as a weir, added to `spillway` (never gated)
+    aux_spillway: Optional[Spillway] = None
+    aux_text: str = ""                                # "crest 1612.0 ft, 80 ft long, C 2.6"
+
+    def set_aux_weir(self, crest_ft, length_ft, c_us=None):
+        """An auxiliary spillway as a broad-crested weir Q = C L H^1.5 (US units). Nothing is
+        set without both the crest elevation and the length."""
+        if crest_ft is None or not length_ft:
+            if crest_ft is not None or length_ft:
+                raise br.BreachInputError("the auxiliary spillway needs both its crest elevation "
+                                          "(ft) and its length (ft)")
+            return self
+        c = float(c_us) if c_us else AUX_C_US
+        if length_ft <= 0 or c <= 0:
+            raise br.BreachInputError("the auxiliary spillway length and weir coefficient must "
+                                      "be greater than 0")
+        self.aux_spillway = Spillway.from_weir(float(crest_ft), float(length_ft), c)
+        self.aux_text = "crest {:.2f} ft, {:g} ft long, weir C {:g}".format(
+            float(crest_ft), float(length_ft), c)
+        return self
 
     @classmethod
     def from_files(cls, inflow_csv, spillway_csv=None, **kw):
@@ -124,6 +172,7 @@ class FloodInputs:
 class FloodResult:
     def __init__(self):
         self.failed = True             # False when the trigger was never reached
+        self.no_breach_only = False    # True: routed with breach=False (no failure was asked for)
         self.with_breach = None        # Hydrograph, total outflow with the failure
         self.no_breach = None          # Hydrograph, total outflow without it
         self.breach_only = None        # Hydrograph, the breach component
@@ -162,17 +211,22 @@ def route_static(qin, qout, v0, t_in, t_max, dt):
     return np.asarray(ts), np.asarray(vs), np.asarray(qs), t
 
 
-def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0):
+def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0, breach=True):
     """Route the inflow with and without a breach. `method` is a routed method
-    or a TR-60 method of breach.py."""
+    or a TR-60 method of breach.py. With breach=False only the no-breach routing is done (the
+    method and overrides are not used): the result has failed=False and `no_breach` is the
+    outflow through the spillways, the outlets and over the crest."""
     ov = overrides or br.BreachOverrides()
-    if method == br.METHOD_USER:
-        raise br.BreachInputError("route_flood does not handle your own hydrograph")
-    if method not in br.ROUTED_METHODS and method not in br.TR60_METHODS:
-        raise br.BreachInputError("unknown breach method: {}".format(method))
+    if breach:
+        if method == br.METHOD_USER:
+            raise br.BreachInputError("route_flood does not handle your own hydrograph")
+        if method not in br.ROUTED_METHODS and method not in br.TR60_METHODS:
+            raise br.BreachInputError("unknown breach method: {}".format(method))
     dam.validate()
-    dam = br.apply_partial(dam, ov)      # partial breach: the bottom is raised for the routing too
+    if breach:
+        dam = br.apply_partial(dam, ov)  # partial breach: the bottom is raised for the routing too
     spill = fi.spillway
+    aux = fi.aux_spillway
     pool_ft = fi.normal_pool_ft
     if pool_ft is None and spill is not None:
         pool_ft = spill.crest_m / FT
@@ -183,7 +237,8 @@ def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0):
         raise br.BreachInputError("{}: the normal pool elevation ({:.1f} ft) is not below the "
                                   "top of dam ({:.1f} ft)".format(dam.dam_id, pool_ft,
                                                                  dam.top_of_dam_ft))
-    c0 = br._common(dam, pool_ft * FT, "normal pool", br.VW_POOL)
+    vw_src = pmf_vw_source(fi)
+    c0 = br._common(dam, pool_ft * FT, "normal pool", vw_src)
     res, top_m = c0.res, c0.top_m
     notes = list(c0.notes)
     crest_ft = fi.crest_length_ft or dam.crest_length_ft
@@ -193,9 +248,21 @@ def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0):
         notes.append("No embankment crest length given: water above the top of dam is not "
                      "released except through the breach, so the no-breach pool can rise "
                      "above the crest without overtopping. Give the crest length.")
-    if spill is None and not fi.outlets:
-        notes.append("No spillway rating given: the only releases are the breach and, above "
-                     "the crest, the overtopping flow.")
+    if spill is None and aux is None and not fi.outlets:
+        notes.append("No spillway rating given: the only releases are {}above "
+                     "the crest, the overtopping flow.".format("the breach and, " if breach
+                                                               else ""))
+    if aux is not None:
+        notes.append("Auxiliary spillway as a weir ({}), added to the spillway rating. A weir "
+                     "formula, not a rating of the built channel: check it against the design "
+                     "rating.".format(fi.aux_text or "your values"))
+        if aux.crest_m >= top_m:
+            notes.append("The auxiliary spillway crest ({:.2f} ft) is not below the top of dam "
+                         "({:.2f} ft): it only flows once the dam overtops.".format(
+                             aux.crest_m / FT, dam.top_of_dam_ft))
+        if aux.crest_m < pool_ft * FT - 0.003:
+            notes.append("The auxiliary spillway crest ({:.2f} ft) is below the starting pool "
+                         "({:.2f} ft): it flows from the start.".format(aux.crest_m / FT, pool_ft))
     if fi.outlets:
         notes.append("Outlet works: " + "; ".join(outmod.describe(fi.outlets)) + ". Textbook "
                      "weir/orifice flow without conduit friction or tailwater.")
@@ -208,6 +275,8 @@ def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0):
         q = spill.q(wse) if spill is not None else 0.0
         if spill is not None and fi.spillway_schedule:
             q *= outmod.schedule_factor(fi.spillway_schedule, t)
+        if aux is not None:
+            q += aux.q(wse)
         if fi.outlets:
             q += outmod.q_total(fi.outlets, wse, t)
         h = wse - top_m
@@ -237,6 +306,50 @@ def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0):
         notes.append("Without a breach the pool rises to {:.1f} ft, {:.1f} ft over the top of "
                      "dam: the embankment overtops in this flood.".format(
                          peak_stage_ft, peak_stage_ft - dam.top_of_dam_ft))
+
+    if not breach:
+        # 3.19.0: the flood with no failure. The routed outflow is the flood downstream.
+        i_q = int(np.argmax(qs))
+        q_aux = np.array([aux.q(float(w)) for w in wse_nb]) if aux is not None else None
+        if qs[-1] > 0:
+            ts = np.append(ts, ts[-1] + 60.0)
+            qs = np.append(qs, 0.0)
+        over_ft = peak_stage_ft - dam.top_of_dam_ft
+        notes.append("NO BREACH is modelled: the flood downstream is the routed outflow through "
+                     "the spillway{} and over the crest where the pool tops it. The embankment "
+                     "is assumed to stand{}. Flood depths from this run are not a dam failure: "
+                     "compare them with a breach run for the incremental effect.".format(
+                         ", the outlets" if fi.outlets else "",
+                         " although it overtops by {:.1f} ft".format(over_ft)
+                         if over_ft > 0 and crest_m else ""))
+        params = {"scenario": "flood inflow, no breach",
+                  "starting_wse_ft": round(pool_ft, 2), "starting_wse_rule": "normal pool",
+                  "peak_pool_ft": round(peak_stage_ft, 2),
+                  "peak_pool_hr": round(float(stage_t[i_peak]) / 3600.0, 3),
+                  "freeboard_at_peak_ft": round(-over_ft, 2),
+                  "inflow_peak_cfs": round(float(fi.inflow_q_cms.max()) / CFS, 0),
+                  "inflow_volume_acft": round(fi.inflow_volume_m3 / ACFT, 1)}
+        if q_aux is not None:
+            params["aux_spillway"] = fi.aux_text
+            params["aux_spillway_peak_cfs"] = round(float(q_aux.max()) / CFS, 0)
+        out = FloodResult()
+        out.failed = False
+        out.no_breach_only = True
+        out.no_breach = br.Hydrograph(ts, qs, METHOD_NO_BREACH, params, notes,
+                                      t_ref_s=0.0).thinned(max_points=400)
+        out.inflow_t_s, out.inflow_q_cms = fi.inflow_t_s, fi.inflow_q_cms
+        out.notes = notes
+        out.stage_t_s, out.stage_nb_m = stage_t, wse_nb
+        out.summary = {"failed": False, "no_breach_scenario": True,
+                       "peak_pool_ft_no_breach": round(peak_stage_ft, 2),
+                       "overtops": bool(over_ft > 0),
+                       "freeboard_at_peak_ft": round(-over_ft, 2),
+                       "peak_outflow_no_breach_cfs": round(out.no_breach.peak_cfs, 0),
+                       "peak_outflow_hr": round(float(stage_t[i_q]) / 3600.0, 3),
+                       "inflow_peak_cfs": params["inflow_peak_cfs"]}
+        if q_aux is not None:
+            out.summary["aux_spillway_peak_cfs"] = params["aux_spillway_peak_cfs"]
+        return out
 
     # -- 2. when the breach starts --------------------------------------------------------
     trig = fi.trigger
@@ -279,7 +392,7 @@ def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0):
     # -- 3. with breach ----------------------------------------------------------------------
     rule = "pool at breach initiation ({})".format(
         {"peak": "peak pool of the flood", "time": "user time", "wse": "trigger elevation"}[trig])
-    c = br._common(dam, wse_b, rule, br.VW_POOL)   # 3.16.4: PMF Vw per the ND standards
+    c = br._common(dam, wse_b, rule, vw_src)   # 3.16.4 / DamIT Core 0.3.0: PMF Vw, shared rule
     v_release0 = c.v_release
     tw, qw, qb, sw, vw = [t_b], [], [], [wse_b], [v_b]
     params = c.params
@@ -321,7 +434,7 @@ def route_flood(dam, method, overrides, fi, max_hours=240.0, dt_hydro_s=30.0):
         tw, qw, qb = np.asarray(tw), np.asarray(qw), np.asarray(qb)
     else:      # TR-60: peak and volume from TR-60, added to the no-breach flow
         shape = "curvilinear" if method == br.METHOD_TR60_CURVE else "triangular"
-        tri = br.tr60_hydrograph(dam, ov, shape, wse_b, rule, br.VW_POOL)
+        tri = br.tr60_hydrograph(dam, ov, shape, wse_b, rule, vw_src)
         notes += tri.notes
         params.update(tri.params)
         tt = t_b + tri.t_s

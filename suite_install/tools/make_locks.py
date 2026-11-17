@@ -36,8 +36,8 @@ ROLES = {
     # ANUGA 4.1 + gmsh (the DamSafety / DamIT Runners mesh with gmsh) + NetCDF I/O
     "ndanuga": ["python=3.12", "anuga=4.1", "gmsh=4.15", "python-gmsh", "numpy", "scipy", "gdal",
                 "netcdf4", "matplotlib-base"],
-    # the local AIs (Pierre + dam-research), OCR included
-    "ndresearch": ["python=3.12", "numpy", "pymupdf", "pypdf", "ocrmypdf", "tesseract"],
+    # the local AIs (Heim + vor), OCR included
+    "ndvor": ["python=3.12", "numpy", "pymupdf", "pypdf", "ocrmypdf", "tesseract"],
     # macOS / Linux: conda compilers + OpenMP to build the patched LISFLOOD-FP 8.3 at install time
     "ndbuild": ["cmake", "make", "llvm-openmp", "c-compiler", "cxx-compiler"],
 }
@@ -48,9 +48,9 @@ PLATFORMS = {
     "win-64": [("__win", "0"), ("__archspec", "1=x86_64")],
 }
 # ndbuild: macOS always builds LISFLOOD-FP at install; Linux only if the shipped binary cannot run
-ROLES_FOR = {p: ["ndqgis", "ndanuga", "ndresearch"] + ([] if p == "win-64" else ["ndbuild"]) for p in PLATFORMS}
+ROLES_FOR = {p: ["ndqgis", "ndanuga", "ndvor"] + ([] if p == "win-64" else ["ndbuild"]) for p in PLATFORMS}
 # packages that some platforms do not have: dropped there (and said so in the lock's header)
-OPTIONAL = {"ndresearch": ["ocrmypdf", "tesseract"]}
+OPTIONAL = {"ndvor": ["ocrmypdf", "tesseract"]}
 
 
 def vpkgs(platform):

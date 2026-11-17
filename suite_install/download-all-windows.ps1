@@ -10,10 +10,11 @@ Double-click download-all-windows.cmd, or:
                         another machine (the same files download-all.sh fetches)
   -NoModels             skip the AI models (the AI installer pulls them online instead)
   -Models "a b"         which models (default: qwen3:30b-a3b qwen3:14b nomic-embed-text qwen3-embedding:0.6b)
-  -NoLibrary            skip the dam-research reference library
+  -NoLibrary            skip the vor reference library
   -Pack                 also zip each platform's set as offline-<platform>.zip
 
-Every file is checked against the sha256 pinned in locks\ and a bad download is deleted.
+Every file is checked against the sha256 pinned in locks\ before it is put in place; a
+cut-off download is resumed, and up to 4 passes run by themselves (DAMSUITE_DL_PASSES).
 Files are downloaded only; nothing downloaded is run, except the pinned portable Ollama on a
 side port (127.0.0.1:11499) to pull the models. No admin, nothing installed.
 =============================================================================
@@ -34,28 +35,58 @@ foreach ($p in $Platform) { if (-not (Test-Path (Join-Path $Locks $p))) { throw 
 $Curl = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
 $script:Bad = 0
 
-# Fetch-List: items with Url, Dest, Sha. Missing/bad files are downloaded (curl.exe, 8 at a time,
-# when Windows has it; else one by one), then every file is checked.
+# Fetch-List: items with Url, Dest, Sha. Each missing file is downloaded to <Dest>.part and
+# moved into place only once its sha256 matches (same scheme as download-all.sh):
+#   DAMSUITE_DL_PARALLEL (default 3) at a time with curl.exe; curl retries every error and
+#   resumes a cut-off .part (-C -); up to DAMSUITE_DL_PASSES (default 4) passes run by
+#   themselves. A .part that did not grow in a pass and still fails its sha256 is deleted and
+#   starts over. Without a new enough curl.exe, Invoke-WebRequest fetches one by one (no resume).
+$DlParallel = if ($env:DAMSUITE_DL_PARALLEL) { [int]$env:DAMSUITE_DL_PARALLEL } else { 3 }
+$DlPasses = if ($env:DAMSUITE_DL_PASSES) { [int]$env:DAMSUITE_DL_PASSES } else { 4 }
+$CurlMaj = 0; $CurlMin = 0
+if ($Curl) { $v = (& $Curl --version | Select-Object -First 1); if ($v -match 'curl (\d+)\.(\d+)') { $CurlMaj = [int]$matches[1]; $CurlMin = [int]$matches[2] } }
+function CurlAtLeast($maj, $min) { ($CurlMaj -gt $maj) -or ($CurlMaj -eq $maj -and $CurlMin -ge $min) }
+function FSize($f) { if (Test-Path -LiteralPath $f) { (Get-Item -LiteralPath $f).Length } else { 0 } }
+
 function Fetch-List($items) {
-  $todo = @($items | Where-Object { -not ((Test-Path -LiteralPath $_.Dest) -and ((Sha $_.Dest) -eq $_.Sha)) })
-  if ($todo.Count -gt 0) {
-    Write-Host "  downloading $($todo.Count) file(s) ..."
-    foreach ($t in $todo) { New-Item -ItemType Directory -Force -Path (Split-Path $t.Dest) | Out-Null; Remove-Item -LiteralPath $t.Dest -ErrorAction SilentlyContinue }
-    $par = $false
-    if ($Curl) { $v = (& $Curl --version | Select-Object -First 1); $par = ($v -match 'curl (\d+)\.(\d+)' -and ([int]$matches[1] -gt 7 -or [int]$matches[2] -ge 66)) }
-    if ($par) {
+  $pass = 1
+  while ($true) {
+    $todo = New-Object System.Collections.Generic.List[object]
+    foreach ($t in $items) {
+      if ((Test-Path -LiteralPath $t.Dest) -and ((Sha $t.Dest) -eq $t.Sha)) { continue }
+      New-Item -ItemType Directory -Force -Path (Split-Path $t.Dest) | Out-Null
+      Remove-Item -LiteralPath $t.Dest -ErrorAction SilentlyContinue
+      $part = "$($t.Dest).part"
+      if ((Test-Path -LiteralPath $part) -and ((Sha $part) -eq $t.Sha)) { Move-Item -Force -LiteralPath $part -Destination $t.Dest; continue }
+      $todo.Add([pscustomobject]@{ Url = $t.Url; Dest = $t.Dest; Part = $part; Sha = $t.Sha; Before = (FSize $part) })
+    }
+    if ($todo.Count -eq 0) { break }
+    if ($pass -gt $DlPasses) {
+      foreach ($t in $todo) { Warn "still missing after $DlPasses passes: $(Split-Path $t.Dest -Leaf)"; $script:Bad++ }
+      Warn 're-run to carry on: finished files are kept and partial ones (.part) resume'
+      break
+    }
+    Write-Host "  downloading $($todo.Count) file(s), $DlParallel at a time (pass $pass of $DlPasses) ..."
+    if (CurlAtLeast 7 66) {
       $cfg = Join-Path $env:TEMP 'damsuite-curl.cfg'
-      $lines = foreach ($t in $todo) { "url = `"$($t.Url)`""; "output = `"$($t.Dest -replace '\\','/')`"" }
+      $lines = foreach ($t in $todo) { "url = `"$($t.Url)`""; "output = `"$($t.Part -replace '\\','/')`"" }
       [IO.File]::WriteAllLines($cfg, $lines)
-      & $Curl -fsSL --retry 4 --retry-delay 3 --connect-timeout 30 --parallel --parallel-max 8 -K $cfg
+      $opts = @('-fsSL', '--connect-timeout', '30', '--speed-limit', '1024', '--speed-time', '60', '--retry', '5', '--retry-delay', '5', '-C', '-')
+      if (CurlAtLeast 7 71) { $opts += '--retry-all-errors' }
+      if ($DlParallel -gt 1) { $opts += @('--parallel', '--parallel-max', "$DlParallel") }
+      & $Curl @opts -K $cfg
+      if ($LASTEXITCODE -ne 0) { Write-Host '  some downloads were cut off; checking ...' }
       Remove-Item $cfg -ErrorAction SilentlyContinue
     } else {
-      foreach ($t in $todo) { try { Invoke-WebRequest -UseBasicParsing -Uri $t.Url -OutFile $t.Dest } catch { Warn "download failed: $($t.Url)" } }
+      foreach ($t in $todo) { try { Invoke-WebRequest -UseBasicParsing -Uri $t.Url -OutFile $t.Part } catch { Write-Host "  download cut off: $(Split-Path $t.Dest -Leaf)" } }
     }
-  }
-  foreach ($t in $items) {
-    if (-not (Test-Path -LiteralPath $t.Dest)) { Warn "missing: $(Split-Path $t.Dest -Leaf)"; $script:Bad++ }
-    elseif ((Sha $t.Dest) -ne $t.Sha) { Warn "sha256 mismatch, deleted: $(Split-Path $t.Dest -Leaf)"; Remove-Item -LiteralPath $t.Dest; $script:Bad++ }
+    $left = 0
+    foreach ($t in $todo) {
+      if ((Test-Path -LiteralPath $t.Part) -and ((Sha $t.Part) -eq $t.Sha)) { Move-Item -Force -LiteralPath $t.Part -Destination $t.Dest }
+      else { $left++; if ((FSize $t.Part) -le $t.Before) { Remove-Item -LiteralPath $t.Part -ErrorAction SilentlyContinue } }
+    }
+    $pass++
+    if ($left -gt 0 -and $pass -le $DlPasses) { Write-Host "  $left file(s) not finished; pass $pass in $($pass*10) s ..."; Start-Sleep -Seconds ($pass*10) }
   }
 }
 
@@ -103,15 +134,15 @@ if (-not $NoModels -and $Models) {
 }
 
 if (-not $NoLibrary) {
-  Say 'dam-research library -> damit_ai\offline\DamResearch\library'
-  $fa = Join-Path $Here 'damit_ai\research\fetch_asdso.py'
+  Say 'vor library -> damit_ai\offline\Vor\library'
+  $fa = Join-Path $Here 'damit_ai\vor\fetch_asdso.py'
   $py = $null
-  foreach ($c in @((Join-Path $env:USERPROFILE 'miniforge3\envs\ndresearch\python.exe'), (Join-Path $env:USERPROFILE 'miniforge3\python.exe'))) { if (Test-Path $c) { $py = $c; break } }
+  foreach ($c in @((Join-Path $env:USERPROFILE 'miniforge3\envs\ndvor\python.exe'), (Join-Path $env:USERPROFILE 'miniforge3\python.exe'))) { if (Test-Path $c) { $py = $c; break } }
   if (-not $py) { $g = Get-Command python.exe -ErrorAction SilentlyContinue; if ($g -and $g.Source -notmatch 'WindowsApps') { $py = $g.Source } }
   if ($py -and (Test-Path $fa)) {
-    $lib = Join-Path $Here 'damit_ai\offline\DamResearch'; New-Item -ItemType Directory -Force -Path (Join-Path $lib 'library') | Out-Null
-    $env:DAMRESEARCH_HOME = $lib; & $py $fa --catalog --asdso; if ($LASTEXITCODE -ne 0) { Warn 'some library files failed' }
-    Remove-Item Env:DAMRESEARCH_HOME
+    $lib = Join-Path $Here 'damit_ai\offline\Vor'; New-Item -ItemType Directory -Force -Path (Join-Path $lib 'library') | Out-Null
+    $env:VOR_HOME = $lib; & $py $fa --catalog --asdso; if ($LASTEXITCODE -ne 0) { Warn 'some library files failed' }
+    Remove-Item Env:VOR_HOME
   } else { Warn 'library skipped (needs a Python: run it again after install-all, or use download-all.sh on a Mac / Linux box)' }
 }
 
@@ -123,7 +154,7 @@ if ($Pack) {
     foreach ($l in $extra) { if ($l[0] -eq $P -and $l[1] -ne 'ollama-pull' -and (Test-Path (Join-Path $Here $l[2]))) { $rel += $l[2] } }
     if (Test-Path (Join-Path $Here 'damit_ai\offline\ollama\SHA256SUMS')) { $rel += 'damit_ai/offline/ollama/SHA256SUMS' }
     # tar.exe (built into Windows 10+) keeps the folder paths, so the zip unzips into place on any OS
-    & tar.exe -a -c -f $z -C $Here @($rel | Select-Object -Unique)
+    & tar.exe -a -c -f $z --exclude '*.part' -C $Here @($rel | Select-Object -Unique)
     if ($LASTEXITCODE -eq 0) { Ok "$z ($([math]::Round((Get-Item $z).Length / 1MB)) MB); unzip it in the package folder on the target" } else { Warn "could not pack $z" }
   }
 }

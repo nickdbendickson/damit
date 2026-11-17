@@ -17,6 +17,9 @@ from . import conditioning as cond
 from . import terrain
 from .units import FT, MILE
 
+from ..compat import nodata_sample as NDS      # DamIT: the suite library is compat/ here
+
+
 KIND_STRUCTURE = "structure"
 KIND_ROAD = "road"
 KIND_RAIL = "rail"
@@ -79,6 +82,44 @@ class Receptors:
         out = np.full(len(self.x), np.nan)
         out[ok] = arr[r[ok], c[ok]]
         return out
+
+    def apply_nodata_on_grid(self, grid, depth2d, vel2d=None, cell_m=None):
+        """Sample depth (and velocity) on `grid` and apply the 20 m NoData-receptor rule.
+
+        A finite 0 stays dry. Peak depth and peak velocity may come from different wet
+        cells (option C). Returns (depth, vel, sampling, flags). `cell_m` defaults to
+        `grid.dx` (Runner grids are in metres).
+        """
+        policy = NDS.nodata_policy(grid.dx if cell_m is None else float(cell_m))
+        d = self.sample(grid, depth2d)
+        v = None if vel2d is None else self.sample(grid, vel2d)
+        sampling = np.array([NDS.SAMPLING_CENTRE] * len(self.x), dtype=object)
+        flags = np.array([None] * len(self.x), dtype=object)
+        col = np.floor((self.x - grid.x0) / grid.dx).astype(int)
+        row = np.floor((grid.y0 - self.y) / grid.dx).astype(int)
+        ny, nx = depth2d.shape
+        for i in range(len(self.x)):
+            r, c = int(row[i]), int(col[i])
+            if not (0 <= r < ny and 0 <= c < nx):
+                sampling[i] = "outside the raster"
+                continue
+            if not NDS.is_nodata(d[i]):
+                continue
+            depths, vels = [], []
+            for rr, cc in NDS.neighbourhood_rc(r, c, ny, nx):
+                depths.append(depth2d[rr, cc])
+                vels.append(None if vel2d is None else vel2d[rr, cc])
+            peak = NDS.peak_wet_cells(depths, vels)
+            decided = NDS.resolve_nodata(True, peak, policy)
+            sampling[i] = decided["sampling"]
+            flags[i] = decided["flag"]
+            if decided["flag"] == NDS.FLAG_NEIGHBOURHOOD:
+                d[i] = decided["depth"]
+                if v is not None and decided["velocity"] is not None:
+                    v[i] = decided["velocity"]
+            elif decided["flag"] == NDS.FLAG_DRY_REVIEW:
+                d[i] = 0.0
+        return d, v, sampling, flags
 
 
 def count_text(rec, mask):
@@ -171,8 +212,15 @@ def summarize(rec, grid, final, arrival_m, dv_limit=DV_DANGER_FT2S):
     if not len(rec):
         return {}, []
     inb = rec.in_bounds(grid.bounds)
-    d = rec.sample(grid, final["depth"])
-    v = rec.sample(grid, final["velocity"])
+    # M21: a build that wrote no maximum-velocity raster passes velocity as None; sample it as
+    # all-NaN so velocity_fps is blank and the depth x velocity danger count is reported unknown
+    # (None), not a falsely safe 0, in the receptor summary and CSV.
+    vraw = final.get("velocity")
+    has_vel = vraw is not None
+    d, v, sampling, nodata_flags = rec.apply_nodata_on_grid(
+        grid, final["depth"], vraw if has_vel else None)
+    if v is None:
+        v = np.full(d.shape, np.nan)
     a = rec.sample(grid, final["arrival"])
     wet = inb & np.isfinite(d) & (d >= arrival_m)
     dv = np.nan_to_num(d) / FT * np.nan_to_num(v) / FT
@@ -190,9 +238,9 @@ def summarize(rec, grid, final, arrival_m, dv_limit=DV_DANGER_FT2S):
             else round(float(rec.length_m[k & (d >= 1.0 * FT)].sum()) / 1000.0, 2),
             "depth_ge_3ft": int((k & (d >= 3.0 * FT)).sum()) if kind == KIND_STRUCTURE
             else round(float(rec.length_m[k & (d >= 3.0 * FT)].sum()) / 1000.0, 2),
-            "dv_ge_{:g}_ft2s".format(dv_limit): int((k & (dv >= dv_limit)).sum())
-            if kind == KIND_STRUCTURE
-            else round(float(rec.length_m[k & (dv >= dv_limit)].sum()) / 1000.0, 2),
+            "dv_ge_{:g}_ft2s".format(dv_limit): (None if not has_vel else
+                (int((k & (dv >= dv_limit)).sum()) if kind == KIND_STRUCTURE
+                 else round(float(rec.length_m[k & (dv >= dv_limit)].sum()) / 1000.0, 2))),
             "max_depth_ft": round(float(np.nanmax(d[k])) / FT, 2),
             "earliest_arrival_hr": (round(float(np.nanmin(a[k])), 2)
                                     if np.isfinite(a[k]).any() else None),
