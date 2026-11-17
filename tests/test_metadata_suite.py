@@ -64,7 +64,7 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.4.3"           # DamIT PMP 0.4.0: watershed, temporal patterns, losses, lisfloodrain (the others are 0.2.0)
+PMP_VERSION = "0.4.4"           # DamIT PMP 0.4.4: VERTEX_ELEVATION, stream refinement, principal outlet, stage probes (the others: Data 0.2.1, Core 0.3.0)
 DATA_VERSION = "0.2.1"          # DamIT Data 0.2.1: an update that cannot replace an open folder says so
 CORE_VERSION = "0.3.0"          # DamIT Core 0.3.0: the shared defaults file (lib/shared_defaults.py)
 

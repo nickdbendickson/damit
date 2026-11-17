@@ -87,6 +87,64 @@ class Settings(unittest.TestCase):
         self.assertIn("grade_dist_m", str(cm.exception))
 
 
+    def test_channel_sizing_keys_reach_the_mesher_and_are_checked(self):          # 0.4.2
+        spec = AR.mesh_spec(circle(0, 0, 1000), None, None, 1, {"channel_area_m2": 400, "channel_dist_min_m": 60,
+                                                                "channel_dist_max_m": 600, "max_area_m2": 5000})
+        self.assertEqual((spec["channel_area_m2"], spec["channel_dist_min_m"], spec["channel_dist_max_m"]), (400.0, 60.0, 600.0))
+        with self.assertRaises(AR.JobError) as cm:
+            AR.mesh_spec(circle(0, 0, 1000), None, None, 1, {"channel_area_m2": -1})
+        self.assertIn("channel_area_m2", str(cm.exception))
+        sp = AR.mesh_spec(circle(0, 0, 1000), [[[0, 0], [500, 0]]], [(0, 0)], 1, None, lines=[[[0, 10], [100, 10]]])
+        self.assertEqual(sp["lines"], [[[0.0, 10.0], [100.0, 10.0]]])               # embedded lines (the outlet)
+
+    def test_outlet_spec_is_checked_and_labelled(self):
+        o = AR.outlet_spec((0, 0), (120, 0), 0.9, 321.8, 320.0)
+        self.assertEqual((o["shape"], o["width_m"], o["length_m"], o["assumed"]), ("pipe", 0.9, 120.0, True))
+        self.assertIn("ASSUMED", o["note"])
+        self.assertFalse(AR.outlet_spec((0, 0), (120, 0), 0.9, 321.8, 320.0, assumed=False)["assumed"])
+        for bad in (dict(diameter_m=0), dict(diameter_m=float("nan")), dict(diameter_m=100.0)):   # last: ends closer than 2 D
+            kw = dict(inlet=(0, 0), outlet=(120, 0), diameter_m=0.9, invert_in_m=321.8, invert_out_m=320.0)
+            kw.update(bad)
+            with self.assertRaises(AR.JobError):
+                AR.outlet_spec(**kw)
+
+    def test_outlet_probe_and_vertex_elevation_go_into_the_job_only_when_asked(self):
+        d = tempfile.mkdtemp()
+        dem = os.path.join(d, "dem.tif")
+        make_dem(dem)
+        g, _ = AR.read_model_grid(dem, (500000, 5196000, 503000, 5200000), 30.0)
+        st = AR.check_settings({"cell_m": 30.0})
+        t, r = np.array([0, 3600.0]), np.array([1e-7, 1e-7])
+        j0 = np.load(AR.write_job(d, g, t, r, st, 7200.0))
+        for k in ("outlet_json", "probes", "vertex_elevation"):
+            self.assertNotIn(k, j0.files)
+        o = AR.outlet_spec((501000, 5198000), (501100, 5198000), 0.9, 100.0, 99.0)
+        j1 = np.load(AR.write_job(d, g, t, r, st, 7200.0, outlet=o, probes=[(501500, 5198500)], vertex_elevation=True))
+        self.assertEqual(json.loads(str(j1["outlet_json"]))["width_m"], 0.9)
+        self.assertEqual(j1["probes"].shape, (1, 2))
+        self.assertEqual(int(j1["vertex_elevation"]), 1)
+
+
+@unittest.skipUnless(HAVE, "numpy / scipy / GDAL not installed")
+class StreamRefinement(unittest.TestCase):
+    def test_stream_lines_are_clipped_simplified_and_sized_for_the_mesher(self):      # 0.4.2
+        from damit_pmp import watershed as W
+        from damit_pmp.runner_shared.grid import NODATA, Grid
+        ny, nx, cell = 40, 60, 30.0
+        rows, cols = np.indices((ny, nx))
+        z = 100.0 + 0.9 * np.abs(rows - ny // 2) + 0.15 * cols
+        z[0, :] = z[-1, :] = z[:, 0] = z[:, -1] = NODATA
+        g = Grid(z, 500000.0, 5200000.0, cell, NODATA, None)
+        outer = circle(g.x0 + nx * cell / 2, g.y0 - ny * cell / 2, 400.0)          # a ring smaller than the grid
+        lines, info = AR.stream_refine_lines(g, outer, 0.02)                        # 0.02 km2 = 22 cells
+        self.assertGreaterEqual(info["lines"], 1)
+        self.assertLess(info["length_km_in_domain"], info["network_km_grid"])       # clipped to the ring
+        from damit_pmp.anugarain import clip_lines_to_polygon
+        self.assertEqual(len(clip_lines_to_polygon(lines, outer)), len(lines))       # all inside
+        with self.assertRaises(AR.JobError):
+            AR.stream_refine_lines(g, outer, 0)
+
+
 @unittest.skipUnless(HAVE, "numpy / scipy / GDAL not installed")
 class RateSeries(unittest.TestCase):
     def write(self, text):
