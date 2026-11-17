@@ -231,6 +231,25 @@ class TestHeightDatumStart(Base):
         d = self.digest({"datum": "NGVD29"})
         self.assertIn("DATUM", ids(d, "PROBLEM"))
 
+    def test_navd88_with_a_units_suffix_is_not_a_datum_problem(self):
+        # DamIT Crest / Runner write vdatum.NAVD88_TAG ("NAVD88 ft"); a units suffix is not a mismatch.
+        for tag in ("NAVD88 ft", "NAVD88 feet", "NAVD88 m", "NAVD88 US survey ft", "NAVD 88", "navd88 (ft)"):
+            d = self.digest({"datum": tag})
+            self.assertNotIn("DATUM", ids(d), tag)
+            self.assertEqual(d["checks"]["datum"]["basis"], "stated NAVD88", tag)
+            self.assertEqual(d["checks"]["datum"]["normalized_datum"], "NAVD88", tag)
+
+    def test_ngvd29_with_a_units_suffix_is_still_a_datum_problem(self):
+        d = self.digest({"datum": "NGVD29 ft"})
+        self.assertIn("DATUM", ids(d, "PROBLEM"))
+        self.assertIn("NGVD29 ft", [f["title"] for f in d["flags"] if f["id"] == "DATUM"][0])
+
+    def test_normalize_stated_datum_strips_units_only(self):
+        self.assertEqual(RD.normalize_stated_datum("NAVD88 ft"), "NAVD88")
+        self.assertEqual(RD.normalize_stated_datum("NGVD29 feet"), "NGVD29")
+        self.assertEqual(RD.normalize_stated_datum(""), "")
+        self.assertEqual(RD.normalize_stated_datum(None), "")
+
     def test_start_wse_must_be_top_of_dam_max_pool(self):
         d = self.digest({"start_wse": 1495.0})
         f = [x for x in d["flags"] if x["id"] == "START_WSE"][0]

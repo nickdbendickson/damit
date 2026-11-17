@@ -44,7 +44,9 @@ RASTERS = [("DEPTH", "Maximum depth raster", True), ("VELOCITY", "Maximum veloci
                                                             False),
            ("NONBREACH", "Non-breach depth raster", False),
            ("ARRIVAL", "Arrival time raster (hours)", False)]
-LAYERS = [("STRUCTURES", "structure", "Structures"), ("ROADS", "road", "Roads"),
+LAYERS = [("STRUCTURES", "structure", "Structures"),
+          ("ADDRESS_POINTS", "structure", "ND E911 address points (empty = offline pack)"),
+          ("ROADS", "road", "Roads"),
           ("RAIL", "rail", "Railroads"), ("FACILITIES", "facility", "Critical facilities"),
           ("LIFELINES", "lifeline", "Lifelines and utilities"),
           ("ENVIRONMENT", "environment", "Environmental / cultural features"),
@@ -194,6 +196,17 @@ class DamitHazardDialog(QDialog):
             r += 1
         self.metres = QCheckBox("Rasters are in metres (m, m/s, m\u00b2/s)")
         g.addWidget(self.metres, r, 0, 1, 2)
+        r += 1
+        self.terrain = _layer_combo("raster")
+        g.addWidget(QLabel("Run DEM / terrain (optional)"), r, 0)
+        g.addWidget(self.terrain, r, 1)
+        r += 1
+        self.terrain_units = QComboBox()
+        self.terrain_units.addItems([
+            "Detect (band unit, 3DEP cue, or match WSE minus depth)",
+            "Metres", "Feet (international)", "US survey feet"])
+        g.addWidget(QLabel("Terrain elevation units"), r, 0)
+        g.addWidget(self.terrain_units, r, 1)
         r += 1
         self.layers = {}
         for key, _kind, label in LAYERS:
@@ -423,7 +436,11 @@ class DamitHazardDialog(QDialog):
              "APPLY_ADVISORY": self.advisory.isChecked(),
              "RUN_SCENARIO": 1 + self.scenario.currentIndex(),
              "MODEL_DIM": self.dim.currentIndex(), "METRES": self.metres.isChecked(),
+             "TERRAIN_UNITS": self.terrain_units.currentIndex(),
              "DAM_NAME": self.dam.text().strip(), "OUTPUT": self.out.text().strip()}
+        lyr = self.terrain.currentLayer()
+        if lyr is not None:
+            p["TERRAIN"] = lyr
         for key, _l, _r in RASTERS:
             lyr = self.rasters[key].currentLayer()
             if lyr is not None:

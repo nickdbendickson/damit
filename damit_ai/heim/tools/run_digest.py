@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run_digest.py 1.0.0 - a deterministic review of one DamIT Runner run (no LLM, no network).
+"""run_digest.py 1.3.6 - a deterministic review of one DamIT Runner run (no LLM, no network).
 
 The digest reads what the Runner already wrote (run_setup.json, run_report.json with its per-pass
 records, the per-pass LISFLOOD-FP results, the dam folder, the Hazard report) and answers the
@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.5"
+VERSION = "1.3.7"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -789,17 +789,41 @@ def check_bottom_raised(report, fl):
     return False
 
 
+# Trailing unit tokens Crest / the Runner append to a datum tag ("NAVD88 ft", "NAVD88 US survey ft").
+_DATUM_UNIT_SUFFIX = re.compile(
+    r"(?:(?:US(?:SURVEY|STATUTE)?|INT(?:ERNATIONAL)?)?(?:FEET|FOOT|FT|METERS|METRES|M))$"
+)
+
+
+def normalize_stated_datum(text):
+    """Compact a stated-datum string and drop a trailing units suffix so 'NAVD88 ft' compares as NAVD88.
+
+    Spaces, hyphens and punctuation are removed first ('NAVD 88', 'NAVD88 (ft)'). Real mismatches
+    such as NGVD29 or NGVD29 ft stay NGVD29. This does not treat 'DEM' or 'LiDAR' as NAVD88.
+    """
+    s = re.sub(r"[\s_,./()[\]-]+", "", str(text or "").strip().upper())
+    while True:
+        trimmed = _DATUM_UNIT_SUFFIX.sub("", s)
+        if trimmed == s:
+            return s
+        s = trimmed
+
+
 def check_datum(f, fl, th=THRESHOLDS):
     """DWR elevations are NAVD88 only. Evidence of another datum is a flag. A top of dam in the NAVD88 range with no
     datum stated is NOT an alarm (the Runner never writes a stated datum itself). Only when the elevation cannot be
-    judged at all (no top of dam) is the datum reported, as an INFO note."""
+    judged at all (no top of dam) is the datum reported, as an INFO note.
+
+    DamIT Crest and the Runner write the tag as 'NAVD88 ft' (vdatum.NAVD88_TAG). A units suffix is
+    not a datum mismatch; NGVD29 or a local-range elevation still is."""
     top = f["top_ft"]
-    datum = (f["stated_datum"] or "").upper().replace(" ", "")
+    datum = normalize_stated_datum(f["stated_datum"])
     dwr = (f["top_source"] or "").upper() == "DWR"
     local = top is not None and 0.0 <= top <= th["local_datum_max_ft"]
     navd_range = top is not None and th["local_datum_max_ft"] < top <= NAVD88_RANGE_MAX_FT
     info = {"top_ft": top, "stated_datum": f["stated_datum"], "source": f["top_source"], "local_datum": local,
             "has_dam_record": f["has_record"],
+            "normalized_datum": datum or None,
             "basis": ("stated NAVD88" if datum == "NAVD88" else "stated " + str(f["stated_datum"]) if datum else
                       "NAVD88 range (no datum stated)" if navd_range else "unknown")}
     if local or (datum and datum != "NAVD88"):
@@ -1138,8 +1162,9 @@ def cached_points(path, wkt=None):
 def receptor_check(grid, points, th=THRESHOLDS):
     """points: [(id, x, y)] or a PointSet, in the raster's CRS; grid.data in ft with NaN = NoData.
 
-    nodata: the cell under the receptor is NoData and a neighbour is wet (the receptor sits in a hole in the
-    results, next to water); dry_next_to_wet: the cell is dry and a neighbour is at least near_wet_ft deep.
+    nodata: the cell under the receptor is NoData and a neighbour is wet. check_receptors
+    splits that list into true holes, oversize enclosed components, and flood-edge cells. dry_next_to_wet: the cell is
+    a finite dry value and a neighbour is at least near_wet_ft deep.
 
     Vectorised (1.3.1): one pass of numpy index arithmetic over all points, no per-point Python or GDAL call. A receptor can only
     be flagged within one cell of a wet cell, so only the points inside the wet extent's bounding box (grown by a cell) are
@@ -1244,21 +1269,108 @@ def runner_nodata(grid, inplace=False):
     return Grid(data, grid.x0, grid.y0, grid.cell)
 
 
+
+def _true_hole_mod():
+    try:
+        from damit_core.lib import true_hole as m
+        return m
+    except ImportError:
+        import importlib.util, os
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..",
+                                            "damit_core", "lib", "true_hole.py"))
+        spec = importlib.util.spec_from_file_location("damit_core_lib_true_hole", path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+
+def split_nodata_true_holes(grid, points, nd_items):
+    """Split nodata_next_to_wet items into TRUE_HOLE, oversize, and flood-edge.
+
+    Uses the shared damit_core.lib.true_hole helper (4-connectivity, size cap).
+    Only the listed receptors are classified; receptor_check stays a single numpy pass.
+    """
+    if not nd_items:
+        return [], [], []
+    import numpy as np
+    ps = as_pointset(points)
+    by_id = {ps.ids[i]: i for i in range(len(ps))}
+    TH = _true_hole_mod()
+    ana = TH.analyze_nodata(grid.data, max_cells=TH.TRUE_HOLE_MAX_CELLS, cache=False)
+    hole, over, nr, nc = ana["hole"], ana["oversize"], ana["hole"].shape[0], ana["hole"].shape[1]
+    holes, overs, edges = [], [], []
+    for item in nd_items:
+        pid = item[0]
+        i = by_id.get(pid)
+        if i is None:
+            edges.append(item)
+            continue
+        rr = int(np.floor((grid.y0 - ps.y[i]) / grid.cell))
+        cc = int(np.floor((ps.x[i] - grid.x0) / grid.cell))
+        if not (0 <= rr < nr and 0 <= cc < nc):
+            edges.append(item)
+            continue
+        if hole[rr, cc]:
+            holes.append(item)
+        elif over[rr, cc]:
+            overs.append(item)
+        else:
+            edges.append(item)
+    return holes, overs, edges
+
+
 def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     if depth_grid is None or not len(points):
         return None
     res = receptor_check(depth_grid, points)
     note = (" Sampled on %s." % grid_source) if grid_source else ""
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
+    holes, overs, edges = split_nodata_true_holes(depth_grid, points, nd)
+    res["nodata_true_hole"] = holes
+    res["nodata_oversize"] = overs
+    res["nodata_flood_edge"] = edges
     if nd:
-        fl.add("RECEPTOR_NODATA", WATCH, "receptors", "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
-               "ids: %s. The results have a hole at the receptor. Hazard's path depends on the depth-grid "
-               "cell size (larger side, converted to metres; NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, strictly "
-               "greater than): on a grid coarser than 20 m it takes the peak depth and velocity over neighbouring "
-               "wet cells (sampling=neighbourhood, flag nodata_neighbourhood); at 20 m or finer it still scores "
-               "the NoData cell dry (sampling=centre_nodata_dry) and flags nodata_dry_review. Check these by hand.%s" % (
-                   _ids("%s (neighbour %.2f ft)" % t for t in nd), note),
-               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd}, grid_source=grid_source)
+        holes = res.get("nodata_true_hole") or []
+        overs = res.get("nodata_oversize") or []
+        edges = res.get("nodata_flood_edge") or []
+        cell = getattr(depth_grid, "cell", None)
+        cell_s = ("%g map units" % cell) if cell is not None else "unknown"
+        cap = _true_hole_mod().TRUE_HOLE_MAX_CELLS
+        detail = (
+            "ids: %s. Of these, %d sit in a true hole (TRUE_HOLE: a 4-connected non-wet "
+            "component that does not touch the raster border and has at most "
+            "TRUE_HOLE_MAX_CELLS = %d cells)%s, %d sit in an oversize enclosed component "
+            "(not a hole; scored dry)%s, and %d sit on a flood-edge / exterior NoData cell "
+            "(the Runner writes every dry cell as NoData)%s. "
+            "Hazard's path depends on the depth-grid cell size (this raster's cell is %s; "
+            "larger side, converted to metres; NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, "
+            "strictly greater than). On a grid coarser than 20 m, every NoData receptor is "
+            "scored with depth = max(0, neighbour water surface minus the receptor's own "
+            "ground) (sampling=neighbourhood_wse); raw neighbour depth is never used. "
+            "No ground: scored dry (nodata_no_ground_review). An oversize component is "
+            "scored dry (nodata_oversize_component). At 20 m or finer every NoData cell "
+            "next to water is still scored dry (sampling=centre_nodata_dry) and flagged "
+            "nodata_dry_review. Check these by hand.%s"
+            % (
+                _ids("%s (neighbour %.2f ft)" % t for t in nd),
+                len(holes), cap,
+                (": " + _ids("%s (neighbour %.2f ft)" % t for t in holes)) if holes else "",
+                len(overs),
+                (": " + _ids("%s (neighbour %.2f ft)" % t for t in overs)) if overs else "",
+                len(edges),
+                (": " + _ids("%s (neighbour %.2f ft)" % t for t in edges)) if edges else "",
+                cell_s,
+                note,
+            )
+        )
+        fl.add("RECEPTOR_NODATA", WATCH, "receptors",
+               "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
+               detail,
+               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd},
+               grid_source=grid_source,
+               n_true_hole=len(holes), n_oversize=len(overs), n_flood_edge=len(edges),
+               true_hole_ids=[t[0] for t in holes], oversize_ids=[t[0] for t in overs],
+               flood_edge_ids=[t[0] for t in edges])
     if dn:
         fl.add("RECEPTOR_DRY_NEXT_TO_WET", WATCH, "receptors",
                "%d structure(s) are on a dry cell beside water at least %.1f ft deep" % (len(dn), th["near_wet_ft"]),
@@ -1282,8 +1394,13 @@ REVIEW_CODES = {
     "no_layer": "a receptor layer was not supplied (e.g. lifelines, M11a)",
     "outside_domain": "receptors outside the routed domain were not scored",
     "m13_guessed": "M13 descriptor guessed",
-    "nodata_neighbourhood": "a structure sits on a NoData cell on a grid coarser than 20 m; peak depth and velocity were taken from neighbouring wet cells and need review",
+    "nodata_neighbourhood": "legacy flag: a structure sat on a NoData cell and was filled from a neighbour (replaced by nodata_wse_ground)",
+    "nodata_wse_ground": "a structure sits on a NoData cell on a grid coarser than 20 m; depth is max(0, neighbour water surface minus own ground) and needs review",
+    "nodata_wse_dry": "a structure sits on a NoData cell on a grid coarser than 20 m; scored dry because its ground is at or above every neighbouring water surface",
+    "nodata_no_ground_review": "a structure sits on a NoData cell on a grid coarser than 20 m; scored dry because no run DEM was available (raw neighbour depth was not used)",
+    "nodata_oversize_component": "a structure sits in an enclosed NoData component larger than TRUE_HOLE_MAX_CELLS; scored dry (not a hole)",
     "nodata_dry_review": "a structure sits on a NoData cell on a grid at or finer than 20 m; scored dry from the NoData cell and need review",
+    "nodata_flood_edge": "legacy flag: a structure sat on a dry flood-edge cell written as NoData on a grid coarser than 20 m; scored dry",
 }
 
 

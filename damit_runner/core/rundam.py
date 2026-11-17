@@ -50,6 +50,8 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.6.4: WSE-consistent NoData depth (impacts / nodata_sample / true_hole); no model-number changes
+0.6.3: NoData neighbourhood fill only of a TRUE_HOLE (impacts / nodata_sample); no model-number changes
 0.6.2: from DamSafety Runner 3.20.6, a resumed ANUGA run no longer computes its first pass again
 (workflow.anuga_passes keeps the first pass's result). No change to this module's run or its numbers.
 """
@@ -59,7 +61,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.6.2"
+VERSION = "0.6.4"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

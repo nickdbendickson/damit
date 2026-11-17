@@ -122,7 +122,9 @@ A method that needs a layer kind (M9a rail, M11a lifelines, M8a/M8b roads) repor
 was supplied. When some were supplied and sampled but none is in the scored set (every one outside the routed domain, or
 dropped by the scenario, development and cutoff filters), it reports `layer_none_scored` (info) with the counts instead.
 
-**NoData receptors (0.2.6).** When the cell under a structure (or every cell in its footprint) is NoData and a neighbour is wet, the path depends on the depth-grid cell size. The cell is the larger side of the pixel, converted to metres from the raster CRS units (metres, international feet, US survey feet, or a geographic CRS via metres-per-degree at mid-latitude). Neighbourhood fill is used only when that size is strictly greater than `NODATA_NEIGHBOURHOOD_MIN_CELL_M` = 20 m: peak depth and peak velocity over the wet cells in the 3×3 neighbourhood (and the footprint, if there is one), `sampling=neighbourhood`, flag `nodata_neighbourhood`. At 20 m or finer the NoData cell is still scored dry (`sampling=centre_nodata_dry`) and flagged for review (`nodata_dry_review`), so a hole on a fine product-of-record is not filled from a neighbour. The report *Inputs* line records the cell size, the threshold and which path this run uses. A dry (finite 0) cell stays dry (`RECEPTOR_DRY_NEXT_TO_WET`). A NoData cell with no wet neighbour is left dry and is not flagged.
+**NoData receptors (0.2.6, 0.4.3).** When the cell under a structure (or every cell in its footprint) is NoData and a neighbour is wet, neighbourhood sampling applies only when the depth-grid cell (larger side, converted to metres from the raster CRS units) is strictly greater than `NODATA_NEIGHBOURHOOD_MIN_CELL_M` = 20 m. The sampled depth is physical: `max(0, neighbour water surface − the receptor's own ground)` (`sampling=neighbourhood_wse`). Water surface comes from the WSE raster, or from neighbour depth plus neighbour ground. Ground comes from the run DEM / terrain (the `TERRAIN` input, or `steps.json` / `run_setup` beside the depth raster), sampled at the receptor point. Raw neighbour depth is never used. When no ground is available the receptor is scored dry (`sampling=centre_nodata_no_ground`, flag `nodata_no_ground_review`). A **TRUE_HOLE** (`nodata_true_hole`) is a 4-connected non-wet component that does not touch the raster border and has at most `TRUE_HOLE_MAX_CELLS` = 25 cells. 4-connectivity is used on purpose: a corner-only (diagonal) path to the border does not connect a pocket to the exterior. A larger enclosed component is not a hole and scores dry (`sampling=centre_nodata_oversize`, flag `nodata_oversize_component`). At 20 m or finer the NoData cell is still scored dry (`sampling=centre_nodata_dry`) and flagged for review (`nodata_dry_review`), hole or edge. The report *Inputs* line records the cell size, the threshold, the cap, the connectivity and which path this run uses, plus the receptor ground and neighbour water surface used. A dry (finite 0) cell stays dry (`RECEPTOR_DRY_NEXT_TO_WET`). A NoData cell with no wet neighbour is left dry and is not flagged. The hole / oversize masks are built once per raster and cached.
+
+**Peak depth, peak velocity and depth × velocity (0.4.3).** Classification uses peak depth and peak velocity over the structure's wet cells, even when those peaks come from different cells (Nick's option C, 1 Nov 2026). When they do, the receptor is flagged `dv_cells_differ`. Depth × velocity (`dv_ft2s`, `dv_source=cells`, also `dv_same_cell_ft2s`) is still the largest product of one wet cell, as before 0.4.2, so the DV thresholds (M3, M10b) score the same; the product of the two peaks is reported as `dv_peak_ft2s`. A DV raster, when supplied, is still used as `dv_source=raster`.
 
 
 Attribute names are matched case-insensitively; the first of these per field is used
@@ -132,8 +134,8 @@ Attribute names are matched case-insensitively; the first of these per field is 
 |---|---|
 | `type` | struct_type, bldg_type, occ_type, facility_type, lifeline_type, site_type |
 | `occtype` (0.4.0) | the NSI occupancy type (RES1-1SWB, COM4, AGR1 ...); kept in the output, only suggests a type |
-| `habitable`, `is_911` (0.4.0) | Crest's habitable flag; `is_911` / `nd911` / `address_point_911`, `source` = nd911, `placed` = 911 address point or an `nguid` mark an ND 911 address point |
-| `bid`, `fd_id`, `usastrucid`, `nguid`, `crest_id`, `source_ref`, `structure_id` (0.4.0) | the first one found is the structure's key (`struct_key`) for the review |
+| `habitable`, `is_911` (0.4.0; official schema 0.4.2) | Crest's habitable flag; `is_911` / `nd911` / `address_point_911`, `source` = nd911 or official `SOURCE` such as `SARGENT COUNTY 911` / NDGISHUB, `placed` / `Placement` = 911 address point or official `Structure`, or a `nguid` / `Site_NGUID` mark an ND 911 address point |
+| `bid`, `fd_id`, `usastrucid`, `Site_NGUID` / `nguid`, `crest_id`, `source_ref`, `structure_id` (0.4.0 / 0.4.2) | the first one found is the structure's key (`struct_key`) for the review |
 | `occupants` | people, persons, par, pop, population |
 | `floor_elev` / `floor_height_ft` | ffe, first_floor_elev / ffh, found_ht |
 | `ground_elev`, `foundation_elev` | lag, grade_elev / found_elev |
@@ -199,6 +201,12 @@ Markdown report links the chart and the HTML report embeds it.
   written; a chart problem never fails the classification.
 * DamIT Screener writes the same chart for its screening flood into the dam folder (`damit_screener_dv_habitable.*`),
   from its point sample at each structure, with the same rule (Crest hands over `source` = nd911 for its 911 points).
+
+### Official ND E911 address points (0.4.2)
+
+`damit:classify` has an optional `ADDRESS_POINTS` input for the official ND GIS Hub / NENA site-address layer (`NDGISHUB_address_points`, field `Site_NGUID`). When that input is empty, the official layer is read from the **configured offline pack** (`ND_DAM_HAZARD_OFFLINE_PACK`, `NDSUITE_PACK` / `NDSUITE_DATA`, the QGIS `ndsuite/pack_path` setting, or `~/.ndsuite`). The log names the source used. No path is hard-coded; a missing pack does not fail the run; the pack is never written.
+
+Those points count as ND 911 address points under the same rule as DWR `ndhazard:classify` 2.25.6 (official `SOURCE` values such as `SARGENT COUNTY 911`, `Placement` `Structure`, and `Site_NGUID`). **The habitability rule used for M6 and the class is unchanged:** the 911 / reviewed rule stays opt-in (`HABITABLE_RULE`).
 
 ### Habitability: 911 address points, NSI, USA Structures and the engineer's review (0.4.0)
 
