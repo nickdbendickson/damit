@@ -1138,11 +1138,10 @@ def cached_points(path, wkt=None):
 def receptor_check(grid, points, th=THRESHOLDS):
     """points: [(id, x, y)] or a PointSet, in the raster's CRS; grid.data in ft with NaN = NoData.
 
-    nodata: the cell under the receptor is NoData and a neighbour is wet. That is split into
-    true holes (NoData enclosed by the wet footprint; criterion TRUE_HOLE / nodata_true_hole)
-    and flood-edge cells (the Runner writes dry cells as NoData, so a cell next to water is
-    not a hole). dry_next_to_wet: the cell is a finite dry value and a neighbour is at least
-    near_wet_ft deep.
+    nodata: the cell under the receptor is NoData and a neighbour is wet. check_receptors
+    splits that list into true holes (NoData enclosed by the wet footprint; TRUE_HOLE) and
+    flood-edge cells (the Runner writes dry cells as NoData). dry_next_to_wet: the cell is
+    a finite dry value and a neighbour is at least near_wet_ft deep.
 
     Vectorised (1.3.1): one pass of numpy index arithmetic over all points, no per-point Python or GDAL call. A receptor can only
     be flagged within one cell of a wet cell, so only the points inside the wet extent's bounding box (grown by a cell) are
@@ -1153,12 +1152,12 @@ def receptor_check(grid, points, th=THRESHOLDS):
     nr, nc = a.shape
     n_all = len(ps)
     if n_all == 0:
-        return {"sampled": 0, "outside": 0, "nodata_next_to_wet": [], "dry_next_to_wet": [], "nodata_true_hole": [], "nodata_flood_edge": []}
+        return {"sampled": 0, "outside": 0, "nodata_next_to_wet": [], "dry_next_to_wet": []}
     rr = np.floor((grid.y0 - ps.y) / grid.cell).astype(np.int64)
     cc = np.floor((ps.x - grid.x0) / grid.cell).astype(np.int64)
     inside = (rr >= 0) & (rr < nr) & (cc >= 0) & (cc < nc)
     n = int(inside.sum())
-    out = {"sampled": n, "outside": n_all - n, "nodata_next_to_wet": [], "dry_next_to_wet": [], "nodata_true_hole": [], "nodata_flood_edge": []}
+    out = {"sampled": n, "outside": n_all - n, "nodata_next_to_wet": [], "dry_next_to_wet": []}
     with np.errstate(invalid="ignore"):
         wet = np.isfinite(a) & (a >= th["wet_ft"])
     rows = np.flatnonzero(wet.any(axis=1))
@@ -1185,30 +1184,6 @@ def receptor_check(grid, points, th=THRESHOLDS):
         dry = fin & (v < th["wet_ft"]) & (nb >= th["near_wet_ft"])
     out["nodata_next_to_wet"] = [(ps.ids[sel[i]], round(float(nb[i]), 2)) for i in np.flatnonzero(nod)]
     out["dry_next_to_wet"] = [(ps.ids[sel[i]], round(float(nb[i]), 2)) for i in np.flatnonzero(dry)]
-    # TRUE_HOLE vs flood edge (the Runner writes dry cells as NoData).
-    holes = np.zeros(a.shape, dtype=bool)
-    if nod.any():
-        try:
-            from damit_runner.compat.nodata_sample import true_hole_mask_array
-            holes = np.asarray(true_hole_mask_array(a), dtype=bool)
-        except Exception:
-            wetm = np.isfinite(a) & (a > 0)
-            # isolated fallback: all 4 cardinal neighbours wet (single-cell holes only)
-            padw = np.zeros((nr + 2, nc + 2), dtype=bool)
-            padw[1:-1, 1:-1] = wetm
-            holes = (~np.isfinite(a)
-                     & padw[0:nr, 1:nc+1] & padw[2:nr+2, 1:nc+1]
-                     & padw[1:nr+1, 0:nc] & padw[1:nr+1, 2:nc+2])
-    hole_ids, edge_ids = [], []
-    for i in np.flatnonzero(nod):
-        item = (ps.ids[sel[i]], round(float(nb[i]), 2))
-        rr, cc = int(r[i]), int(c[i])
-        if 0 <= rr < nr and 0 <= cc < nc and holes[rr, cc]:
-            hole_ids.append(item)
-        else:
-            edge_ids.append(item)
-    out["nodata_true_hole"] = hole_ids
-    out["nodata_flood_edge"] = edge_ids
     return out
 
 
@@ -1271,12 +1246,72 @@ def runner_nodata(grid, inplace=False):
     return Grid(data, grid.x0, grid.y0, grid.cell)
 
 
+def split_nodata_true_holes(grid, points, nd_items):
+    """Split nodata_next_to_wet items into TRUE_HOLE vs flood-edge, without slowing receptor_check.
+
+    A NoData cell is a true hole when its 4-connected non-wet component does not
+    touch the raster border. Only the listed receptors are classified (the digest
+    list is short); receptor_check itself stays a single numpy pass.
+    """
+    if not nd_items:
+        return [], []
+    import numpy as np
+    ps = as_pointset(points)
+    by_id = {ps.ids[i]: i for i in range(len(ps))}
+    a = grid.data
+    nr, nc = a.shape
+    wet = np.isfinite(a) & (a > 0)
+    nonwet = ~wet
+    holes, edges = [], []
+    cache = {}  # (r, c) -> is_true_hole
+    for item in nd_items:
+        pid = item[0]
+        i = by_id.get(pid)
+        if i is None:
+            edges.append(item)
+            continue
+        rr = int(np.floor((grid.y0 - ps.y[i]) / grid.cell))
+        cc = int(np.floor((ps.x[i] - grid.x0) / grid.cell))
+        if not (0 <= rr < nr and 0 <= cc < nc):
+            edges.append(item)
+            continue
+        key = (rr, cc)
+        if key not in cache:
+            # BFS through non-wet; border means exterior
+            seen = {(rr, cc)}
+            q = [(rr, cc)]
+            reaches = False
+            k = 0
+            while k < len(q):
+                r, c = q[k]
+                k += 1
+                if r == 0 or c == 0 or r == nr - 1 or c == nc - 1:
+                    reaches = True
+                    break
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    a_, b_ = r + dr, c + dc
+                    if 0 <= a_ < nr and 0 <= b_ < nc and nonwet[a_, b_] and (a_, b_) not in seen:
+                        seen.add((a_, b_))
+                        q.append((a_, b_))
+            is_hole = (not reaches) and (not np.isfinite(a[rr, cc]))
+            for cell in seen:
+                cache[cell] = is_hole and (not np.isfinite(a[cell]))
+        if cache.get(key):
+            holes.append(item)
+        else:
+            edges.append(item)
+    return holes, edges
+
+
 def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     if depth_grid is None or not len(points):
         return None
     res = receptor_check(depth_grid, points)
     note = (" Sampled on %s." % grid_source) if grid_source else ""
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
+    holes, edges = split_nodata_true_holes(depth_grid, points, nd)
+    res["nodata_true_hole"] = holes
+    res["nodata_flood_edge"] = edges
     if nd:
         holes = res.get("nodata_true_hole") or []
         edges = res.get("nodata_flood_edge") or []
