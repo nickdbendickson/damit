@@ -16,10 +16,11 @@ ALIASES = {
              "occupancy_type", "facility_type", "lifeline_type", "env_type", "site_type"),
     "occtype": ("occtype",),                       # NSI occupancy type (RES1-1SWB, COM1, AGR1 ...)
     "habitable": ("habitable", "is_habitable"),    # DamIT Crest's flag on the structures it hands off
-    "address_source": ("source",),                 # Crest: "nd911" for a 911 address point
-    "placed": ("placed",),                         # Crest: "911 address point"
-    "nguid": ("nguid", "ng911_guid"),              # a NENA GUID: an ND 911 address point layer
+    "address_source": ("source", "address_source"),  # Crest: "nd911"; official layer: SOURCE e.g. "SARGENT COUNTY 911"
+    "placed": ("placed", "placement"),               # Crest: "911 address point"; official NENA: Placement "Structure"
+    "nguid": ("nguid", "ng911_guid", "site_nguid", "nd_site_nguid"),  # official layer: Site_NGUID (case-insensitive)
     "is_911": ("is_911", "nd911", "address_point_911"),
+    "nd_address_points": ("nd_address_points",),
     "occupancy": ("occupancy", "occ", "use_pattern"),
     "occupants": ("occupants", "people", "persons", "par", "pop", "population"),
     "floor_elev": ("floor_elev", "ffe", "first_floor_elev", "lowest_floor_elev", "floor_elev_ft"),
@@ -98,8 +99,13 @@ NSI_BY_CLASS = {"IND": "industrial", "AGR": "farm_unoccupied", "REL": "instituti
 NSI_COM = {6: "hospital", 10: "storage"}                  # COM1-5, 7-9 commercial; COM10 parking: not habitable
 NSI_EDU = {1: "school", 2: "institution"}
 _NSI_CODE = re.compile(r"^\s*(RES|COM|IND|AGR|REL|GOV|EDU)\s*(\d+)", re.I)
-SOURCES_911 = ("nd911", "nd_911", "911", "e911", "ng911", "address_point_911")
-KEY_FIELDS = ("structure_id", "struct_id", "bid", "fd_id", "usastrucid", "nguid", "crest_id", "source_ref")
+SOURCES_911 = ("nd911", "nd_911", "911", "e911", "ng911", "address_point_911", "ndgishub")
+# Official NENA Placement values (ND GIS Hub). "Structure" is on the building; the others are still 911 points.
+NENA_PLACEMENTS = ("structure", "property access", "parcel", "geocoding", "site", "unknown")
+NENA_FIELDS = ("add_number", "st_name", "addnum_pre", "place_type", "msagcomm", "inc_muni")
+ND_FAMILY = "NDGISHUB"
+KEY_FIELDS = ("structure_id", "struct_id", "bid", "fd_id", "usastrucid", "site_nguid",
+              "nd_site_nguid", "nguid", "crest_id", "source_ref")
 
 
 def nsi_type(occtype):
@@ -123,16 +129,97 @@ def nsi_class(occtype):
     return m.group(1).upper() if m else None
 
 
+def _norm_911_token(s):
+    """Lower-case source / family text with spaces and hyphens folded to underscores (DWR has_911)."""
+    return str(s or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _source_is_911(src):
+    """True for Crest tags (nd911, e911, NDGISHUB) and official dispatch SOURCE values such as
+    'SARGENT COUNTY 911'."""
+    n = _norm_911_token(src)
+    if not n:
+        return False
+    if n in SOURCES_911:
+        return True
+    # a dispatch name ending in the word 911 ("SARGENT COUNTY 911" -> sargent_county_911); not any
+    # text that merely ends in the digits 911 (a street number, "PO BOX 1911")
+    if n.endswith("_911") or "ndgishub" in n:
+        return True
+    return False
+
+
+def _has_nena_fields(r):
+    """True when the record carries official NENA address-point fields (Add_Number, St_Name, ...)."""
+    raw = r.get("raw") or {}
+    low = {_key(k): v for k, v in raw.items()} if raw else {}
+    for name in NENA_FIELDS:
+        val = r.get(name)
+        if val in (None, "") and name in low:
+            val = low[name]
+        if val not in (None, ""):
+            return True
+    return False
+
+
 def address_point_911(r):
-    """True for an ND 911 address point: an explicit is_911 flag, Crest's source "nd911" / placed "911 address
-    point", or a NENA GUID (nguid) - whatever a 911 layer carries."""
+    """True for an ND 911 (NENA / NG911) address point.
+
+    Aligned with DWR Hazard has_911 (ndhazard:classify 2.25.6) plus the official ND GIS Hub
+    schema (Site_NGUID, SOURCE such as 'SARGENT COUNTY 911', Placement 'Structure'):
+      * an explicit is_911 / nd911 / address_point_911 flag
+      * source / address_source in nd911, 911, e911, ng911, address_point_911, NDGISHUB
+      * official dispatch SOURCE ending in 911 (e.g. 'SARGENT COUNTY 911')
+      * placed = '911 address point'
+      * official NENA Placement ('Structure', and the other NENA placements) on a NENA record
+      * a NENA GUID (nguid / Site_NGUID / ND_Site_NGUID)
+      * family NDGISHUB on rec['families'] or rec['sources']
+      * ND_Address_Points > 0, or Sources contains NDGISHUB
+    A FEMA parcel address (Address column only) is not a 911 point.
+    """
     if r.get("is_911") is not None:
         return bool(r["is_911"])
-    if str(r.get("address_source") or "").strip().lower() in SOURCES_911:
+    src = r.get("address_source") or r.get("source")
+    if _source_is_911(src):
         return True
-    if str(r.get("placed") or "").strip().lower() == "911 address point":
+    placed = str(r.get("placed") or "").strip().lower()
+    if placed == "911 address point":
         return True
-    return bool(r.get("nguid"))
+    if placed in NENA_PLACEMENTS and (_has_nena_fields(r) or bool(r.get("nguid")) or _source_is_911(src)):
+        return True
+    if r.get("nguid") not in (None, ""):
+        return True
+    n = r.get("nd_address_points") or r.get("ND_Address_Points")
+    try:
+        if n not in (None, "") and float(n) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    fams = r.get("families") or ()
+    fam_l = {str(f).strip().upper() for f in fams}
+    if ND_FAMILY in fam_l or "ND GIS HUB" in fam_l:
+        return True
+    if any(_source_is_911(f) for f in fams):
+        return True
+    srcs = r.get("sources")
+    if isinstance(srcs, (list, tuple)):
+        for s in srcs:
+            if not isinstance(s, dict):
+                continue
+            if str(s.get("family") or "").upper() == ND_FAMILY:
+                return True
+            if str(s.get("nguid") or s.get("ng911_guid") or s.get("site_nguid") or "").strip():
+                return True
+            if _source_is_911(s.get("family") or s.get("source")):
+                return True
+            if str(s.get("placed") or s.get("placement") or "").strip().lower() == "911 address point":
+                return True
+    col = r.get("Sources") or r.get("sources")
+    if isinstance(col, str):
+        bits = [_norm_911_token(b) for b in col.replace(";", ",").split(",")]
+        if ND_FAMILY.lower() in bits or any(b in SOURCES_911 or b.endswith("_911") for b in bits):
+            return True
+    return False
 
 
 def review_key(r):
