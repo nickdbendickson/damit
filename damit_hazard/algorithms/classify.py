@@ -123,20 +123,25 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "water: neighbourhood sampling is used only on a depth grid coarser than "
                 "NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m (larger cell side, converted to "
                 "metres; strictly greater than 20 m). The sampled depth is physical: "
-                "max(0, neighbour water surface minus the receptor's own ground), the max "
-                "over wet neighbours (sampling=neighbourhood_wse). Water surface comes from "
+                "max(0, the highest neighbouring water surface minus the receptor's own ground) "
+                "(sampling=neighbourhood_wse). Water surface comes from "
                 "the WSE raster, or from neighbour depth plus neighbour ground. Ground comes "
-                "from the run DEM / terrain (TERRAIN, or the path in steps.json / run_setup "
-                "beside the depth raster), sampled at the receptor point. Raw neighbour "
+                "from the run source DEM / terrain (TERRAIN, or the path in steps.json / run_setup "
+                "beside the depth raster), sampled at the receptor point "
+                "(ground_source=source_dem_point). The Runner uses bilinear ground from "
+                "its model-resolution DEM (ground_source=model_dem_bilinear). Raw neighbour "
                 "depth is never used. When no ground is available the receptor is scored dry "
                 "and flagged nodata_no_ground_review. An enclosed 4-connected non-wet "
-                "component larger than TRUE_HOLE_MAX_CELLS (25) is not a hole and scores dry "
-                "(nodata_oversize_component). 4-connectivity is used on purpose: a "
+                "component larger than TRUE_HOLE_MAX_CELLS (25) is not a hole: it still "
+                "gets the WSE-minus-ground test and is flagged nodata_oversize_component. "
+                "4-connectivity is used on purpose: a "
                 "corner-only (diagonal) path to the border does not connect a pocket to the "
-                "exterior. At 20 m or finer the NoData cell is still scored dry "
+                "exterior. The true-hole helper ships inside the plugin at "
+                "damit_hazard/lib/true_hole.py (a copy of damit_core/lib/true_hole.py). "
+                "At 20 m or finer the NoData cell is still scored dry "
                 "(sampling=centre_nodata_dry) and flagged for review (nodata_dry_review). A "
-                "dry (finite 0) cell is scored dry. Ground, the neighbour water surface used "
-                "and the path are recorded per receptor. Peak depth and peak velocity are "
+                "dry (finite 0) cell is scored dry. Ground, the ground source, the highest "
+                "neighbouring water surface used and the path are recorded per receptor. Peak depth and peak velocity are "
                 "independent maxima over wet cells (option C); when they come from different "
                 "cells the receptor is flagged dv_cells_differ and the reported depth x "
                 "velocity is peak depth x peak velocity.<br><br>"
@@ -775,6 +780,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                      ("depth_ft", compat.FT_DOUBLE), ("vel_fps", compat.FT_DOUBLE),
                      ("dv_ft2s", compat.FT_DOUBLE), ("rise_ft", compat.FT_DOUBLE),
                      ("ground_ft", compat.FT_DOUBLE), ("neighbour_wse_ft", compat.FT_DOUBLE),
+                     ("ground_source", compat.FT_STRING),
                      ("flags", compat.FT_STRING), ("sampling", compat.FT_STRING),
                      ("nodata_path", compat.FT_STRING),
                      ("occtype", compat.FT_STRING), ("suggested_type", compat.FT_STRING),
@@ -811,6 +817,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                                  ",".join(sorted(pr.get("methods", []))), r.get("depth_ft"),
                                  r.get("velocity_fps"), r.get("dv_ft2s"), r.get("rise_ft"),
                                  r.get("ground_ft"), r.get("neighbour_wse_ft"),
+                                 r.get("ground_source"),
                                  ",".join(sorted(set(res["receptor_flags"].get(rid, [])))),
                                  r.get("sampling"), r.get("nodata_path"),
                                  r.get("occtype"), r.get("suggested_type"), r.get("struct_key"),

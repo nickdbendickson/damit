@@ -2,6 +2,14 @@
 
 Shared by DamIT Hazard, DamIT Runner and Heim (one implementation). No QGIS.
 
+This file is the canonical copy. Byte-identical copies ship inside the
+standalone Hazard plugin (damit_hazard/lib/true_hole.py) and next to the
+Heim digest tools that setup-local-heim.sh copies
+(damit_ai/heim/tools/true_hole.py, installed as ~/local-ai/true_hole.py).
+A parity test fails if a copy drifts from this file. Hazard must import
+with only damit_hazard and damit_catalog installed; the digest loads the
+sibling copy so a local-ai install does not need damit_core.
+
 Named criterion TRUE_HOLE (also recorded as nodata_true_hole):
 
   The wet footprint is every cell with a finite depth strictly greater than 0.
@@ -17,10 +25,10 @@ Named criterion TRUE_HOLE (also recorded as nodata_true_hole):
   as an outlet.
 
   TRUE_HOLE_MAX_CELLS (25, a 5x5 block) is the named size cap. A larger
-  enclosed component is not a hole: it is a dry island or cut-off area
-  (flag nodata_oversize_component) and scores dry. Finite-0 cells take part
-  in connectivity and in the size count, but are never themselves holes
-  (already dry).
+  enclosed component is not a hole (flag nodata_oversize_component) but is
+  still scored with the same WSE-minus-ground test as the rim of a
+  border-touching dry area. Finite-0 cells take part in connectivity and in
+  the size count, but are never themselves holes (already dry).
 
 The Runner writes every dry cell as NoData, so an enclosed NoData pocket on
 Runner output is often model-dry high ground, not a gap in the results.
@@ -50,8 +58,10 @@ def analyze_nodata(depth, max_cells=TRUE_HOLE_MAX_CELLS, cache=False):
       enclosed  bool mask of enclosed NoData cells (any size)
       size      int array, 4-connected non-wet component size (0 if wet)
       max_cells the cap used
-    Cached on the array when cache=True so a classify / impacts pass does not
-    rebuild the masks on every receptor.
+    cache=True tries to store the result as an attribute on the array. A
+    plain numpy ndarray cannot hold attributes, so nothing is cached on the
+    Runner path; the Runner analyses once per apply_nodata_on_grid pass
+    instead. DamIT Hazard caches the result on the Raster object.
     """
     a = np.asarray(depth)
     cap = int(max_cells)

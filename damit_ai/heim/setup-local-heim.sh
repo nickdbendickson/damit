@@ -3918,14 +3918,14 @@ SCRIPT_EOF_REPOAUDIT
   done
   ok "rag_index 2.8, rag_query 2.5, audit_plugin 1.3, suite_check 1.0, dam_chain 1.5.3, repo_audit 1.0 written and compiled"
   # v3.7/v3.8: the run watcher (deterministic digest + the small explainer) is copied, not generated
-  for f in run_digest heim_watch run_results; do
+  for f in run_digest heim_watch run_results true_hole; do
     if [[ -f "${0:A:h}/tools/$f.py" ]]; then
       cp "${0:A:h}/tools/$f.py" "$LOCAL_AI/$f.py" && "$HEIM_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
     else
       warn "tools/$f.py not found next to this script: the run watcher was not installed"
     fi
   done
-  ok "run_digest, heim_watch, run_results (heim runs) copied and compiled"
+  ok "run_digest, heim_watch, run_results, true_hole (heim runs) copied and compiled"
   # the code-triage eval, like install-local-ai-linux.sh: the scorer plus the question set it
   # reads from ../eval/questions.json. Without both, `python3 ~/local-ai/eval_heim.py` is missing.
   if [[ -f "${0:A:h}/tools/eval_heim.py" ]]; then

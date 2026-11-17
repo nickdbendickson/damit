@@ -74,15 +74,22 @@ the model can be asked directly, with nothing looked up (`heim-chat --bare`, or 
 - **Judgment zone = Medium in ND** (the TM-11 judgment zone counts as Medium in the ND preset).
 - **Receptors on NoData (Hazard 0.2.6, 0.4.3).** When the cell under a structure (or every cell of its footprint) is NoData
   and a neighbour is wet, neighbourhood sampling applies only on a grid coarser than 20 m (`NODATA_NEIGHBOURHOOD_MIN_CELL_M`).
-  The sampled depth is physical: `max(0, neighbour water surface − the receptor's own ground)` (`sampling=neighbourhood_wse`,
+  The sampled depth is physical: `max(0, the highest neighbouring water surface − the receptor's own ground)` (`sampling=neighbourhood_wse`,
   flag `nodata_wse_ground` when depth > 0; the older names `sampling=neighbourhood` / flag `nodata_neighbourhood` referred
   to raw neighbour depth and are no longer used to score). Water surface comes from the WSE raster, or from neighbour
-  depth plus neighbour ground. Ground comes from the run DEM / terrain, sampled at the receptor point. Raw neighbour
-  depth is never used. No ground: scored dry (`sampling=centre_nodata_no_ground`, flag `nodata_no_ground_review`).
+  depth plus neighbour ground. Hazard samples ground from the run's *source* DEM at the receptor point
+  (`ground_source=source_dem_point`). The Runner uses bilinear ground from its interpolated model-resolution DEM
+  (`ground_source=model_dem_bilinear`); on DWR-2659 house 19616 that is 0.13 ft (Hazard, 10 m point) vs about 0.94 ft
+  (Runner, 50 m cell). Raw neighbour depth is never used. No ground: scored dry (`sampling=centre_nodata_no_ground`, flag `nodata_no_ground_review`).
   A TRUE_HOLE is a 4-connected non-wet component that does not touch the raster border and has at most
   `TRUE_HOLE_MAX_CELLS` (25) cells. 4-connectivity is used on purpose: a corner-only (diagonal) path to the border does
-  not connect a pocket to the exterior. A larger enclosed component is not a hole and scores dry
-  (`sampling=centre_nodata_oversize`, flag `nodata_oversize_component`). At 20 m or finer it still scores the cell dry
+  not connect a pocket to the exterior. A larger enclosed component is not a hole: it still gets the WSE-minus-ground
+  test, like the rim of a border-touching dry area, and is flagged `nodata_oversize_component` for review. The true-hole
+  helper ships as `damit_core/lib/true_hole.py`, with a byte-identical copy inside the Hazard plugin
+  (`damit_hazard/lib/true_hole.py`) and next to the Heim digest tools that `setup-local-heim.sh` copies
+  (`damit_ai/heim/tools/true_hole.py`, installed as `~/local-ai/true_hole.py`). Hazard imports with only
+  damit_hazard and damit_catalog installed. The hole / oversize mask is cached on Hazard's Raster object;
+  the Runner builds it once per pass and does not cache it on a plain numpy array. At 20 m or finer it still scores the cell dry
   (0 ft, `sampling=centre_nodata_dry`) and flags `nodata_dry_review`, hole or edge. The legacy `centre_nodata_edge` /
   `nodata_flood_edge` path is unused on coarse grids once ground is available. A scored NoData cell goes to a person
   (`HAZARD_REVIEW`). A dry (finite 0) cell stays dry; a NoData cell with no wet neighbour stays dry and is not flagged.

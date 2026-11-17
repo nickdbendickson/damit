@@ -20,18 +20,25 @@ the path depends on the depth-grid cell size (larger side, converted to metres;
 NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, strictly greater than):
   * at 20 m or finer: the NoData cell is scored dry (0 ft), sampling is
     "centre_nodata_dry", and the structure is flagged for review (nodata_dry_review).
-  * coarser than 20 m, every NoData receptor (hole or flood edge) is scored with a
-    physical depth: max(0, neighbour water surface minus the receptor's own ground),
-    taking the max over wet neighbours (sampling=neighbourhood_wse). The water surface
-    comes from the WSE raster, or from neighbour depth plus neighbour ground. Ground
-    comes from the run DEM / terrain, sampled at the receptor point. When no ground is
-    available the receptor is scored dry (sampling=centre_nodata_no_ground, flag
-    nodata_no_ground_review); raw neighbour depth is never used. An enclosed non-wet
-    component larger than TRUE_HOLE_MAX_CELLS is not a hole and scores dry
-    (sampling=centre_nodata_oversize, flag nodata_oversize_component).
+  * coarser than 20 m, every NoData receptor (hole, flood edge, or oversize
+    enclosed component) is scored with a physical depth: max(0, the highest
+    neighbouring water surface minus the receptor's own ground)
+    (sampling=neighbourhood_wse). The water surface comes from the WSE raster,
+    or from neighbour depth plus neighbour ground. Ground comes from the run
+    source DEM / terrain, sampled at the receptor point (ground_source=
+    source_dem_point). The Runner, by contrast, uses bilinear ground from its
+    interpolated model-resolution DEM (ground_source=model_dem_bilinear), so
+    the two can disagree on the same house. When no ground is available the
+    receptor is scored dry (sampling=centre_nodata_no_ground, flag
+    nodata_no_ground_review); raw neighbour depth is never used. An enclosed
+    non-wet component larger than TRUE_HOLE_MAX_CELLS is not a hole: it still
+    gets the WSE-minus-ground test and is flagged nodata_oversize_component
+    for review. The true-hole helper is bundled at damit_hazard/lib/true_hole.py
+    (a copy of damit_core/lib/true_hole.py). The hole / oversize mask is cached
+    on the Raster object, not on a plain numpy array.
 A dry (finite 0) cell is left dry. A NoData cell with no wet neighbour is left dry and is
-not flagged. Ground, the neighbour water surface used, and the path are recorded per
-receptor.
+not flagged. Ground, the ground source, the highest neighbouring water surface used,
+and the path are recorded per receptor.
 
 The input rasters are someone else's run (often a product-of-record folder) and are opened read
 only with GDAL PAM off (no_pam): nothing, not even a .aux.xml statistics sidecar, is written
@@ -63,19 +70,36 @@ M_PER_DEG_LON_EQ = 111320.0       # metres per degree of longitude at the equato
 
 
 def _true_hole_mod():
-    """Shared TRUE_HOLE helper (damit_core.lib.true_hole); file path fallback for tests."""
+    """Load the TRUE_HOLE helper: bundled copy first, then damit_core, then checkout.
+
+    The Hazard plugin ships damit_hazard/lib/true_hole.py so it imports with only
+    damit_hazard and damit_catalog installed (no damit_core).
+    """
+    import importlib.util
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "..", "lib", "true_hole.py"),
+        os.path.join(here, "..", "..", "damit_core", "lib", "true_hole.py"),
+    ]
+    for path in candidates:
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            continue
+        spec = importlib.util.spec_from_file_location("damit_true_hole", path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
     try:
         from damit_core.lib import true_hole as m
         return m
     except ImportError:
-        import importlib.util
-        import os
-        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
-                                            "damit_core", "lib", "true_hole.py"))
-        spec = importlib.util.spec_from_file_location("damit_core_lib_true_hole", path)
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        return m
+        pass
+    raise FileNotFoundError(
+        "the true-hole helper was not found: expected damit_hazard/lib/true_hole.py "
+        "inside the Hazard plugin (a bundled copy of damit_core/lib/true_hole.py), "
+        "or an installed damit_core package"
+    )
 
 
 TH = _true_hole_mod()
@@ -684,8 +708,9 @@ def _neighbour_wse_values(rs, dep, xs, ys, terrain):
 def _from_neighbourhood_wse(rs, dep, points, terrain, ground_point):
     """WSE-consistent hydraulics for a coarse-grid NoData receptor, or None if no wet neighbour.
 
-    depth = max(0, neighbour WSE - receptor ground) over wet neighbours. Velocity and
-    option-C peaks are taken only over neighbours whose physical depth is > 0.
+    depth = max(0, the highest neighbouring WSE - receptor ground) over wet
+    neighbours. Velocity and option-C peaks are taken only over neighbours
+    whose physical depth is > 0.
     """
     xs, ys = _neighbourhood_centres(dep, points)
     if xs is None:
@@ -706,6 +731,7 @@ def _from_neighbourhood_wse(rs, dep, points, terrain, ground_point):
         hyd["cells"] = []
         hyd["ground_ft"] = None
         hyd["neighbour_wse_ft"] = None
+        hyd["ground_source"] = "none"
         hyd["terrain_z_how"] = how
         hyd["nodata_path"] = "no_ground"
         return hyd, "no_ground"
@@ -724,6 +750,7 @@ def _from_neighbourhood_wse(rs, dep, points, terrain, ground_point):
         hyd["cells"] = []
         hyd["ground_ft"] = float(ground)
         hyd["neighbour_wse_ft"] = used
+        hyd["ground_source"] = "source_dem_point"
         hyd["terrain_z_how"] = how
         hyd["nodata_path"] = "wse_minus_ground"
         return hyd, "wse_dry"
@@ -737,6 +764,7 @@ def _from_neighbourhood_wse(rs, dep, points, terrain, ground_point):
         used = float(wse_nb[wet_phys][at_peak][0])
     hyd["ground_ft"] = float(ground)
     hyd["neighbour_wse_ft"] = used
+    hyd["ground_source"] = "source_dem_point"
     hyd["terrain_z_how"] = how
     hyd["nodata_path"] = "wse_minus_ground"
     hyd["sampling"] = SAMPLING_NEIGHBOURHOOD_WSE
@@ -751,25 +779,17 @@ def _nodata_or_plain(rs, dep, points, xs, ys, d, policy, plain_sampling,
     At 20 m or finer the 20 m rule is unchanged: NoData next to water is scored
     dry (centre_nodata_dry) and flagged for review, hole or edge.
 
-    Coarser than 20 m: every NoData receptor (edge or hole) is scored with
-    depth = max(0, neighbour WSE - own ground). An oversize enclosed component
-    scores dry. With no ground, the receptor scores dry (never raw neighbour
-    depth).
+    Coarser than 20 m: every NoData receptor (edge, hole, or oversize
+    enclosed component) is scored with depth = max(0, the highest
+    neighbouring WSE - own ground). An oversize component is not a hole
+    and is flagged nodata_oversize_component, but it still gets the
+    WSE-minus-ground test. With no ground, the receptor scores dry
+    (never raw neighbour depth).
     """
     hole, oversize = _cell_flags(dep, points)
     terrain = rs.get("terrain")
     gpt = ground_point if ground_point is not None else (points[0] if points else None)
     if policy["neighbourhood_allowed"]:
-        if oversize:
-            hyd = _hyd(rs, xs, ys, d)
-            nb = _from_neighbourhood(rs, dep, points)
-            if nb is not None:
-                hyd["ground_ft"] = _sample_ground_ft(terrain, [gpt] if gpt else points)
-                hyd["nodata_path"] = "oversize_component"
-                return _stamp_nodata(hyd, policy, SAMPLING_CENTRE_NODATA_OVERSIZE,
-                                     False, hole, True)
-            hyd["sampling"] = plain_sampling
-            return hyd
         got = _from_neighbourhood_wse(rs, dep, points, terrain, gpt)
         if got is None:
             hyd = _hyd(rs, xs, ys, d)

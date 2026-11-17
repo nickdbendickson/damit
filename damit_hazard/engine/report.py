@@ -40,15 +40,20 @@ def _nodata_sampling_lines(result):
         how = p.get("terrain_z_how")
         if allowed:
             path = ("WSE-consistent neighbourhood depth for every NoData receptor "
-                    "(sampling=neighbourhood_wse): depth = max(0, neighbour water surface "
-                    "minus the receptor's own ground), never raw neighbour depth. Water "
-                    "surface from the WSE raster, or neighbour depth plus neighbour ground. "
-                    "No ground: scored dry (centre_nodata_no_ground, flag "
-                    "nodata_no_ground_review). An enclosed 4-connected non-wet component "
-                    "larger than TRUE_HOLE_MAX_CELLS = {} is not a hole and scores dry "
-                    "(centre_nodata_oversize, flag nodata_oversize_component). "
-                    "4-connectivity: a corner-only path to the border does not connect a "
-                    "pocket to the exterior".format(cap))
+                    "(sampling=neighbourhood_wse): depth = max(0, the highest neighbouring "
+                    "water surface minus the receptor's own ground), never raw neighbour "
+                    "depth. Water surface from the WSE raster, or neighbour depth plus "
+                    "neighbour ground. Hazard ground is the source DEM sampled at the "
+                    "receptor point (ground_source=source_dem_point); the Runner uses "
+                    "bilinear ground from the model-resolution DEM "
+                    "(ground_source=model_dem_bilinear). No ground: scored dry "
+                    "(centre_nodata_no_ground, flag nodata_no_ground_review). An enclosed "
+                    "4-connected non-wet component larger than TRUE_HOLE_MAX_CELLS = {} is "
+                    "not a hole: it still gets the WSE-minus-ground test and is flagged "
+                    "nodata_oversize_component. 4-connectivity: a corner-only path to the "
+                    "border does not connect a pocket to the exterior. The true-hole helper "
+                    "ships in damit_hazard/lib/true_hole.py; the mask is cached on the "
+                    "Raster object".format(cap))
             if how:
                 path += "; terrain units: " + how
         else:

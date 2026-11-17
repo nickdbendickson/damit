@@ -1,6 +1,7 @@
 """Raster sampling (GDAL + numpy; skipped without GDAL) and the vendored cell selection."""
 import os
 import struct
+import shutil
 import tempfile
 import unittest
 
@@ -230,6 +231,7 @@ def test_nodata_at_30m_without_ground_scores_dry():
     assert h["sampling"] == "centre_nodata_no_ground"
     assert h["depth_ft"] == 0.0
     assert h.get("nodata_path") == "no_ground"
+    assert h.get("ground_source") == "none"
     assert h.get("nodata_true_hole") is True
     assert h["cell_m"] == 30.0
     assert h["nodata_neighbourhood_min_cell_m"] == 20.0
@@ -328,6 +330,7 @@ def test_dry_as_nodata_wse_depth_on_edge_and_hole():
     assert abs(h["depth_ft"] - 0.5) < 1e-9
     assert abs(h["ground_ft"] - 99.5) < 1e-9
     assert abs(h["neighbour_wse_ft"] - 100.0) < 1e-9
+    assert h.get("ground_source") == "source_dem_point"
     assert h.get("nodata_path") == "wse_minus_ground"
     e, _pol = _nodata_grid(cell=30.0, dry_as_nodata=True, surround=False,
                            with_terrain=True, ground_ft=99.5, wse_ft=100.0)
@@ -411,3 +414,77 @@ def test_nodata_analysis_is_cached_on_the_raster():
     second = S.nodata_analysis(dep)
     assert first is second
     assert first["hole"][3, 3]
+
+
+def test_oversize_enclosed_rim_gets_wse_minus_ground():
+    """An oversize enclosed island rim is scored like a border-touching dry rim.
+
+    It is not a hole, but it still gets depth = max(0, highest neighbouring WSE
+    minus own ground) and is flagged nodata_oversize (sampling=neighbourhood_wse).
+    """
+    cap = S.TRUE_HOLE_MAX_CELLS
+    n = cap + 6
+    d = tempfile.mkdtemp()
+    dep = np.full((n + 4, n + 4), -9999.0, np.float32)
+    vel = np.full(dep.shape, 3.0, np.float32)
+    dep[1:n + 3, 1:n + 3] = 3.0
+    dep[2, 2:2 + cap + 1] = -9999.0          # cap+1 enclosed NoData cells
+    cell, ground_ft, wse_ft = 50.0, 101.5, 102.0
+    y0 = dep.shape[0] * cell
+    kw = dict(x0=0.0, y0=y0, cell=cell, epsg=32614)
+    wse = np.full(dep.shape, -9999.0, np.float32)
+    wet = dep > 0
+    wse[wet] = wse_ft
+    ter = np.full(dep.shape, ground_ft, np.float32)
+    rs = S.open_rasters({"depth": _tif(os.path.join(d, "d.tif"), dep, **kw),
+                         "velocity": _tif(os.path.join(d, "v.tif"), vel, **kw)})
+    rs["wse"] = S.Raster(_tif(os.path.join(d, "w.tif"), wse, **kw), 1.0)
+    rs["terrain"] = S.Raster(_tif(os.path.join(d, "t.tif"), ter, **kw), 1.0)
+    rs["terrain"].z_how = "feet (test)"
+    rs["terrain"].z_scale_to_ft = 1.0
+    x, y = 2.5 * cell, y0 - 2.5 * cell
+    h = S.sample_structures({"rim": (_point_wkb(x, y), (x, y), 0.1 * cell)},
+                            rs, edge=0.0, point_radius=0.1 * cell)["rim"]
+    assert h.get("nodata_oversize") is True
+    assert h.get("nodata_true_hole") is not True
+    assert h["sampling"] == "neighbourhood_wse"
+    assert abs(h["depth_ft"] - 0.5) < 1e-5
+    assert abs(h["velocity_fps"] - 3.0) < 1e-5
+    assert h.get("nodata_path") == "wse_minus_ground"
+    assert h.get("ground_source") == "source_dem_point"
+    assert abs(h["ground_ft"] - ground_ft) < 1e-9
+    assert abs(h["neighbour_wse_ft"] - wse_ft) < 1e-5
+
+
+def test_hazard_imports_without_damit_core():
+    """Hazard sampling imports with only damit_hazard + damit_catalog on the path."""
+    import subprocess
+    import sys
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    tmp = tempfile.mkdtemp(prefix="hazard_mininst_")
+    try:
+        plug = os.path.join(tmp, "plugins")
+        os.makedirs(plug)
+        for pkg in ("damit_hazard", "damit_catalog"):
+            shutil.copytree(os.path.join(root, pkg), os.path.join(plug, pkg),
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        py = (
+            "import os, sys\n"
+            "sys.path[:0] = [os.environ['MIN_PLUGINS']]\n"
+            "sys.modules.pop('damit_core', None)\n"
+            "import damit_hazard.sampling.rasters as S\n"
+            "assert S.TRUE_HOLE_MAX_CELLS == 25\n"
+            "assert S.TRUE_HOLE_CONNECTIVITY == 4\n"
+            "import numpy as np\n"
+            "a = np.full((5, 5), np.nan); a[1:4, 1:4] = 1.0; a[2, 2] = np.nan\n"
+            "m = S.true_hole_mask_from_array(a)\n"
+            "assert bool(m[2, 2])\n"
+            "print('hazard_mininst_ok')\n"
+        )
+        env = dict(os.environ, MIN_PLUGINS=plug, PYTHONPATH=plug)
+        r = subprocess.run([sys.executable, "-c", py], capture_output=True, text=True,
+                           env=env, cwd=tmp)
+        assert r.returncode == 0, r.stdout + "\n" + r.stderr
+        assert "hazard_mininst_ok" in r.stdout
+    finally:
+        shutil.rmtree(tmp, True)
