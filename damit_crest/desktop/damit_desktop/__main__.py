@@ -47,6 +47,41 @@ PREFERRED_PORT = 47241
 
 TITLE = "DamIT Crest — Dam Breach and Hazard Desk"
 
+#: Injected into the desk after every page load (evaluate_js runs outside the page CSP, and webview_csp.py keeps it
+#: from using eval, so script-src 'self' does not block it). It keeps the window on its own 127.0.0.1 origin: a click
+#: on an off-origin http(s) link, or a window.open to one, is cancelled and handed to the OS browser via
+#: window.pywebview.api.open_external. Same-origin links and non-web schemes (blob:, data:, about:, mailto:) are left
+#: to the page, so nothing legitimate changes.
+NAV_GUARD_JS = r"""
+(function () {
+  if (window.__damitNavGuard) return;
+  window.__damitNavGuard = true;
+  var ORIGIN = window.location.origin;
+  function external(url) {
+    try {
+      var u = new URL(url, window.location.href);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      return u.origin === ORIGIN ? null : u.href;
+    } catch (e) { return null; }
+  }
+  document.addEventListener("click", function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+    if (!a) return;
+    var href = external(a.getAttribute("href"));
+    if (!href) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try { window.pywebview.api.open_external(href); } catch (e) {}
+  }, true);
+  var nativeOpen = window.open;
+  window.open = function (url) {
+    var href = url ? external(String(url)) : null;
+    if (href) { try { window.pywebview.api.open_external(href); } catch (e) {} return null; }
+    return nativeOpen.apply(window, arguments);
+  };
+})();
+"""
+
 #: Random per-launch secret. The served index.html carries it in <meta name="damit-token">; every /api/ call must
 #: send it back in the X-DamIT-Token header. A custom header also forces a CORS preflight, which this server never
 #: answers, so other web origins cannot reach the API from a browser.
@@ -622,6 +657,19 @@ class Api:
         self._remember_dir(Path(path).resolve().parent)
         return {"saved": str(path)}
 
+    def open_external(self, url: str) -> dict:
+        """Open an http/https link in the system browser. The desk window itself never leaves its own local origin:
+        the page nav guard (NAV_GUARD_JS) routes every off-origin link here, so a link can never drive the app to
+        another site. Any non-web scheme is refused rather than handed to the OS."""
+        try:
+            parsed = urlparse(str(url))
+        except Exception:
+            return {"error": "bad url"}
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return {"error": "only http/https links open in the browser"}
+        webbrowser.open(url)
+        return {"opened": url}
+
 
 #: Largest binary export accepted from the page (a view PDF is a few MB).
 MAX_BINARY_BYTES = 100 * 1024 * 1024
@@ -710,6 +758,8 @@ def main() -> None:
 
         try:
             webview.settings["ALLOW_DOWNLOADS"] = True  # belt and braces; exports use the Save dialog bridge
+            # A target=_blank / window.open link goes to the OS browser, never a new in-app window on another origin.
+            webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
         except Exception:
             pass
         # pywebview's JS API binder uses new Function / eval; rewrite it so the CSP can stay
@@ -718,6 +768,8 @@ def main() -> None:
         install_pywebview_csp_patches(webview)
         api = Api(settings_file=SETTINGS_FILE)
         api._window = webview.create_window(TITLE, url, js_api=api, width=1280, height=860, min_size=(760, 560))
+        # Re-arm the nav guard after every in-page load (the loaded event re-fires on each navigation).
+        api._window.events.loaded += lambda *a: api._window.evaluate_js(NAV_GUARD_JS)
         webview.start(private_mode=False, storage_path=str(store))
     except Exception as e:  # no GUI backend: use the system browser (downloads work there)
         print(f"DamIT Crest desktop: no webview ({e}). Opening {url} in the browser; press Ctrl+C to stop.")

@@ -318,5 +318,24 @@ class ResolveWorkTests(unittest.TestCase):
             resolve_work(["/etc"])
 
 
+class OpenExternalTests(unittest.TestCase):
+    """Api.open_external hands only http/https links to the OS browser; the nav guard routes every off-origin
+    link through it, so the desk window never navigates to an outside site."""
+
+    @mock.patch.object(m.webbrowser, "open")
+    def test_http_and_https_open_in_browser(self, wb):
+        api = m.Api()
+        self.assertEqual(api.open_external("https://usgs.gov/x"), {"opened": "https://usgs.gov/x"})
+        self.assertEqual(api.open_external("http://example.com/"), {"opened": "http://example.com/"})
+        self.assertEqual([c.args[0] for c in wb.call_args_list], ["https://usgs.gov/x", "http://example.com/"])
+
+    @mock.patch.object(m.webbrowser, "open")
+    def test_non_web_schemes_refused(self, wb):
+        api = m.Api()
+        for bad in ("file:///etc/passwd", "javascript:alert(1)", "data:text/html,x", "mailto:a@b.c", "", "nope"):
+            self.assertIn("error", api.open_external(bad), bad)
+        wb.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
