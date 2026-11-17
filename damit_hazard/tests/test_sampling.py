@@ -144,7 +144,8 @@ def test_reader_and_no_pam_write_no_sidecar():
 
 
 def _nodata_grid(cell=1.0, cell_x=None, cell_y=None, wkt=None, epsg=32614, all_nodata=False,
-                 dry_centre=False, dry_as_nodata=False, surround=True):
+                 dry_centre=False, dry_as_nodata=False, surround=True,
+                 with_terrain=False, ground_ft=99.5, wse_ft=100.0):
     """5x5 depth grid with a point at the centre of cell (2,2).
 
     surround=True (default): a TRUE_HOLE at (2,2) — all 4 cardinal neighbours wet
@@ -179,6 +180,16 @@ def _nodata_grid(cell=1.0, cell_x=None, cell_y=None, wkt=None, epsg=32614, all_n
     kw = dict(x0=0.0, y0=y0, cell=cell, cell_x=dx, cell_y=dy, epsg=epsg, wkt=wkt)
     rs = S.open_rasters({"depth": _tif(os.path.join(d, "d.tif"), dep, **kw),
                          "velocity": _tif(os.path.join(d, "v.tif"), vel, **kw)})
+    if with_terrain:
+        # WSE only on wet cells; terrain is a constant (already in feet).
+        wse = np.full((5, 5), -9999.0, np.float32)
+        wet = (dep > 0) & (dep != -9999.0)
+        wse[wet] = float(wse_ft)
+        ter = np.full((5, 5), float(ground_ft), np.float32)
+        rs["wse"] = S.Raster(_tif(os.path.join(d, "w.tif"), wse, **kw), 1.0)
+        rs["terrain"] = S.Raster(_tif(os.path.join(d, "t.tif"), ter, **kw), 1.0)
+        rs["terrain"].z_how = "feet (test)"
+        rs["terrain"].z_scale_to_ft = 1.0
     x, y = 2.5 * dx, y0 - 2.5 * dy
     out = S.sample_structures({"hole": (_point_wkb(x, y), (x, y), 0.1 * min(dx, dy))},
                               rs, edge=0.0, point_radius=0.1 * min(dx, dy))
@@ -211,22 +222,17 @@ def test_nodata_at_exactly_20m_scores_dry_and_is_flagged_for_review():
     assert h["cell_m"] == 20.0
 
 
-def test_nodata_at_30m_uses_neighbourhood_peak():
-    """Coarser than 20 m: a TRUE_HOLE takes the neighbourhood peak, not 0."""
+
+def test_nodata_at_30m_without_ground_scores_dry():
+    """Coarser than 20 m, no DEM: score dry. Raw neighbour depth is never used."""
     h, pol = _nodata_hole(cell=30.0)
     assert pol["cell_m"] == 30.0 and pol["neighbourhood_allowed"] is True
-    assert h["sampling"] == "neighbourhood" and h.get("neighbourhood") is True
-    assert h["depth_ft"] == 3.0
-    assert h["velocity_fps"] == 4.0          # peak velocity over wet cells, possibly another cell
-    assert h["dv_cells_differ"] is True
-    assert abs(h["dv_ft2s"] - 12.0) < 1e-9    # peak depth x peak velocity, labelled consistently
-    assert h["dv_source"] == "peak_depth_x_peak_velocity"
-    assert abs(h["dv_same_cell_ft2s"] - 8.0) < 1e-9  # 2 ft x 4 fps on the north cell
+    assert h["sampling"] == "centre_nodata_no_ground"
+    assert h["depth_ft"] == 0.0
+    assert h.get("nodata_path") == "no_ground"
     assert h.get("nodata_true_hole") is True
     assert h["cell_m"] == 30.0
     assert h["nodata_neighbourhood_min_cell_m"] == 20.0
-    assert h["in_domain"] is True and h["sampled"] is True
-
 
 def test_finite_dry_centre_is_not_filled_from_neighbours():
     """A dry (0) cell beside water stays dry: that is RECEPTOR_DRY_NEXT_TO_WET, not neighbourhood."""
@@ -245,12 +251,14 @@ def test_nodata_with_no_wet_neighbour_stays_dry():
         assert h["depth_ft"] == 0.0
 
 
+
 def test_nonsquare_cell_uses_the_larger_side():
-    """15 m x 25 m (larger side 25 m > 20) uses neighbourhood; 15 m x 20 m stays dry."""
-    h, pol = _nodata_hole(cell_x=15.0, cell_y=25.0)
+    """15 m x 25 m (larger side 25 m > 20) uses WSE sampling; 15 m x 20 m stays dry."""
+    h, pol = _nodata_hole(cell_x=15.0, cell_y=25.0, with_terrain=True, ground_ft=99.5, wse_ft=100.0)
     assert abs(pol["cell_m"] - 25.0) < 1e-6 and pol["neighbourhood_allowed"] is True
-    assert h["sampling"] == "neighbourhood" and h["depth_ft"] == 3.0
-    h, pol = _nodata_hole(cell_x=15.0, cell_y=20.0)
+    assert h["sampling"] == "neighbourhood_wse"
+    assert abs(h["depth_ft"] - 0.5) < 1e-9
+    h, pol = _nodata_hole(cell_x=15.0, cell_y=20.0, with_terrain=True, ground_ft=99.5, wse_ft=100.0)
     assert abs(pol["cell_m"] - 20.0) < 1e-6 and pol["neighbourhood_allowed"] is False
     assert h["sampling"] == "centre_nodata_dry" and h["depth_ft"] == 0.0
 
@@ -261,11 +269,10 @@ def test_cell_size_in_us_survey_feet_is_converted_to_metres():
     assert abs(pol["cell_m"] - 50.0 * 0.3048006096012192) < 1e-6
     assert pol["neighbourhood_allowed"] is False
     assert h["sampling"] == "centre_nodata_dry" and h["depth_ft"] == 0.0
-    h, pol = _nodata_hole(cell=80.0, wkt=US_FT_WKT)
+    h, pol = _nodata_hole(cell=80.0, wkt=US_FT_WKT, with_terrain=True, ground_ft=99.5, wse_ft=100.0)
     assert abs(pol["cell_m"] - 80.0 * 0.3048006096012192) < 1e-6
     assert pol["neighbourhood_allowed"] is True
-    assert h["sampling"] == "neighbourhood" and h["depth_ft"] == 3.0
-
+    assert h["sampling"] == "neighbourhood_wse" and abs(h["depth_ft"] - 0.5) < 1e-9
 
 def test_neighbourhood_threshold_is_strictly_greater_than_20():
     assert S.NODATA_NEIGHBOURHOOD_MIN_CELL_M == 20.0
@@ -300,30 +307,42 @@ def test_true_hole_mask_enclosed_and_edge():
     assert not S.true_hole_mask_from_array(b)[2, 2]
 
 
-def test_dry_as_nodata_edge_stays_dry_and_true_hole_is_filled():
+def test_dry_as_nodata_wse_depth_on_edge_and_hole():
     """Regression (DWR-2659, 50 m Runner output): dry cells are written as NoData, not 0.
 
-    On a coarse (30 m) dry-as-NoData field, a structure on the flood edge stays dry
-    (sampling=centre_nodata_edge) and a structure on a true interior hole is
-    neighbourhood-filled. At 20 m or finer both stay dry (centre_nodata_dry).
+    On a coarse (30 m) dry-as-NoData field, every NoData receptor (edge or hole)
+    is scored with depth = max(0, neighbour WSE - own ground). Without a DEM the
+    receptor is dry (never raw neighbour depth). At 20 m or finer both stay dry
+    (centre_nodata_dry), even when terrain would give a positive physical depth.
     """
-    # coarse, true hole
+    # coarse, no DEM: hole and edge both dry (no raw 3 ft fill)
     h, pol = _nodata_grid(cell=30.0, dry_as_nodata=True, surround=True)
     assert pol["neighbourhood_allowed"] is True
-    assert h["sampling"] == "neighbourhood" and h.get("nodata_true_hole") is True
-    assert h["depth_ft"] == 3.0 and h["velocity_fps"] == 4.0
-    assert h["dv_cells_differ"] is True
-    assert abs(h["dv_ft2s"] - 12.0) < 1e-9
-    # coarse, flood edge
+    assert h["sampling"] == "centre_nodata_no_ground" and h["depth_ft"] == 0.0
     e, _pol = _nodata_grid(cell=30.0, dry_as_nodata=True, surround=False)
-    assert e["sampling"] == "centre_nodata_edge" and e.get("neighbourhood") is not True
-    assert e["depth_ft"] == 0.0
-    assert e.get("nodata_true_hole") is not True
-    # 20 m rule unchanged: hole and edge both score dry and are flagged for review
+    assert e["sampling"] == "centre_nodata_no_ground" and e["depth_ft"] == 0.0
+    # coarse, with DEM: physical depth 0.5 ft, not the 3 ft neighbour
+    h, _pol = _nodata_grid(cell=30.0, dry_as_nodata=True, surround=True,
+                           with_terrain=True, ground_ft=99.5, wse_ft=100.0)
+    assert h["sampling"] == "neighbourhood_wse"
+    assert abs(h["depth_ft"] - 0.5) < 1e-9
+    assert abs(h["ground_ft"] - 99.5) < 1e-9
+    assert abs(h["neighbour_wse_ft"] - 100.0) < 1e-9
+    assert h.get("nodata_path") == "wse_minus_ground"
+    e, _pol = _nodata_grid(cell=30.0, dry_as_nodata=True, surround=False,
+                           with_terrain=True, ground_ft=99.5, wse_ft=100.0)
+    assert e["sampling"] == "neighbourhood_wse" and abs(e["depth_ft"] - 0.5) < 1e-9
+    # ground above every neighbouring WSE: dry
+    d, _pol = _nodata_grid(cell=30.0, dry_as_nodata=True, surround=True,
+                           with_terrain=True, ground_ft=100.2, wse_ft=100.0)
+    assert d["sampling"] == "neighbourhood_wse" and d["depth_ft"] == 0.0
+    # 20 m rule unchanged, even with terrain that would give 0.5 ft
     for surround in (True, False):
-        f, _pol = _nodata_grid(cell=20.0, dry_as_nodata=True, surround=surround)
+        f, _pol = _nodata_grid(cell=20.0, dry_as_nodata=True, surround=surround,
+                               with_terrain=True, ground_ft=99.5, wse_ft=100.0)
         assert f["sampling"] == "centre_nodata_dry" and f["depth_ft"] == 0.0
-        f, _pol = _nodata_grid(cell=10.0, dry_as_nodata=True, surround=surround)
+        f, _pol = _nodata_grid(cell=10.0, dry_as_nodata=True, surround=surround,
+                               with_terrain=True, ground_ft=99.5, wse_ft=100.0)
         assert f["sampling"] == "centre_nodata_dry" and f["depth_ft"] == 0.0
 
 
@@ -332,5 +351,63 @@ def test_coarse_edge_with_finite_zero_dry_is_not_filled():
     border, is not a true hole and is not filled on a coarse grid."""
     h, pol = _nodata_grid(cell=30.0, dry_as_nodata=False, surround=False)
     assert pol["neighbourhood_allowed"] is True
-    assert h["sampling"] == "centre_nodata_edge"
+    assert h["sampling"] == "centre_nodata_no_ground"
     assert h["depth_ft"] == 0.0
+
+
+def test_wse_minus_ground_never_uses_raw_neighbour_depth():
+    """Physical depth is 0.13 ft from WSE - ground, not the 3 ft neighbour depth."""
+    h, _pol = _nodata_hole(cell=30.0, dry_as_nodata=True, with_terrain=True,
+                           ground_ft=100.0, wse_ft=100.13)
+    assert h["sampling"] == "neighbourhood_wse"
+    assert abs(h["depth_ft"] - 0.13) < 1e-5
+    assert abs(h["ground_ft"] - 100.0) < 1e-9
+    assert abs(h["neighbour_wse_ft"] - 100.13) < 1e-5
+
+
+def test_diagonal_only_link_to_border_is_enclosed():
+    """4-connectivity: a pocket linked to the exterior only at a corner is enclosed.
+
+    Documented on purpose: water that touches only at a corner is not an outlet.
+    """
+    a = np.full((6, 6), np.nan)
+    a[1:5, 1:5] = 1.0
+    a[2, 2] = np.nan
+    a[1, 0] = np.nan          # diagonal (corner) contact from border toward the pocket
+    # 4-connected, (2,2) does not reach the border through (1,0)
+    m = S.true_hole_mask_from_array(a)
+    assert m[2, 2]
+    assert not m[1, 0]        # (1,0) touches the border (col 0)
+    # A 4-connected dry corridor does connect:
+    b = a.copy()
+    b[2, 1] = np.nan
+    b[2, 0] = np.nan
+    assert not S.true_hole_mask_from_array(b)[2, 2]
+
+
+def test_oversize_enclosed_component_scores_dry():
+    """An enclosed component larger than TRUE_HOLE_MAX_CELLS is not a hole."""
+    cap = S.TRUE_HOLE_MAX_CELLS
+    n = cap + 6
+    # Wet ring around an n x 1 enclosed NoData strip, plus a 1-cell hole
+    a = np.full((n + 4, n + 4), np.nan)
+    a[1:n + 3, 1:n + 3] = 1.0
+    a[2, 2:2 + cap + 1] = np.nan          # cap+1 enclosed cells in a row
+    a[4, 4] = np.nan                       # 1-cell hole
+    ana = S.TH.analyze_nodata(a, max_cells=cap, cache=False)
+    assert not ana["hole"][2, 2]
+    assert ana["oversize"][2, 2] and ana["oversize"][2, 2 + cap]
+    assert ana["hole"][4, 4] and not ana["oversize"][4, 4]
+    assert ana["size"][2, 2] == cap + 1
+
+
+def test_nodata_analysis_is_cached_on_the_raster():
+    d = tempfile.mkdtemp()
+    a = np.full((7, 7), -9999.0, np.float32)
+    a[1:6, 1:6] = 1.0
+    a[3, 3] = -9999.0
+    dep = S.Raster(_tif(os.path.join(d, "d.tif"), a, x0=0.0, y0=7.0, cell=1.0))
+    first = S.nodata_analysis(dep)
+    second = S.nodata_analysis(dep)
+    assert first is second
+    assert first["hole"][3, 3]

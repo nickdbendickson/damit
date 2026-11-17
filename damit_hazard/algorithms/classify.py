@@ -114,19 +114,26 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "Receptor attributes are read by name (type, occupants, floor_elev / "
                 "floor_height_ft, aadt, road_class, func_class, sole_access, trains_per_day, "
                 "passenger, ...): see the plugin README. A structure on a NoData cell next to "
-                "water: neighbourhood fill is used only for a TRUE_HOLE (NoData enclosed by "
-                "the wet footprint; 4-connected non-wet component does not touch the raster "
-                "border) and only on a depth grid coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M "
-                "= 20 m (larger cell side, converted to metres; strictly greater than 20 m) "
-                "(sampling=neighbourhood, flag nodata_neighbourhood). A dry flood-edge cell "
-                "(the Runner writes dry cells as NoData) is scored dry "
-                "(sampling=centre_nodata_edge). At 20 m or finer the NoData cell is still "
-                "scored dry (sampling=centre_nodata_dry) and flagged for review "
-                "(nodata_dry_review). A dry (finite 0) cell is scored dry. The report "
-                "records the path, the threshold and the cell size. Peak depth and peak "
-                "velocity are independent maxima over wet cells (option C); when they come "
-                "from different cells the receptor is flagged dv_cells_differ and the "
-                "reported depth x velocity is peak depth x peak velocity.<br><br>"
+                "water: neighbourhood sampling is used only on a depth grid coarser than "
+                "NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m (larger cell side, converted to "
+                "metres; strictly greater than 20 m). The sampled depth is physical: "
+                "max(0, neighbour water surface minus the receptor's own ground), the max "
+                "over wet neighbours (sampling=neighbourhood_wse). Water surface comes from "
+                "the WSE raster, or from neighbour depth plus neighbour ground. Ground comes "
+                "from the run DEM / terrain (TERRAIN, or the path in steps.json / run_setup "
+                "beside the depth raster), sampled at the receptor point. Raw neighbour "
+                "depth is never used. When no ground is available the receptor is scored dry "
+                "and flagged nodata_no_ground_review. An enclosed 4-connected non-wet "
+                "component larger than TRUE_HOLE_MAX_CELLS (25) is not a hole and scores dry "
+                "(nodata_oversize_component). 4-connectivity is used on purpose: a "
+                "corner-only (diagonal) path to the border does not connect a pocket to the "
+                "exterior. At 20 m or finer the NoData cell is still scored dry "
+                "(sampling=centre_nodata_dry) and flagged for review (nodata_dry_review). A "
+                "dry (finite 0) cell is scored dry. Ground, the neighbour water surface used "
+                "and the path are recorded per receptor. Peak depth and peak velocity are "
+                "independent maxima over wet cells (option C); when they come from different "
+                "cells the receptor is flagged dv_cells_differ and the reported depth x "
+                "velocity is peak depth x peak velocity.<br><br>"
                 "Informational screening aid, not a regulatory determination: the engineer of "
                 "record and the regulating agency make the determination.")
 
@@ -171,6 +178,15 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
             self.addParameter(QgsProcessingParameterRasterLayer(key, label, optional=opt))
         self.addParameter(QgsProcessingParameterBoolean(
             "METRES", "Rasters are in metres (m, m/s, m\u00b2/s)", False))
+        self.addParameter(QgsProcessingParameterRasterLayer(
+            "TERRAIN", "Run DEM / terrain (same DEM the Runner used; empty = steps.json or "
+            "run_setup beside the depth raster). Used for WSE-consistent NoData depth "
+            "(neighbour water surface minus the receptor's own ground)", optional=True))
+        self.addParameter(QgsProcessingParameterEnum(
+            "TERRAIN_UNITS", "Terrain elevation units", options=[
+                "Detect (band unit, vertical CRS, 3DEP cue, or match WSE minus depth)",
+                "Metres", "Feet (international)", "US survey feet"],
+            defaultValue=0))
         for key, _kind, label, typ in LAYERS:
             self.addParameter(QgsProcessingParameterFeatureSource(
                 key, label, [typ], optional=True))
@@ -518,7 +534,12 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                                                       cfg.get("scenarios_any_of") or [None])[0])
         dim = DIMS[self.parameterAsEnum(p, "MODEL_DIM", context)]
         metres = self.parameterAsBool(p, "METRES", context)
-        main = {"scenario": scen, "model_dim": dim, "label": "main run", "metres": metres}
+        tu = self.parameterAsEnum(p, "TERRAIN_UNITS", context)
+        terrain_units = {0: "auto", 1: "m", 2: "ft", 3: "us_ft"}[int(tu)]
+        terrain_layer = self.parameterAsRasterLayer(p, "TERRAIN", context)
+        terrain_path = terrain_layer.source() if terrain_layer is not None else None
+        main = {"scenario": scen, "model_dim": dim, "label": "main run", "metres": metres,
+                "terrain": terrain_path, "terrain_units": terrain_units}
         dep_layer = self.parameterAsRasterLayer(p, "DEPTH", context)
         if dep_layer is None:
             raise QgsProcessingException("A maximum depth raster is required.")
@@ -537,6 +558,8 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 for _k, role, _l, _o in RASTERS:
                     if spec.get(role) and not os.path.isabs(spec[role]):
                         spec[role] = os.path.join(base, spec[role])
+                if spec.get("terrain") and not os.path.isabs(spec["terrain"]):
+                    spec["terrain"] = os.path.join(base, spec["terrain"])
                 run_specs.append(spec)
             layers_info.append(_stat(extra, "extra runs"))
         trains_rows = []
@@ -572,6 +595,28 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                     parts.append(gg)
                 domain = QgsGeometry.unaryUnion(parts) if parts else None
             rs = S.open_rasters(paths, metres=bool(spec.get("metres", metres)))
+            tpath = spec.get("terrain") or terrain_path
+            tunits = spec.get("terrain_units") or terrain_units
+            tnote = "given"
+            if not tpath:
+                tpath, discovered_u, tnote = S.discover_run_terrain(paths.get("depth"))
+                if tpath and (not tunits or tunits == "auto"):
+                    tunits = discovered_u or "auto"
+            if tpath:
+                ter, how = S.open_terrain(tpath, z_units=tunits or "auto",
+                                          depth=rs.get("depth"), wse=rs.get("wse"))
+                if ter is not None:
+                    rs["terrain"] = ter
+                    layers_info.append(_stat(tpath, "terrain ({})".format(
+                        spec.get("scenario") or "run {}".format(i + 1)), how or tnote))
+                else:
+                    layers_info.append(_stat(tpath, "terrain (unused)",
+                                             how or tnote or "could not resolve elevation units"))
+                    feedback.pushInfo("Terrain not used for NoData depth: {}".format(how))
+            policy = S.nodata_policy(rs["depth"])
+            policy["terrain"] = tpath
+            policy["terrain_z_how"] = (getattr(rs.get("terrain"), "z_how", None)
+                                       if rs.get("terrain") is not None else None)
             feedback.pushInfo("Run {} ({}, {}): sampling".format(
                 i + 1, spec.get("scenario") or "?", spec.get("model_dim") or "?"))
             recs, g = self._receptors(sources, rs, crs, cfg, context, feedback, domain)
@@ -592,7 +637,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                          "label": spec.get("label") or "run {}".format(i + 1),
                          "breach_location": spec.get("breach_location"),
                          "receptors": recs,
-                         "nodata_sampling": S.nodata_policy(rs["depth"])})
+                         "nodata_sampling": policy})
             feedback.setProgress(10 + 60.0 * (i + 1) / len(run_specs))
         res = core.classify(cat, cfg, runs, dam=dam, charts=charts, layers=layers_info, habitable_rule=rule)
         self._habitability(res, cat, cfg, runs, charts, dam, layers_info, best, rule, rv_path, reviews, feedback)
@@ -640,7 +685,9 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                      ("adv_class", compat.FT_INT), ("methods", compat.FT_STRING),
                      ("depth_ft", compat.FT_DOUBLE), ("vel_fps", compat.FT_DOUBLE),
                      ("dv_ft2s", compat.FT_DOUBLE), ("rise_ft", compat.FT_DOUBLE),
+                     ("ground_ft", compat.FT_DOUBLE), ("neighbour_wse_ft", compat.FT_DOUBLE),
                      ("flags", compat.FT_STRING), ("sampling", compat.FT_STRING),
+                     ("nodata_path", compat.FT_STRING),
                      ("occtype", compat.FT_STRING), ("suggested_type", compat.FT_STRING),
                      ("struct_key", compat.FT_STRING), ("is_911", compat.FT_INT),
                      ("reviewed_habitable", compat.FT_INT), ("habitable_status", compat.FT_STRING),
@@ -674,8 +721,9 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                                  labels.get(cls, "No hit"), pr.get("advisory"),
                                  ",".join(sorted(pr.get("methods", []))), r.get("depth_ft"),
                                  r.get("velocity_fps"), r.get("dv_ft2s"), r.get("rise_ft"),
+                                 r.get("ground_ft"), r.get("neighbour_wse_ft"),
                                  ",".join(sorted(set(res["receptor_flags"].get(rid, [])))),
-                                 r.get("sampling"),
+                                 r.get("sampling"), r.get("nodata_path"),
                                  r.get("occtype"), r.get("suggested_type"), r.get("struct_key"),
                                  None if r.get("is_911") is None else int(bool(r.get("is_911"))),
                                  None if r.get("reviewed_habitable") is None else int(bool(r["reviewed_habitable"])),

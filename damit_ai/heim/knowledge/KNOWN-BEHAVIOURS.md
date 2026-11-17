@@ -72,22 +72,26 @@ the model can be asked directly, with nothing looked up (`heim-chat --bare`, or 
   `RAIL_TRAINS_LOOKUP` (`field,value,trains_per_day,source` = `SUBDIV,KO,15,...`). Other lines without a value
   stay flagged.
 - **Judgment zone = Medium in ND** (the TM-11 judgment zone counts as Medium in the ND preset).
-- **Receptors on NoData (Hazard 0.2.6, 0.4.2).** When the cell under a structure (or every cell of its footprint) is NoData
-  and a neighbour is wet, the rule depends on the depth-grid cell (larger side, in metres) and on whether the cell is a
-  TRUE_HOLE (its 4-connected non-wet component does not touch the raster border; it is enclosed by the wet footprint).
-  On a grid coarser than 20 m (`NODATA_NEIGHBOURHOOD_MIN_CELL_M`), Hazard fills only a true hole: it takes the peak depth
-  and velocity over the wet cells of the 3x3 neighbourhood (`sampling=neighbourhood`, flag `nodata_neighbourhood`). A dry
-  flood-edge cell written as NoData (the Runner writes every dry cell as NoData; this is not a hole) is scored dry
-  (`sampling=centre_nodata_edge`, flag `nodata_flood_edge`). At 20 m or finer it still scores the cell dry
-  (0 ft, `sampling=centre_nodata_dry`) and flags `nodata_dry_review`, hole or edge. A filled hole or a fine-grid NoData
-  cell goes to a person (`HAZARD_REVIEW`). A dry (finite 0) cell stays dry; a NoData cell with no wet neighbour stays
-  dry and is not flagged. A structure on a dry cell beside deep water can still be missed by a coarse grid: flag it for
-  a person. DamIT Hazard does not score roads with unknown class or AADT (M8a); the older DamSafety plugin scored them
-  Medium by assumption.
-- **Peak depth and peak velocity are maxima over wet cells** (depth of 0.1 ft or more; option C, 1 Nov 2026: the two
-  peaks may come from different cells). When they do, Hazard flags `dv_cells_differ` and the reported depth × velocity
-  is peak depth × peak velocity (`dv_source=peak_depth_x_peak_velocity`), not the largest same-cell product
-  (`dv_same_cell_ft2s`).
+- **Receptors on NoData (Hazard 0.2.6, 0.4.3).** When the cell under a structure (or every cell of its footprint) is NoData
+  and a neighbour is wet, neighbourhood sampling applies only on a grid coarser than 20 m (`NODATA_NEIGHBOURHOOD_MIN_CELL_M`).
+  The sampled depth is physical: `max(0, neighbour water surface − the receptor's own ground)` (`sampling=neighbourhood_wse`,
+  flag `nodata_wse_ground` when depth > 0; the older names `sampling=neighbourhood` / flag `nodata_neighbourhood` referred
+  to raw neighbour depth and are no longer used to score). Water surface comes from the WSE raster, or from neighbour
+  depth plus neighbour ground. Ground comes from the run DEM / terrain, sampled at the receptor point. Raw neighbour
+  depth is never used. No ground: scored dry (`sampling=centre_nodata_no_ground`, flag `nodata_no_ground_review`).
+  A TRUE_HOLE is a 4-connected non-wet component that does not touch the raster border and has at most
+  `TRUE_HOLE_MAX_CELLS` (25) cells. 4-connectivity is used on purpose: a corner-only (diagonal) path to the border does
+  not connect a pocket to the exterior. A larger enclosed component is not a hole and scores dry
+  (`sampling=centre_nodata_oversize`, flag `nodata_oversize_component`). At 20 m or finer it still scores the cell dry
+  (0 ft, `sampling=centre_nodata_dry`) and flags `nodata_dry_review`, hole or edge. The legacy `centre_nodata_edge` /
+  `nodata_flood_edge` path is unused on coarse grids once ground is available. A scored NoData cell goes to a person
+  (`HAZARD_REVIEW`). A dry (finite 0) cell stays dry; a NoData cell with no wet neighbour stays dry and is not flagged.
+  A structure on a dry cell beside deep water can still be missed by a coarse grid: flag it for a person. DamIT Hazard
+  does not score roads with unknown class or AADT (M8a); the older DamSafety plugin scored them Medium by assumption.
+- **Peak depth and peak velocity are maxima over wet cells** (a cell is wet when depth is strictly greater than 0;
+  option C, 1 Nov 2026: the two peaks may come from different cells). When they do, Hazard flags `dv_cells_differ` and
+  the reported depth × velocity is peak depth × peak velocity (`dv_source=peak_depth_x_peak_velocity`), not the largest
+  same-cell product (`dv_same_cell_ft2s`).
 - **Real tool names only:** `damit_screen:handoff`, `damit_run:rundam`, `damit:classify` (and `damit_lite:classify`).
   The automatic 10 m refine is switched off with `--GRID_REFINE=0`. There is no `damit_runner`, no `--no-refine` and
   no `damit_screener_handoff`. See `ALGORITHM-HELP-DAMIT.md` (generated from the code) for every id and parameter.

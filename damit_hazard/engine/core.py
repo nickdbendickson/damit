@@ -1314,28 +1314,56 @@ def _nodata_cell_and_threshold(ctx):
 def _flag_nodata_neighbourhood(ctx):
     """Structures on a NoData cell next to water.
 
-    Neighbourhood fill on a grid coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M applies
-    only to a TRUE_HOLE (NoData enclosed by the wet footprint; flag nodata_neighbourhood).
-    A dry flood-edge cell on a coarse grid is scored dry (sampling=centre_nodata_edge,
-    flag nodata_flood_edge). At the neighbourhood-fill threshold or finer, NoData is
-    scored dry and flagged (nodata_dry_review), hole or edge. Not a habitability rule.
+    On a grid coarser than the neighbourhood-fill threshold, every NoData
+    receptor is scored with depth = max(0, neighbour water surface minus own
+    ground). Flags: nodata_wse_ground (physical depth > 0), nodata_wse_dry
+    (physical depth 0), nodata_no_ground_review (no DEM), nodata_oversize_component
+    (enclosed component larger than the named cap). At the threshold or finer,
+    NoData is scored dry and flagged nodata_dry_review. Not a habitability rule.
     """
     recs = ctx.run.get("receptors") or []
-    neigh = [r["id"] for r in recs
-             if r.get("sampling") == "neighbourhood" or r.get("neighbourhood")]
+    wse_wet = [r["id"] for r in recs
+               if r.get("sampling") == "neighbourhood_wse" and (r.get("depth_ft") or 0) > 0]
+    wse_dry = [r["id"] for r in recs
+               if r.get("sampling") == "neighbourhood_wse" and not (r.get("depth_ft") or 0) > 0]
+    nog = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_no_ground"]
+    over = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_oversize"]
     dry = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_dry"]
+    # legacy name from the first #111 cut, if any receptor still carries it
     edge = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_edge"]
-    if not neigh and not dry and not edge:
+    if not (wse_wet or wse_dry or nog or over or dry or edge):
         return
     cell, min_m = _nodata_cell_and_threshold(ctx)
     cell_s = "{:g} m".format(cell) if cell is not None else "unknown"
-    if neigh:
-        ctx.flag(WARNING, "nodata_neighbourhood",
-                 "{} structure(s) sit on a true hole in the depth grid (TRUE_HOLE / "
-                 "nodata_true_hole: NoData enclosed by the wet footprint) on a {} grid "
-                 "(coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m): peak depth and "
-                 "velocity were taken from neighbouring wet cells (or the footprint) and need "
-                 "review".format(len(neigh), cell_s, min_m), None, neigh)
+    from ..sampling.rasters import TRUE_HOLE_MAX_CELLS
+    if wse_wet:
+        ctx.flag(WARNING, "nodata_wse_ground",
+                 "{} structure(s) sit on a NoData cell next to water on a {} grid "
+                 "(coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m): depth is "
+                 "max(0, neighbour water surface minus the receptor's own ground), "
+                 "not the raw neighbour depth, and needs review "
+                 "(sampling=neighbourhood_wse)"
+                 .format(len(wse_wet), cell_s, min_m), None, wse_wet)
+    if wse_dry:
+        ctx.flag(INFO, "nodata_wse_dry",
+                 "{} structure(s) sit on a NoData cell next to water on a {} grid "
+                 "(coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m): scored dry "
+                 "because the receptor ground is at or above every neighbouring water "
+                 "surface (sampling=neighbourhood_wse)"
+                 .format(len(wse_dry), cell_s, min_m), None, wse_dry)
+    if nog:
+        ctx.flag(WARNING, "nodata_no_ground_review",
+                 "{} structure(s) sit on a NoData cell next to water on a {} grid "
+                 "(coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m): scored dry "
+                 "because no run DEM / terrain was available; raw neighbour depth was "
+                 "not used (sampling=centre_nodata_no_ground)"
+                 .format(len(nog), cell_s, min_m), None, nog)
+    if over:
+        ctx.flag(INFO, "nodata_oversize_component",
+                 "{} structure(s) sit in an enclosed NoData component larger than "
+                 "TRUE_HOLE_MAX_CELLS = {} on a {} grid: not a hole, scored dry "
+                 "(sampling=centre_nodata_oversize)"
+                 .format(len(over), TRUE_HOLE_MAX_CELLS, cell_s), None, over)
     if dry:
         ctx.flag(WARNING, "nodata_dry_review",
                  "{} structure(s) sit on a NoData cell next to water on a {} grid "
@@ -1345,10 +1373,8 @@ def _flag_nodata_neighbourhood(ctx):
     if edge:
         ctx.flag(INFO, "nodata_flood_edge",
                  "{} structure(s) sit on a dry flood-edge cell written as NoData on a {} "
-                 "grid (coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m; not a "
-                 "TRUE_HOLE): scored dry (sampling=centre_nodata_edge). The Runner writes "
-                 "every dry cell as NoData, so a cell next to water is not a hole in the "
-                 "results.".format(len(edge), cell_s, min_m), None, edge)
+                 "grid (legacy centre_nodata_edge path)."
+                 .format(len(edge), cell_s), None, edge)
 
 
 

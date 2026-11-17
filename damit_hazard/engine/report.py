@@ -35,23 +35,32 @@ def _nodata_sampling_lines(result):
         min_m = p.get("nodata_neighbourhood_min_cell_m", 20.0)
         allowed = p.get("neighbourhood_allowed")
         cell_s = "{:g} m".format(cell) if cell is not None else "unknown"
+        cap = p.get("true_hole_max_cells", 25)
+        conn = p.get("true_hole_connectivity", 4)
+        how = p.get("terrain_z_how")
         if allowed:
-            path = ("neighbourhood fill only of a TRUE_HOLE (NoData enclosed by the wet "
-                    "footprint; sampling=neighbourhood, flag nodata_neighbourhood); a dry "
-                    "flood-edge cell written as NoData is scored dry "
-                    "(sampling=centre_nodata_edge, flag nodata_flood_edge)")
+            path = ("WSE-consistent neighbourhood depth for every NoData receptor "
+                    "(sampling=neighbourhood_wse): depth = max(0, neighbour water surface "
+                    "minus the receptor's own ground), never raw neighbour depth. Water "
+                    "surface from the WSE raster, or neighbour depth plus neighbour ground. "
+                    "No ground: scored dry (centre_nodata_no_ground, flag "
+                    "nodata_no_ground_review). An enclosed 4-connected non-wet component "
+                    "larger than TRUE_HOLE_MAX_CELLS = {} is not a hole and scores dry "
+                    "(centre_nodata_oversize, flag nodata_oversize_component). "
+                    "4-connectivity: a corner-only path to the border does not connect a "
+                    "pocket to the exterior".format(cap))
+            if how:
+                path += "; terrain units: " + how
         else:
             path = ("NoData scored dry (sampling=centre_nodata_dry, flag nodata_dry_review), "
                     "whether or not the cell is a true hole")
         who = p.get("scenario") or p.get("label") or "run"
         out.append("NoData receptors ({}): depth-grid cell {} (larger side, converted to metres); "
-                   "neighbourhood fill only of a TRUE_HOLE (nodata_true_hole: a NoData cell "
-                   "whose 4-connected non-wet component does not touch the raster border) and "
-                   "only when the cell is coarser than "
-                   "NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m (strictly greater than). A dry "
-                   "(finite 0) cell is scored dry. The Runner writes dry cells as NoData, so a "
-                   "flood-edge structure is not a hole. This run: {}."
-                   .format(who, cell_s, min_m, path))
+                   "neighbourhood sampling only when the cell is coarser than "
+                   "NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m (strictly greater than). "
+                   "TRUE_HOLE uses {}-connectivity and size cap TRUE_HOLE_MAX_CELLS = {}. "
+                   "A dry (finite 0) cell is scored dry. This run: {}."
+                   .format(who, cell_s, min_m, conn, cap, path))
     return out
 
 
