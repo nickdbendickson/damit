@@ -155,6 +155,7 @@ Heim can watch a DamIT Runner run, but the review does not depend on the model. 
    band: an inflow inside it is the INFO note `TOE_BAND_WIDENED`, not a `TOE_INFLOW` problem. The Runner now warns when a run ends with a wet edge.
    Interactive Q&A (`heim`, `heim-chat`) stays on the larger model (30B on a 32 GB+ Mac); both are configurable.
    **1.3.5 (DWR-2659).** `RECEPTOR_NODATA` describes both Hazard 0.2.6 paths: neighbourhood fill only on a depth grid coarser than 20 m (`sampling=neighbourhood`, flag `nodata_neighbourhood`); at 20 m or finer Hazard still scores the NoData cell dry (`sampling=centre_nodata_dry`) and flags `nodata_dry_review`.
+   **1.3.6.** `check_datum` treats a units suffix on a NAVD88 tag as NAVD88 (`NAVD88 ft`, `feet`, `m`, `US survey ft` and similar). DamIT Crest writes `NAVD88 ft`; that no longer raises a false DATUM PROBLEM. A real mismatch (`NGVD29`, `NGVD29 ft`) is still flagged.
 
 Hooks fire at the end of each pass, on a stall, before Hazard and at the run end, so even a 45 s run is reviewed:
 
