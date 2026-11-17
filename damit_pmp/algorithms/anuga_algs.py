@@ -71,7 +71,14 @@ class AnugaRain(_Base):
             "without evolving; `--run` simulates.\n\n"
             "Nothing is launched by default. Give an ANUGA Python to build the gmsh mesh here (BUILD_MESH; gmsh only, "
             "the runner's launcher with a timeout); RUN_ANUGA (off by default) also runs the full simulation. The "
-            "runner's worker has no rain: only its mesher, outer ring, flow path, sizes and domain build are reused. "
+            "runner's worker has no rain: only its mesher, outer ring, flow path, sizes and domain build are reused.\n\n"
+            "0.4.2 options (all off by default): VERTEX_ELEVATION samples the model DEM at the triangle vertices (a "
+            "continuous bed) instead of once per centroid; without a finer DEM the runner's centroid rule leaves a bed "
+            "that jumps between neighbouring triangles, which strands rain water (DWR-2801: 4.8 vs 3.1 Mm3 stored at 36 "
+            "h, 0.6 vs 65 m3/s at the dam). STREAM_AREA_KM2, CHANNEL_AREA_M2, CHANNEL_DIST_MIN_M / MAX_M refine the mesh "
+            "along the D8 stream network; REFINE_LINES puts mesh edges along given lines (a dam crest); OUTLET_* add the "
+            "dam's principal outlet as the runner's Boyd pipe culvert (the values are labelled assumed unless "
+            "OUTLET_ASSUMED is off); STAGE_PROBE records the water level at a point (the pond) every yield step. "
             + NOTE)
 
     def initAlgorithm(self, config=None):  # noqa: N802
@@ -112,6 +119,35 @@ class AnugaRain(_Base):
                                              "runner's 100)", DOUBLE, optional=True, minValue=1.0)))
         add(adv(QgsProcessingParameterNumber("GRADE_DIST_M", "Distance over which the size grows to the far field (m; "
                                              "empty = the runner's 1500)", DOUBLE, optional=True, minValue=1.0)))
+        add(adv(QgsProcessingParameterNumber("STREAM_AREA_KM2", "Refine the mesh along the stream network: channels draining "
+                                             "at least this area (km2) from the D8 accumulation of the model DEM get the "
+                                             "mesher's channel sizing (empty = only the flow path, the runner's rule)",
+                                             DOUBLE, optional=True, minValue=0.0001)))
+        add(adv(QgsProcessingParameterNumber("CHANNEL_AREA_M2", "Triangle area on the flow path and stream lines (m2; empty = "
+                                             "the runner's 250)", DOUBLE, optional=True, minValue=1.0)))
+        add(adv(QgsProcessingParameterNumber("CHANNEL_DIST_MIN_M", "Distance from a channel line kept at the channel "
+                                             "size (m; empty = the runner's 250)", DOUBLE, optional=True, minValue=1.0)))
+        add(adv(QgsProcessingParameterNumber("CHANNEL_DIST_MAX_M", "Distance at which the size has grown to the far field "
+                                             "(m; empty = the runner's 2500)", DOUBLE, optional=True, minValue=1.0)))
+        add(adv(QgsProcessingParameterFeatureSource("REFINE_LINES", "Extra mesh refinement lines (embankment crests, a dam line: "
+                                                     "mesh edges are put along them at the runner's line size)",
+                                                     [QgsProcessing.TypeVectorLine], optional=True)))
+        add(adv(QgsProcessingParameterBoolean("VERTEX_ELEVATION", "Sample the model DEM at the triangle vertices (a continuous "
+                                              "bed) instead of once per centroid (the runner's rule without a finer DEM)", False)))
+        add(adv(QgsProcessingParameterPoint("OUTLET_INLET", "Principal outlet (pipe through the dam), inlet end on the pond side "
+                                             "(with the other OUTLET_* values: the runner's Boyd pipe culvert; empty = no outlet)",
+                                             optional=True)))
+        add(adv(QgsProcessingParameterPoint("OUTLET_OUTLET", "Principal outlet, outlet end downstream of the dam", optional=True)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_DIAMETER_M", "Outlet pipe diameter (m)", DOUBLE, optional=True, minValue=0.05)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_INVERT_IN_M", "Outlet inlet invert elevation (m, DEM datum)", DOUBLE, optional=True)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_INVERT_OUT_M", "Outlet outlet invert elevation (m, DEM datum)", DOUBLE, optional=True)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_MANNING", "Outlet pipe Manning n", DOUBLE, 0.013, minValue=0.005)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_LOSSES", "Outlet entrance/exit loss coefficient", DOUBLE, 0.5, minValue=0.0)))
+        add(adv(QgsProcessingParameterNumber("OUTLET_BARRELS", "Outlet number of barrels", DOUBLE, 1.0, minValue=1.0)))
+        add(adv(QgsProcessingParameterBoolean("OUTLET_ASSUMED", "The outlet values are assumed (not from the as-built drawings): "
+                                              "the manifest and the maps say so", True)))
+        add(adv(QgsProcessingParameterPoint("STAGE_PROBE", "Record the water level at this point every yield step (e.g. the "
+                                             "pond; anuga_rain_result.npz probe_stage)", optional=True)))
         add(adv(QgsProcessingParameterNumber("BUFFER_M", "Grow the domain by this much (m; the runner buffers its "
                                              "flood footprint by 500, a basin needs none)", DOUBLE, defaultValue=0.0,
                                              minValue=0.0)))
@@ -224,7 +260,49 @@ class AnugaRain(_Base):
                 channel, plen = AR.flow_path(grid, outer, start)
                 points = [start]
                 feedback.pushInfo("Flow path: {:.0f} m traced, {} piece(s) inside the domain".format(plen, len(channel)))
-            spec = AR.mesh_spec(outer, channel, points, st["threads"], sizing)
+            stream_info = None
+            stream_km2 = self._opt_num(P, "STREAM_AREA_KM2", context)
+            if stream_km2:
+                slines, stream_info = AR.stream_refine_lines(grid, outer, stream_km2)
+                channel = list(channel) + slines
+                feedback.pushInfo("Stream network: {lines} line(s), {length_km_in_domain} km in the domain (threshold "
+                                  "{threshold_km2} km2)".format(**stream_info))
+            outlet, probes = None, None
+            ref_lines = []
+            if P.get("REFINE_LINES") not in (None, ""):
+                src = self.parameterAsSource(P, "REFINE_LINES", context)
+                tr = QgsCoordinateTransform(src.sourceCrs(), dem_layer.crs(), QgsProject.instance())
+                for f in src.getFeatures():
+                    g = QgsGeometry(f.geometry())
+                    if g.isEmpty():
+                        continue
+                    g.transform(tr)
+                    for part in (g.asMultiPolyline() if g.isMultipart() else [g.asPolyline()]):
+                        if len(part) >= 2:
+                            ref_lines.append([(q.x(), q.y()) for q in part])
+                ref_lines = AR.clip_lines_to_polygon(ref_lines, outer)
+                feedback.pushInfo("Refinement lines: {} piece(s) in the domain".format(len(ref_lines)))
+            if P.get("OUTLET_INLET") not in (None, "") or P.get("OUTLET_OUTLET") not in (None, ""):
+                nums = [self._opt_num(P, k, context) for k in ("OUTLET_DIAMETER_M", "OUTLET_INVERT_IN_M", "OUTLET_INVERT_OUT_M")]
+                if P.get("OUTLET_INLET") in (None, "") or P.get("OUTLET_OUTLET") in (None, "") or any(v is None for v in nums):
+                    raise QgsProcessingException("An outlet needs OUTLET_INLET, OUTLET_OUTLET, OUTLET_DIAMETER_M, "
+                                                 "OUTLET_INVERT_IN_M and OUTLET_INVERT_OUT_M.")
+                pi = self.parameterAsPoint(P, "OUTLET_INLET", context, dem_layer.crs())
+                po = self.parameterAsPoint(P, "OUTLET_OUTLET", context, dem_layer.crs())
+                outlet = AR.outlet_spec((pi.x(), pi.y()), (po.x(), po.y()), nums[0], nums[1], nums[2],
+                                        self.parameterAsDouble(P, "OUTLET_MANNING", context),
+                                        self.parameterAsDouble(P, "OUTLET_LOSSES", context),
+                                        self.parameterAsDouble(P, "OUTLET_BARRELS", context),
+                                        self.parameterAsBool(P, "OUTLET_ASSUMED", context))
+                points = list(points) + [tuple(e) for e in outlet["end_points"]]
+                feedback.pushInfo("Outlet: {:.2f} m pipe, {:.0f} m long, inverts {:.2f} -> {:.2f} m{}".format(
+                    outlet["width_m"], outlet["length_m"], *outlet["invert_elevations"],
+                    " (ASSUMED values)" if outlet["assumed"] else ""))
+            if P.get("STAGE_PROBE") not in (None, ""):
+                pp = self.parameterAsPoint(P, "STAGE_PROBE", context, dem_layer.crs())
+                probes = [(pp.x(), pp.y())]
+            spec = AR.mesh_spec(outer, channel, points, st["threads"], sizing,
+                                lines=ref_lines + ([outlet["end_points"]] if outlet else []))
             t, r = AR.read_rate_csv(self.parameterAsFile(P, "RATE_CSV", context))
             storm_s = float(t[-1])
             sim_h = self.parameterAsDouble(P, "SIM_TIME_H", context)
@@ -246,7 +324,8 @@ class AnugaRain(_Base):
 
         spec_path = os.path.join(out_dir, AR.SPEC_NAME)
         AR.write_json(spec_path, spec)
-        AR.write_job(out_dir, grid, t, r, st, sim_time, factor, fine, gauge)
+        AR.write_job(out_dir, grid, t, r, st, sim_time, factor, fine, gauge, outlet, probes,
+                     self.parameterAsBool(P, "VERTEX_ELEVATION", context))
         files = AR.copy_script_files(out_dir)
         rate_copy = os.path.join(out_dir, AR.RATE_NAME)
         with open(self.parameterAsFile(P, "RATE_CSV", context), "rb") as a, open(rate_copy, "wb") as b:
@@ -306,7 +385,7 @@ class AnugaRain(_Base):
             "domain": {"source": what, "crs": dem_layer.crs().authid(), "outer_ring_points": len(outer),
                        "area_km2": oinfo["region_km2"], "area_sq_mi": oinfo["region_km2"] / 2.589988,
                        "simplify_m": oinfo["simplify_m"], "model_cell_m": st["cell_m"], "grid": [grid.ny, grid.nx],
-                       "flow_path_start": start, "flow_path_length_m": plen},
+                       "flow_path_start": start, "flow_path_length_m": plen, "stream_refinement": stream_info, "outlet": outlet},
             "settings": dict(st, sim_time_s=sim_time, storm_s=storm_s, sizing={k: v for k, v in sizing.items() if v},
                              elevation=("fine (native DEM at the vertices)" if fine else "model grid (centroids)"),
                              mesher_defaults=gmshmod.default_sizes(), run_anuga=run_anuga, build_mesh=bool(mesh_path)),

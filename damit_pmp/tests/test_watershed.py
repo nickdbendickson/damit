@@ -37,6 +37,32 @@ def valley(nx=44, ny=34, cell=30.0, tilt=0.005, side=0.03, frame=True):
 
 
 @unittest.skipUnless(HAVE, "numpy / scipy / GDAL not installed")
+class StreamLines(unittest.TestCase):
+    """0.4.2: watershed.stream_lines, the D8 channels draining at least a threshold area, as polylines."""
+
+    def test_the_valley_channel_is_one_line_along_its_row(self):
+        g, rc = valley()
+        lines, info = W.stream_lines(g, 20 * 900.0)                    # channels that drain 20 cells or more
+        self.assertGreaterEqual(len(lines), 1)
+        self.assertEqual(info["lines"], len(lines))
+        pts = np.vstack([np.asarray(l) for l in lines])
+        ys = g.xy(rc, 5)[1]
+        self.assertTrue((np.abs(pts[:, 1] - ys) < 1.5 * g.dx).mean() > 0.9)       # on the channel row (V-valley)
+        self.assertGreater(info["length_m"], 0.8 * (g.nx - 4) * g.dx)
+        # the line runs downstream: west (the valley drains west), start east of its end
+        longest = max(lines, key=lambda l: len(l))
+        self.assertGreater(longest[0][0], longest[-1][0])
+
+    def test_a_bigger_threshold_gives_a_shorter_network_and_a_huge_one_none(self):
+        g, _ = valley()
+        _, small = W.stream_lines(g, 4 * 900.0)
+        _, big = W.stream_lines(g, 60 * 900.0)
+        self.assertGreater(small["length_m"], big["length_m"])
+        lines, none = W.stream_lines(g, 1e12)
+        self.assertEqual((lines, none["length_m"]), ([], 0.0))
+
+
+@unittest.skipUnless(HAVE, "numpy / scipy / GDAL not installed")
 class Delineation(unittest.TestCase):
     def test_valley_drains_to_its_west_end(self):
         g, rc = valley()
