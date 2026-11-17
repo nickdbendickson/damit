@@ -14,6 +14,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 # Pinned to a44b4fb / tests.test_qgis_integration.test_runner_ported_tools_are_registered.
+try:
+    import numpy  # noqa: F401
+    HAVE_NUMPY = True
+except ImportError:
+    HAVE_NUMPY = False
+
 EXPECTED_ALGORITHMS = [
     "damit_run:batch",
     "damit_run:cascade",
@@ -69,6 +75,7 @@ def _min_plugins(tmp):
 
 
 class RunnerMinInstall(unittest.TestCase):
+    @unittest.skipUnless(HAVE_NUMPY, "numpy")
     def test_runner_imports_without_damit_core(self):
         """nodata_sample and impacts import with only Runner + Catalog on the path."""
         tmp = tempfile.mkdtemp(prefix="runner_mininst_")
