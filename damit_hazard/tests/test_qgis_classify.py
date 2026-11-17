@@ -634,3 +634,50 @@ def test_plugin_load_unload_shares_provider():
     assert QgsApplication.processingRegistry().algorithmById("damit:classify") is not None
     plug.unload()
     assert iface.menu == []
+
+
+def _official_e911_layer():
+    """A one-point official ND GIS Hub / NENA address-point layer (Site_NGUID, SOURCE, Placement)."""
+    from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsVectorLayer
+    uri = ("Point?crs=EPSG:32614&field=Site_NGUID:string&field=SOURCE:string&field=Placement:string"
+           "&field=Add_Number:integer&field=St_Name:string&field=St_PosTyp:string&field=ADDRESS:string")
+    lyr = QgsVectorLayer(uri, "NDGISHUB_address_points", "memory")
+    f = QgsFeature(lyr.fields())
+    f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(500015.0, 5200055.0)))  # wet house-1 cell
+    f.setAttributes(["{02A3C62A-C9BA-4F2A-AD0B-70AB7127AE26}", "SARGENT COUNTY 911", "Structure",
+                     13826, "99TH", "ST", "13826 99TH ST SE"])
+    assert lyr.dataProvider().addFeatures([f])
+    return lyr
+
+
+def test_official_e911_address_points_parameter_and_default_rule_stays_legacy():
+    """0.4.2: official schema ADDRESS_POINTS are 911 points; HABITABLE_RULE still defaults to legacy."""
+    _app()
+    d = tempfile.mkdtemp(prefix="damit_e911_")
+    dep, vel = _rasters(d)
+    addr = _official_e911_layer()
+    from damit_hazard.engine import catalog as C
+    pids = [None] + list(C.load()["presets"])
+    # no HABITABLE_RULE: default must stay legacy (0)
+    out = os.path.join(d, "out_default")
+    res = _alg_run({"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0,
+                    "DEPTH": dep, "VELOCITY": vel, "METRES": True, "ADDRESS_POINTS": addr,
+                    "OUTPUT": out, "DAM_NAME": "smoke"})
+    rep = json.load(open(os.path.join(out, "damit_hazard_report.json"), encoding="utf-8"))
+    assert rep["habitable_rule"] == "legacy", rep["habitable_rule"]
+    from qgis.core import QgsVectorLayer
+    lyr = QgsVectorLayer(res["GPKG"] + "|layername=address_points", "a", "ogr")
+    assert lyr.isValid() and lyr.featureCount() == 1
+    feat = next(lyr.getFeatures())
+    assert int(feat["is_911"]) == 1
+    assert feat["struct_key"].lower().endswith("{02a3c62a-c9ba-4f2a-ad0b-70ab7127ae26}".lower()) or \
+        "02A3C62A" in str(feat["struct_key"]).upper()
+    assert feat["habitable_basis"] == "911_address"
+    # opt-in reviewed rule: the official 911 point is the habitable driver
+    out2 = os.path.join(d, "out_reviewed")
+    res2 = _alg_run({"PRESET": pids.index("ND"), "RUN_SCENARIO": 3, "MODEL_DIM": 0,
+                     "DEPTH": dep, "VELOCITY": vel, "METRES": True, "ADDRESS_POINTS": addr,
+                     "HABITABLE_RULE": 1, "OUTPUT": out2, "DAM_NAME": "smoke"})
+    rep2 = json.load(open(os.path.join(out2, "damit_hazard_report.json"), encoding="utf-8"))
+    assert rep2["habitable_rule"] == "reviewed"
+    assert res2["CLASS"] == res["CLASS"]  # one 911 house in the high zone: both rules say High

@@ -48,6 +48,32 @@ def test_911_detection_from_the_layer_and_crests_hand_off():
         assert R.from_attributes("structure:1", "structure", dict(a))["is_911"] is want, a
 
 
+def test_911_detection_of_the_official_nd_e911_schema():
+    """Official ND GIS Hub / NENA fields (Site_NGUID, SOURCE 'SARGENT COUNTY 911', Placement 'Structure')."""
+    nguid = "{02A3C62A-C9BA-4F2A-AD0B-70AB7127AE26}"
+    official = {"Site_NGUID": nguid, "SOURCE": "SARGENT COUNTY 911", "Placement": "Structure",
+                "Add_Number": 13826, "St_Name": "99TH", "St_PosTyp": "ST", "ADDRESS": "13826 99TH ST SE"}
+    r = R.from_attributes("address_point:1", "structure", official)
+    assert r["is_911"] is True
+    assert r["nguid"] == nguid
+    assert r["struct_key"] == "site_nguid:" + nguid
+    # each official signal is enough on its own (the official layer failed all three on 0.4.1)
+    assert R.from_attributes("a", "structure", {"Site_NGUID": nguid})["is_911"] is True
+    assert R.from_attributes("a", "structure", {"ND_Site_NGUID": nguid})["is_911"] is True
+    assert R.from_attributes("a", "structure", {"site_nguid": nguid.lower()})["is_911"] is True
+    assert R.from_attributes("a", "structure", {"SOURCE": "SARGENT COUNTY 911"})["is_911"] is True
+    assert R.from_attributes("a", "structure", {"SOURCE": "Cass County 911"})["is_911"] is True
+    assert R.from_attributes("a", "structure", {"source": "NDGISHUB"})["is_911"] is True
+    assert R.from_attributes("a", "structure", {"Placement": "Structure", "Add_Number": 13826,
+                                                "St_Name": "99TH"})["is_911"] is True
+    # Placement alone, with no NENA / source / GUID, is not a 911 point
+    assert R.from_attributes("a", "structure", {"Placement": "Structure"})["is_911"] is False
+    # a FEMA parcel address is not a 911 point
+    assert R.from_attributes("a", "structure", {"Address": "13826 99TH ST SE", "source": "usa_structures"})["is_911"] is False
+    # Crest tags still work
+    assert R.from_attributes("a", "structure", {"source": "nd911", "placed": "911 address point"})["is_911"] is True
+
+
 def test_the_review_rule():
     s = core.reviewed_status
     assert s({"is_911": True, "type": "home"}, HT) == ("yes", core.BASIS_911)

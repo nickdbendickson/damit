@@ -19,7 +19,7 @@ from qgis.core import (QgsCoordinateTransform, QgsFeature, QgsFeatureRequest, Qg
                        QgsProcessingOutputFile)
 
 from .. import compat, styles
-from ..engine import (catalog as C, core, dam_record, dvchart, habitability, habitable_review, rail_lookup,
+from ..engine import (catalog as C, core, dam_record, dvchart, e911_pack, habitability, habitable_review, rail_lookup,
                       receptors as R, report, tm11, usa_structures)
 from ..sampling import rasters as S
 
@@ -120,6 +120,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "flag nodata_neighbourhood); at 20 m or finer the NoData cell is still scored "
                 "dry (sampling=centre_nodata_dry) and flagged for review (nodata_dry_review). "
                 "The report records the path, the threshold and the cell size.<br><br>"
+                "Optional ADDRESS_POINTS is the official ND E911 / ND GIS Hub address-point layer (fields Site_NGUID, SOURCE, Placement). When it is empty, the official NDGISHUB_address_points layer is read from the configured offline pack (ND_DAM_HAZARD_OFFLINE_PACK, NDSUITE_PACK / NDSUITE_DATA, or the suite pack setting) and the source used is written to the log. A missing pack does not fail the run.<br><br>"
                 "Informational screening aid, not a regulatory determination: the engineer of "
                 "record and the regulating agency make the determination.")
 
@@ -167,6 +168,9 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         for key, _kind, label, typ in LAYERS:
             self.addParameter(QgsProcessingParameterFeatureSource(
                 key, label, [typ], optional=True))
+        self.addParameter(QgsProcessingParameterFeatureSource(
+            "ADDRESS_POINTS", "ND E911 address points (official ND GIS Hub / NENA layer; empty = the "
+            "E911 layer from the configured offline pack)", [compat.SRC_ANY], optional=True))
         self.addParameter(QgsProcessingParameterFeatureSource(
             "DOMAIN", "Routed domain polygon (receptors outside are flagged)",
             [compat.SRC_POLYGON], optional=True))
@@ -265,7 +269,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 if gm.isNull() or gm.isEmpty():
                     continue
                 gm.transform(xf)
-                rid = "{}:{}".format(kind, feat.id())
+                rid = "{}:{}".format("address_point" if key == "ADDRESS_POINTS" else kind, feat.id())
                 geoms[rid] = (key, feat.geometry(), feat.attributes(), names)
                 attrs[rid] = dict(zip(names, feat.attributes()))
                 a = attrs[rid]
@@ -496,6 +500,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         if charts_path:
             layers_info.append(_stat(charts_path, "extra charts"))
         sources = []
+        self._e911_layers = []            # keep pack-backed layers alive for the run
         for key, kind, _label, _t in LAYERS:
             src = self.parameterAsSource(p, key, context)
             if src is not None:
@@ -503,9 +508,6 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 lyr = self.parameterAsVectorLayer(p, key, context)
                 layers_info.append(_stat(lyr.source() if lyr else key, key.lower(),
                                          "{} features".format(src.featureCount())))
-        if not sources:
-            raise QgsProcessingException("Give at least one receptor layer (structures, roads, "
-                                         "rail, facilities, lifelines or environment).")
         si = self.parameterAsEnum(p, "RUN_SCENARIO", context)
         scen = SCENARIO_IDS[si - 1] if si > 0 else ((cfg["scenarios"] or
                                                       cfg.get("scenarios_any_of") or [None])[0])
@@ -515,6 +517,26 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         dep_layer = self.parameterAsRasterLayer(p, "DEPTH", context)
         if dep_layer is None:
             raise QgsProcessingException("A maximum depth raster is required.")
+        addr_src = self.parameterAsSource(p, "ADDRESS_POINTS", context)
+        if addr_src is not None:
+            sources.append(("ADDRESS_POINTS", "structure", addr_src))
+            lyr = self.parameterAsVectorLayer(p, "ADDRESS_POINTS", context)
+            note = "{} features".format(addr_src.featureCount())
+            layers_info.append(_stat(lyr.source() if lyr else "ADDRESS_POINTS", "address_points", note))
+            feedback.pushInfo(e911_pack.describe_source(lyr.source() if lyr else "ADDRESS_POINTS", "parameter"))
+        else:
+            pack_lyr, pack_note = e911_pack.load_e911_layer(dep_layer, context)
+            if pack_lyr is not None:
+                self._e911_layers.append(pack_lyr)
+                sources.append(("ADDRESS_POINTS", "structure", pack_lyr))
+                layers_info.append({"role": "address_points", "source": pack_note, "modified": None,
+                                    "size": None, "note": "{} features".format(pack_lyr.featureCount())})
+                feedback.pushInfo(e911_pack.describe_source(pack_note, "pack"))
+            else:
+                feedback.pushInfo(e911_pack.describe_source(pack_note, "none"))
+        if not sources:
+            raise QgsProcessingException("Give at least one receptor layer (structures, ND E911 address "
+                                         "points, roads, rail, facilities, lifelines or environment).")
         for key, role, _label, _opt in RASTERS:
             lyr = self.parameterAsRasterLayer(p, key, context)
             if lyr is not None:
