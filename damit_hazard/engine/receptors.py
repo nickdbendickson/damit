@@ -142,7 +142,9 @@ def _source_is_911(src):
         return False
     if n in SOURCES_911:
         return True
-    if n.endswith("_911") or n.endswith("911") or "ndgishub" in n:
+    # a dispatch name ending in the word 911 ("SARGENT COUNTY 911" -> sargent_county_911); not any
+    # text that merely ends in the digits 911 (a street number, "PO BOX 1911")
+    if n.endswith("_911") or "ndgishub" in n:
         return True
     return False
 
@@ -215,7 +217,7 @@ def address_point_911(r):
     col = r.get("Sources") or r.get("sources")
     if isinstance(col, str):
         bits = [_norm_911_token(b) for b in col.replace(";", ",").split(",")]
-        if ND_FAMILY.lower() in bits or any(b in SOURCES_911 or b.endswith("_911") or b.endswith("911") for b in bits):
+        if ND_FAMILY.lower() in bits or any(b in SOURCES_911 or b.endswith("_911") for b in bits):
             return True
     return False
 

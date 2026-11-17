@@ -64,6 +64,8 @@ def test_911_detection_of_the_official_nd_e911_schema():
     assert R.from_attributes("a", "structure", {"SOURCE": "SARGENT COUNTY 911"})["is_911"] is True
     assert R.from_attributes("a", "structure", {"SOURCE": "Cass County 911"})["is_911"] is True
     assert R.from_attributes("a", "structure", {"source": "NDGISHUB"})["is_911"] is True
+    # text that only ends in the digits 911 is not a dispatch source (0.4.2 review fix)
+    assert R.from_attributes("a", "structure", {"source": "PO BOX 1911"})["is_911"] is False
     assert R.from_attributes("a", "structure", {"Placement": "Structure", "Add_Number": 13826,
                                                 "St_Name": "99TH"})["is_911"] is True
     # Placement alone, with no NENA / source / GUID, is not a 911 point
