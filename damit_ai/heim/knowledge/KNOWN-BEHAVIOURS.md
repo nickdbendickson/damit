@@ -72,7 +72,7 @@ the model can be asked directly, with nothing looked up (`heim-chat --bare`, or 
   `RAIL_TRAINS_LOOKUP` (`field,value,trains_per_day,source` = `SUBDIV,KO,15,...`). Other lines without a value
   stay flagged.
 - **Judgment zone = Medium in ND** (the TM-11 judgment zone counts as Medium in the ND preset).
-- **Receptors on NoData (Hazard 0.2.6, 0.4.3).** When the cell under a structure (or every cell of its footprint) is NoData
+- **Receptors on NoData (Hazard 0.2.6, 0.4.3, 0.4.4).** When the cell under a structure (or every cell of its footprint) is NoData
   and a neighbour is wet, neighbourhood sampling applies only on a grid coarser than 20 m (`NODATA_NEIGHBOURHOOD_MIN_CELL_M`).
   The sampled depth is physical: `max(0, the highest neighbouring water surface − the receptor's own ground)` (`sampling=neighbourhood_wse`,
   flag `nodata_wse_ground` when depth > 0; the older names `sampling=neighbourhood` / flag `nodata_neighbourhood` referred
@@ -95,10 +95,10 @@ the model can be asked directly, with nothing looked up (`heim-chat --bare`, or 
   (`HAZARD_REVIEW`). A dry (finite 0) cell stays dry; a NoData cell with no wet neighbour stays dry and is not flagged.
   A structure on a dry cell beside deep water can still be missed by a coarse grid: flag it for a person. DamIT Hazard
   does not score roads with unknown class or AADT (M8a); the older DamSafety plugin scored them Medium by assumption.
-- **Peak depth and peak velocity are maxima over wet cells** (a cell is wet when depth is strictly greater than 0;
-  option C, 1 Nov 2026: the two peaks may come from different cells). When they do, Hazard flags `dv_cells_differ` and
-  the reported depth × velocity is peak depth × peak velocity (`dv_source=peak_depth_x_peak_velocity`), not the largest
-  same-cell product (`dv_same_cell_ft2s`).
+- **Peak depth and peak velocity are maxima over wet cells** (depth of 0.1 ft or more; option C, 1 Nov 2026: the two
+  peaks may come from different cells). When they do, Hazard flags `dv_cells_differ`; depth × velocity (`dv_ft2s`,
+  `dv_source=cells`, what the DV thresholds read) stays the largest same-cell product, and peak depth × peak velocity
+  is reported as `dv_peak_ft2s`.
 - **Real tool names only:** `damit_screen:handoff`, `damit_run:rundam`, `damit:classify` (and `damit_lite:classify`).
   The automatic 10 m refine is switched off with `--GRID_REFINE=0`. There is no `damit_runner`, no `--no-refine` and
   no `damit_screener_handoff`. See `ALGORITHM-HELP-DAMIT.md` (generated from the code) for every id and parameter.
