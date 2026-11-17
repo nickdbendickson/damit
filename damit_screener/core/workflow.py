@@ -42,20 +42,24 @@ STEP_ORDER = ("prepare", "terrain", "storage", "breach_direction", "hydrograph",
 
 
 def settings_from(text_or_path):
+    """The Screener settings: DEFAULT_SETTINGS updated from a JSON file path or JSON text ('' = the
+    defaults); then larger clips move to the configured pack DEM unless the JSON set larger_clips
+    (core/pack_terrain; the per-dam coverage check is in run_dam). The notes are kept in
+    _terrain_source_notes (run_dam logs them)."""
+    from .pack_terrain import apply_offline_pack_terrain
     s = json.loads(json.dumps(DEFAULT_SETTINGS))
     t = (text_or_path or "").strip()
-    if not t:
-        from .pack_terrain import apply_offline_pack_terrain
-        return apply_offline_pack_terrain(s)
-    if os.path.isfile(t):
-        with open(t, encoding="utf-8") as fh:
-            t = fh.read()
-    loaded = json.loads(t)
-    if not isinstance(loaded, dict):
-        raise ValueError("settings must be a JSON object")
-    s.update(loaded)
-    from .pack_terrain import apply_offline_pack_terrain
-    return apply_offline_pack_terrain(s)
+    loaded = {}
+    if t:
+        if os.path.isfile(t):
+            with open(t, encoding="utf-8") as fh:
+                t = fh.read()
+        loaded = json.loads(t)
+        if not isinstance(loaded, dict):
+            raise ValueError("settings must be a JSON object")
+        s.update(loaded)
+    s["_explicit_keys"] = sorted(loaded)
+    return apply_offline_pack_terrain(s, explicit=tuple(loaded))
 
 
 def check(status, title, detail="", fix=""):
@@ -248,18 +252,31 @@ def build_handoff(cat, config, dam, results, settings, receptors_json=None):
     return pkg
 
 
+def _dam_xy(dam):
+    """((x, y), epsg) of a prepared dam record (x / y / crs from steps.prepare; lon / lat accepted),
+    or (None, None) when the dam has no usable point or CRS."""
+    if not isinstance(dam, dict):
+        return None, None
+    import re
+    for kx, ky, crs in (("x", "y", dam.get("crs")), ("lon", "lat", "EPSG:4326")):
+        try:
+            x, y = float(dam.get(kx)), float(dam.get(ky))
+        except (TypeError, ValueError):
+            continue
+        m = re.search(r"(?:EPSG:)?(\d{4,6})\s*$", str(crs or "").strip(), re.I)
+        if m:
+            return (x, y), int(m.group(1))
+    return None, None
+
+
 def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None, log=print, cancel=None):
     """All screening steps for one dam. Returns the per-step results dict (+ 'handoff_path')."""
     from .pack_terrain import apply_offline_pack_terrain
-    xy = None
-    if isinstance(dam, dict):
-        lon, lat = dam.get("lon"), dam.get("lat")
-        if lon is not None and lat is not None:
-            try:
-                xy = (float(lon), float(lat))
-            except (TypeError, ValueError):
-                xy = None
-    settings = apply_offline_pack_terrain(dict(settings or {}), xy=xy, log=log)
+    xy, xy_epsg = _dam_xy(dam)
+    settings = dict(settings or {})
+    settings.pop("_terrain_source_notes", None)
+    apply_offline_pack_terrain(settings, xy=xy, xy_epsg=xy_epsg, log=log,
+                               explicit=tuple(settings.get("_explicit_keys") or ()))
     _, _, HO = CB.modules()
     nid_step = dam.get("nid_step") or ST.step(ST.STATUS_OK, "dam record prepared")
     res = {"prepare": ST.step(nid_step["status"], "dam record prepared; " + nid_step["detail"],

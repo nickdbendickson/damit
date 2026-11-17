@@ -88,15 +88,10 @@ def _patch_evaluate_js(Window) -> None:
 
     def evaluate_js(self, script: str, callback: Callable[..., Any] | None = None) -> Any:
         # The stock method wraps `script` in eval("...") so a bare expression can be the return
-        # value. Wrap it as a function body instead: statements (the JS-API result callback)
-        # run as they are; an expression needs an explicit return, which this desk does not use.
-        # run_js is used only when we do not need a value; here we still want stringify(value).
-        safe = "return (function(){\n" + str(script) + "\n})();"
-        # Call the original with the wrapper already in `script`; then prevent its eval wrap
-        # by temporarily replacing it... easier to duplicate the small return path via run_js
-        # plus our own stringify IIFE, but the original also handles CEF / Android and errors.
-        # We intercept by passing a script that, if still eval'd, is a function-expression
-        # string... that would still be eval. So we must bypass the original wrapper.
+        # value; eval is what the CSP refuses. The script runs as a function body instead.
+        # LIMIT: a bare expression ("document.title", or pywebview's own window.dom helpers such as
+        # element.text) now returns None; write "return document.title" to get a value. The desk
+        # only uses evaluate_js through pywebview's JS-API callbacks, which are statements.
         return _evaluate_without_eval(self, script, callback, original)
 
     Window.evaluate_js = evaluate_js
