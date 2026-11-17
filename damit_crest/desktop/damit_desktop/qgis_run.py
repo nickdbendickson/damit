@@ -874,6 +874,13 @@ def run_screening(
     return {**out, "ok": True, "stopped": False, "chainResult": rows}
 
 
+
+def _dam_line_layer(folder: Path) -> Path | None:
+    """The drawn dam line write_dam_folder wrote (longitude / latitude GeoJSON), or None."""
+    path = Path(folder) / "dam_line.geojson"
+    return path if path.is_file() else None
+
+
 def run_model(
     dam: dict,
     analysis: dict,
@@ -932,6 +939,9 @@ def run_model(
         cls = _classification(dam)
         if cls:
             config_json["classification"] = cls
+        line = _dam_line_layer(folder)
+        if line:
+            config_json["dam"]["dam_line"] = str(line)
         path = folder / "runner_config.json"
         path.write_text(json.dumps(config_json, indent=2) + "\n", encoding="utf-8")
         log(f"One dam, no QGIS window: {cli} run")
@@ -1004,6 +1014,7 @@ def run_model(
         "STORAGE_ACFT": _finite(dam.get("storageAcFt")),
         "TOP_FT": _finite(datum.get("crestNavdFt")),
         "AREA_AC": _finite(dam.get("surfaceAreaAc")),
+        "DAM_LINES": str(line) if (line := _dam_line_layer(folder)) else None,
     }
     if "OUTPUT_FOLDER" in accepted:
         (root / "runs").mkdir(exist_ok=True)
@@ -1011,6 +1022,13 @@ def run_model(
         log(f"Hand-off package: {package}")
     cmd = [exe, "run", rundam, *_args(exe, rundam, values, log)]
     log(f"This button runs {rundam} for one dam.")
+    if values.get("DAM_LINES"):
+        log("Dam line sent as DAM_LINES (" + Path(values["DAM_LINES"]).name + "). It is longitude and latitude; "
+            "the Runner reprojects it to the DEM so the toe band can be placed "
+            "(5 m out to H×(slope+1), 3:1 when the slope is unknown, 150 m cap, with the side check).")
+    else:
+        log("No drawn dam line was written, so DAM_LINES was not sent. The Runner will look in the dam folder, "
+            "or fall back to the lowest ground within 150 m of the dam point.")
     if builtin:
         log("LISFLOOD_EXE=builtin: the built-in numpy engine (a screening approximation, not LISFLOOD-FP).")
     elif model_settings["LISFLOOD_EXE"]:

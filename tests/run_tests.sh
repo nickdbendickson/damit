@@ -21,7 +21,7 @@ cd "$ROOT"
 PY="${DAMIT_PYTHON:-python3}"
 QPY="${DAMIT_QGIS_PYTHON:-python3}"
 echo "== pure Python ($PY)"
-nice -n 19 $PY -m unittest -v damit_catalog.tests.test_catalog damit_screener.tests.test_workflow \
+nice -n 19 $PY -m unittest -v damit_catalog.tests.test_catalog damit_screener.tests.test_workflow damit_screener.tests.test_pack_terrain \
     damit_screener.tests.test_engine2d damit_runner.tests.test_rundam damit_runner.tests.test_flood damit_runner.tests.test_scenarios damit_runner.tests.test_followups damit_runner.tests.test_batch_workers damit_runner.tests.test_ckpt_sign damit_runner.tests.test_qa_maps_headless damit_runner.tests.test_engine_sync3 damit_runner.tests.test_anuga_passes damit_runner.tests.test_dam_point_line damit_runner.tests.test_zunit_hecras damit_runner.tests.test_nodata_true_hole tests.test_metadata tests.test_engine_parity \
     tests.test_hazard_screener_agree
 nice -n 19 $PY damit_hazard/tests/run_tests.py

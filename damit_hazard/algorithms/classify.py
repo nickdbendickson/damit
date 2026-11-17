@@ -19,7 +19,7 @@ from qgis.core import (QgsCoordinateTransform, QgsFeature, QgsFeatureRequest, Qg
                        QgsProcessingOutputFile)
 
 from .. import compat, styles
-from ..engine import (catalog as C, core, dam_record, dvchart, habitability, habitable_review, rail_lookup,
+from ..engine import (catalog as C, core, dam_record, dvchart, e911_pack, habitability, habitable_review, rail_lookup,
                       receptors as R, report, tm11, usa_structures)
 from ..sampling import rasters as S
 
@@ -62,6 +62,12 @@ def _stat(path, role, note=""):
     except OSError:
         return {"role": role, "source": path, "modified": None, "size": None, "note": note}
 
+
+# E911 points merged onto a structure of another layer (DWR Hazard constants STRUCTURE_MERGE_DIST_FT and
+# ADDRESS_SNAP_FT): within 30 ft when the point is on the building (Placement Structure), within 100 ft when it
+# is placed at the driveway, parcel or property access.
+ADDRESS_MERGE_FT = 30.0
+ADDRESS_SNAP_FT = 100.0
 
 class _Style(QgsProcessingLayerPostProcessorInterface):
     instances = []
@@ -134,6 +140,12 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "independent maxima over wet cells (option C); when they come from different "
                 "cells the receptor is flagged dv_cells_differ and the reported depth x "
                 "velocity is peak depth x peak velocity.<br><br>"
+                "Optional ADDRESS_POINTS is the official ND E911 / ND GIS Hub address-point "
+                "layer (fields Site_NGUID, SOURCE, Placement). When it is empty, the official "
+                "NDGISHUB_address_points layer is read from the configured offline pack "
+                "(ND_DAM_HAZARD_OFFLINE_PACK, NDSUITE_PACK / NDSUITE_DATA, or the suite pack "
+                "setting) and the source used is written to the log. A missing pack does not "
+                "fail the run.<br><br>"
                 "Informational screening aid, not a regulatory determination: the engineer of "
                 "record and the regulating agency make the determination.")
 
@@ -190,6 +202,9 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         for key, _kind, label, typ in LAYERS:
             self.addParameter(QgsProcessingParameterFeatureSource(
                 key, label, [typ], optional=True))
+        self.addParameter(QgsProcessingParameterFeatureSource(
+            "ADDRESS_POINTS", "ND E911 address points (official ND GIS Hub / NENA layer; empty = the "
+            "E911 layer from the configured offline pack)", [compat.SRC_ANY], optional=True))
         self.addParameter(QgsProcessingParameterFeatureSource(
             "DOMAIN", "Routed domain polygon (receptors outside are flagged)",
             [compat.SRC_POLYGON], optional=True))
@@ -288,7 +303,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 if gm.isNull() or gm.isEmpty():
                     continue
                 gm.transform(xf)
-                rid = "{}:{}".format(kind, feat.id())
+                rid = "{}:{}".format("address_point" if key == "ADDRESS_POINTS" else kind, feat.id())
                 geoms[rid] = (key, feat.geometry(), feat.attributes(), names)
                 attrs[rid] = dict(zip(names, feat.attributes()))
                 a = attrs[rid]
@@ -308,6 +323,16 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                     c = gm.centroid().asPoint()
                     areas[rid] = (bytes(gm.asWkb()), (c.x(), c.y()), None)
             hyd = {}
+            if key == "ADDRESS_POINTS":
+                # 0.4.2 review fix: an E911 point at a building that another structure layer already
+                # holds is that building's 911 tag, not a second structure (DWR Hazard merges the two
+                # sources within STRUCTURE_MERGE_DIST_FT, ADDRESS_SNAP_FT for a point placed at the
+                # driveway / parcel). Only unmatched points stay structures of their own.
+                merged = self._merge_address_points(areas, attrs, out, f2m, feedback)
+                for rid in merged:
+                    areas.pop(rid, None)
+                    attrs.pop(rid, None)
+                    geoms.pop(rid, None)       # written once, as the structure it tags
             if kind == "structure":
                 self._xy.update({rid: v[1] for rid, v in areas.items()})
             if areas:
@@ -321,6 +346,52 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 out.append(r)
             feedback.pushInfo("{}: {} receptor(s) sampled".format(key.lower(), len(attrs)))
         return out, geoms
+
+    def _merge_address_points(self, areas, attrs, out, f2m, feedback):
+        """Tag the structure receptors already in `out` with the E911 point at the same building.
+        Returns the address-point rids that were merged (they are not added as structures)."""
+        cand = [r for r in out if r.get("kind") == "structure" and r["id"] in self._xy]
+        if not cand or not areas:
+            if areas:
+                feedback.pushInfo("address points: no other structure layer; each E911 point is a structure")
+            return set()
+        near_ft, snap_ft = ADDRESS_MERGE_FT, ADDRESS_SNAP_FT
+        cell = snap_ft * f2m
+        grid = {}
+        for r in cand:
+            x, y = self._xy[r["id"]]
+            grid.setdefault((int(x // cell), int(y // cell)), []).append(r)
+        pairs = []
+        for rid, (_wkb, (x, y), _f) in areas.items():
+            a = {str(k).lower(): v for k, v in attrs[rid].items()}
+            placed = str(a.get("placement") or a.get("placed") or "").strip().lower()
+            lim = (near_ft if placed in ("", "structure", "911 address point") else snap_ft) * f2m
+            gx, gy = int(x // cell), int(y // cell)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for r in grid.get((gx + dx, gy + dy), ()):
+                        sx, sy = self._xy[r["id"]]
+                        d = ((sx - x) ** 2 + (sy - y) ** 2) ** 0.5
+                        if d <= lim:
+                            pairs.append((d, rid, r))
+        pairs.sort(key=lambda t: t[0])
+        used_pt, used_st = set(), set()
+        for _d, rid, r in pairs:
+            if rid in used_pt or r["id"] in used_st:
+                continue
+            used_pt.add(rid)
+            used_st.add(r["id"])
+            a = {str(k).lower(): v for k, v in attrs[rid].items()}
+            r["is_911"] = True
+            r["address_point"] = rid
+            for src, dst in (("site_nguid", "nguid"), ("nd_site_nguid", "nguid"), ("source", "address_source"),
+                             ("placement", "placed")):
+                if a.get(src) not in (None, "") and r.get(dst) in (None, ""):
+                    r[dst] = a[src]
+        feedback.pushInfo("address points: {} matched a structure already in the inventory (that structure "
+                          "is now its 911 point), {} are structures of their own".format(
+                              len(used_pt), len(areas) - len(used_pt)))
+        return used_pt
 
     # ------------------------------------------------------------------- main -----------
     def checkParameterValues(self, parameters, context):
@@ -519,6 +590,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         if charts_path:
             layers_info.append(_stat(charts_path, "extra charts"))
         sources = []
+        self._e911_layers = []            # keep pack-backed layers alive for the run
         for key, kind, _label, _t in LAYERS:
             src = self.parameterAsSource(p, key, context)
             if src is not None:
@@ -526,9 +598,6 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 lyr = self.parameterAsVectorLayer(p, key, context)
                 layers_info.append(_stat(lyr.source() if lyr else key, key.lower(),
                                          "{} features".format(src.featureCount())))
-        if not sources:
-            raise QgsProcessingException("Give at least one receptor layer (structures, roads, "
-                                         "rail, facilities, lifelines or environment).")
         si = self.parameterAsEnum(p, "RUN_SCENARIO", context)
         scen = SCENARIO_IDS[si - 1] if si > 0 else ((cfg["scenarios"] or
                                                       cfg.get("scenarios_any_of") or [None])[0])
@@ -543,6 +612,26 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         dep_layer = self.parameterAsRasterLayer(p, "DEPTH", context)
         if dep_layer is None:
             raise QgsProcessingException("A maximum depth raster is required.")
+        addr_src = self.parameterAsSource(p, "ADDRESS_POINTS", context)
+        if addr_src is not None:
+            sources.append(("ADDRESS_POINTS", "structure", addr_src))
+            lyr = self.parameterAsVectorLayer(p, "ADDRESS_POINTS", context)
+            note = "{} features".format(addr_src.featureCount())
+            layers_info.append(_stat(lyr.source() if lyr else "ADDRESS_POINTS", "address_points", note))
+            feedback.pushInfo(e911_pack.describe_source(lyr.source() if lyr else "ADDRESS_POINTS", "parameter"))
+        else:
+            pack_lyr, pack_note = e911_pack.load_e911_layer(dep_layer, context)
+            if pack_lyr is not None:
+                self._e911_layers.append(pack_lyr)
+                sources.append(("ADDRESS_POINTS", "structure", pack_lyr))
+                layers_info.append({"role": "address_points", "source": pack_note, "modified": None,
+                                    "size": None, "note": "{} features".format(pack_lyr.featureCount())})
+                feedback.pushInfo(e911_pack.describe_source(pack_note, "pack"))
+            else:
+                feedback.pushInfo(e911_pack.describe_source(pack_note, "none"))
+        if not sources:
+            raise QgsProcessingException("Give at least one receptor layer (structures, ND E911 address "
+                                         "points, roads, rail, facilities, lifelines or environment).")
         for key, role, _label, _opt in RASTERS:
             lyr = self.parameterAsRasterLayer(p, key, context)
             if lyr is not None:
