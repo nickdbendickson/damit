@@ -134,8 +134,8 @@ Attribute names are matched case-insensitively; the first of these per field is 
 |---|---|
 | `type` | struct_type, bldg_type, occ_type, facility_type, lifeline_type, site_type |
 | `occtype` (0.4.0) | the NSI occupancy type (RES1-1SWB, COM4, AGR1 ...); kept in the output, only suggests a type |
-| `habitable`, `is_911` (0.4.0) | Crest's habitable flag; `is_911` / `nd911` / `address_point_911`, `source` = nd911, `placed` = 911 address point or an `nguid` mark an ND 911 address point |
-| `bid`, `fd_id`, `usastrucid`, `nguid`, `crest_id`, `source_ref`, `structure_id` (0.4.0) | the first one found is the structure's key (`struct_key`) for the review |
+| `habitable`, `is_911` (0.4.0; official schema 0.4.2) | Crest's habitable flag; `is_911` / `nd911` / `address_point_911`, `source` = nd911 or official `SOURCE` such as `SARGENT COUNTY 911` / NDGISHUB, `placed` / `Placement` = 911 address point or official `Structure`, or a `nguid` / `Site_NGUID` mark an ND 911 address point |
+| `bid`, `fd_id`, `usastrucid`, `Site_NGUID` / `nguid`, `crest_id`, `source_ref`, `structure_id` (0.4.0 / 0.4.2) | the first one found is the structure's key (`struct_key`) for the review |
 | `occupants` | people, persons, par, pop, population |
 | `floor_elev` / `floor_height_ft` | ffe, first_floor_elev / ffh, found_ht |
 | `ground_elev`, `foundation_elev` | lag, grade_elev / found_elev |
@@ -201,6 +201,12 @@ Markdown report links the chart and the HTML report embeds it.
   written; a chart problem never fails the classification.
 * DamIT Screener writes the same chart for its screening flood into the dam folder (`damit_screener_dv_habitable.*`),
   from its point sample at each structure, with the same rule (Crest hands over `source` = nd911 for its 911 points).
+
+### Official ND E911 address points (0.4.2)
+
+`damit:classify` has an optional `ADDRESS_POINTS` input for the official ND GIS Hub / NENA site-address layer (`NDGISHUB_address_points`, field `Site_NGUID`). When that input is empty, the official layer is read from the **configured offline pack** (`ND_DAM_HAZARD_OFFLINE_PACK`, `NDSUITE_PACK` / `NDSUITE_DATA`, the QGIS `ndsuite/pack_path` setting, or `~/.ndsuite`). The log names the source used. No path is hard-coded; a missing pack does not fail the run; the pack is never written.
+
+Those points count as ND 911 address points under the same rule as DWR `ndhazard:classify` 2.25.6 (official `SOURCE` values such as `SARGENT COUNTY 911`, `Placement` `Structure`, and `Site_NGUID`). **The habitability rule used for M6 and the class is unchanged:** the 911 / reviewed rule stays opt-in (`HABITABLE_RULE`).
 
 ### Habitability: 911 address points, NSI, USA Structures and the engineer's review (0.4.0)
 

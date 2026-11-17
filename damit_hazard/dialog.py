@@ -44,7 +44,9 @@ RASTERS = [("DEPTH", "Maximum depth raster", True), ("VELOCITY", "Maximum veloci
                                                             False),
            ("NONBREACH", "Non-breach depth raster", False),
            ("ARRIVAL", "Arrival time raster (hours)", False)]
-LAYERS = [("STRUCTURES", "structure", "Structures"), ("ROADS", "road", "Roads"),
+LAYERS = [("STRUCTURES", "structure", "Structures"),
+          ("ADDRESS_POINTS", "structure", "ND E911 address points (empty = offline pack)"),
+          ("ROADS", "road", "Roads"),
           ("RAIL", "rail", "Railroads"), ("FACILITIES", "facility", "Critical facilities"),
           ("LIFELINES", "lifeline", "Lifelines and utilities"),
           ("ENVIRONMENT", "environment", "Environmental / cultural features"),
