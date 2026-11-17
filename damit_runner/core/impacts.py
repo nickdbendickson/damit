@@ -83,12 +83,17 @@ class Receptors:
         out[ok] = arr[r[ok], c[ok]]
         return out
 
-    def apply_nodata_on_grid(self, grid, depth2d, vel2d=None, cell_m=None):
+    def apply_nodata_on_grid(self, grid, depth2d, vel2d=None, cell_m=None,
+                             ground2d=None, wse2d=None):
         """Sample depth (and velocity) on `grid` and apply the 20 m NoData-receptor rule.
 
-        A finite 0 stays dry. Peak depth and peak velocity may come from different wet
-        cells (option C). Returns (depth, vel, sampling, flags). `cell_m` defaults to
-        `grid.dx` (Runner grids are in metres).
+        On a coarse grid the scored depth is max(0, neighbour WSE minus the receptor's
+        own ground), never raw neighbour depth. Without ground the receptor is dry.
+        An oversize enclosed component is dry. A finite 0 stays dry. Returns
+        (depth, vel, sampling, flags). `cell_m` defaults to `grid.dx` (metres).
+        `ground2d` / `wse2d` are in the same units as `depth2d` (SI metres). When
+        `ground2d` is omitted and `grid` is a DEM of the same shape, `grid.masked()`
+        is used. The hole / oversize masks are built once and cached on the array.
         """
         policy = NDS.nodata_policy(grid.dx if cell_m is None else float(cell_m))
         d = self.sample(grid, depth2d)
@@ -98,6 +103,14 @@ class Receptors:
         col = np.floor((self.x - grid.x0) / grid.dx).astype(int)
         row = np.floor((grid.y0 - self.y) / grid.dx).astype(int)
         ny, nx = depth2d.shape
+        if ground2d is None and getattr(grid, "data", None) is not None:
+            try:
+                if np.shape(grid.data) == np.shape(depth2d) and hasattr(grid, "masked"):
+                    ground2d = grid.masked()
+            except Exception:
+                ground2d = None
+        ana = NDS.analyze_nodata_array(depth2d)
+        holes, oversz = ana["hole"], ana["oversize"]
         for i in range(len(self.x)):
             r, c = int(row[i]), int(col[i])
             if not (0 <= r < ny and 0 <= c < nx):
@@ -110,14 +123,36 @@ class Receptors:
                 depths.append(depth2d[rr, cc])
                 vels.append(None if vel2d is None else vel2d[rr, cc])
             peak = NDS.peak_wet_cells(depths, vels)
-            decided = NDS.resolve_nodata(True, peak, policy)
+            ground_value = None
+            if ground2d is not None:
+                if hasattr(grid, "sample_bilinear") and ground2d is getattr(grid, "data", None)                         or (hasattr(grid, "masked") and ground2d is not None):
+                    try:
+                        gv = grid.sample_bilinear([self.x[i]], [self.y[i]])
+                        if np.isfinite(gv[0]):
+                            ground_value = float(gv[0])
+                    except Exception:
+                        ground_value = None
+                if ground_value is None and 0 <= r < np.shape(ground2d)[0] and 0 <= c < np.shape(ground2d)[1]:
+                    gv = ground2d[r, c]
+                    if np.isfinite(gv):
+                        ground_value = float(gv)
+            phys_d, phys_v, has_g, _used = NDS.physical_neighbour_depth(
+                depth2d, r, c, ground2d, wse2d, ground_value=ground_value, vel2d=vel2d)
+            hole = bool(holes[r][c]) if hasattr(holes, "__getitem__") else False
+            over = bool(oversz[r][c]) if hasattr(oversz, "__getitem__") else False
+            decided = NDS.resolve_nodata(True, peak, policy,
+                                         is_true_hole=hole, is_oversize=over,
+                                         has_ground=has_g,
+                                         physical_depth=phys_d, physical_velocity=phys_v)
             sampling[i] = decided["sampling"]
             flags[i] = decided["flag"]
-            if decided["flag"] == NDS.FLAG_NEIGHBOURHOOD:
+            if decided["flag"] in (NDS.FLAG_WSE_GROUND, NDS.FLAG_NEIGHBOURHOOD):
                 d[i] = decided["depth"]
                 if v is not None and decided["velocity"] is not None:
                     v[i] = decided["velocity"]
-            elif decided["flag"] == NDS.FLAG_DRY_REVIEW:
+            elif decided["flag"] in (NDS.FLAG_DRY_REVIEW, NDS.FLAG_FLOOD_EDGE,
+                                     NDS.FLAG_NO_GROUND, NDS.FLAG_OVERSIZE,
+                                     NDS.FLAG_WSE_DRY):
                 d[i] = 0.0
         return d, v, sampling, flags
 
@@ -218,7 +253,9 @@ def summarize(rec, grid, final, arrival_m, dv_limit=DV_DANGER_FT2S):
     vraw = final.get("velocity")
     has_vel = vraw is not None
     d, v, sampling, nodata_flags = rec.apply_nodata_on_grid(
-        grid, final["depth"], vraw if has_vel else None)
+        grid, final["depth"], vraw if has_vel else None,
+        ground2d=grid.masked() if hasattr(grid, "masked") else None,
+        wse2d=final.get("wse") if isinstance(final, dict) else None)
     if v is None:
         v = np.full(d.shape, np.nan)
     a = rec.sample(grid, final["arrival"])

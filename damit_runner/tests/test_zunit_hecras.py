@@ -1,5 +1,8 @@
 """Depth must not collapse when a feet DEM has a blank or plural US-survey-foot unit, and the
-HEC-RAS plan must not assume US units or replace a finished breach with a narrower one."""
+HEC-RAS plan must not assume US units or replace a finished breach with a narrower one.
+
+This module never launches HEC-RAS or Wine. Tests that would start either must skip.
+"""
 import os
 import sys
 import tempfile
