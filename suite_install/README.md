@@ -61,6 +61,14 @@ Options: `--no-damsafety`, `--no-damit`, `--no-ai`, `--no-heim`, `--no-vor`,
 On Windows the options are `-NoDamSafety`, `-NoDamIT`, `-NoAI`, `-NoHeim`, `-NoVor`,
 `-SkipLisflood`, `-Offline`, `-Check` and `-NoShortcuts`.
 
+**A test install beside your normal one.** `--root DIR` puts the suite folder in `DIR/dam-suite`, the QGIS
+profiles in `DIR/qgis/QGIS3/profiles` (the launchers open QGIS with `--profiles-path DIR/qgis`, so your usual
+QGIS profiles are not touched) and, when Miniforge is not installed yet, Miniforge in `DIR/miniforge3`. The local
+AIs always use your home folder, so `--root` leaves them out unless you add `--ai` after it. The parts can also be
+set one by one: `--prefix DIR`, `--qgis-profiles-path DIR`, `--damsafety-profile NAME`, `--damit-profile NAME`.
+Windows: `-Root`, `-Prefix`, `-QgisProfilesPath`, `-DamSafetyProfile`, `-DamitProfile`, `-AI`. Use the same
+options with `--check` to see that install.
+
 - **macOS never downloads from the installer**, the same as the earlier Mac packages. If the
   offline set is missing, it stops and asks for it, or for `download-all.sh` to be run first.
   Miniforge is checked against its sha256 before it runs. LISFLOOD-FP is built from the bundled
@@ -84,7 +92,9 @@ Mac, also the `.command` files). On Windows, use `open-damsafety-qgis.cmd` /
 `open-damit-qgis.cmd` or the Desktop shortcuts. Keep the two sets in their own profiles.
 
 The Crest desks: `~/dam-suite/open-damit-crest.sh` and `open-nd-crest.sh` (Windows: `.cmd`). They
-use different ports, so both can be open at the same time. Their Report step calls `qgis_process`
+use different ports (North Dakota Crest http://127.0.0.1:47231, DamIT Crest http://127.0.0.1:47241; each prints
+its address when it starts, and takes a random port if its own is busy), so both can be open at the same time.
+Their Report step calls `qgis_process`
 in the matching profile (North Dakota Crest: `damsafety`; DamIT Crest: `damit`): `qgis_process` has
 no profile option, so the launcher points `QGIS_CUSTOM_CONFIG_PATH` at
 `~/dam-suite/qgis-process/<profile>`, whose `profiles/default` is a link to the real profile.

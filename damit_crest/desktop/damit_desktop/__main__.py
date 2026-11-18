@@ -497,7 +497,7 @@ def serve(root: Path | None = None, port: int = PREFERRED_PORT) -> ThreadingHTTP
     except OSError as e:
         if port == 0 or e.errno not in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1), 10048):
             raise
-        print(f"DamIT Crest desktop: port {port} is busy; using a random port (saved records will not carry over).")
+        print(f"DamIT Crest desktop: port {port} is busy; using a random port (saved records will not carry over).", flush=True)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -753,6 +753,9 @@ def main() -> None:
     nid.NID_DIR = store / "nid"  # the per-state NID cache (nid.py), outside the install and any repository
     server = serve()
     url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
+    # install test 2026-11-18: the address is printed at start (flushed: the launcher's output may be a pipe),
+    # so it can be opened in a browser and the port is visible whichever window opens.
+    print(f"DamIT Crest desktop: {url}", flush=True)
     try:
         import webview
 
@@ -772,7 +775,7 @@ def main() -> None:
         api._window.events.loaded += lambda *a: api._window.evaluate_js(NAV_GUARD_JS)
         webview.start(private_mode=False, storage_path=str(store))
     except Exception as e:  # no GUI backend: use the system browser (downloads work there)
-        print(f"DamIT Crest desktop: no webview ({e}). Opening {url} in the browser; press Ctrl+C to stop.")
+        print(f"DamIT Crest desktop: no webview ({e}). Opening {url} in the browser; press Ctrl+C to stop.", flush=True)
         webbrowser.open(url)
         try:
             threading.Event().wait()
