@@ -317,5 +317,87 @@ class Screening(unittest.TestCase):
         self.assertTrue(math.isclose(res["radius_m"], 1500.0))
 
 
+def _printed_bdy_times(path):
+    """The time column of a LISFLOOD-FP .bdy file, as printed (header: name, then '<n> seconds')."""
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    n = int(lines[2].split()[0])
+    return [ln.split()[1] for ln in lines[3:3 + n]]
+
+
+@unittest.skipUnless(HAVE_NUMPY, "numpy needed")
+class BdyTimesIncrease(unittest.TestCase):
+    """0.6.6: the .bdy times strictly increase at the printed 4 decimals (LISFLOOD-FP stops on 'Time Series invalid
+    time values'). DWR-2801 Screener 2026-11-18: 0.55 h = 1980.0000000000002 s and the 30 s grid's 1980 s were both
+    written as 1980.0000 (and 1.1 h as 3960.0000)."""
+
+    def assert_increasing(self, t, what):
+        printed = ["{:.4f}".format(v) for v in t]
+        bad = [(a, b) for a, b in zip(printed, printed[1:]) if not float(b) > float(a)]
+        self.assertEqual(bad, [], what)
+
+    def hydro_2801(self):
+        import numpy as np
+        t_s = np.array([0.0, 0.55, 1.1, 2.0]) * 3600.0
+        self.assertNotEqual(t_s[1], 1980.0)                  # the float the old union kept apart from 1980.0
+        return t_s, np.array([0.0, 800.0, 300.0, 0.0])
+
+    def test_screen_hydro_055_h(self):
+        import numpy as np
+        from damit_runner.flood import screen as SC
+        t_s, q = self.hydro_2801()
+        t, qq = SC._Hydro(t_s, q).resampled(30.0)
+        self.assert_increasing(t, "screen _Hydro.resampled")
+        self.assertEqual(t[0], 0.0)
+        self.assertEqual(t[-1], t_s[-1])
+        for b in t_s:                                         # every breakpoint is kept exactly (it holds the peak)
+            self.assertIn(b, t)
+        self.assertEqual(float(qq.max()), 800.0)
+        self.assertEqual(len(t), int(7200 / 30) + 1)          # the grid, with 1980 / 3960 s once each
+
+    def test_screen_hydro_with_start_offset_and_near_duplicates(self):
+        import numpy as np
+        from damit_runner.flood import screen as SC
+        rng = np.random.default_rng(7)
+        t_s = np.sort(np.concatenate([[0.0, 7200.0], rng.uniform(0, 7200, 300),
+                                      np.arange(0, 7200, 30.0)[1:50] + 3e-5]))
+        t_s = np.concatenate([t_s, t_s[100:110] + 1e-4])     # breakpoints closer to each other than 0.002 s
+        t_s.sort()
+        t, _ = SC._Hydro(t_s + 600.0, np.ones_like(t_s)).resampled(30.0)
+        self.assert_increasing(t, "screen with an offset and near-duplicate breakpoints")
+        self.assertEqual(t[-1], t_s[-1] + 600.0)
+
+    def test_breach_resampled_055_h_and_long_record(self):
+        import numpy as np
+        from damit_runner.flood import breach as BR
+        from damit_runner.core import breach as CB
+        t_s, q = self.hydro_2801()
+        rng = np.random.default_rng(11)
+        long_t = np.sort(np.concatenate([[0.0], np.arange(1, 6001) * 30.0 + 3e-5, rng.uniform(0, 180000, 200)]))
+        long_t = np.sort(np.concatenate([long_t, long_t[500:520] + 5e-4]))
+        long_q = np.interp(long_t, [0, 50000, 180030], [0.0, 900.0, 0.0])
+        for mod in (BR, CB):
+            for tt, qq, what in ((t_s, q, "0.55 h"), (long_t, long_q, "6,000+ breakpoints")):
+                h = mod.Hydrograph(t_s=tt, q_cms=qq, method="test")
+                t, qr = h.resampled(30.0)
+                self.assert_increasing(t, "{} {}".format(mod.__name__, what))
+                self.assertAlmostEqual(float(qr.max()), float(qq.max()), places=6)
+                self.assertEqual(qr[-1], 0.0)
+
+    def test_written_bdy_file_increases(self):
+        import numpy as np
+        from damit_runner.flood import lisflood as LF, screen as SC
+        from damit_runner.flood.geom import Grid
+        t_s, q = self.hydro_2801()
+        grid = Grid(np.full((8, 8), 100.0), 0.0, 240.0, 30.0)
+        with tempfile.TemporaryDirectory() as d:
+            LF.write_inputs(d, grid, grid.xy(4, 4), SC._Hydro(t_s, q), 7200.0, cells=[(4, 4)])
+            printed = _printed_bdy_times(os.path.join(d, "run.bdy"))
+        self.assertEqual(len(printed), len(set(printed)))
+        self.assertIn("1980.0000", printed)
+        self.assertIn("3960.0000", printed)
+        self.assert_increasing([float(v) for v in printed], "run.bdy")
+
+
 if __name__ == "__main__":
     unittest.main()
