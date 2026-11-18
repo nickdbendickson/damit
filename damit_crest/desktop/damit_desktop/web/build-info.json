@@ -90,7 +90,7 @@
     "src/lib/crest/sections.ts": "fc9828b18e62ce60b37f93907db3d4d11531a6450d65e8b5e7cac6d106705b7b",
     "src/lib/crest/settings-store.ts": "21c9158c866b793fcbc44268d9be44b771de3922980dee4acbefce1fcb1e1e3a",
     "src/lib/crest/settings.ts": "f738b33be3e4cbb32e4e13a33b10c2c13aec819790149428332b7feca0f83e04",
-    "src/lib/crest/spread.ts": "409ff08b548d39afddf1ad898224a39bb5fae0c37d0d5e5d90271839ce343dd8",
+    "src/lib/crest/spread.ts": "399e6b8f96fe9ec6ea26201536c2598fbb170ddc8f0e5562f54ee6ff4e831213",
     "src/lib/crest/store.ts": "c9c5ec0ea9102e2ef29badd94a8d0e59b99386bd765a8be081fa9be9becda6d2",
     "src/lib/crest/triage.ts": "fe88c723a1b99f97f436972cf514771b4e54c6788a83c2654fc3a68f88c830e5",
     "src/lib/crest/version.ts": "0a20bc8bc83874bb98c337d8b3f92cf3e5afe49a80fe9898c2f66566bcb389eb",
