@@ -231,24 +231,33 @@ ROLES="ndqgis ndanuga"
 # a locked package's local copy: offline/conda/<P>/<channel subdir>/<file> (noarch kept apart,
 # so conda reads each package's own subdir from the file:// URL)
 pkg_path() { local u="${1%/*}"; echo "$CONDA_PKGS/${u##*/}/${1##*/}"; }
-missing_files() {   # prints how many locked files for this platform are absent
-  local n=0 url name
+missing_files() {   # prints each locked file for this platform that is absent, one per line,
+  local url name    # as a path relative to this folder
   for r in $ROLES ndbuild; do
     [ -f "$HERE/locks/$P/$r.lock" ] || continue
     while read -r url _ _; do case "$url" in ''|\#*) continue ;; esac
-      [ -f "$(pkg_path "$url")" ] || n=$((n+1)); done < "$HERE/locks/$P/$r.lock"
+      name="$(pkg_path "$url")"
+      if [ ! -f "$name" ]; then echo "${name#"$HERE/"}"; fi
+    done < "$HERE/locks/$P/$r.lock"
   done
   while read -r pl kind path _; do case "$pl" in ''|\#*) continue ;; esac
-    [ "$pl" = "$P" ] && [ "$kind" != ollama-pull ] && [ ! -f "$HERE/$path" ] && n=$((n+1)); done < "$HERE/locks/extra.lock"
-  echo "$n"
+    if [ "$pl" = "$P" ] && [ "$kind" != ollama-pull ] && [ ! -f "$HERE/$path" ]; then echo "$path"; fi
+  done < "$HERE/locks/extra.lock"
 }
-MISS="$(missing_files)"
+MISSING="$(missing_files)"
+MISS=0; [ -z "$MISSING" ] || MISS="$(printf '%s\n' "$MISSING" | wc -l | tr -d ' ')"
 if [ "$MISS" -gt 0 ]; then
+  # 2026-11-18: name the files, not only count them. Not every offline file is under offline/:
+  # the local AIs' Ollama installer is in damit_ai/offline/, so a copy of offline/ alone from an
+  # older package folder leaves it behind.
+  say "Missing ($MISS):"
+  printf '%s\n' "$MISSING" | sed -n '1,20s/^/  /p'
+  if [ "$MISS" -gt 20 ]; then printf '  ... and %s more\n' "$((MISS - 20))"; fi
   # macOS: never download from the installer (as the earlier Mac packages: nothing fetched and run
   # on the Mac by the installer). Fill offline/ with the offline set or download-all.sh first.
   [ "$OS" = Darwin ] && OFFLINE_ONLY=1
   if [ "$OFFLINE_ONLY" = 1 ]; then
-    die "$MISS file(s) are missing from offline/. Unzip offline-$P.zip in this folder, or run  bash download-all.sh --platform $P  first (on this or any networked machine), then run this again."
+    die "$MISS file(s) are missing (listed above). Unzip offline-$P.zip in this folder, copy them (offline/ AND damit_ai/offline/) from an older package folder, or run  bash download-all.sh --platform $P  first (on this or any networked machine; it fetches only what is missing), then run this again."
   fi
   say "$MISS file(s) not in offline/ yet: fetching them (pinned, sha256-checked)."
   LIBFLAG=""; [ "$DO_VOR" = 1 ] || LIBFLAG="--no-library"
