@@ -109,7 +109,7 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "d0fb73433cf47091733a0dd6306f969a6de73d3e8a9e2a14e73c9aec43a3e546",
+   "diff": "34fac3b1d8d30ef8f2d3dc89ccc354e40492d12be57cf15fe8b6a2757b528661",
    "from": "DamSafety_Runner/algorithms.py"
   },
   "damit_runner/compat/nodata_sample.py": {
@@ -329,7 +329,7 @@
    "from": "DamSafety_Runner/core/impacts.py"
   },
   "damit_runner/core/lisflood.py": {
-   "diff": "57cc99f60127ea281625f5cbddd271a3f7c00a350fe1bfcc0bd1fab02285b1b6",
+   "diff": "66f7309b88822e882e4ed041b7f8d5c6aba86daab8300e21794122351dd5e9a7",
    "from": "DamSafety_Runner/core/lisflood.py"
   },
   "damit_runner/core/model_terrain.py": {
@@ -369,7 +369,7 @@
    "from": "DamSafety_Runner/core/qa_maps.py"
   },
   "damit_runner/core/refine.py": {
-   "diff": "",
+   "diff": "7d9ac82c52f389779520fcacf68878abe86fd12913fbfafcb68689aa2956509f",
    "from": "DamSafety_Runner/core/refine.py"
   },
   "damit_runner/core/report_docx.py": {
@@ -401,7 +401,7 @@
    "from": "DamSafety_Runner/core/run_params.py"
   },
   "damit_runner/core/selftest.py": {
-   "diff": "1463ff3900d06e442a648c431d3a55ceb80ed8e9ec457205c54df7569d9e5227",
+   "diff": "3d4747298dcf26093ba30bc9396f90573c20f302f75a8ba961847cb6d7b7ca70",
    "from": "DamSafety_Runner/core/selftest.py"
   },
   "damit_runner/core/sensitivity.py": {
@@ -445,7 +445,7 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "0112a21e20dc3f6935872ca4a7af31be7146b98fa5dff2eaf007408c2d28608b",
+   "diff": "a3eebfdfb048250686be2333ecd113cc9924cf746a388c1375af42ed44b8f0b3",
    "from": "DamSafety_Runner/core/workflow.py"
   },
   "damit_runner/flood/breach.py": {

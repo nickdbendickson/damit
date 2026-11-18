@@ -56,6 +56,9 @@ TIERS = [(workflow.TIER_LISFLOOD, "LISFLOOD-FP only"),
          # appended (design #68): indices 0 and 1 and the default are unchanged
          (workflow.TIER_HECRAS, "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; "
                                 "needs HEC-RAS 6.6, see help)")]
+# 3.22.0: the run tools' flood engine choice (LISFLOOD-FP stays index 0 and the default)
+FLOOD_ENGINES = ("lisflood", "gpu")
+FLOOD_ENGINES_TEXT = ["LISFLOOD-FP", "GPU engine (LISFLOOD-FP's ACC scheme on the Apple GPU)"]
 DEFAULT_MAX_EXTENT_MI = 20.0     # the run tools' and Setup's default largest domain side
 ZUNITS = [("auto", "Detect from the raster"), ("feet", "Feet"),
           ("us_feet", "US survey feet"), ("meters", "Meters"),
@@ -848,6 +851,17 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         self._text("LISFLOOD_EXE", "LISFLOOD-FP executable (empty = provider setting or an "
                    "installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine "
                    "- a numpy approximation, NOT LISFLOOD-FP)", advanced=True)
+        # 3.22.0: the flood engine, a choice of its own (appended; LISFLOOD-FP stays the default)
+        p = QgsProcessingParameterEnum("FLOOD_ENGINE", "Flood engine", FLOOD_ENGINES_TEXT,
+                                       defaultValue=0, optional=True)
+        _set_help(p, "LISFLOOD-FP: the executable below, else the provider setting, else an "
+                  "installed one. GPU engine: LISFLOOD-FP 8.3's ACC (local inertial) scheme "
+                  "rewritten as GPU kernels; it runs on the Apple GPU through Metal, and on other "
+                  "computers on the CPU build of the same kernels (one core, needs a C++ "
+                  "compiler). It matched LISFLOOD-FP 8.3 within millimetres on the test cases; "
+                  "the run report says which engine ran. ACC only (no FV2 / MWDG2, no near-dam "
+                  "FV1 refine). Typing 'gpu' in the LISFLOOD-FP field does the same.")
+        self.addParameter(p)
         self._text("ANUGA_PYTHON", "ANUGA Python interpreter (a path; a symlink is resolved "
                    "to the real file). Empty = provider setting or auto-detected",
                    advanced=True)
@@ -881,11 +895,18 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         exe = (self._str(parameters, "LISFLOOD_EXE", context)
                or _suite_setting("lisflood_exe") or _setting(SET_LISFLOOD))
         from ..core import lisflood as lfmod
+        if self.parameterDefinition("FLOOD_ENGINE") is not None and \
+                parameters.get("FLOOD_ENGINE") not in (None, "") and \
+                FLOOD_ENGINES[self.parameterAsEnum(parameters, "FLOOD_ENGINE", context)] == "gpu":
+            return lfmod.GPU_EXE
         # Opt in to the built-in screening engine ONLY by an explicit act: the word "builtin" in
         # the field, or the provider flag. It is never selected just because the field is empty,
         # so the numpy approximation can never silently stand in for LISFLOOD-FP (M5 safety).
         if exe and str(exe).strip().lower() in lfmod.BUILTIN_WORDS:
             return lfmod.BUILTIN_EXE
+        # 3.22.0: the GPU engine, likewise only by name ("gpu" / "metal")
+        if exe and str(exe).strip().lower() in lfmod.GPU_WORDS:
+            return lfmod.GPU_EXE
         if not exe or not os.path.isfile(exe):
             found = data_conventions.detect_lisflood()
             if found:
@@ -903,6 +924,55 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
             if found:
                 py = os.path.realpath(found)
         return py
+
+    def engine_sources(self, parameters, context, exe, py):
+        """3.20.7: where the LISFLOOD-FP and ANUGA paths in use came from, for the self-test report
+        and the installation check: (lisflood source, anuga source, problems). find_lisflood /
+        find_anuga take the first set path (this tool's field, then the suite setting, then the
+        Processing option) and auto-detect another one when it is not a file, silently. On a Mac
+        with an older install the report showed the old LISFLOOD-FP and ANUGA env "used" while the
+        settings named the new ones, with no hint which source had won. `problems` has one line
+        for each set path that was NOT used because it is not a file on this computer."""
+        from ..core import lisflood as lfmod
+        problems = []
+        lf_set = [(self._str(parameters, "LISFLOOD_EXE", context), "this tool's LISFLOOD-FP field"),
+                  (_suite_setting("lisflood_exe"), _suite_source_label("lisflood_exe")),
+                  (_setting(SET_LISFLOOD), "Processing option " + SET_LISFLOOD)]
+        an_set = [(self._str(parameters, "ANUGA_PYTHON", context), "this tool's ANUGA field"),
+                  (_setting(SET_ANUGA), "Processing option " + SET_ANUGA)]
+        flag = "Processing option {} (built-in engine)".format(SET_BUILTIN)
+
+        def builtin(used):
+            return bool(used) and os.path.abspath(used) == os.path.abspath(lfmod.BUILTIN_EXE)
+
+        def source(pairs, used, real):
+            first = next(((v, w) for v, w in pairs if v), None)
+            if first is None:
+                if real and builtin(used):                   # review: the flag, not detection
+                    return flag
+                return "auto-detected (no path set)" if used else "none set, none found"
+            v, w = first
+            if real and str(v).strip().lower() in lfmod.BUILTIN_WORDS:
+                return w + " (built-in engine)"
+            if real and str(v).strip().lower() in lfmod.GPU_WORDS:
+                return w + " (GPU engine)"
+            ok = os.path.isfile(v if real else os.path.realpath(v))
+            if ok:
+                return w
+            name = "LISFLOOD-FP" if real else "ANUGA Python"
+            same = used == (v if real else os.path.realpath(v))
+            if not used or same:
+                # review: find_lisflood / find_anuga hand the set path back when nothing else is
+                # found, so it is still the one in use; it was not auto-detected
+                problems.append("{} set to {} ({}) {}; nothing else was found, so the runs still "
+                                "use this path and will fail.".format(name, v, w, _why_not_a_file(v)))
+                return "{} (path is not a file; nothing auto-detected)".format(w)
+            problems.append("{} set to {} ({}) {}; using {} instead.".format(
+                name, v, w, _why_not_a_file(v), used))
+            if real and builtin(used):
+                return flag + ": the {} path is not a file".format(w)
+            return "auto-detected: the {} path is not a file".format(w)
+        return source(lf_set, exe, True), source(an_set, py, False), problems
 
     def run_settings(self, parameters, context, method=None, need_models=True):
         g = lambda n: self.parameterAsDouble(parameters, n, context)
@@ -2375,7 +2445,8 @@ class BatchAlgorithm(_Base):
                 "would not see".format(", ".join(keys)))
         exe = self.find_lisflood(parameters, context)
         from ..core import lisflood as lfmod
-        out["LISFLOOD_EXE"] = "builtin" if exe == lfmod.BUILTIN_EXE else (exe or "")
+        out["LISFLOOD_EXE"] = ("builtin" if exe == lfmod.BUILTIN_EXE else
+                               "gpu" if exe == lfmod.GPU_EXE else (exe or ""))
         out["ANUGA_PYTHON"] = self.find_anuga(parameters, context) or ""
         out.update({"WORKERS": 1, "CLASSIFY": False})
         return out
