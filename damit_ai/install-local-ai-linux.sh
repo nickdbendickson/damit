@@ -287,7 +287,7 @@ EOF
   ok "'heim' persona created"
   PYL="$(make_env "$HEIM_ENV" "python=3.12 pymupdf pypdf numpy")"
   ok "heim python: $PYL"
-  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py; do
+  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py; do
     [[ -f "$HERE/heim/tools/$t" ]] && cp "$HERE/heim/tools/$t" "$HEIM_TOOLS/$t"
   done
   [[ -d "$HERE/heim/eval" ]] && cp -r "$HERE/heim/eval" "$HEIM_TOOLS/eval"   # code-triage eval set (eval_heim.py)

@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.7"
+VERSION = "1.3.9"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -84,7 +84,7 @@ KNOWN_FLAG_IDS = (
     "START_WSE", "TOE_INFLOW", "TOE_BAND", "TOE_BAND_WIDENED", "OUTLET_FLOW", "ENGINE_FALLBACK", "RUN_WARNINGS",
     "RECEPTOR_NODATA", "RECEPTOR_DRY_NEXT_TO_WET", "ROADS_UNSCORED", "HAZARD_REVIEW", "RAIL_TRAINS",
     "NO_RUN_FILES", "DAM_RECORD_MISSING", "TOE_UNCHECKED", "TOE_SOURCE_RUN_REPORT", "RECEPTORS_UNCHECKED",
-    "DAM_POINT_OFF_LINE",
+    "DAM_POINT_OFF_LINE", "TRUE_HOLE_HELPER_MISSING",
 )
 
 # Elevations from 300 ft up to this are taken to be in the NAVD88 range when no datum is stated (ND is ~800-3,500 ft;
@@ -1270,18 +1270,36 @@ def runner_nodata(grid, inplace=False):
 
 
 
+class TrueHoleHelperMissing(RuntimeError):
+    """The bundled true_hole.py helper is not next to this script and damit_core is not installed."""
+
+
 def _true_hole_mod():
+    """Load the TRUE_HOLE helper: sibling copy first (local-ai install), then checkout, then package."""
+    import importlib.util, os
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "true_hole.py"),
+        os.path.join(here, "..", "..", "..", "damit_core", "lib", "true_hole.py"),
+    ]
+    for path in candidates:
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            continue
+        spec = importlib.util.spec_from_file_location("damit_true_hole", path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
     try:
         from damit_core.lib import true_hole as m
         return m
     except ImportError:
-        import importlib.util, os
-        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..",
-                                            "damit_core", "lib", "true_hole.py"))
-        spec = importlib.util.spec_from_file_location("damit_core_lib_true_hole", path)
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        return m
+        pass
+    raise TrueHoleHelperMissing(
+        "the true-hole helper (true_hole.py) is not next to run_digest.py and "
+        "damit_core is not installed; re-run setup-local-heim.sh (it copies "
+        "true_hole.py into ~/local-ai) or install DamIT Core"
+    )
 
 
 def split_nodata_true_holes(grid, points, nd_items):
@@ -1325,11 +1343,32 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
     res = receptor_check(depth_grid, points)
     note = (" Sampled on %s." % grid_source) if grid_source else ""
     nd, dn = res["nodata_next_to_wet"], res["dry_next_to_wet"]
-    holes, overs, edges = split_nodata_true_holes(depth_grid, points, nd)
+    helper_err = None
+    try:
+        holes, overs, edges = split_nodata_true_holes(depth_grid, points, nd)
+    except TrueHoleHelperMissing as e:
+        helper_err = e
+        holes, overs, edges = [], [], []
     res["nodata_true_hole"] = holes
     res["nodata_oversize"] = overs
     res["nodata_flood_edge"] = edges
-    if nd:
+    if nd and helper_err is not None:
+        ids_s = _ids("%s (neighbour %.2f ft)" % t for t in nd)
+        fl.add("RECEPTOR_NODATA", WATCH, "receptors",
+               "%d structure(s) sit on a NoData cell next to wet cells" % len(nd),
+               "ids: %s. The true-hole / oversize / flood-edge split was not done: "
+               "the true-hole helper is missing (%s). Check these by hand.%s"
+               % (ids_s, helper_err, note),
+               ids=[t[0] for t in nd], neighbour_ft={t[0]: t[1] for t in nd},
+               grid_source=grid_source)
+        fl.add("TRUE_HOLE_HELPER_MISSING", WATCH, "receptors",
+               "could not classify NoData receptors: the true-hole helper is missing",
+               "%s. Re-run setup-local-heim.sh (it copies true_hole.py next to run_digest.py) "
+               "or install DamIT Core. This is not a missing raster. NoData receptor ids: %s."
+               % (helper_err, _ids(t[0] for t in nd)),
+               error_type=type(helper_err).__name__,
+               ids=[t[0] for t in nd])
+    elif nd:
         holes = res.get("nodata_true_hole") or []
         overs = res.get("nodata_oversize") or []
         edges = res.get("nodata_flood_edge") or []
@@ -1340,15 +1379,16 @@ def check_receptors(depth_grid, points, fl, th=THRESHOLDS, grid_source=None):
             "ids: %s. Of these, %d sit in a true hole (TRUE_HOLE: a 4-connected non-wet "
             "component that does not touch the raster border and has at most "
             "TRUE_HOLE_MAX_CELLS = %d cells)%s, %d sit in an oversize enclosed component "
-            "(not a hole; scored dry)%s, and %d sit on a flood-edge / exterior NoData cell "
+            "(not a hole; still scored with WSE-minus-ground and flagged "
+            "nodata_oversize_component)%s, and %d sit on a flood-edge / exterior NoData cell "
             "(the Runner writes every dry cell as NoData)%s. "
             "Hazard's path depends on the depth-grid cell size (this raster's cell is %s; "
             "larger side, converted to metres; NODATA_NEIGHBOURHOOD_MIN_CELL_M = 20 m, "
             "strictly greater than). On a grid coarser than 20 m, every NoData receptor is "
-            "scored with depth = max(0, neighbour water surface minus the receptor's own "
-            "ground) (sampling=neighbourhood_wse); raw neighbour depth is never used. "
-            "No ground: scored dry (nodata_no_ground_review). An oversize component is "
-            "scored dry (nodata_oversize_component). At 20 m or finer every NoData cell "
+            "scored with depth = max(0, the highest neighbouring water surface minus the "
+            "receptor's own ground) (sampling=neighbourhood_wse); raw neighbour depth is never used. "
+            "No ground: scored dry (nodata_no_ground_review). An oversize component still "
+            "gets that WSE test and is flagged nodata_oversize_component. At 20 m or finer every NoData cell "
             "next to water is still scored dry (sampling=centre_nodata_dry) and flagged "
             "nodata_dry_review. Check these by hand.%s"
             % (
@@ -1398,7 +1438,7 @@ REVIEW_CODES = {
     "nodata_wse_ground": "a structure sits on a NoData cell on a grid coarser than 20 m; depth is max(0, neighbour water surface minus own ground) and needs review",
     "nodata_wse_dry": "a structure sits on a NoData cell on a grid coarser than 20 m; scored dry because its ground is at or above every neighbouring water surface",
     "nodata_no_ground_review": "a structure sits on a NoData cell on a grid coarser than 20 m; scored dry because no run DEM was available (raw neighbour depth was not used)",
-    "nodata_oversize_component": "a structure sits in an enclosed NoData component larger than TRUE_HOLE_MAX_CELLS; scored dry (not a hole)",
+    "nodata_oversize_component": "a structure sits in an enclosed NoData component larger than TRUE_HOLE_MAX_CELLS (not a hole; still scored with WSE-minus-ground, flagged for review)",
     "nodata_dry_review": "a structure sits on a NoData cell on a grid at or finer than 20 m; scored dry from the NoData cell and need review",
     "nodata_flood_edge": "legacy flag: a structure sat on a dry flood-edge cell written as NoData on a grid coarser than 20 m; scored dry",
 }
@@ -1588,6 +1628,13 @@ def build_digest(run_dir, phase="run_end", dam_folder=None, points=None, points_
                 why_none = ("no receptor points: no structure layer was given or found%s"
                             % ("" if crs_wkt else " (and no CRS is recorded to georeference one)"))
             depth_grid = None                # free the pass grid now: a late pass's grid is the biggest thing the watcher holds
+    except TrueHoleHelperMissing as e:
+        why_none = why_none or "the true-hole helper is missing: %s" % e
+        fl.add("TRUE_HOLE_HELPER_MISSING", WATCH, "receptors",
+               "could not classify NoData receptors: the true-hole helper is missing",
+               "%s. Re-run setup-local-heim.sh (it copies true_hole.py next to run_digest.py) "
+               "or install DamIT Core. This is not a missing raster." % e,
+               error_type=type(e).__name__)
     except ImportError as e:
         why_none = why_none or "a Python package is missing: %s" % e
         fl.add("RECEPTORS_UNCHECKED", INFO, "receptors", "receptors not checked: a Python package is missing",

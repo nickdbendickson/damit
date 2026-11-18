@@ -27,17 +27,35 @@ import os
 
 
 def _true_hole_mod():
+    """Load the TRUE_HOLE helper: bundled copy first, then damit_core, then checkout.
+
+    The Runner plugin ships damit_runner/lib/true_hole.py so it loads with only
+    damit_runner and damit_catalog installed (no damit_core).
+    """
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "..", "lib", "true_hole.py"),
+        os.path.join(here, "..", "..", "damit_core", "lib", "true_hole.py"),
+    ]
+    for path in candidates:
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            continue
+        spec = importlib.util.spec_from_file_location("damit_true_hole", path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
     try:
         from damit_core.lib import true_hole as m
         return m
     except ImportError:
-        import importlib.util
-        path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..',
-                                            'damit_core', 'lib', 'true_hole.py'))
-        spec = importlib.util.spec_from_file_location('damit_core_lib_true_hole', path)
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        return m
+        pass
+    raise FileNotFoundError(
+        "the true-hole helper was not found: expected damit_runner/lib/true_hole.py "
+        "inside the Runner plugin (a bundled copy of damit_core/lib/true_hole.py), "
+        "or an installed damit_core package"
+    )
 
 
 TH = _true_hole_mod()
@@ -405,11 +423,14 @@ def resolve_nodata(centre_is_nodata, neighbour_peak, policy, plain_sampling=SAMP
                    physical_depth=None, physical_velocity=None):
     """Decide the sampling path when every requested cell is NoData.
 
-    On a coarse grid the scored depth is physical_depth (WSE minus ground), never
-    the raw neighbour_peak depth. Without ground the receptor is scored dry.
-    An oversize enclosed component is scored dry. At the 20 m threshold or finer
-    the 20 m rule is unchanged (NoData scores dry, flag nodata_dry_review).
-    `neighbour_peak` is only used to detect whether a wet neighbour exists.
+    On a coarse grid the scored depth is physical_depth (the highest
+    neighbouring WSE minus ground), never the raw neighbour_peak depth.
+    Without ground the receptor is scored dry. An oversize enclosed
+    component is not a hole: it still gets the WSE-minus-ground test and
+    is flagged nodata_oversize_component (in addition to the WSE flag).
+    At the 20 m threshold or finer the 20 m rule is unchanged (NoData
+    scores dry, flag nodata_dry_review). `neighbour_peak` is only used to
+    detect whether a wet neighbour exists.
     """
     hole = bool(is_true_hole)
     over = bool(is_oversize)
@@ -418,27 +439,35 @@ def resolve_nodata(centre_is_nodata, neighbour_peak, policy, plain_sampling=SAMP
             "cell_m": policy.get("cell_m"),
             "nodata_neighbourhood_min_cell_m": policy.get("nodata_neighbourhood_min_cell_m")}
     if not centre_is_nodata:
-        return dict(base, sampling=plain_sampling, flag=None)
+        return dict(base, sampling=plain_sampling, flag=None, flags=None)
     allowed = bool(policy.get("neighbourhood_allowed"))
     has_nb = neighbour_peak is not None
-    if allowed and has_nb and over:
-        return dict(base, sampling=SAMPLING_CENTRE_NODATA_OVERSIZE, flag=FLAG_OVERSIZE,
-                    depth=0.0, velocity=None)
+
+    def _with_oversize(rec):
+        rec["flags"] = rec["flag"]
+        if over and rec.get("flag"):
+            rec["flags"] = rec["flag"] + "," + FLAG_OVERSIZE
+        elif over and not rec.get("flag"):
+            rec["flag"] = FLAG_OVERSIZE
+            rec["flags"] = FLAG_OVERSIZE
+        return rec
+
     if allowed and has_nb and not has_ground:
-        return dict(base, sampling=SAMPLING_CENTRE_NODATA_NO_GROUND, flag=FLAG_NO_GROUND,
-                    depth=0.0, velocity=None)
+        return _with_oversize(dict(base, sampling=SAMPLING_CENTRE_NODATA_NO_GROUND,
+                                   flag=FLAG_NO_GROUND, depth=0.0, velocity=None))
     if allowed and has_nb and has_ground:
         d = 0.0 if physical_depth is None else float(physical_depth)
         v = physical_velocity
         if d > 0:
-            return dict(base, sampling=SAMPLING_NEIGHBOURHOOD_WSE, flag=FLAG_WSE_GROUND,
-                        neighbourhood=True, depth=d, velocity=v)
-        return dict(base, sampling=SAMPLING_NEIGHBOURHOOD_WSE, flag=FLAG_WSE_DRY,
-                    depth=0.0, velocity=None)
+            return _with_oversize(dict(base, sampling=SAMPLING_NEIGHBOURHOOD_WSE,
+                                       flag=FLAG_WSE_GROUND, neighbourhood=True,
+                                       depth=d, velocity=v))
+        return _with_oversize(dict(base, sampling=SAMPLING_NEIGHBOURHOOD_WSE,
+                                   flag=FLAG_WSE_DRY, depth=0.0, velocity=None))
     if (not allowed) and has_nb:
         return dict(base, sampling=SAMPLING_CENTRE_NODATA_DRY, flag=FLAG_DRY_REVIEW,
-                    depth=0.0, velocity=None)
-    return dict(base, sampling=plain_sampling, flag=None, depth=0.0, velocity=None)
+                    flags=FLAG_DRY_REVIEW, depth=0.0, velocity=None)
+    return dict(base, sampling=plain_sampling, flag=None, flags=None, depth=0.0, velocity=None)
 
 
 def note_for_flag(flag, cell_m=None, min_m=NODATA_NEIGHBOURHOOD_MIN_CELL_M):
@@ -446,9 +475,9 @@ def note_for_flag(flag, cell_m=None, min_m=NODATA_NEIGHBOURHOOD_MIN_CELL_M):
     min_m = float(min_m) if min_m is not None else NODATA_NEIGHBOURHOOD_MIN_CELL_M
     cell_s = "{:g} m".format(cell_m) if cell_m is not None else "unknown"
     if flag in (FLAG_WSE_GROUND, FLAG_NEIGHBOURHOOD):
-        return ("{}: centre cell was NoData; depth is max(0, neighbour water surface "
-                "minus the receptor's own ground) on a depth grid of {} (coarser than "
-                "NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m) - verify"
+        return ("{}: centre cell was NoData; depth is max(0, the highest neighbouring "
+                "water surface minus the receptor's own ground) on a depth grid of {} "
+                "(coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m) - verify"
                 .format(FLAG_WSE_GROUND, cell_s, min_m))
     if flag == FLAG_WSE_DRY:
         return ("{}: centre cell was NoData on a depth grid of {} (coarser than "
@@ -462,7 +491,8 @@ def note_for_flag(flag, cell_m=None, min_m=NODATA_NEIGHBOURHOOD_MIN_CELL_M):
                 .format(FLAG_NO_GROUND, cell_s, min_m))
     if flag == FLAG_OVERSIZE:
         return ("{}: centre cell sits in an enclosed NoData component larger than "
-                "TRUE_HOLE_MAX_CELLS = {}; scored dry (not a hole) on a depth grid of {}"
+                "TRUE_HOLE_MAX_CELLS = {} on a depth grid of {} (not a hole; still "
+                "scored with WSE-minus-ground, flagged for review)"
                 .format(FLAG_OVERSIZE, TRUE_HOLE_MAX_CELLS, cell_s))
     if flag == FLAG_DRY_REVIEW:
         return ("{}: centre cell was NoData on a depth grid of {} "
