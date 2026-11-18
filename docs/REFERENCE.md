@@ -171,6 +171,16 @@ time; a failed download is noted and that clip uses the run's DEM). The step rep
 DamSafety Screening does (dam line + reservoir point + DEM; else reservoir → dam point; else the steepest DEM drop;
 low-confidence cases say so) instead of a gap, and `terrain` checks coverage in the DEM's own CRS.
 
+0.3.4 (2026-11-17): `larger_clips` defaults to the configured pack DEM. When the DamIT data folder, `DAMIT_DATA`,
+`NDSUITE_DATA` / `NDSUITE_PACK` or `~/.ndsuite/config.json` holds a DEM in `<folder>/dem`, the larger clips are read
+from it (`larger_clips` 2, `local_dem` = that DEM file) instead of a fresh 3DEP download. 3DEP is still used when there
+is no pack DEM, when the settings JSON sets `larger_clips` itself, when `offline_pack_terrain` is false, or when the DEM
+does not cover the dam (checked per dam from its prepared point). The source is logged; the pack is never written.
+
+0.3.5 (2026-11-18): `damit_screen:runchain` ends as failed, not OK, when a dam's screening flood (`engine2d`) failed or
+did not run; `engine2d` = `off` is still OK. The run report leads with the chain result and `chain_summary.json` lists
+those dams in `flood_failed`.
+
 ## DamIT Runner (`damit_run`)
 
 | Algorithm | What it does |
@@ -243,6 +253,17 @@ left through the model edges (LISFLOOD-FP `.mass`), every edge carrying at least
 arrival depth also moves out, even under `EDGE_TOL_FT`; a clock extension is not counted as a run. The ANUGA tier
 uses the DamSafety Runner's default mesh (flood mask + buffer, refined near field, inlet at least 3 cells, a wider
 second pass when the flood reaches the mesh edge; needs scipy).
+
+0.6.5 (2026-11-18): an empty `LISFLOOD_EXE` with no provider setting also finds the LISFLOOD-FP the dam-suite
+`install-all` package builds in `<DAMSUITE_PREFIX or ~/dam-suite>/bin` (`lisflood`, `lisflood.exe` on Windows), before
+the other install places. Before, a Runner without the provider setting (headless, another profile) fell back to the
+built-in engine although the installer had built LISFLOOD-FP. No model-number changes.
+
+0.6.6 (2026-11-18): LISFLOOD-FP `.bdy` times strictly increase at the printed 4 decimals (damit #126). The Screener's
+2D screening on LISFLOOD-FP (`flood/screen.py`) wrote 0.55 h and the 30 s grid's 1980 s both as `1980.0000`, and
+LISFLOOD-FP stopped with "Time Series invalid time values" (DWR-2801); `Hydrograph.resampled` (`flood/breach.py`,
+`core/breach.py`) takes DamSafety Runner 3.20.14's fix (DWR_Plugins #397) for records of 5,000 or more breakpoints.
+Only times within 0.002 s of another are dropped; no other model-number change.
 
 North Dakota M1 (catalog plugin 0.1.1): a structure in the TM-11 judgment zone gives **Medium** (still flagged for
 engineer review; R7 can take it higher). Other presets keep `judgment_class` null (flag only).
