@@ -123,13 +123,20 @@ Say "$Stamp on $P.  Log: $Log"
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
 $Roles = @('ndqgis','ndanuga'); if ($DoHeim -or $DoVor) { $Roles += 'ndvor' }
-$miss = 0
+# 2026-11-18: name the missing files, not only count them (the local AIs' Ollama installer is in
+# damit_ai\offline\, so a copy of offline\ alone from an older package folder leaves it behind)
+$missing = @()
 foreach ($r in $Roles) {
   foreach ($l in (LockLines (Join-Path $Here "locks\$P\$r.lock"))) {
-    if (-not (Test-Path (PkgPath $l[0]))) { $miss++ } } }
-foreach ($l in ExtraLines) { if (-not (Test-Path (Join-Path $Here $l[2]))) { $miss++ } }
+    $f = PkgPath $l[0]
+    if (-not (Test-Path $f)) { $missing += $f.Substring($Here.Length).TrimStart('\') } } }
+foreach ($l in ExtraLines) { if (-not (Test-Path (Join-Path $Here $l[2]))) { $missing += $l[2] } }
+$miss = $missing.Count
 if ($miss -gt 0) {
-  if ($Offline) { Die "$miss file(s) are missing from offline\ and -Offline was given. Unzip offline-$P.zip here, or run download-all-windows.cmd" }
+  Say "Missing ($miss):"
+  $missing | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" }
+  if ($miss -gt 20) { Write-Host "  ... and $($miss - 20) more" }
+  if ($Offline) { Die "$miss file(s) are missing (listed above) and -Offline was given. Unzip offline-$P.zip here, copy them (offline\ AND damit_ai\offline\) from an older package folder, or run download-all-windows.cmd (it fetches only what is missing)" }
   Say "$miss file(s) not in offline\ yet: fetching them (pinned, sha256-checked)."
   $dl = @{ Platform = $P; NoModels = $true }; if (-not $DoVor) { $dl.NoLibrary = $true }
   & (Join-Path $Here 'download-all-windows.ps1') @dl

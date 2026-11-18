@@ -4,6 +4,7 @@ and no model, screening or Wine is ever started: qgis_process and the runner CLI
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import tempfile
@@ -258,10 +259,11 @@ class FolderTests(unittest.TestCase):
             self.assertEqual(record["fields"]["height_ft"], 27.5)
             self.assertEqual(record["fields"]["lon"], -100.05)
             self.assertNotIn("crs", record["fields"])
-            self.assertNotIn("line_xy", record["proposed_embankment"])
-            self.assertEqual(record["proposed_embankment"]["phrase"], "proposed — embankment inserted from the drawn line")
-            self.assertEqual(record["proposed_embankment"]["crest_m"], round(1071.09 * 0.3048, 3))
-            self.assertTrue(any("line_xy" in n for n in notes))
+            # An existing NID dam is already in the DEM: no proposed-embankment block, and no "line_xy is not set"
+            # note. The Runner reads dam_line.geojson and projects it to the DEM CRS itself.
+            self.assertNotIn("proposed_embankment", record)
+            self.assertFalse(any("line_xy is not set" in n for n in notes))
+            self.assertTrue(any("dam_line.geojson" in n and "DEM CRS" in n for n in notes))
             self.assertEqual(record["status"][-1]["step"], "screened")
             self.assertTrue(record["status"][-1]["result"]["preview"])
             for name in ("dam_line.geojson", "breach_point.geojson", "reservoir_point.geojson", "downstream_area.geojson", "hydrograph.csv"):
@@ -292,6 +294,39 @@ class FolderTests(unittest.TestCase):
             again = json.loads((folder / "dam.json").read_text(encoding="utf-8"))
             self.assertEqual(again["fields"]["height_ft"], 99)
             self.assertEqual(again["proposed_embankment"]["line_xy"], [[1, 2], [3, 4]])
+
+    def test_lonlat_to_5070_matches_proj(self):
+        # Reference values from PROJ (pyproj Transformer EPSG:4269 -> EPSG:5070, always_xy).
+        from damit_desktop.handoff import lonlat_to_5070
+        for (lon, lat), (x, y) in (
+            ((-97.3892604, 46.9853299), (-106169.821, 2666843.345)),
+            ((-97.3929996, 46.9814101), (-106461.916, 2666413.789)),
+            ((-80.0, 30.0), (1534849.039, 898886.088)),
+            ((-120.0, 48.0), (-1786745.610, 3004984.283)),
+        ):
+            gx, gy = lonlat_to_5070(lon, lat)
+            self.assertAlmostEqual(gx, x, places=2)
+            self.assertAlmostEqual(gy, y, places=2)
+
+    def test_new_dam_embankment_has_line_xy_in_5070(self):
+        from damit_desktop.handoff import lonlat_to_5070
+        new = {**DAM, "nid": "", "id": "desk-new1", "isNew": True}
+        with tempfile.TemporaryDirectory() as d:
+            folder, notes = write_dam_folder(Path(d), new, ANALYSIS)
+            emb = json.loads((folder / "dam.json").read_text(encoding="utf-8"))["proposed_embankment"]
+            self.assertEqual(emb["phrase"], "proposed — embankment inserted from the drawn line")
+            self.assertEqual(emb["crs"], "EPSG:5070")
+            self.assertEqual(emb["line_lonlat"], [[-100.1, 46.8], [-100.0, 46.81]])
+            want = [[round(c, 2) for c in lonlat_to_5070(lon, lat)] for lon, lat in emb["line_lonlat"]]
+            self.assertEqual(emb["line_xy"], want)
+            self.assertEqual(len(emb["line_xy"]), 2)
+            # The two drawn points are about 7.7 km apart; the projected line keeps that length.
+            (x0, y0), (x1, y1) = emb["line_xy"]
+            self.assertAlmostEqual(math.hypot(x1 - x0, y1 - y0), 7.69e3, delta=60)
+            self.assertEqual(emb["crest_m"], round(1071.09 * 0.3048, 3))
+            self.assertNotIn("crest_note", emb)
+            self.assertFalse(any("line_xy is not set" in n for n in notes))
+            self.assertTrue(any("line_xy (EPSG:5070)" in n for n in notes))
 
     def test_refuses_a_foreign_dam_json(self):
         with tempfile.TemporaryDirectory() as d:
