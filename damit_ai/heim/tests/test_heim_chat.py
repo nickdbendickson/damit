@@ -219,6 +219,20 @@ class DragAFileTest(Base):
         self.assertEqual(rq.dropped_paths("/no/such/file.pdf"), [])
         self.assertEqual(rq.dropped_paths('an "unclosed quote'), [])
 
+    def test_a_change_in_the_same_time_tick_and_size_is_seen(self):
+        # A small insert can leave the file's size and (on a coarse clock) its mtime unchanged; the SQLite
+        # file change counter still tells the store to reload.
+        self.index(PACK[:1])
+        store = rq.Store("all")
+        before = os.stat(rq.DB)
+        self.index([("added", "new.md", "kit terrain notes")])
+        os.utime(rq.DB, ns=(before.st_atime_ns, before.st_mtime_ns))
+        self.assertEqual(os.stat(rq.DB).st_size, before.st_size)
+        self.assertTrue(store.changed())
+        store.load()
+        self.assertEqual(len(store.rows), 2)
+        self.assertFalse(store.changed())
+
     def test_an_index_changed_from_another_window_is_reloaded(self):
         self.index(PACK[:1])
         store = rq.Store("all")
