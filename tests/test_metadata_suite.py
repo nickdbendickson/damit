@@ -64,9 +64,9 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.4.4"           # DamIT PMP 0.4.4: VERTEX_ELEVATION, stream refinement, principal outlet, stage probes (the others: Data 0.2.1, Core 0.3.0)
+PMP_VERSION = "0.4.5"           # DamIT PMP 0.4.5: the Atlas 14 core shared byte-identical with DamSafety PMP (the others: Data 0.2.1, Core 0.3.1)
 DATA_VERSION = "0.2.1"          # DamIT Data 0.2.1: an update that cannot replace an open folder says so
-CORE_VERSION = "0.3.0"          # DamIT Core 0.3.0: the shared defaults file (lib/shared_defaults.py)
+CORE_VERSION = "0.3.1"          # DamIT Core 0.3.1: http download_file closes its temp file and the HTTPError on a failed request
 
 
 class Metadata(unittest.TestCase):

@@ -534,6 +534,21 @@ class PMPGrids(unittest.TestCase):
                                                     "OUTPUT_JSON": os.path.join(self.tmp, "gb2.json")})
         self.assertAlmostEqual(r2["MEAN"], r["MEAN"], places=3)
 
+    def test_fetchgrid_with_output_json_still_writes_the_sidecar(self):
+        import processing
+        rec = os.path.join(self.tmp, "records", "fetch_record.json")
+        g, out = self.fetch("gb_json", POINT=None, EXTENT="-97.0,-96.97,46.9,46.93 [EPSG:4326]", REGION=2,
+                            OUTPUT_JSON=rec)
+        self.assertEqual(g["OUTPUT_JSON"], rec)
+        for p in (out + ".tif.json", rec):
+            with open(p) as fh:
+                self.assertEqual(json.load(fh)["units"], "in", p)
+        basin = mem_layer("Polygon", "EPSG:4326", [("id", "integer")],
+                          [("POLYGON((-97.0 46.9,-96.97 46.9,-96.97 46.93,-97.0 46.93,-97.0 46.9))", [1])])
+        r = processing.run("damit_pmp:gridbasin", {"GRID": g["OUTPUT"], "BASIN": basin,
+                                                   "OUTPUT_JSON": os.path.join(self.tmp, "gb3.json")})
+        self.assertGreater(r["MEAN"], 6.29)                             # inches, not 1000 times too small
+
     def test_same_duration_index_in_every_tool(self):
         """STORM (hyetograph, raingrid) and DURATION (fetchgrid, gridbasin) are one list: index i = same duration."""
         import processing

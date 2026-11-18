@@ -1,4 +1,4 @@
-# DamIT PMP 0.4.4 – NOAA Atlas 14 only
+# DamIT PMP 0.4.5 – NOAA Atlas 14 only
 
 Processing provider `damit_pmp`. Depends on DamIT Core. **The only data source is NOAA Atlas 14**,
 read from the NOAA/NWS Precipitation Frequency Data Server (PFDS, https://hdsc.nws.noaa.gov/pfds/), or
@@ -8,6 +8,9 @@ This is not a port of DamSafety PMP (the internal prototype of the North Dakota 
 Evaluation Tool). It ships none of that tool's code or data, uses no PMP study geodatabase, no HMR / HMS
 or state PMP product and no other precipitation source. Atlas 14 publishes precipitation-frequency
 estimates up to the 1000-year ARI; **this plugin computes no probable maximum precipitation**.
+
+Code goes only the other way: since 0.4.5 DamSafety PMP carries a byte-identical copy of this plugin's
+Atlas 14 core (see [the shared Atlas 14 core](#045-the-atlas-14-core-shared-with-damsafety-pmp)).
 
 | Tool | What it does |
 |---|---|
@@ -283,3 +286,31 @@ only), so `lisfloodrain` imposes the pipe as a point sink at the inlet cell and 
 ANUGA's unsubmerged and submerged forms; no outlet control) of the pond stage series `OUTLET_STAGE_CSV` taken from an
 earlier run of the same model made with `STAGE_PROBE` (one coupling iteration; `lisflood_probe_stage.csv`). A sink
 cannot take more than the cell holds, so use it with a pond cell that is wet whenever the rating is not zero.
+
+## 0.4.5: the Atlas 14 core shared with DamSafety PMP
+
+No number changes to the Atlas 14 core. Five modules of this plugin are also the Atlas 14 core of DamSafety PMP: `atlas14.py` (PFDS point
+query), `temporal.py` (temporal patterns), `storm.py` (pattern, then losses), `gisgrid.py` (Atlas 14 GIS grids from NOAA)
+and `gridstats.py` (grid basin statistics). DWR_Plugins carries byte-identical copies in `DamSafety_PMP/noaa14/`, so
+both plugins read Atlas 14 the same way, give the same depth for the same dam, and a fix made once reaches both.
+
+**One way only.** DamIT is the origin of the five files: a change is made here first and copied unchanged to
+DWR_Plugins, on branches of the same name in the two repos. Nothing comes back: DamIT PMP still ships none of DamSafety
+PMP's code or data. The five modules use only the Python standard library, numpy and GDAL, and the caller passes in the
+network, so they name neither plugin. Their wording is now neutral: the no-coverage error ends "There is no Atlas 14
+estimate for it." instead of naming DamIT PMP. The JSON schema ids (`damit.pmp.atlas14_gis` and the other
+`damit.pmp.*`) are file-format names and stay, so each plugin reads the other's files.
+
+**The guard.** `scripts/check_atlas14_shared.py --dwr <DWR_Plugins checkout>` fails (exit 1, with a short diff) when a
+pair differs or a file is missing; there are no accepted differences. `damit_pmp/SHARED_ATLAS14.json` records the
+DWR_Plugins commit the copies were checked at and the sha256 of each file, and `tests/test_atlas14_shared.py` fails when
+a shared file changes without a new record. CI (`.github/workflows/atlas14_shared.yml`) checks pull requests against the
+recorded commit and, every day, against DWR_Plugins `main`. DWR_Plugins has its own tripwire
+(`DamSafety_PMP/noaa14/SHARED.json`). After changing a shared file: copy it to `DamSafety_PMP/noaa14/`, commit it in
+DWR_Plugins, then run `python3 scripts/check_atlas14_shared.py --dwr <DWR_Plugins checkout> --update` and commit
+`SHARED_ATLAS14.json` with the change.
+
+**fetchgrid sidecar.** `fetchgrid` always writes `<tif>.json` now; OUTPUT_JSON adds a copy. Before, a run with
+OUTPUT_JSON set wrote no sidecar, so `gridbasin` read that GeoTIFF (already in inches) with SCALE 0.001 and gave a basin
+mean 1000 times too small. `MASK_TO_BASIN` and `gridbasin` keep every cell the basin touches; the label, the help and the
+`gisgrid.read_clip` docstring now say so (the rule did not change).

@@ -41,8 +41,9 @@ def parse_name(path):
 
 
 def grid_scale(path, default=0.001):
-    """Inches per grid unit: 1.0 for a grid written by damit_pmp:fetchgrid (its JSON sidecar says units in),
-    else ``default`` (NOAA's own grids are thousandths of an inch)."""
+    """Inches per grid unit: 1.0 for a grid written by an Atlas 14 fetchgrid tool (its JSON sidecar says units in;
+    the sidecar schema id damit.pmp.atlas14_gis is a file-format name shared by both plugins), else ``default``
+    (NOAA's own grids are thousandths of an inch)."""
     side = path + ".json"
     if os.path.exists(side):
         try:

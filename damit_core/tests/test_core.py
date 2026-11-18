@@ -1,10 +1,13 @@
 """DamIT Core (pure Python; no QGIS needed)."""
+import http.server
 import json
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -119,6 +122,47 @@ class CatalogAccess(unittest.TestCase):
         self.assertEqual(catalog_access.preset_for_state(cat, "NC"), "NC")    # Nov 2026 Summaries S-12
         cfg = catalog_access.resolve(cat, "preset", "USBR_TM11")
         self.assertEqual(cfg["preset_id"], "USBR")
+
+
+class _NotFound(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):  # noqa: N802
+        self.send_error(404, "Not Found")
+
+    def log_message(self, *args):
+        pass
+
+
+class HttpDownload(unittest.TestCase):
+    """lib.http.download_file against a local server that answers 404 (no internet)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
+        self.thread = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = "http://127.0.0.1:{}/missing.zip".format(self.srv.server_address[1])
+        env = mock.patch.dict(os.environ, {"no_proxy": "127.0.0.1,localhost", "NO_PROXY": "127.0.0.1,localhost"})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.thread.join(5)
+        shutil.rmtree(self.tmp)
+
+    def test_404_keeps_its_status_and_leaves_no_file_or_descriptor(self):
+        from damit_core.lib import http as H
+        dest = os.path.join(self.tmp, "dl", "missing.zip")
+        fds = "/proc/self/fd"
+        before = len(os.listdir(fds)) if os.path.isdir(fds) else None
+        for _ in range(3):
+            with self.assertRaises(H.HttpError) as cm:
+                H.download_file(self.url, dest, timeout=10)
+            self.assertEqual(cm.exception.status, 404)
+        self.assertEqual(os.listdir(os.path.dirname(dest)), [])           # no .part_ file left
+        if before is not None:
+            self.assertEqual(len(os.listdir(fds)), before)                # the temporary file was closed
 
 
 if __name__ == "__main__":

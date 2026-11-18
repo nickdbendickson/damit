@@ -57,6 +57,7 @@ def get_bytes(url, timeout=60, headers=None):
         with urllib.request.urlopen(req, timeout=timeout) as r:   # noqa: S310 - https URLs we build
             return r.read()
     except urllib.error.HTTPError as e:
+        e.close()                                # its response holds the socket open
         raise HttpError(url, e.code, str(e.reason))
     except (urllib.error.URLError, OSError) as e:
         raise HttpError(url, None, str(e))
@@ -69,6 +70,7 @@ def head(url, timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as r:   # noqa: S310
             return {k.lower(): v for k, v in r.headers.items()}
     except urllib.error.HTTPError as e:
+        e.close()                                # its response holds the socket open
         raise HttpError(url, e.code, str(e.reason))
     except (urllib.error.URLError, OSError) as e:
         raise HttpError(url, None, str(e))
@@ -82,27 +84,31 @@ def download_file(url, dest, timeout=120, progress=None, cancelled=None, max_byt
     fd, tmp = tempfile.mkstemp(prefix=".part_", dir=folder)
     done = 0
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout) as r, os.fdopen(fd, "wb") as out:  # noqa: S310
-            total = int(r.headers.get("Content-Length") or 0) or None
-            if max_bytes and total and total > max_bytes:
-                raise HttpError(url, None, "download is {:.0f} MB, over the {:.0f} MB limit".format(
-                    total / 1e6, max_bytes / 1e6))
-            while True:
-                if cancelled is not None and cancelled():
-                    raise HttpError(url, None, "cancelled")
-                chunk = r.read(1 << 20)
-                if not chunk:
-                    break
-                out.write(chunk)
-                done += len(chunk)
-                if max_bytes and done > max_bytes:
-                    raise HttpError(url, None, "download passed the {:.0f} MB limit".format(max_bytes / 1e6))
-                if progress is not None:
-                    progress(done, total)
+        # the file is opened before the request, so it is closed before the cleanup below even when the request
+        # fails (an open file cannot be removed on Windows, and that error would hide the HTTP status)
+        with os.fdopen(fd, "wb") as out:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                total = int(r.headers.get("Content-Length") or 0) or None
+                if max_bytes and total and total > max_bytes:
+                    raise HttpError(url, None, "download is {:.0f} MB, over the {:.0f} MB limit".format(
+                        total / 1e6, max_bytes / 1e6))
+                while True:
+                    if cancelled is not None and cancelled():
+                        raise HttpError(url, None, "cancelled")
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    done += len(chunk)
+                    if max_bytes and done > max_bytes:
+                        raise HttpError(url, None, "download passed the {:.0f} MB limit".format(max_bytes / 1e6))
+                    if progress is not None:
+                        progress(done, total)
         shutil.move(tmp, dest)
         return done
     except urllib.error.HTTPError as e:
+        e.close()                                # its response holds the socket open
         raise HttpError(url, e.code, str(e.reason))
     except (urllib.error.URLError, OSError) as e:
         if isinstance(e, HttpError):
