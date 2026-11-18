@@ -528,6 +528,51 @@ def _prepare(dam: dict, analysis: dict, work: str | None, log, files=None, appen
 SETTINGS_DIR: Path | None = None
 
 
+CHECK_ROLES = ("preflight", "runchain", "rundam", "classify")   # the roles the Report step's buttons call
+CHECK_TIMEOUT_S = 180.0
+
+
+def run_check(log, cancel: threading.Event | None = None, config: HandoffConfig | None = None) -> dict:
+    """'Check QGIS hand-off' (install test 2026-11-18): qgis_process is found, which QGIS profile it reads, and every
+    algorithm the buttons call (DamIT defaults or damit-handoff.json overrides) is registered there
+    (`qgis_process help <id>`). Runs no dam and writes nothing."""
+    cfg = handoff_config(config)
+    exe = find_qgis_process()
+    if not exe:
+        log("qgis_process was not found. Open the desk with the dam-suite launcher open-damit-crest.sh, or put "
+            "QGIS's qgis_process on PATH (or set QGIS_PROCESS).")
+        return {"ok": False, "check": []}
+    log(f"qgis_process: {exe}")
+    custom = os.environ.get("QGIS_CUSTOM_CONFIG_PATH")
+    log("QGIS profile it reads: " + (f"default profile under {custom}" if custom else
+                                     "the default profile (QGIS_CUSTOM_CONFIG_PATH not set)"))
+    if custom:
+        link = Path(custom) / "profiles" / "default"
+        log(f"  -> {os.path.realpath(link)}" if link.exists() else
+            f"  -> {link} does not exist: the launcher's link is missing")
+    for problem in cfg.problems:
+        log(f"Handoff config: {problem}")
+    rows = []
+    for role in CHECK_ROLES:
+        if cancel is not None and cancel.is_set():
+            log("Cancelled.")
+            return {"ok": False, "cancelled": True, "check": rows}
+        alg = cfg.alg(role)
+        code, out = _run([exe, "help", alg], CHECK_TIMEOUT_S, cancel)
+        found = code == 0 and alg in out
+        rows.append({"role": role, "algorithm": alg, "found": found})
+        where = "" if cfg.sources.get(role, "default") == "default" else f", from {cfg.sources[role]}"
+        log(f"{'OK     ' if found else 'MISSING'} {alg}  ({role}{where})")
+        if not found:
+            for ln in [x for x in out.strip().splitlines() if x.strip()][-2:]:
+                log(f"        {ln}")
+    ok = all(r["found"] for r in rows)
+    log("The hand-off is ready: every algorithm the buttons call is in QGIS." if ok else
+        "Not ready: install or enable the missing DamIT plugins in that profile (DamIT Screener for damit_screen:, "
+        "DamIT Runner for damit_run:, DamIT Hazard for damit:), then check again.")
+    return {"ok": ok, "check": rows}
+
+
 def handoff_config(config: HandoffConfig | None = None) -> HandoffConfig:
     """The resolved algorithm ids. Read for every job, so an edited damit-handoff.json applies without a restart."""
     return config if config is not None else load_config(SETTINGS_DIR)

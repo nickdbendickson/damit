@@ -247,7 +247,9 @@ class Integration(unittest.TestCase):
         r = processing.run("damit_screen:runchain", {
             "WORK": work, "MODE": 0, "PRESET": "ND", "DAMS": self._dams(), "FIELD_MAP": self.FMAP,
             "RECEPTORS": self._receptors(),
-            "SETTINGS": json.dumps({"summary": {"model_dimension": "1D", "hydraulics_source": "breach_model"}})})
+            # no terrain here: no screening flood asked for (Screener 0.3.5 fails a chain whose flood did not run)
+            "SETTINGS": json.dumps({"engine2d": "off",
+                                    "summary": {"model_dimension": "1D", "hydraulics_source": "breach_model"}})})
         self.assertTrue(r["OK"])
         self.assertEqual(r["DAMS"], 1)
         pkg_path = r["HANDOFFS"][0]

@@ -1,0 +1,65 @@
+name: atlas14_shared
+
+# Five DamIT PMP modules (damit_pmp/atlas14.py, temporal.py, storm.py, gisgrid.py, gridstats.py) are the NOAA Atlas 14
+# core DamSafety PMP shares: nickdbendickson/DWR_Plugins carries byte-identical copies in DamSafety_PMP/noaa14/.
+# scripts/check_atlas14_shared.py fails on any difference (damit_pmp/SHARED_ATLAS14.json records the DWR_Plugins commit).
+#   pull request / push: against the DWR_Plugins commit SHARED_ATLAS14.json was recorded at, so a change to a shared
+#                        file has to be copied to DWR_Plugins, committed there and re-recorded (--update);
+#   daily:               against DWR_Plugins main, so a copy that was not made (or an edit made only there) shows up
+#                        within a day.
+
+on:
+  push:
+    branches: [main]
+    paths: ["damit_pmp/atlas14.py", "damit_pmp/temporal.py", "damit_pmp/storm.py", "damit_pmp/gisgrid.py",
+            "damit_pmp/gridstats.py", "damit_pmp/SHARED_ATLAS14.json", "scripts/check_atlas14_shared.py",
+            "tests/test_atlas14_shared.py", ".github/workflows/atlas14_shared.yml"]
+  pull_request:
+    paths: ["damit_pmp/atlas14.py", "damit_pmp/temporal.py", "damit_pmp/storm.py", "damit_pmp/gisgrid.py",
+            "damit_pmp/gridstats.py", "damit_pmp/SHARED_ATLAS14.json", "scripts/check_atlas14_shared.py",
+            "tests/test_atlas14_shared.py", ".github/workflows/atlas14_shared.yml"]
+  schedule:
+    - cron: "29 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recorded:
+    name: Shared Atlas 14 core matches the recorded DWR_Plugins commit
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The guard's own tests
+        run: python3 -W error -m unittest -v tests.test_atlas14_shared
+      - name: Recorded DWR_Plugins commit
+        id: rec
+        run: echo "sha=$(python3 scripts/check_atlas14_shared.py --print-synced-to)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: nickdbendickson/DWR_Plugins
+          ref: ${{ steps.rec.outputs.sha }}
+          path: _dwr
+      - name: Byte-identical with the recorded commit
+        run: python3 scripts/check_atlas14_shared.py --dwr _dwr
+
+  dwr-main:
+    name: Shared Atlas 14 core matches DWR_Plugins main
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/checkout@v4
+        with:
+          repository: nickdbendickson/DWR_Plugins
+          path: _dwr
+      - name: Byte-identical with DWR_Plugins main (a failure shows the diff)
+        run: python3 scripts/check_atlas14_shared.py --dwr _dwr

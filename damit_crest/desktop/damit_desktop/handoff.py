@@ -178,6 +178,36 @@ def _line(feature):
     return out if len(out) >= 2 else None
 
 
+# EPSG:5070 (NAD83 / Conus Albers): the CRS the Runner's proposed-embankment block uses for line_xy
+# (damit_runner/core/proposed.py json_safe_spec). conditioning.line_for_spec uses line_xy on an EPSG:5070 grid and
+# projects line_lonlat onto any other DEM CRS, so the block carries both. GRS80; the drawn line is web-map lon/lat,
+# taken as NAD83 (the WGS84/NAD83 difference, about 1 m, is below the DEM cell).
+_ALBERS_A = 6378137.0
+_ALBERS_F = 1 / 298.257222101
+_ALBERS_LAT1, _ALBERS_LAT2, _ALBERS_LAT0, _ALBERS_LON0 = 29.5, 45.5, 23.0, -96.0
+
+
+def _albers_q(sin_phi: float, e: float) -> float:
+    es = e * sin_phi
+    return (1 - e * e) * (sin_phi / (1 - es * es) - (1 / (2 * e)) * math.log((1 - es) / (1 + es)))
+
+
+def lonlat_to_5070(lon: float, lat: float) -> tuple[float, float]:
+    """Longitude/latitude (degrees) to EPSG:5070 metres (Snyder, Map Projections, eq. 14-1 to 14-12)."""
+    e = math.sqrt(_ALBERS_F * (2 - _ALBERS_F))
+    a = _ALBERS_A
+    p1, p2, p0 = (math.radians(v) for v in (_ALBERS_LAT1, _ALBERS_LAT2, _ALBERS_LAT0))
+    m1 = math.cos(p1) / math.sqrt(1 - (e * math.sin(p1)) ** 2)
+    m2 = math.cos(p2) / math.sqrt(1 - (e * math.sin(p2)) ** 2)
+    q0, q1, q2 = (_albers_q(math.sin(v), e) for v in (p0, p1, p2))
+    n = (m1 * m1 - m2 * m2) / (q2 - q1)
+    c = m1 * m1 + n * q1
+    rho0 = a * math.sqrt(c - n * q0) / n
+    rho = a * math.sqrt(c - n * _albers_q(math.sin(math.radians(lat)), e)) / n
+    theta = n * math.radians(lon - _ALBERS_LON0)
+    return rho * math.sin(theta), rho0 - rho * math.cos(theta)
+
+
 def _dump(path: Path, obj) -> None:
     """Write JSON atomically. A crash mid-write must not leave a truncated dam.json — write_dam_folder then
     refuses to overwrite it (not a valid record) and the folder is stuck until someone deletes the file by hand.
@@ -360,21 +390,30 @@ def write_dam_folder(work: Path, dam: dict, analysis: dict, append_status: bool 
             notes.append(
                 "Kept the proposed embankment already in dam.json. It already has a crest line in map coordinates."
             )
-        elif line and crest is not None:
+        elif line and crest is not None and ids["is_new"]:
+            # A new (proposed) dam: the Runner raises this embankment onto the DEM it reads. line_xy is the drawn
+            # line in EPSG:5070 (the block's crs, as the Runner's own proposed-dam tool writes it); on a DEM in
+            # another CRS the Runner projects line_lonlat instead (conditioning.line_for_spec).
             record["proposed_embankment"] = {
                 "phrase": PHRASE,
                 "dam_id": dam_id,
+                "crs": "EPSG:5070",
+                "line_xy": [[round(x, 2), round(y, 2)] for x, y in (lonlat_to_5070(lon, lat) for lon, lat in line)],
                 "line_lonlat": [[round(x, 7), round(y, 7)] for x, y in line],
                 "crest_m": round(float(crest) * FT, 3),
                 "crest_len_m": round(float(_num(dam.get("lengthFt")) or 0) * FT, 2),
                 "height_m": round(float(_num(dam.get("heightFt")) or 0) * FT, 3),
-                "crest_note": (
-                    "line_xy is not set. DamIT Crest stored longitude and latitude. "
-                    "The Runner inserts the embankment only after the line is projected to the DEM CRS."
-                ),
             }
             notes.append(
-                "line_xy is not set. The drawn line is longitude and latitude, so the Runner will not insert the embankment."
+                "Proposed embankment: the drawn line is in dam.json as line_xy (EPSG:5070) and longitude and latitude. "
+                "The Runner raises it onto the DEM, projecting the line when the DEM is in another CRS."
+            )
+        elif line:
+            # An existing dam is already in the DEM: no embankment is inserted. The Runner reads dam_line.geojson
+            # from this folder and projects it to the DEM CRS for the dam position and the toe band.
+            notes.append(
+                "Dam line written to dam_line.geojson (longitude and latitude). The Runner projects it to the DEM CRS "
+                "for the dam position and the toe band. An existing dam is already in the DEM, so no embankment is inserted."
             )
         # What this record used of the suite's shared defaults (the desk's settings.ts assumptions()), the same
         # top-level entry a Runner run writes. Another tool's entry is kept: DamIT Crest fills it only when it is

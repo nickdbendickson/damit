@@ -60,7 +60,7 @@ class EndToEnd(unittest.TestCase):
             {"dam_id": "ID", "height_ft": "HT", "storage_acft": "STOR",
              "top_of_dam_elev_ft": "TOD", "normal_pool_elev_ft": "NP",
              "emergency_spillway_elev_ft": "AUX", "peak_pool_100yr_elev_ft": "P100"})
-        settings = dict(WF.DEFAULT_SETTINGS, preset=preset or state, terrain=self.dem)
+        settings = dict(WF.DEFAULT_SETTINGS, preset=preset or state, terrain=self.dem, engine2d="off")  # an empty DEM: no flood; the hand-off is what is tested
         summ = WF.run_chain(self.work, settings, dams, [], log=lambda *_: None)
         self.assertTrue(summ["ok"], "screener failed for {}".format(state))
         return summ

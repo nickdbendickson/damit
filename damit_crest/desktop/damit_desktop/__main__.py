@@ -47,8 +47,46 @@ PREFERRED_PORT = 47241
 
 TITLE = "DamIT Crest — Dam Breach and Hazard Desk"
 
-#: Random per-launch secret. The served index.html carries it in <meta name="damit-token">; every /api/ call must
-#: send it back in the X-DamIT-Token header. A custom header also forces a CORS preflight, which this server never
+#: Injected into the desk after every page load (evaluate_js runs outside the page CSP, and webview_csp.py keeps it
+#: from using eval, so script-src 'self' does not block it). It keeps the window on its own 127.0.0.1 origin: a click
+#: on an off-origin http(s) link, or a window.open to one, is cancelled and handed to the OS browser via
+#: window.pywebview.api.open_external. Same-origin links and non-web schemes (blob:, data:, about:, mailto:) are left
+#: to the page, so nothing legitimate changes.
+NAV_GUARD_JS = r"""
+(function () {
+  if (window.__damitNavGuard) return;
+  window.__damitNavGuard = true;
+  var ORIGIN = window.location.origin;
+  function external(url) {
+    try {
+      var u = new URL(url, window.location.href);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      return u.origin === ORIGIN ? null : u.href;
+    } catch (e) { return null; }
+  }
+  document.addEventListener("click", function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+    if (!a) return;
+    var href = external(a.getAttribute("href"));
+    if (!href) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try { window.pywebview.api.open_external(href); } catch (e) {}
+  }, true);
+  var nativeOpen = window.open;
+  window.open = function (url) {
+    var href = url ? external(String(url)) : null;
+    if (href) { try { window.pywebview.api.open_external(href); } catch (e) {} return null; }
+    return nativeOpen.apply(window, arguments);
+  };
+})();
+"""
+
+#: Random per-launch secret. main() opens the desk at index.html#damit-token=<token>: a URL fragment is never sent
+#: over HTTP, so no request to this server - from another local process or another OS user on a shared host - can
+#: obtain it (security audit 2026-11-18: it used to be written into <meta name="damit-token"> of the served page).
+#: The page keeps it in sessionStorage (src/lib/crest/desktop-server.ts); every /api/ call must send it back in the
+#: X-DamIT-Token header. It is never written into the page markup and no endpoint returns it. A custom header also forces a CORS preflight, which this server never
 #: answers, so other web origins cannot reach the API from a browser.
 TOKEN_HEADER = "X-DamIT-Token"
 API_TOKEN = secrets.token_urlsafe(32)
@@ -110,7 +148,9 @@ def start_job(
     def work_job():
         try:
             log = lambda line: _job_log(job, line)
-            if kind == "layers":
+            if kind == "check":
+                result = qgis_run.run_check(log, cancel=cancel)
+            elif kind == "layers":
                 result = run_layers(dam or {}, work, source, log)
             elif kind == "folder":
                 result = run_folder(dam or {}, analysis or {}, work, log, files)
@@ -130,6 +170,8 @@ def start_job(
                     job["chainIds"] = list(result["chainIds"])
                 if result.get("chainResult"):
                     job["chainResult"] = list(result["chainResult"])
+                if result.get("check"):
+                    job["check"] = list(result["check"])
                 if isinstance(result.get("classification"), dict):
                     # damit:classify's class for the chosen jurisdiction; the Report step stores and leads with it.
                     job["classification"] = dict(result["classification"])
@@ -263,8 +305,7 @@ class _Handler(SimpleHTTPRequestHandler):
     def _serve_index(self) -> None:
         index = Path(self.directory) / "index.html"
         html = index.read_text(encoding="utf-8")
-        meta = f'<meta name="damit-token" content="{API_TOKEN}">'
-        html = html.replace("<head>", "<head>" + meta, 1) if "<head>" in html else meta + html
+        # The token is NOT injected into the page (see API_TOKEN): any local peer can GET / on the loopback port.
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
     def do_GET(self):
@@ -320,6 +361,7 @@ class _Handler(SimpleHTTPRequestHandler):
             "/api/folder": "folder",
             "/api/layers": "layers",
             "/api/classify": "classify",
+            "/api/check": "check",
         }
         kind = kinds.get(parsed.path)
         if not self._api_allowed():
@@ -462,7 +504,7 @@ def serve(root: Path | None = None, port: int = PREFERRED_PORT) -> ThreadingHTTP
     except OSError as e:
         if port == 0 or e.errno not in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1), 10048):
             raise
-        print(f"DamIT Crest desktop: port {port} is busy; using a random port (saved records will not carry over).")
+        print(f"DamIT Crest desktop: port {port} is busy; using a random port (saved records will not carry over).", flush=True)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -622,6 +664,19 @@ class Api:
         self._remember_dir(Path(path).resolve().parent)
         return {"saved": str(path)}
 
+    def open_external(self, url: str) -> dict:
+        """Open an http/https link in the system browser. The desk window itself never leaves its own local origin:
+        the page nav guard (NAV_GUARD_JS) routes every off-origin link here, so a link can never drive the app to
+        another site. Any non-web scheme is refused rather than handed to the OS."""
+        try:
+            parsed = urlparse(str(url))
+        except Exception:
+            return {"error": "bad url"}
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return {"error": "only http/https links open in the browser"}
+        webbrowser.open(url)
+        return {"opened": url}
+
 
 #: Largest binary export accepted from the page (a view PDF is a few MB).
 MAX_BINARY_BYTES = 100 * 1024 * 1024
@@ -696,6 +751,11 @@ def write_text(path: Path, text: str) -> None:
         raise
 
 
+def desk_url(port: int) -> str:
+    """The address the desk window opens: the API token rides in the fragment, which is never sent over HTTP."""
+    return f"http://127.0.0.1:{port}/index.html#damit-token={API_TOKEN}"
+
+
 def main() -> None:
     global SETTINGS_FILE
     store = storage_dir()
@@ -704,12 +764,19 @@ def main() -> None:
     qgis_run.SETTINGS_DIR = store  # damit-handoff.json is read from here (docs/HANDOFF.md)
     nid.NID_DIR = store / "nid"  # the per-state NID cache (nid.py), outside the install and any repository
     server = serve()
+    # printed without the token: opening this plain address elsewhere shows the desk, but its /api/ calls are refused
     url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
+    open_url = desk_url(server.server_address[1])
+    # install test 2026-11-18: the address is printed at start (flushed: the launcher's output may be a pipe),
+    # so it can be opened in a browser and the port is visible whichever window opens.
+    print(f"DamIT Crest desktop: {url}", flush=True)
     try:
         import webview
 
         try:
             webview.settings["ALLOW_DOWNLOADS"] = True  # belt and braces; exports use the Save dialog bridge
+            # A target=_blank / window.open link goes to the OS browser, never a new in-app window on another origin.
+            webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
         except Exception:
             pass
         # pywebview's JS API binder uses new Function / eval; rewrite it so the CSP can stay
@@ -717,11 +784,15 @@ def main() -> None:
         from .webview_csp import install_pywebview_csp_patches
         install_pywebview_csp_patches(webview)
         api = Api(settings_file=SETTINGS_FILE)
-        api._window = webview.create_window(TITLE, url, js_api=api, width=1280, height=860, min_size=(760, 560))
+        api._window = webview.create_window(TITLE, open_url, js_api=api, width=1280, height=860, min_size=(760, 560))
+        # Re-arm the nav guard after every in-page load (the loaded event re-fires on each navigation).
+        api._window.events.loaded += lambda *a: api._window.evaluate_js(NAV_GUARD_JS)
         webview.start(private_mode=False, storage_path=str(store))
     except Exception as e:  # no GUI backend: use the system browser (downloads work there)
-        print(f"DamIT Crest desktop: no webview ({e}). Opening {url} in the browser; press Ctrl+C to stop.")
-        webbrowser.open(url)
+        print(f"DamIT Crest desktop: no webview ({e}). Opening {url} in the browser; press Ctrl+C to stop.", flush=True)
+        # The token is in the fragment. On this fallback the OS passes the address to the browser on its command
+        # line, which other local users may be able to list; the pywebview window above has no such exposure.
+        webbrowser.open(open_url)
         try:
             threading.Event().wait()
         except KeyboardInterrupt:

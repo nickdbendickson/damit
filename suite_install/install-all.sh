@@ -30,6 +30,18 @@
 #   bash install-all.sh --check          # report what is installed
 #   options: --no-damsafety --no-damit --no-crest (both desks) --no-ai --no-heim --no-vor --skip-lisflood
 #
+#   Somewhere other than your normal QGIS profiles and home folder (for a test install):
+#     --prefix DIR              the suite folder (launchers, LISFLOOD-FP, desks); default ~/dam-suite
+#                               (env DAMSUITE_PREFIX)
+#     --qgis-profiles-path DIR  QGIS profiles under DIR/QGIS3/profiles instead of QGIS's usual
+#                               folder; the launchers open QGIS with --profiles-path DIR
+#                               (env DAMSUITE_QGIS_PROFILES_PATH)
+#     --damsafety-profile NAME  --damit-profile NAME   profile names (default damsafety / damit)
+#     --root DIR                all of the above under DIR: DIR/dam-suite, DIR/qgis and Miniforge in
+#                               DIR/miniforge3 when it is not installed yet. The local AIs (Heim, Vor,
+#                               Ollama) always use your home folder, so --root also turns them off
+#                               unless --ai is given after it.
+#
 # It never touches your data folders (~/ND_Suite_Data, DamIT data), offline packs, or
 # any QGIS profile other than "damsafety" and "damit".
 # =============================================================================
@@ -40,6 +52,7 @@ PREFIX="${DAMSUITE_PREFIX:-$HOME/dam-suite}"
 MINIFORGE_DIR="${DAMSUITE_MINIFORGE:-$HOME/miniforge3}"
 DS_PROFILE="${DAMSAFETY_PROFILE:-damsafety}"
 DI_PROFILE="${DAMIT_PROFILE:-damit}"
+QGIS_PROFILES_PATH="${DAMSUITE_QGIS_PROFILES_PATH:-}"
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
@@ -49,7 +62,17 @@ while [ $# -gt 0 ]; do
     --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;  --no-crest) DO_CREST=0 ;;
     --no-ai) DO_HEIM=0; DO_VOR=0 ;;  --no-heim) DO_HEIM=0 ;;  --no-vor) DO_VOR=0 ;;
     --skip-lisflood) SKIP_LISFLOOD=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
-    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+    --ai) DO_HEIM=1; DO_VOR=1 ;;
+    --prefix|--qgis-profiles-path|--damsafety-profile|--damit-profile|--root)
+      [ $# -gt 1 ] && [ -n "$2" ] || { echo "$1 needs a value" >&2; exit 2; }
+      case "$1" in
+        --prefix) PREFIX="$2" ;;  --qgis-profiles-path) QGIS_PROFILES_PATH="$2" ;;
+        --damsafety-profile) DS_PROFILE="$2" ;;  --damit-profile) DI_PROFILE="$2" ;;
+        --root) PREFIX="$2/dam-suite"; QGIS_PROFILES_PATH="$2/qgis"
+                [ -x "$MINIFORGE_DIR/bin/conda" ] || MINIFORGE_DIR="$2/miniforge3"
+                DO_HEIM=0; DO_VOR=0 ;;
+      esac; shift ;;
+    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac; shift
 done
@@ -87,6 +110,19 @@ if [ "$OS" = Darwin ]; then
 else
   PROFILES="$HOME/.local/share/QGIS/QGIS3/profiles"; NCPU="$(nproc)"
 fi
+# --qgis-profiles-path / --root: QGIS's own --profiles-path layout (<path>/QGIS3/profiles); the
+# launchers pass it, so QGIS opened from them uses these profiles and never the usual ones
+PROFILES_ARG=()
+if [ -n "$QGIS_PROFILES_PATH" ]; then
+  case "$QGIS_PROFILES_PATH" in "~"/*) QGIS_PROFILES_PATH="$HOME/${QGIS_PROFILES_PATH#"~/"}" ;; /*) ;;
+    *) QGIS_PROFILES_PATH="$PWD/$QGIS_PROFILES_PATH" ;; esac
+  PROFILES="$QGIS_PROFILES_PATH/QGIS3/profiles"; PROFILES_ARG=(--profiles-path "$QGIS_PROFILES_PATH")
+fi
+case "$PREFIX" in "~"/*) PREFIX="$HOME/${PREFIX#"~/"}" ;; /*) ;; *) PREFIX="$PWD/$PREFIX" ;; esac
+for _n in "$DS_PROFILE" "$DI_PROFILE"; do
+  case "$_n" in ""|*/*|.|..) die "profile name '$_n' is not a plain folder name" ;; esac
+done
+[ "$DS_PROFILE" != "$DI_PROFILE" ] || die "the DamSafety and DamIT sets need different profiles (both are '$DS_PROFILE'): their Processing ids clash"
 THREADS="${DAMSUITE_THREADS:-$NCPU}"
 DS_DIR="$PROFILES/$DS_PROFILE"; DI_DIR="$PROFILES/$DI_PROFILE"
 CONDA_PKGS="$HERE/offline/conda/$P"
@@ -164,6 +200,7 @@ if [ "$MODE" = check ]; then
       found_elsewhere "$e" | while IFS= read -r o; do echo "      another $e at $o"; done
     done
   else echo "  conda: not found"; fi
+  echo "  QGIS profiles: $PROFILES$( [ -n "$QGIS_PROFILES_PATH" ] && echo " (QGIS opened with --profiles-path $QGIS_PROFILES_PATH)")"
   L="$PREFIX/bin/lisflood"
   echo "  LISFLOOD-FP: $L $( [ -x "$L" ] && { grep -aq inittm_depth "$L" && echo 'OK (Runner patch present)' || echo UNPATCHED; } || echo missing)"
   echo "  DamSafety profile ($DS_PROFILE):"; for p in $DS_PLUGINS; do echo "    $p $( [ -d "$DS_DIR/python/plugins/$p" ] && ver_of "$DS_DIR/python/plugins/$p" || echo missing)"; done
@@ -194,24 +231,33 @@ ROLES="ndqgis ndanuga"
 # a locked package's local copy: offline/conda/<P>/<channel subdir>/<file> (noarch kept apart,
 # so conda reads each package's own subdir from the file:// URL)
 pkg_path() { local u="${1%/*}"; echo "$CONDA_PKGS/${u##*/}/${1##*/}"; }
-missing_files() {   # prints how many locked files for this platform are absent
-  local n=0 url name
+missing_files() {   # prints each locked file for this platform that is absent, one per line,
+  local url name    # as a path relative to this folder
   for r in $ROLES ndbuild; do
     [ -f "$HERE/locks/$P/$r.lock" ] || continue
     while read -r url _ _; do case "$url" in ''|\#*) continue ;; esac
-      [ -f "$(pkg_path "$url")" ] || n=$((n+1)); done < "$HERE/locks/$P/$r.lock"
+      name="$(pkg_path "$url")"
+      if [ ! -f "$name" ]; then echo "${name#"$HERE/"}"; fi
+    done < "$HERE/locks/$P/$r.lock"
   done
   while read -r pl kind path _; do case "$pl" in ''|\#*) continue ;; esac
-    [ "$pl" = "$P" ] && [ "$kind" != ollama-pull ] && [ ! -f "$HERE/$path" ] && n=$((n+1)); done < "$HERE/locks/extra.lock"
-  echo "$n"
+    if [ "$pl" = "$P" ] && [ "$kind" != ollama-pull ] && [ ! -f "$HERE/$path" ]; then echo "$path"; fi
+  done < "$HERE/locks/extra.lock"
 }
-MISS="$(missing_files)"
+MISSING="$(missing_files)"
+MISS=0; [ -z "$MISSING" ] || MISS="$(printf '%s\n' "$MISSING" | wc -l | tr -d ' ')"
 if [ "$MISS" -gt 0 ]; then
+  # 2026-11-18: name the files, not only count them. Not every offline file is under offline/:
+  # the local AIs' Ollama installer is in damit_ai/offline/, so a copy of offline/ alone from an
+  # older package folder leaves it behind.
+  say "Missing ($MISS):"
+  printf '%s\n' "$MISSING" | sed -n '1,20s/^/  /p'
+  if [ "$MISS" -gt 20 ]; then printf '  ... and %s more\n' "$((MISS - 20))"; fi
   # macOS: never download from the installer (as the earlier Mac packages: nothing fetched and run
   # on the Mac by the installer). Fill offline/ with the offline set or download-all.sh first.
   [ "$OS" = Darwin ] && OFFLINE_ONLY=1
   if [ "$OFFLINE_ONLY" = 1 ]; then
-    die "$MISS file(s) are missing from offline/. Unzip offline-$P.zip in this folder, or run  bash download-all.sh --platform $P  first (on this or any networked machine), then run this again."
+    die "$MISS file(s) are missing (listed above). Unzip offline-$P.zip in this folder, copy them (offline/ AND damit_ai/offline/) from an older package folder, or run  bash download-all.sh --platform $P  first (on this or any networked machine; it fetches only what is missing), then run this again."
   fi
   say "$MISS file(s) not in offline/ yet: fetching them (pinned, sha256-checked)."
   LIBFLAG=""; [ "$DO_VOR" = 1 ] || LIBFLAG="--no-library"
@@ -421,7 +467,9 @@ mk_launcher() {  # mk_launcher <file> <profile>
     printf 'export QT_PLUGIN_PATH=%q QGIS_PREFIX_PATH=%q\n' "$QP/plugins" "$QP"
     printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
     printf 'export NDBREACH_ANUGA_MESHER=gmsh NDBREACH_ANUGA_PYTHON=%q NDBREACH_LISFLOOD=%q\n' "$ANUGA_PY" "$LISFLOOD_EXE"
-    printf 'exec %q --profile %q "$@"\n' "$QP/bin/qgis" "$2"; } > "$1"
+    printf 'exec %q --profile %q' "$QP/bin/qgis" "$2"
+    [ ${#PROFILES_ARG[@]} -eq 0 ] || printf ' %q %q' "${PROFILES_ARG[@]}"
+    printf ' "$@"\n'; } > "$1"
   chmod +x "$1"
   if [ "$OS" = Darwin ]; then cp "$1" "${1%.sh}.command"; chmod +x "${1%.sh}.command"; fi
 }
@@ -533,7 +581,8 @@ fi
 # the ND inventory (DWR dams + NID + other structures), ND VERTCON grid and the DamSafety hand-off
 # (nddam:preflight / nddam:runchain / ndbreach:rundam in profile "damsafety"). It is self-contained
 # (no Catalog rule) and only needs the standard library, so it runs on the ndqgis env like DamIT
-# Crest. The two desks use different ports (47231 and 47241), so both can be open at once.
+# Crest. The two desks use different ports (North Dakota Crest 47231, DamIT Crest 47241), so both can
+# be open at once; each prints its address when it starts.
 if [ "$DO_CREST" = 1 ] && [ -f "$HERE/nd_crest/crest-desktop/run.py" ]; then
   say "North Dakota Crest desk -> $PREFIX/nd_crest"
   rm -rf "$PREFIX/nd_crest"; mkdir -p "$PREFIX/nd_crest"
@@ -570,6 +619,11 @@ if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then
     mkdir -p "$HOME/Vor/library"
     cp -R -n "$HERE/damit_ai/offline/Vor/library/." "$HOME/Vor/library/" 2>/dev/null || true
     ok "reference library copied to ~/Vor/library"
+  fi
+  # install test 2026-11-18: Vor came up with nothing to search. The library is not in the zip; it
+  # comes from download-all (offline/Vor) or fetch_asdso.py, and is indexed with `vor ingest`.
+  if [ "$DO_VOR" = 1 ] && ! find "$HOME/Vor/library" -type f \( -iname '*.pdf' -o -iname '*.md' \) 2>/dev/null | grep -q .; then
+    warn "Vor's library (~/Vor/library) is empty, so Vor has nothing to search yet. Get the public reference set with:  python3 $HERE/damit_ai/vor/fetch_asdso.py --catalog  (or bash download-all.sh, which puts it in offline/), then run:  vor ingest"
   fi
   export CONDA_EXE
   if [ "$OS" = Linux ]; then

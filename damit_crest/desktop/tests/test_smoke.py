@@ -241,12 +241,12 @@ class ServedEngineTests(unittest.TestCase):
 
     def test_serves_the_bundle(self):
         body, ctype = self.get("/index.html")
-        # the server adds the per-launch API token (damit_desktop.__main__.API_TOKEN) to the page it serves
+        # the per-launch API token is NOT written into the page (security audit 2026-11-18); the desk gets it from
+        # the URL fragment, so the served page is the bundle's index.html byte for byte
         from damit_desktop.__main__ import API_TOKEN
 
-        meta = f'<meta name="damit-token" content="{API_TOKEN}">'.encode()
-        self.assertIn(meta, body)
-        self.assertEqual(body.replace(meta, b"", 1), (WEB / "index.html").read_bytes())
+        self.assertNotIn(API_TOKEN.encode(), body)
+        self.assertEqual(body, (WEB / "index.html").read_bytes())
         self.assertIn("text/html", ctype)
         for ref in ASSET_RE.findall(body.decode("utf-8")):
             data, ctype = self.get("/" + ref)
