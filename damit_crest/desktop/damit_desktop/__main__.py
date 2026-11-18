@@ -145,7 +145,9 @@ def start_job(
     def work_job():
         try:
             log = lambda line: _job_log(job, line)
-            if kind == "layers":
+            if kind == "check":
+                result = qgis_run.run_check(log, cancel=cancel)
+            elif kind == "layers":
                 result = run_layers(dam or {}, work, source, log)
             elif kind == "folder":
                 result = run_folder(dam or {}, analysis or {}, work, log, files)
@@ -165,6 +167,8 @@ def start_job(
                     job["chainIds"] = list(result["chainIds"])
                 if result.get("chainResult"):
                     job["chainResult"] = list(result["chainResult"])
+                if result.get("check"):
+                    job["check"] = list(result["check"])
                 if isinstance(result.get("classification"), dict):
                     # damit:classify's class for the chosen jurisdiction; the Report step stores and leads with it.
                     job["classification"] = dict(result["classification"])
@@ -355,6 +359,7 @@ class _Handler(SimpleHTTPRequestHandler):
             "/api/folder": "folder",
             "/api/layers": "layers",
             "/api/classify": "classify",
+            "/api/check": "check",
         }
         kind = kinds.get(parsed.path)
         if not self._api_allowed():
