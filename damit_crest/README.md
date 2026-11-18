@@ -95,8 +95,20 @@ desk opens in the system browser. Optional packages: `pyinstaller damit_crest.sp
 `sh build_mac.sh` (macOS, Python 3.10–3.12) give `DamIT Crest.exe` / `DamIT Crest.app`.
 
 The local server listens on 127.0.0.1:47241 (Crest uses 47231, so both can run). Every `/api/` call needs the
-per-launch token the server puts in the page (`X-DamIT-Token`), and a job may only write under `~/DamITDams`,
-`DAMIT_WORK` or `DAMIT_WORK_ROOTS`.
+per-launch token (`X-DamIT-Token`), and a job may only write under `~/DamITDams`, `DAMIT_WORK` or `DAMIT_WORK_ROOTS`.
+The server never puts the token in the page and no endpoint returns it: the window opens at
+`index.html#damit-token=<token>` (a URL fragment is never sent over HTTP), and the page keeps it in `sessionStorage`.
+
+**The printed address and the browser.** At start the desk prints `DamIT Crest desktop: http://127.0.0.1:47241/index.html`
+(a random port when 47241 is busy). That address has no token: opened by hand in a browser it shows the desk, but every
+call to the local server (layers, the dam folder, screening, model runs, classify, the hand-off and VERTCON
+lookups, the local DEM) is
+refused (HTTP 403). Use the window. When no window backend starts (no pywebview, as on the suite installer's `ndqgis`
+env), the desk opens the system browser itself with a one-time launch link (`/launch?code=…`) that the server swaps,
+once and within 2 minutes, for the token, so the token never appears on the browser's command line; if no browser
+starts, that link is printed in the terminal. A reload of that tab keeps working. A used or expired link, or the plain
+address in a new tab, does not: stop the desk (Ctrl+C) and start it again. A browser that says the link was already
+used when you had not opened it means another program used it first; restarting also makes a new token.
 
 ## Settings: starting pool, roughness and the shared defaults
 

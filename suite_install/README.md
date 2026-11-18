@@ -94,6 +94,10 @@ Mac, also the `.command` files). On Windows, use `open-damsafety-qgis.cmd` /
 The Crest desks: `~/dam-suite/open-damit-crest.sh` and `open-nd-crest.sh` (Windows: `.cmd`). They
 use different ports (North Dakota Crest http://127.0.0.1:47231, DamIT Crest http://127.0.0.1:47241; each prints
 its address when it starts, and takes a random port if its own is busy), so both can be open at the same time.
+The suite's `ndqgis` env has no pywebview, so each launcher opens its desk in your browser through a one-time
+launch link (used once, valid 2 minutes; printed in the terminal if no browser starts). The printed address itself
+has no API token: typed into a browser it shows the desk, but the buttons that call the local server are refused.
+After closing the tab, stop the desk (Ctrl+C) and run the launcher again.
 Their Report step calls `qgis_process`
 in the matching profile (North Dakota Crest: `damsafety`; DamIT Crest: `damit`): `qgis_process` has
 no profile option, so the launcher points `QGIS_CUSTOM_CONFIG_PATH` at
