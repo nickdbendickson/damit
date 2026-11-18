@@ -36,7 +36,7 @@ class RoundTrip(unittest.TestCase):
                              {"dam_id": "ID", "height_ft": "HT", "storage_acft": "STOR", "top_of_dam_elev_ft": "TOD",
                               "normal_pool_elev_ft": "NP", "emergency_spillway_elev_ft": "AUX",
                               "peak_pool_100yr_elev_ft": "P100"})
-        summ = WF.run_chain(self.work, dict(WF.DEFAULT_SETTINGS, preset="NE", terrain=dem), dams, [],
+        summ = WF.run_chain(self.work, dict(WF.DEFAULT_SETTINGS, preset="NE", terrain=dem, engine2d="off"), dams, [],  # empty DEM: no flood
                             log=lambda *_: None)
         self.assertTrue(summ["ok"])
         self.pkg_path = summ["dams"]["NE00007"]["handoff_path"]

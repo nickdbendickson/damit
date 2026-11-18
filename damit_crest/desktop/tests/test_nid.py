@@ -14,7 +14,11 @@ sys.path.insert(0, str(HERE.parent))
 from damit_desktop import nid  # noqa: E402
 
 RI = (HERE / "fixtures" / "nid_ri_fixture.csv").read_text(encoding="utf-8")
-ND = (HERE.parent.parent / "scripts" / "fixtures" / "nid_nd_fixture.csv").read_text(encoding="utf-8")
+# install test 2026-11-18: the ND fixture was read from damit_crest/scripts/fixtures, which the install
+# package does not ship (it copies damit_crest/desktop only), so these tests failed after an install. The
+# desk keeps its own copy; test_nd_fixture_copy_matches_scripts checks it against the scripts copy in a checkout.
+ND_SCRIPTS = HERE.parent.parent / "scripts" / "fixtures" / "nid_nd_fixture.csv"
+ND = (HERE / "fixtures" / "nid_nd_fixture.csv").read_text(encoding="utf-8")
 
 
 class ConvertTests(unittest.TestCase):
@@ -33,6 +37,11 @@ class ConvertTests(unittest.TestCase):
         self.assertNotIn("FIXTURE-DESIGNER-NOT-REAL", text)
         self.assertNotIn('"owner', text.lower())
         self.assertIn("National Inventory of Dams", b["source"]["attribution"])
+
+    @unittest.skipUnless(ND_SCRIPTS.is_file(), "no damit_crest/scripts (an installed desk)")
+    def test_nd_fixture_copy_matches_scripts(self):
+        self.assertEqual(ND, ND_SCRIPTS.read_text(encoding="utf-8"),
+                         "copy scripts/fixtures/nid_nd_fixture.csv to desktop/tests/fixtures/")
 
     def test_nd_fixture_matches_the_node_build_values(self):
         b = nid.convert_csv(ND, "ND", "2026-10-29T21:56:00Z")

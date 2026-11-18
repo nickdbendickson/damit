@@ -72,7 +72,9 @@ class RunChain(C.DamitAlgorithm):
                             log=feedback.pushInfo, cancel=feedback.isCanceled)
         if not summ["ok"] and self.parameterAsBool(params, "FAIL_ON_ERROR", context):
             raise QgsProcessingException("Screening chain {}: see the log".format(
-                "refused by the preflight" if summ.get("refused") else "failed"))
+                "refused by the preflight" if summ.get("refused") else
+                "failed: no screening flood for {}".format(", ".join(sorted(summ["flood_failed"])))
+                if summ.get("flood_failed") else "failed"))
         return {"OK": summ["ok"], "DAMS": len(summ["dams"]), "REPORT": summ.get("report", ""),
                 "HANDOFFS": [r.get("handoff_path") for r in summ["dams"].values() if r.get("handoff_path")]}
 

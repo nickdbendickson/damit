@@ -81,6 +81,17 @@ class FindExe(unittest.TestCase):
         with mock.patch.object(shutil, "which", lambda n, *x, **k: a if n == "lisflood" else None):
             self.assertEqual(self.find()["how"], "PATH (lisflood)")
 
+    def test_dam_suite_installer_build_is_found(self):
+        # 0.6.5: the LISFLOOD-FP install-all puts in ~/dam-suite/bin (or DAMSUITE_PREFIX/bin)
+        LF = self.LF
+        built = _exe(os.path.join(self.tmp, "dam-suite", "bin"))
+        r = self.find()
+        self.assertEqual((r["exe"], r["how"], r["warning"]), (built, "install place", None))
+        other = _exe(os.path.join(self.tmp, "elsewhere", "bin"))
+        self.assertEqual(self.find(environ={"DAMSUITE_PREFIX": os.path.join(self.tmp, "elsewhere")})["exe"], other)
+        a = _exe(os.path.join(self.tmp, "a"))                        # a provider setting still wins
+        self.assertEqual(self.find(settings={LF.SETTING_DAMIT: a})["exe"], a)
+
     def test_nothing_found_falls_back_with_a_warning(self):
         r = self.find()
         self.assertEqual(r["exe"], self.LF.BUILTIN)
