@@ -1174,11 +1174,22 @@ class Store(object):
         self.load()
 
     def _stamp(self):
+        """(mtime, size, SQLite file change counter). The counter (header bytes 24-27) goes up on every
+        committed write; mtime and size alone missed a small insert made within one file-system time
+        tick (the new row fit in an existing page, so the size stayed the same)."""
         try:
             st = os.stat(DB)
-            return (st.st_mtime_ns, st.st_size)
         except OSError:
             return None
+        counter = None
+        try:
+            with open(DB, "rb") as f:
+                head = f.read(28)
+            if len(head) == 28 and head.startswith(b"SQLite format 3\x00"):
+                counter = int.from_bytes(head[24:28], "big")
+        except OSError:
+            pass
+        return (st.st_mtime_ns, st.st_size, counter)
 
     def load(self):
         self.stamp = self._stamp()
