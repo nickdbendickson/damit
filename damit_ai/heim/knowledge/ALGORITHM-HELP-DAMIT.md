@@ -455,6 +455,7 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme on the Apple GPU) |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |
@@ -593,6 +594,7 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme on the Apple GPU) |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |
@@ -788,6 +790,7 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme on the Apple GPU) |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |
@@ -1105,6 +1108,7 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme on the Apple GPU) |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |
