@@ -89,7 +89,8 @@ class Plugins(unittest.TestCase):
     def test_core_about_lists_suite(self):
         import damit_core
         txt = damit_core.classFactory(QH.FakeIface()).about_text()
-        self.assertIn("DamIT Core 0.3.0", txt)
+        from tests.test_metadata_suite import CORE_VERSION      # one place for the Core version
+        self.assertIn("DamIT Core " + CORE_VERSION, txt)
         self.assertIn("DamIT Catalog", txt)
 
     def test_provider_ids_do_not_collide_with_hazard(self):
