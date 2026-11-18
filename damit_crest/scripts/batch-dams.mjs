@@ -9,11 +9,14 @@
  *   node --experimental-strip-types scripts/batch-dams.mjs --out <dir> (--all | --county Cass[,Barnes] | --ids ND00199,ND00486)
  *        [--nid-state ND] [--nid-file nid_XX.json] [--concurrency 2] [--limit N] [--list]
  *        [--dem /path/ND_1m_EPSG26914.vrt [--dem-feet] [--gdalwarp <path>]]
- *        [--defaults ~/DamIT/defaults.json]
+ *        [--defaults ~/DamIT/defaults.json] [--no-flowlines]
  *
  * --dem reads the terrain from a local raster (the statewide 1 m mosaic) through gdalwarp instead of the 3DEP service
  * (scripts/local-dem.mjs): no per-dam download, and the crest is read on a 2 m grid. The VRT must be in metres
  * (--dem-feet for a feet DEM). 911 address points come from the ND GIS Hub for ND dams only.
+ *
+ * The trace crosses lakes along the USGS 3DHP mapped flowline (hydro.nationalmap.gov) on 3DEP terrain; --no-flowlines
+ * (and --dem, a local terrain that may be used offline) leave it to the terrain alone.
  *
  * --defaults starts every structure from a shared defaults file (the one the DamIT plugins and the desk's Settings
  * read: starting pool, failure mode, breach equation, Manning's n) instead of Crest's built-in values.
@@ -27,6 +30,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { localDemFetcher } from "./local-dem.mjs";
+import { fetchFlowlines } from "../src/lib/crest/flowlines.ts";
 import { applyDefaults, mergeDefaults, readDefaultsFile, recordDefaults } from "../src/lib/crest/settings.ts";
 import { DEFAULT_STATUSES, batchCsv, batchCsvMeta, estimateSeconds, loadStructures, makeStructures, runBatch, selectStructures } from "../src/lib/crest/batch.ts";
 import { makeNidData } from "../src/lib/crest/nid-dams.ts";
@@ -90,6 +94,7 @@ export function parseArgs(argv) {
     else if (a === "--dem-feet") o.demFeet = true;
     else if (a === "--gdalwarp") o.gdalwarp = argv[++i];
     else if (a === "--defaults") o.defaults = argv[++i];
+    else if (a === "--no-flowlines") o.noFlowlines = true;
     else throw new Error(`unexpected ${a}`);
   }
   if (!o.by) throw new Error("pick one of --all, --county, --ids");
@@ -155,6 +160,7 @@ export async function main(argv, log = console.log) {
     nd,
     ...(shared ? { prepare: (d) => applyDefaults(d, shared) } : {}),
     ...(local ? { fetchDem: local, nearCellM: 2, demLabel: "local DEM" } : {}),
+    flowlines: local || o.noFlowlines ? null : (b) => fetchFlowlines(b),
     concurrency: o.concurrency,
     skip,
     onRow: (row, _dam, done, total) => {
