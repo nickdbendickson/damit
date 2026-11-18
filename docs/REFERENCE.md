@@ -259,6 +259,12 @@ second pass when the flood reaches the mesh edge; needs scipy).
 the other install places. Before, a Runner without the provider setting (headless, another profile) fell back to the
 built-in engine although the installer had built LISFLOOD-FP. No model-number changes.
 
+0.6.6 (2026-11-18): LISFLOOD-FP `.bdy` times strictly increase at the printed 4 decimals (damit #126). The Screener's
+2D screening on LISFLOOD-FP (`flood/screen.py`) wrote 0.55 h and the 30 s grid's 1980 s both as `1980.0000`, and
+LISFLOOD-FP stopped with "Time Series invalid time values" (DWR-2801); `Hydrograph.resampled` (`flood/breach.py`,
+`core/breach.py`) takes DamSafety Runner 3.20.14's fix (DWR_Plugins #397) for records of 5,000 or more breakpoints.
+Only times within 0.002 s of another are dropped; no other model-number change.
+
 North Dakota M1 (catalog plugin 0.1.1): a structure in the TM-11 judgment zone gives **Medium** (still flagged for
 engineer review; R7 can take it higher). Other presets keep `judgment_class` null (flag only).
 
