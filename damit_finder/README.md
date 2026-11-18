@@ -316,13 +316,18 @@ in words why something is blank. The pick is made first and checked unchanged af
 the default image list (the most recent NAIP only) a card reads "1 of 1" or "0 of 1": one look, not
 a water history; list your state's yearly near-infrared images in `IMAGES` for that. Marks made
 with the evidence on the card are not an independent test of the evidence (`run_info` records
-`evidence`). The evidence tool also writes `review_order`, a second sort: score in bands 0.1 wide,
-then water in 2 or more image years first (0.7.1; with the default one-image list no fill has 2,
+`evidence`). The evidence tool also writes `review_order`, a second sort: score in bands 0.1 wide
+(a fill on a pond-outlet line, `line_source` "DEM pool outlet", counted four bands lower than its
+score and after the other fills of that band; 0.7.2), then water in 2 or more image years first (0.7.1; with the default one-image list no fill has 2,
 so this needs your yearly images in `IMAGES`), then buildings and roads down the flow path, then
 score; its CSV is written in that order. How far down to look: on two North Dakota review sheets
 (Finder 0.7.0 fills) 55 of the 60 top-scored unlisted fills were dams, and the dams with no pool
 in the LiDAR scored 0.5 to 0.75 with the ND model, so work down to a score of about 0.5 there; in
-another state the score is the ND model's guess until your own marks say otherwise.
+another state the score is the ND model's guess until your own marks say otherwise. On North
+Dakota's statewide review sheet (2026-11-18, 90 cards picked at random inside score bands) the
+pond-outlet fills were dams 3 of 8 at 0.73 and up, 2 of 10 at 0.5 to 0.73 and 0 of 8 at 0.3 to
+0.5, against 10 of 10, 13 of 16 at 0.6 to 0.73, 11 of 16 at 0.5 to 0.6 and 6 of 12 at 0.4 to 0.5
+for the other fills: hence the four-band drop. Mark a sheet of your own before you trust it.
 
 A review sheet (an aerial and a hillshade chip per card; yes / no / unsure / offset, where offset is
 a real dam just off the point) gives the marks the score tool's `MARKS` takes, and
