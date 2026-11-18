@@ -135,16 +135,17 @@ class TestAlgorithmHelp(StrictCase):
 
 class TestInstallers(StrictCase):
     def test_new_tools_exist_and_are_copied_by_every_installer(self):
-        for tool in ("run_digest.py", "heim_watch.py"):
+        for tool in ("run_digest.py", "heim_watch.py", "true_hole.py"):
             self.assertTrue(os.path.exists(os.path.join(HEIM, "tools", tool)))
         for inst in ("install-local-ai-linux.sh", "install-local-ai-windows.ps1"):
             t = read(AI, inst)
             self.assertIn("run_digest.py", t)
             self.assertIn("heim_watch.py", t)
+            self.assertIn("true_hole.py", t)
             self.assertIn("qwen3:4b", t)
             self.assertIn("phi4-mini", t)
         mac = read(HEIM, "setup-local-heim.sh")
-        for needle in ("run_digest", "heim_watch", "qwen3:4b", "--watch-model", "--no-watch-model", "v3.8"):
+        for needle in ("run_digest", "heim_watch", "true_hole", "qwen3:4b", "--watch-model", "--no-watch-model", "v3.8"):
             self.assertIn(needle, mac)
 
     def test_every_tool_the_linux_installer_copies_exists(self):

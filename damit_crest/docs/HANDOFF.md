@@ -51,6 +51,12 @@ The file is re-read for every job, so an edit applies without restarting. The Re
 `qgis_process help <id>`; if the algorithm is not installed the job stops with a message naming the variable to set,
 and nothing is started.
 
+**Check QGIS hand-off (damit #121).** The Report step's *Check QGIS hand-off* button checks the link without running a
+dam: which `qgis_process` the desk found, which QGIS profile it reads (`QGIS_CUSTOM_CONFIG_PATH`, and where the
+dam-suite launcher's `profiles/default` link points), and whether each algorithm the buttons call (`preflight`,
+`runchain`, `rundam`, `classify`: the DamIT defaults or the `damit-handoff.json` overrides) is registered there
+(`qgis_process help <id>`). It writes nothing. Server: `POST /api/check` (`damit_desktop/qgis_run.run_check`).
+
 ## What each button sends
 
 Every `qgis_process` call sends **only the parameters the installed algorithm's `qgis_process help <id>` lists**, so

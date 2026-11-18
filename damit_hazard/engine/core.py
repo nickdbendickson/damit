@@ -1317,7 +1317,7 @@ def _flag_nodata_neighbourhood(ctx):
     receptor is scored with depth = max(0, neighbour water surface minus own
     ground). Flags: nodata_wse_ground (physical depth > 0), nodata_wse_dry
     (physical depth 0), nodata_no_ground_review (no DEM), nodata_oversize_component
-    (enclosed component larger than the named cap). At the threshold or finer,
+    (enclosed component larger than the named cap; still WSE-scored). At the threshold or finer,
     NoData is scored dry and flagged nodata_dry_review. Not a habitability rule.
     """
     recs = ctx.run.get("receptors") or []
@@ -1326,7 +1326,8 @@ def _flag_nodata_neighbourhood(ctx):
     wse_dry = [r["id"] for r in recs
                if r.get("sampling") == "neighbourhood_wse" and not (r.get("depth_ft") or 0) > 0]
     nog = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_no_ground"]
-    over = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_oversize"]
+    over = [r["id"] for r in recs if r.get("nodata_oversize")
+            or r.get("sampling") == "centre_nodata_oversize"]
     dry = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_dry"]
     # legacy name from the first #111 cut, if any receptor still carries it
     edge = [r["id"] for r in recs if r.get("sampling") == "centre_nodata_edge"]
@@ -1339,7 +1340,7 @@ def _flag_nodata_neighbourhood(ctx):
         ctx.flag(WARNING, "nodata_wse_ground",
                  "{} structure(s) sit on a NoData cell next to water on a {} grid "
                  "(coarser than NODATA_NEIGHBOURHOOD_MIN_CELL_M = {:g} m): depth is "
-                 "max(0, neighbour water surface minus the receptor's own ground), "
+                 "max(0, the highest neighbouring water surface minus the receptor's own ground), "
                  "not the raw neighbour depth, and needs review "
                  "(sampling=neighbourhood_wse)"
                  .format(len(wse_wet), cell_s, min_m), None, wse_wet)
@@ -1360,8 +1361,9 @@ def _flag_nodata_neighbourhood(ctx):
     if over:
         ctx.flag(INFO, "nodata_oversize_component",
                  "{} structure(s) sit in an enclosed NoData component larger than "
-                 "TRUE_HOLE_MAX_CELLS = {} on a {} grid: not a hole, scored dry "
-                 "(sampling=centre_nodata_oversize)"
+                 "TRUE_HOLE_MAX_CELLS = {} on a {} grid: not a hole; still scored "
+                 "with WSE-minus-ground (the highest neighbouring water surface "
+                 "minus the receptor's own ground) and flagged for review"
                  .format(len(over), TRUE_HOLE_MAX_CELLS, cell_s), None, over)
     if dry:
         ctx.flag(WARNING, "nodata_dry_review",

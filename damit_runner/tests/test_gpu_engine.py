@@ -42,7 +42,7 @@ class GpuEngineChoice(unittest.TestCase):
         from damit_runner.flood import lisflood as LF
         from damit_runner.core import metalflood as MF
         from damit_runner.core.metalflood import cases
-        if not (MF.metal_available() or MF.find_compiler()):
+        if not (MF.metal_available()[0] or MF.find_compiler()):   # metal_available() is (ok, why)
             self.skipTest("no Metal GPU and no C++ compiler for the CPU build")
         os.environ["DAMIT_MF_BACKEND"] = "cpu"              # the CPU build of the same kernels
         try:
@@ -61,6 +61,25 @@ class GpuEngineChoice(unittest.TestCase):
                 self.assertGreater(np.nansum(a > 0.001), 0)
         finally:
             os.environ.pop("DAMIT_MF_BACKEND", None)
+
+
+class MetalfloodProvenance(unittest.TestCase):
+    """core/metalflood is a copy of DWR_Plugins #399 (a draft, not on DWR main), so the engine parity gate
+    cannot check it yet; METALFLOOD_SOURCE.json records the commit and each file's sha256."""
+
+    def test_files_match_the_recorded_source(self):
+        import hashlib
+        import json
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "METALFLOOD_SOURCE.json"), encoding="utf-8") as fh:
+            rec = json.load(fh)
+        folder = os.path.join(root, "core", "metalflood")
+        have = sorted(f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)))
+        self.assertEqual(have, sorted(rec["sha256"]), "core/metalflood files differ from METALFLOOD_SOURCE.json")
+        for name, want in rec["sha256"].items():
+            with open(os.path.join(folder, name), "rb") as fh:
+                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, name)
+        self.assertEqual(len(rec["source_commit"]), 40)
 
 
 if __name__ == "__main__":

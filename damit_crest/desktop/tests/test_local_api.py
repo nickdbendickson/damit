@@ -56,10 +56,23 @@ class LocalApiTests(unittest.TestCase):
         conn.close()
         return r.status, data
 
-    def test_index_carries_token(self):
-        status, data = self.req("GET", "/index.html", token=False)
-        self.assertEqual(status, 200)
-        self.assertIn(f'<meta name="damit-token" content="{m.API_TOKEN}">'.encode(), data)
+    def test_index_has_no_token(self):
+        # Security audit 2026-11-18: the token was written into the served page, so any local peer (another process
+        # or OS user) read it with a plain GET /. No path answers with the token now; the desk gets it from the URL
+        # fragment main() opens.
+        for path in ("/", "/index.html", "/api/token", "/api/job?id=x", "/api/nope"):
+            status, data = self.req("GET", path, token=False)
+            self.assertNotIn(b"damit-token", data, path)
+            self.assertNotIn(m.API_TOKEN.encode(), data, path)
+            if path.startswith("/api/"):
+                self.assertEqual(status, 403, path)
+            else:
+                self.assertEqual(status, 200, path)
+
+    def test_desk_url_carries_token_in_fragment_only(self):
+        base, _, frag = m.desk_url(self.port).partition("#")
+        self.assertEqual(base, f"http://127.0.0.1:{self.port}/index.html")
+        self.assertEqual(frag, f"damit-token={m.API_TOKEN}")
 
     def test_token_is_random_and_long(self):
         self.assertGreaterEqual(len(m.API_TOKEN), 32)

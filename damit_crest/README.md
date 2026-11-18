@@ -201,7 +201,8 @@ The desk runs under a Content-Security-Policy built in one place, `src/lib/crest
 - **Scripts** run only from the app itself. The desktop app's local server sends the policy with every response
   from `web/security-headers.json`; `DamIT.html` carries it in a `<meta>` tag with the SHA-256 of its one inline
   script. No `unsafe-inline` or `unsafe-eval` for scripts. The per-launch token is a `<meta>` tag, not a script.
-- **Network** from the page is limited to USGS basemap tiles and OpenStreetMap, USGS 3DEP, the ND GIS Hub 911 points
+- **Network** from the page is limited to USGS basemap tiles and OpenStreetMap, USGS 3DEP, USGS 3DHP lake flowlines
+  (`hydro.nationalmap.gov`, from damit #120; off in the offline / local-DEM paths), the ND GIS Hub 911 points
   and the BLM PLSS service (plus a tile server set with `VITE_CREST_TILE_URL` at build time). The NID state download
   is made by the Python server, not the page. A new service has to be added to `csp.ts`; `csp.test.ts` fails when
   the source names a host the policy does not.

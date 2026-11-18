@@ -1,0 +1,21 @@
+{
+ "about": "Provenance of damit_runner/core/metalflood/ (the GPU flood engine). Each file is a byte-for-byte copy of DamSafety_Runner/core/metalflood/ at the commit below. That commit is the head of DWR_Plugins #399, a DRAFT pull request not merged into DWR_Plugins main, so scripts/check_engine_parity.py cannot check these files: PARITY.json stays synced to 5d2ec3b, which has no metalflood folder, and its pairs for these files are skipped there. tests/test_gpu_engine.py checks the sha256 below so an edit here is noticed. When #399 merges and PARITY.json is synced (with the DamSafety changes since 5d2ec3b actually ported), the parity gate takes over and this file can go.",
+ "from": "DamSafety_Runner/core/metalflood/",
+ "sha256": {
+  "README.md": "1cfa753ca69d8088d2a603f7dd0c715b8477d000267f431352d6d72c6615f6e3",
+  "__init__.py": "dfba0b912eba57c8695f302455579a0438472a48e175727c80439235d5ff436c",
+  "__main__.py": "fa42c67cf5444a50a3b644583265480be419a7b14aea8e84fbeff1019cfad63a",
+  "backends.py": "baabf01685a64c7e7b9ae284ad1216e2f0d1dc7f7aa1b6ed3715c29ef26a555d",
+  "bench.py": "4cf8ac4c9555fa498786994f3f77ad8ac2f4162aee4b6f11842677742d61b97b",
+  "cases.py": "ceea4632cdea9023215aa7255d10929cf75acb0c83f0dbfc18deabfd1685490c",
+  "cpu_kernels.cpp": "16b2a2cf7ed62ca7367e7efe243f0bca6cac660dbb62a4c357f7030983dc8bdc",
+  "deckio.py": "c17df1e2360c506362570ab29e385ee4a718536978a2ced73c645c29c9509895",
+  "engine.py": "e42fef77e87c84b0e9de118273dd5c2f8e1670c2197017b94edf20edac036948",
+  "kernels.metal": "9629893a5f86d4647d1d3d1262939d68ab23eec867a110fdadbd87965164ca67",
+  "mf_shim.h": "fcf45f9839ad5b6aaf97858645aab128d077e4f88332e0370a1b0620be64b3c6"
+ },
+ "source": "nickdbendickson/DWR_Plugins",
+ "source_commit": "51d729174b0beeb6f2fcee35b94a19e228841293",
+ "source_pr": 399,
+ "source_pr_state": "draft (not merged)"
+}

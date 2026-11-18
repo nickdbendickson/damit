@@ -89,7 +89,25 @@ class _Hydro:
         self.t_s, self.q_cms = t_s, q_cms
 
     def resampled(self, dt_s):
-        t = np.union1d(np.arange(0.0, float(self.t_s[-1]), dt_s), self.t_s)
+        """Every hydrograph breakpoint plus a dt_s grid, for the .bdy file (times printed with 4 decimals).
+
+        0.6.6: a grid time within 0.002 s of a breakpoint is dropped, and breakpoints closer than that to each
+        other are kept once (the end time stays), so the printed times strictly increase. np.union1d kept both
+        1980.0 and 0.55 h = 1980.0000000000002 s; they printed as the same 1980.0000 and LISFLOOD-FP stopped with
+        "Time Series invalid time values" (DWR-2801 Screener, 2026-11-18). The same rule as the Runner's
+        Hydrograph.resampled (flood/breach.py, DamSafety Runner 3.20.14, DWR_Plugins #397)."""
+        orig = np.unique(np.asarray(self.t_s, dtype=float))
+        t_end = float(orig[-1])
+        grid = np.arange(0.0, t_end, dt_s)
+        if len(orig) > 1:
+            k = np.clip(np.searchsorted(orig, grid), 1, len(orig) - 1)
+            near = np.minimum(np.abs(grid - orig[k - 1]), np.abs(grid - orig[k]))
+        else:
+            near = np.abs(grid - orig[0])
+        t = np.unique(np.concatenate([orig, grid[near > 0.002]]))
+        t = t[np.concatenate([[True], np.diff(t) > 0.002])]
+        if t[-1] != t_end:
+            t[-1] = t_end
         return t, np.interp(t, self.t_s, self.q_cms)
 
 

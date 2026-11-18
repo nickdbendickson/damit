@@ -9,6 +9,7 @@
  * file on the user's drive by path, so the web desk stays on 3DEP (the batch command line takes --dem <vrt>).
  */
 import { parseBsq, setDemOverride, type DemGrid, type DemRequest } from "./outline.ts";
+import { desktopToken } from "./desktop-server.ts";
 
 type DemReply = { path?: string | null; gdalwarp?: string | null; cancelled?: boolean; error?: string };
 
@@ -35,7 +36,7 @@ const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
 type Fetch = (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; status: number; arrayBuffer: () => Promise<ArrayBuffer>; text: () => Promise<string> }>;
 
 function token(): string {
-  return typeof document === "undefined" ? "" : (document.querySelector('meta[name="damit-token"]')?.getAttribute("content") ?? "");
+  return desktopToken();
 }
 
 export function localDemUrl(req: DemRequest): string {

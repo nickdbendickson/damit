@@ -87,19 +87,25 @@ class Receptors:
                              ground2d=None, wse2d=None):
         """Sample depth (and velocity) on `grid` and apply the 20 m NoData-receptor rule.
 
-        On a coarse grid the scored depth is max(0, neighbour WSE minus the receptor's
-        own ground), never raw neighbour depth. Without ground the receptor is dry.
-        An oversize enclosed component is dry. A finite 0 stays dry. Returns
+        On a coarse grid the scored depth is max(0, the highest neighbouring
+        WSE minus the receptor's own ground), never raw neighbour depth.
+        Ground is bilinear from the model-resolution DEM (ground_source=
+        model_dem_bilinear), not the source DEM point sample Hazard uses.
+        Without ground the receptor is dry. An oversize enclosed component
+        is not a hole: it still gets the WSE-minus-ground test and is
+        flagged nodata_oversize_component. A finite 0 stays dry. Returns
         (depth, vel, sampling, flags). `cell_m` defaults to `grid.dx` (metres).
         `ground2d` / `wse2d` are in the same units as `depth2d` (SI metres). When
         `ground2d` is omitted and `grid` is a DEM of the same shape, `grid.masked()`
-        is used. The hole / oversize masks are built once and cached on the array.
+        is used. The hole / oversize masks are built once per pass (not cached
+        on the numpy array).
         """
         policy = NDS.nodata_policy(grid.dx if cell_m is None else float(cell_m))
         d = self.sample(grid, depth2d)
         v = None if vel2d is None else self.sample(grid, vel2d)
         sampling = np.array([NDS.SAMPLING_CENTRE] * len(self.x), dtype=object)
         flags = np.array([None] * len(self.x), dtype=object)
+        ground_source = np.array([None] * len(self.x), dtype=object)
         col = np.floor((self.x - grid.x0) / grid.dx).astype(int)
         row = np.floor((grid.y0 - self.y) / grid.dx).astype(int)
         ny, nx = depth2d.shape
@@ -145,15 +151,20 @@ class Receptors:
                                          has_ground=has_g,
                                          physical_depth=phys_d, physical_velocity=phys_v)
             sampling[i] = decided["sampling"]
-            flags[i] = decided["flag"]
-            if decided["flag"] in (NDS.FLAG_WSE_GROUND, NDS.FLAG_NEIGHBOURHOOD):
+            flags[i] = decided.get("flags") or decided["flag"]
+            if has_g and ground_value is not None:
+                ground_source[i] = "model_dem_bilinear"
+            elif decided["sampling"] != NDS.SAMPLING_CENTRE:
+                ground_source[i] = "none"
+            primary = decided["flag"]
+            if primary in (NDS.FLAG_WSE_GROUND, NDS.FLAG_NEIGHBOURHOOD):
                 d[i] = decided["depth"]
                 if v is not None and decided["velocity"] is not None:
                     v[i] = decided["velocity"]
-            elif decided["flag"] in (NDS.FLAG_DRY_REVIEW, NDS.FLAG_FLOOD_EDGE,
-                                     NDS.FLAG_NO_GROUND, NDS.FLAG_OVERSIZE,
-                                     NDS.FLAG_WSE_DRY):
+            elif primary in (NDS.FLAG_DRY_REVIEW, NDS.FLAG_FLOOD_EDGE,
+                             NDS.FLAG_NO_GROUND, NDS.FLAG_WSE_DRY):
                 d[i] = 0.0
+        self.nodata_ground_source = ground_source
         return d, v, sampling, flags
 
 

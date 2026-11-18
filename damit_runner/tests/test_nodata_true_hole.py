@@ -66,9 +66,17 @@ class TrueHole(unittest.TestCase):
         self.assertEqual(dry["flag"], NDS.FLAG_WSE_DRY)
         self.assertEqual(dry["depth"], 0.0)
         over = NDS.resolve_nodata(True, peak, pol, is_oversize=True, has_ground=True,
-                                  physical_depth=0.13)
-        self.assertEqual(over["sampling"], NDS.SAMPLING_CENTRE_NODATA_OVERSIZE)
-        self.assertEqual(over["depth"], 0.0)
+                                  physical_depth=0.13, physical_velocity=1.1)
+        self.assertEqual(over["sampling"], NDS.SAMPLING_NEIGHBOURHOOD_WSE)
+        self.assertEqual(over["flag"], NDS.FLAG_WSE_GROUND)
+        self.assertIn(NDS.FLAG_OVERSIZE, (over.get("flags") or "").split(","))
+        self.assertEqual(over["depth"], 0.13)
+        over_dry = NDS.resolve_nodata(True, peak, pol, is_oversize=True, has_ground=True,
+                                      physical_depth=0.0)
+        self.assertEqual(over_dry["sampling"], NDS.SAMPLING_NEIGHBOURHOOD_WSE)
+        self.assertEqual(over_dry["flag"], NDS.FLAG_WSE_DRY)
+        self.assertIn(NDS.FLAG_OVERSIZE, (over_dry.get("flags") or "").split(","))
+        self.assertEqual(over_dry["depth"], 0.0)
         # 20 m rule is unchanged for a hole or an edge, even with a physical depth
         fine = NDS.nodata_policy(20.0)
         for hole in (True, False):
