@@ -193,6 +193,11 @@ def lisflood_candidates():
     env = os.environ.get("DAMIT_LISFLOOD")
     if env:
         c.append(env)
+    # Runner 0.6.8: the build the dam-suite install-all package puts in <DAMSUITE_PREFIX or ~/dam-suite>/bin
+    # (lisflood, lisflood.exe on Windows), before PATH, so an older LISFLOOD-FP on PATH does not win
+    for root in (os.environ.get("DAMSUITE_PREFIX", "").strip(), _home_paths("dam-suite")):
+        if root:
+            c += [os.path.join(root, "bin", "lisflood"), os.path.join(root, "bin", "lisflood.exe")]
     w = shutil.which("lisflood")
     if w:
         c.append(w)

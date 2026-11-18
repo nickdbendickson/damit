@@ -265,6 +265,12 @@ LISFLOOD-FP stopped with "Time Series invalid time values" (DWR-2801); `Hydrogra
 `core/breach.py`) takes DamSafety Runner 3.20.14's fix (DWR_Plugins #397) for records of 5,000 or more breakpoints.
 Only times within 0.002 s of another are dropped; no other model-number change.
 
+0.6.8 (2026-11-18): with `LISFLOOD_EXE` and the provider settings empty, the dam-suite installer's
+`<DAMSUITE_PREFIX or ~/dam-suite>/bin` LISFLOOD-FP comes before PATH, so an older LISFLOOD-FP on PATH (an 8.2 wrapper on
+the test box) no longer wins over the installer's 8.3. Order: `LISFLOOD_EXE`, provider setting, `NDBREACH_LISFLOOD`,
+installer bin, PATH, the usual install places, then the built-in engine with its warning. The same order in
+`data_conventions.lisflood_candidates` and DamIT PMP 0.4.6's `runner_shared` copy. No model-number changes.
+
 North Dakota M1 (catalog plugin 0.1.1): a structure in the TM-11 judgment zone gives **Medium** (still flagged for
 engineer review; R7 can take it higher). Other presets keep `judgment_class` null (flag only).
 

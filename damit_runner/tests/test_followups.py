@@ -86,11 +86,47 @@ class FindExe(unittest.TestCase):
         LF = self.LF
         built = _exe(os.path.join(self.tmp, "dam-suite", "bin"))
         r = self.find()
-        self.assertEqual((r["exe"], r["how"], r["warning"]), (built, "install place", None))
+        self.assertEqual((r["exe"], r["how"], r["warning"]), (built, "dam-suite installer (bin)", None))
         other = _exe(os.path.join(self.tmp, "elsewhere", "bin"))
         self.assertEqual(self.find(environ={"DAMSUITE_PREFIX": os.path.join(self.tmp, "elsewhere")})["exe"], other)
         a = _exe(os.path.join(self.tmp, "a"))                        # a provider setting still wins
         self.assertEqual(self.find(settings={LF.SETTING_DAMIT: a})["exe"], a)
+
+    def test_installer_build_comes_before_path(self):
+        # 0.6.8 (install test 2026-11-18): a LISFLOOD-FP 8.2 wrapper on PATH won over the installer's 8.3.
+        # Order with LISFLOOD_EXE empty: provider setting > NDBREACH_LISFLOOD > installer bin > PATH.
+        LF = self.LF
+        built = _exe(os.path.join(self.tmp, "dam-suite", "bin"))
+        wrapper = _exe(os.path.join(self.tmp, "path_bin"), "lisflood-fp")
+        on_path = lambda n, *x, **k: wrapper if n in ("lisflood", "lisflood-fp") else None   # noqa: E731
+        with mock.patch.object(shutil, "which", on_path):
+            r = self.find()
+            self.assertEqual((r["exe"], r["how"]), (built, "dam-suite installer (bin)"))
+            a = _exe(os.path.join(self.tmp, "a"))
+            self.assertEqual(self.find(settings={LF.SETTING_DAMIT: a})["exe"], a)      # the setting wins
+            self.assertEqual(self.find(settings={LF.SETTING_NDBREACH: a})["exe"], a)
+            c = _exe(os.path.join(self.tmp, "c"))
+            self.assertEqual(self.find(environ={LF.ENV_NDBREACH: c})["exe"], c)       # then the env var
+            os.remove(built)                                                          # no installer build: PATH
+            self.assertEqual(self.find()["how"], "PATH (lisflood)")
+
+    def test_detect_lisflood_installer_before_path(self):
+        # the same order in data_conventions.lisflood_candidates (selftest, engine check, PMP's copy)
+        from damit_runner.core import data_conventions as DC
+        from damit_pmp.runner_shared import data_conventions as PDC
+        built = _exe(os.path.join(self.tmp, "dam-suite", "bin"))
+        wrapper = _exe(os.path.join(self.tmp, "path_bin"))
+        env = _exe(os.path.join(self.tmp, "env"))
+        with mock.patch.object(shutil, "which", lambda n, *x, **k: wrapper if n == "lisflood" else None), \
+                mock.patch.dict(os.environ, {"HOME": self.tmp, "USERPROFILE": self.tmp}), \
+                mock.patch.object(os.path, "expanduser", lambda p: p.replace("~", self.tmp, 1)):
+            for mod in (DC, PDC):
+                os.environ.pop("DAMIT_LISFLOOD", None)
+                os.environ.pop("DAMSUITE_PREFIX", None)
+                self.assertEqual(mod.lisflood_candidates()[:2], [built, wrapper], mod.__name__)
+                os.environ["DAMIT_LISFLOOD"] = env
+                self.assertEqual(mod.lisflood_candidates()[0], env)
+                os.environ.pop("DAMIT_LISFLOOD")
 
     def test_nothing_found_falls_back_with_a_warning(self):
         r = self.find()
