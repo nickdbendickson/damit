@@ -342,6 +342,63 @@ class TestScripts(unittest.TestCase):
             self.assertFalse(loaded("qgis.org"))
 
     @unittest.skipUnless(shutil.which("bash"), "no bash")
+    def test_missing_offline_files_are_named(self):
+        """2026-11-18 (Nick's osx-64 install): the installer said '1 file(s) are missing' without
+        naming it; it was damit_ai/offline/ollama/Ollama-darwin.zip, outside offline/. The
+        installer's offline check is run here on a fake package folder."""
+        import tempfile
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        a = sh.index("pkg_path() {")
+        b = sh.index("\n  fi\n", sh.index('if [ "$OFFLINE_ONLY" = 1 ]; then', a)) + len("\n  fi\n")
+        block = sh[a:b] + "fi\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            here = os.path.join(tmp, "pkg")
+            os.makedirs(os.path.join(here, "locks", "osx-64"))
+            with open(os.path.join(here, "locks", "osx-64", "ndqgis.lock"), "w") as fh:
+                for i in range(25):
+                    fh.write("https://conda.anaconda.org/conda-forge/osx-64/p{}.conda a b\n".format(i))
+            with open(os.path.join(here, "locks", "extra.lock"), "w") as fh:
+                fh.write("osx-64 ollama damit_ai/offline/ollama/Ollama-darwin.zip x\n"
+                         "osx-64 ollama-pull models/m y\nosx-arm64 miniforge offline/a.sh z\n")
+            with open(os.path.join(tmp, "block.sh"), "w") as fh:
+                fh.write(block)
+            run = os.path.join(tmp, "run.sh")
+            with open(run, "w") as fh:
+                fh.write('set -eo pipefail\nsay() { printf "==> %s\\n" "$*"; }\n'
+                         'die() { printf "ERROR: %s\\n" "$*" >&2; exit 1; }\n'
+                         'HERE="$1"; P=osx-64; ROLES=ndqgis; OS="$2"; OFFLINE_ONLY=0\n'
+                         'CONDA_PKGS="$HERE/offline/conda/$P"\n. "$(dirname "$0")/block.sh"\n'
+                         'echo "REACHED $MISS"\n')
+
+            def go(os_name):
+                return subprocess.run(["bash", run, here, os_name], capture_output=True, text=True)
+
+            r = go("Darwin")                    # everything missing: 25 + Ollama, 20 listed
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("Missing (26):", r.stdout)
+            self.assertIn("  offline/conda/osx-64/osx-64/p0.conda", r.stdout)
+            self.assertIn("... and 6 more", r.stdout)
+            self.assertIn("26 file(s) are missing (listed above)", r.stderr)
+            self.assertIn("damit_ai/offline/", r.stderr)
+            d = os.path.join(here, "offline", "conda", "osx-64", "osx-64")
+            os.makedirs(d)
+            for i in range(25):
+                open(os.path.join(d, "p{}.conda".format(i)), "w").close()
+            r = go("Darwin")                    # Nick's case: only the Ollama installer
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("Missing (1):\n  damit_ai/offline/ollama/Ollama-darwin.zip", r.stdout)
+            os.makedirs(os.path.join(here, "damit_ai", "offline", "ollama"))
+            open(os.path.join(here, "damit_ai", "offline", "ollama", "Ollama-darwin.zip"), "w").close()
+            r = go("Darwin")                    # nothing missing: no list, carries on
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(), "REACHED 0")
+            os.remove(os.path.join(d, "p3.conda"))
+            r = go("Linux")                     # Linux lists it, then fetches (carries on)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("  offline/conda/osx-64/osx-64/p3.conda", r.stdout)
+            self.assertIn("REACHED 1", r.stdout)
+
     def test_bash_scripts_parse(self):
         for f in ("install-all.sh", "download-all.sh", "tools/make_package.sh"):
             subprocess.run(["bash", "-n", os.path.join(SI, f)], check=True)
