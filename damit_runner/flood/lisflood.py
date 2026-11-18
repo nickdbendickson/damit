@@ -74,11 +74,29 @@ def _executable(p):
     return bool(p) and os.path.isfile(p) and (os.name == "nt" or os.access(p, os.X_OK))
 
 
-def install_candidates(home=None):
-    """LISFLOOD-FP builds in the usual install places (existing executables only)."""
+def suite_installer_exes(home=None, environ=None):
+    """0.6.5 (install test 2026-11-18): the LISFLOOD-FP the dam-suite install-all package puts in
+    <DAMSUITE_PREFIX or ~/dam-suite>/bin (lisflood, lisflood.exe on Windows). It was not among the install
+    places, so a DamIT Runner without the provider setting (headless, another profile) fell back to the
+    built-in engine although the installer had built the patched LISFLOOD-FP."""
+    environ = os.environ if environ is None else environ
+    home = home or os.path.expanduser("~")
+    roots = [str(environ.get("DAMSUITE_PREFIX") or "").strip(), os.path.join(home, "dam-suite")]
+    out = []
+    for r in roots:
+        for name in ("lisflood", "lisflood.exe"):
+            p = os.path.join(r, "bin", name) if r else ""
+            if p and p not in out and _executable(p):
+                out.append(p)
+    return out
+
+
+def install_candidates(home=None, environ=None):
+    """LISFLOOD-FP builds in the usual install places (existing executables only); the dam-suite installer's
+    build first."""
     import glob
     home = home or os.path.expanduser("~")
-    out = []
+    out = suite_installer_exes(home, environ)
     for parts in INSTALL_GLOBS:
         out += sorted(glob.glob(os.path.join(home, *parts)))
     for pat in SYSTEM_GLOBS:
@@ -121,7 +139,7 @@ def find_exe(exe, settings=None, environ=None, home=None):
         found = shutil.which(name)
         if found:
             return {"exe": found, "how": "PATH ({})".format(name), "warning": None}
-    found = install_candidates(home)
+    found = install_candidates(home, environ)
     if found:
         return {"exe": found[0], "how": "install place", "warning": None}
     return {"exe": BUILTIN, "how": "fallback: no LISFLOOD-FP found", "warning": FALLBACK_WARNING}

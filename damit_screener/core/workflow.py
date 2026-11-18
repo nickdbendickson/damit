@@ -321,6 +321,22 @@ def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None,
     return res
 
 
+def flood_failures(results, flood_off=False):
+    """{dam_id: why} for the dams whose screening flood (engine2d) failed or was skipped. 0.3.5
+    (install test 2026-11-18): the chain said OK when the flood step failed or never ran, because
+    only the hand-off package counted. A flood left out on purpose (engine2d = "off") is not a
+    failure."""
+    bad = {}
+    for did, r in (results or {}).items():
+        e = r.get("engine2d") or {}
+        st = e.get("status")
+        if st == ST.STATUS_OK or (st == ST.STATUS_NOT_RUN and flood_off):
+            continue
+        bad[did] = "{}: {}".format("did not run" if st in (None, ST.STATUS_NOT_RUN, ST.STATUS_GAP) else "failed",
+                                   e.get("detail") or "no result")
+    return bad
+
+
 def run_chain(work, settings, dams, dam_problems=None, receptors=None, receptor_fields=None,
               terrain_info=None, do_preflight=True, log=print, cancel=None):
     """Preflight, then every selected dam through the steps. Returns a summary dict."""
@@ -339,7 +355,13 @@ def run_chain(work, settings, dams, dam_problems=None, receptors=None, receptor_
     out = {}
     for d in sel:
         out[d["dam_id"]] = run_dam(cat, config, d, settings, work, receptors, terrain_info, log, cancel)
-    summary = {"ok": all(r.get("handoff", {}).get("status") == ST.STATUS_OK for r in out.values()),
+    flood_off = str(settings.get("engine2d") or "builtin").lower() == "off"
+    no_flood = flood_failures(out, flood_off)
+    for did, why in no_flood.items():
+        log("!!! {}: screening flood {}".format(did, why))
+    summary = {"ok": all(r.get("handoff", {}).get("status") == ST.STATUS_OK for r in out.values())
+                     and not no_flood,
+               "flood_failed": no_flood,
                "refused": False, "checks": checks, "work": work, "mode": config["mode"],
                "preset_id": config.get("preset_id"), "scenarios": [s["id"] for s in config["scenarios"]],
                "catalog": cat.identity(), "dams": out,
@@ -381,6 +403,9 @@ def write_report(work, summary, cat, config):
              "- Domain cutoffs: {}".format(", ".join(d["id"] for d in config["domain_cutoffs"]) or "none"),
              "- Methods: {}".format(", ".join("{} ({})".format(k, m["strength"]) for k, m in config["methods"].items())),
              "- Modifiers: {}".format(", ".join(r["id"] for r in config["modifiers"]) or "none"), "",
+             "- Chain result: {}".format("OK" if summary.get("ok") else "FAILED" + (
+                 " (no screening flood for {})".format(", ".join(sorted(summary["flood_failed"])))
+                 if summary.get("flood_failed") else "")), "",
              "| Dam | Suggested | Triage (M13) | Gaps | Hand-off |", "|---|---|---|---|---|"]
     for did, r in summary["dams"].items():
         sc = (r.get("suggest") or {}).get("screening") or {}

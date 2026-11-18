@@ -24,12 +24,22 @@ by download-all-windows.ps1, each checked against the sha256 pinned in locks\.
 
 Options: -Offline (refuse to download)  -Check  -NoDamSafety  -NoDamIT  -NoAI  -NoHeim
          -NoVor  -SkipLisflood  -NoShortcuts
+Somewhere other than your normal QGIS profiles and home folder (a test install):
+         -Prefix DIR  (the suite folder; default %USERPROFILE%\dam-suite, env DAMSUITE_PREFIX)
+         -QgisProfilesPath DIR  (profiles in DIR\QGIS3\profiles; the launchers pass
+                                 --profiles-path DIR; env DAMSUITE_QGIS_PROFILES_PATH)
+         -DamSafetyProfile NAME  -DamitProfile NAME  (default damsafety / damit)
+         -Root DIR  (all of these under DIR, Miniforge in DIR\miniforge3 when it is not
+                     installed yet; the local AIs always use your home folder, so -Root
+                     turns them off unless -AI is given too)
 It never touches your data folders, offline packs, or other QGIS profiles.
 =============================================================================
 #>
 param(
   [switch]$Offline, [switch]$Check, [switch]$NoDamSafety, [switch]$NoDamIT, [switch]$NoCrest,
-  [switch]$NoAI, [switch]$NoHeim, [switch]$NoVor, [switch]$SkipLisflood, [switch]$NoShortcuts
+  [switch]$NoAI, [switch]$NoHeim, [switch]$NoVor, [switch]$SkipLisflood, [switch]$NoShortcuts,
+  [string]$Prefix = '', [string]$QgisProfilesPath = '', [string]$DamSafetyProfile = 'damsafety',
+  [string]$DamitProfile = 'damit', [string]$Root = '', [switch]$AI
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -37,10 +47,26 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $P = 'win-64'
 $Ver = if (Test-Path (Join-Path $Here 'VERSION')) { (Get-Content (Join-Path $Here 'VERSION') -TotalCount 1) } else { 'dev' }
 $Stamp = "dam-suite install-all $Ver"
-$Prefix = if ($env:DAMSUITE_PREFIX) { $env:DAMSUITE_PREFIX } else { Join-Path $env:USERPROFILE 'dam-suite' }
 $MiniforgeDir = if ($env:DAMSUITE_MINIFORGE) { $env:DAMSUITE_MINIFORGE } else { Join-Path $env:USERPROFILE 'miniforge3' }
-$Profiles = Join-Path $env:APPDATA 'QGIS\QGIS3\profiles'
-$DsProfile = 'damsafety'; $DiProfile = 'damit'
+if ($Root) {
+  if (-not $Prefix) { $Prefix = Join-Path $Root 'dam-suite' }
+  if (-not $QgisProfilesPath) { $QgisProfilesPath = Join-Path $Root 'qgis' }
+  if (-not (Test-Path (Join-Path $MiniforgeDir 'Scripts\conda.exe'))) { $MiniforgeDir = Join-Path $Root 'miniforge3' }
+  if (-not $AI) { $NoAI = $true }
+}
+if (-not $Prefix) { $Prefix = if ($env:DAMSUITE_PREFIX) { $env:DAMSUITE_PREFIX } else { Join-Path $env:USERPROFILE 'dam-suite' } }
+$Prefix = [IO.Path]::GetFullPath($Prefix)
+if (-not $QgisProfilesPath -and $env:DAMSUITE_QGIS_PROFILES_PATH) { $QgisProfilesPath = $env:DAMSUITE_QGIS_PROFILES_PATH }
+$ProfilesArg = ''
+if ($QgisProfilesPath) {
+  $QgisProfilesPath = [IO.Path]::GetFullPath($QgisProfilesPath)
+  $Profiles = Join-Path $QgisProfilesPath 'QGIS3\profiles'; $ProfilesArg = " --profiles-path `"$QgisProfilesPath`""
+} else { $Profiles = Join-Path $env:APPDATA 'QGIS\QGIS3\profiles' }
+$DsProfile = $DamSafetyProfile; $DiProfile = $DamitProfile
+foreach ($n in @($DsProfile, $DiProfile)) {
+  if (-not $n -or $n -match '[\\/:]' -or $n -eq '.' -or $n -eq '..') { throw "profile name '$n' is not a plain folder name" }
+}
+if ($DsProfile -eq $DiProfile) { throw "the DamSafety and DamIT sets need different profiles (both are '$DsProfile'): their Processing ids clash" }
 $DsDir = Join-Path $Profiles $DsProfile; $DiDir = Join-Path $Profiles $DiProfile
 $DsPlugins = @('DamSafety_Core','DamSafety_Setup','DamSafety_Data','DamSafety_Screening','DamSafety_Runner','DamSafety_Hazard','DamSafety_HazardLite','DamSafety_PMP','DamSafety_Finder')
 $DiPlugins = @('damit_core','damit_catalog','damit_setup','damit_data','damit_screener','damit_runner','damit_hazard','damit_hazardlite','damit_pmp','damit_finder')
@@ -259,7 +285,7 @@ function Make-Launcher($file, $profile) {
     'set NDBREACH_ANUGA_MESHER=gmsh',
     "set `"NDBREACH_ANUGA_PYTHON=$AnugaPy`"",
     "set `"NDBREACH_LISFLOOD=$Lisflood`"",
-    "start `"`" `"%CONDA_PREFIX%\Library\bin\qgis.exe`" --profile $profile %*")
+    "start `"`" `"%CONDA_PREFIX%\Library\bin\qgis.exe`" --profile $profile$ProfilesArg %*")
   [IO.File]::WriteAllLines($file, $lines)
   if (-not $NoShortcuts) {
     try {

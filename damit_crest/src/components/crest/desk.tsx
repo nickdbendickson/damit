@@ -1519,7 +1519,7 @@ const handoff = {
 };
 let handoffTimer = 0;
 
-type JobPath = "/api/screen" | "/api/model" | "/api/folder" | "/api/layers" | "/api/classify";
+type JobPath = "/api/screen" | "/api/model" | "/api/folder" | "/api/layers" | "/api/classify" | "/api/check";
 
 /** The algorithm ids the desktop server will call (GET /api/handoff): DamIT defaults or the user's overrides. */
 type HandoffInfo = { algorithms: Record<string, string>; sources: Record<string, string>; problems: string[]; cli: string | null };
@@ -1616,7 +1616,7 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
             receptors,
             model: handoff.model,
             source: handoff.source,
-            files: path === "/api/layers" ? undefined : files,
+            files: path === "/api/layers" || path === "/api/check" ? undefined : files,
           }),
         });
       } catch {
@@ -1709,7 +1709,8 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
         the drawn area) to {algs.classify}, so the chosen preset or custom methods judge the downstream consequences; it
         is not started without a depth raster or a receptor it can place. The flood model runs{" "}
         {algs.rundam} for this dam only. A
-        missing algorithm, a missing DEM or depth raster, or a preflight FAIL stops there. Cancel stops QGIS; DAMIT_SCREENING_TIMEOUT_S sets a time limit. The result is a suggested class,
+        missing algorithm, a missing DEM or depth raster, or a preflight FAIL stops there. Check QGIS hand-off tests the
+        link to the plugins first, without running a dam. Cancel stops QGIS; DAMIT_SCREENING_TIMEOUT_S sets a time limit. The result is a suggested class,
         not an official one.
       </p>
       <p className="mt-1 text-xs text-muted" data-testid="handoff-algorithms">
@@ -1848,6 +1849,15 @@ function PluginPanel({ dam, result }: { dam: DamRecord; result: ReturnType<typeo
         </label>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="inline-flex h-10 items-center rounded-sm border border-water bg-paper px-3 text-sm text-water disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={handoff.busy}
+          onClick={() => void start("/api/check")}
+          title="Checks that qgis_process is found and that the preflight, chain, flood model and classify algorithms are in its QGIS profile. Runs no dam and writes nothing."
+        >
+          Check QGIS hand-off
+        </button>
         <button type="button" className={btn} disabled={handoff.busy} onClick={() => void start("/api/layers")}>
           Get layers
         </button>

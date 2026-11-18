@@ -150,6 +150,39 @@ class Chain(unittest.TestCase):
         self.assertIn("REG_05.2026", rep)
         self.assertIn("Suggested classifications only", rep)
 
+    def test_chain_fails_when_flood_does_not_run(self):
+        # 0.3.5: a skipped or failed screening flood is a failed chain, not OK
+        dem = os.path.join(self.work, "dem.tif")
+        open(dem, "wb").close()
+        hyd = os.path.join(self.work, "hyd.csv")
+        with open(hyd, "w") as fh:
+            fh.write("time_hr,discharge_cfs\n0,0\n1,5000\n3,0\n")
+        dams, probs = ST.prepare([raw_dam(HYD=hyd, AZ=95)],
+                                 dict(FMAP, hydrograph_csv="HYD", breach_azimuth_deg="AZ"))
+        s = dict(WF.DEFAULT_SETTINGS, preset="ND", terrain=dem,
+                 engine2d="builtin")
+        logs = []
+        real = ST.engine2d
+        ST.engine2d = lambda *a, **k: ST.step(ST.STATUS_GAP, "the screening flood needs storage_acft")
+        try:
+            summ = WF.run_chain(self.work, s, dams, probs, [], log=logs.append)
+        finally:
+            ST.engine2d = real
+        self.assertFalse(summ.get("refused"), logs)
+        self.assertFalse(summ["ok"])
+        self.assertIn("ND00001", summ["flood_failed"])
+        with open(summ["report"]) as fh:
+            self.assertIn("Chain result: FAILED", fh.read())
+
+    def test_flood_failures_rules(self):
+        ok = {"engine2d": {"status": "ok", "detail": ""}}
+        off = {"engine2d": {"status": "not_run", "detail": "engine2d is off"}}
+        gap = {"engine2d": {"status": "gap", "detail": "no terrain"}}
+        bad = {"engine2d": {"status": "fail", "detail": "boom"}}
+        self.assertEqual(WF.flood_failures({"a": ok, "b": off}, flood_off=True), {})
+        self.assertEqual(set(WF.flood_failures({"a": ok, "b": off, "c": gap, "d": bad})), {"b", "c", "d"})
+        self.assertTrue(WF.flood_failures({"d": bad})["d"].startswith("failed"))
+
     def test_chain_refused_on_preflight_fail(self):
         summ = WF.run_chain(self.work, dict(WF.DEFAULT_SETTINGS, preset="ND"), [], [], log=lambda *_: None)
         self.assertFalse(summ["ok"])
