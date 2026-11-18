@@ -17,6 +17,8 @@ from . import builtin_lisflood as BL
 from .geom import Grid, NODATA
 
 BUILTIN = "builtin"
+GPU = "gpu"
+GPU_WORDS = ("gpu", "metal", "gpu engine", "metalflood")
 DEFAULT_MAX_WALL_S = 24 * 3600.0
 ARRIVAL_TOL_M = 0.001
 NO_WINDOW = {"creationflags": 0x08000000} if os.name == "nt" else {}
@@ -33,6 +35,10 @@ class WallLimit(ModelError):
 
 def is_builtin(exe):
     return str(exe or "").strip().lower() == BUILTIN
+
+
+def is_gpu(exe):
+    return str(exe or "").strip().lower() in GPU_WORDS
 
 
 # Where LISFLOOD-FP is looked for when LISFLOOD_EXE is empty, in this order (the old ND Breach Runner's
@@ -115,6 +121,8 @@ def find_exe(exe, settings=None, environ=None, home=None):
     e = str(exe or "").strip()
     if is_builtin(e) or e.lower() in ("built-in", "built in"):
         return {"exe": BUILTIN, "how": "LISFLOOD_EXE = builtin", "warning": None}
+    if is_gpu(e):
+        return {"exe": GPU, "how": "LISFLOOD_EXE = gpu", "warning": None}
     if e:
         if os.path.isfile(e):
             return {"exe": e, "how": "LISFLOOD_EXE", "warning": None}
@@ -286,6 +294,33 @@ def run(workdir, par, exe, max_wall_s=0.0, threads=0, cancel=None, log=None):
             with open(os.path.join(workdir, "lisflood.log"), "w", encoding="utf-8") as f:
                 f.write(BL.NAME + "\n" + "\n".join(lines) + "\n")
         return {"engine": BL.NAME, "wall_s": time.time() - t0, "wall_limit_s": limit, "unpatched": False}
+    if is_gpu(exe):
+        from ..core import metalflood as MF
+        lines = []
+
+        def say_g(m):
+            lines.append(m)
+            if log:
+                log(m)
+
+        def stop_g(t_sim=None, sim=None):
+            if cancel is not None and cancel():
+                return True
+            return time.time() - t0 > limit
+
+        backend = os.environ.get("DAMIT_MF_BACKEND") or os.environ.get("DAMSAFETY_MF_BACKEND") or "auto"
+        try:
+            MF.run_par(par, cancel=stop_g, log=say_g, backend=backend)
+        except MF.Cancelled:
+            if time.time() - t0 > limit:
+                raise WallLimit("the GPU engine hit its wall-clock limit of {:.1f} h".format(limit / 3600.0))
+            raise ModelError("GPU engine cancelled")
+        except MF.EngineError as e:
+            raise ModelError("GPU engine: {}".format(e))
+        finally:
+            with open(os.path.join(workdir, "lisflood.log"), "w", encoding="utf-8") as f:
+                f.write(MF.NAME + "\n" + "\n".join(lines) + "\n")
+        return {"engine": MF.NAME, "wall_s": time.time() - t0, "wall_limit_s": limit, "unpatched": False}
     env = dict(os.environ)
     if threads:
         env["OMP_NUM_THREADS"] = str(int(threads))
