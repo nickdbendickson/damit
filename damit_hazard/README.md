@@ -208,6 +208,8 @@ Markdown report links the chart and the HTML report embeds it.
 
 Those points count as ND 911 address points under the same rule as DWR `ndhazard:classify` 2.25.6 (official `SOURCE` values such as `SARGENT COUNTY 911`, `Placement` `Structure`, and `Site_NGUID`). **The habitability rule used for M6 and the class is unchanged:** the 911 / reviewed rule stays opt-in (`HABITABLE_RULE`).
 
+**An E911 point at a structure already in another layer tags it (0.4.2 review fix, damit #113).** An official address point that falls on a building another structure layer already holds is not counted as a second (presumed-home) structure: it marks that structure as its 911 point. It is matched within 30 ft when `Placement` is `Structure`, and within 100 ft when the point is placed at the driveway, parcel or property access (`ADDRESS_MERGE_FT` / `ADDRESS_SNAP_FT` in `algorithms/classify.py`, the same values as DWR Hazard's `STRUCTURE_MERGE_DIST_FT` / `ADDRESS_SNAP_FT`). Only the points that match no structure become structures of their own; the log says how many of each. A `SOURCE` that only ends in the digits 911 (a street number, "PO BOX 1911") is not a 911 source; it has to end in the word 911 ("SARGENT COUNTY 911").
+
 ### Habitability: 911 address points, NSI, USA Structures and the engineer's review (0.4.0)
 
 * **The engineer's review.** `damit:reviewhabitable` (Processing Toolbox, *DamIT Hazard*) saves `reviewed_habitable`
