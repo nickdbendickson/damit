@@ -1,6 +1,6 @@
 """Temporal distributions of a design storm: NOAA Atlas 14 quartile curves (HDSC) and the NRCS 24-hour types.
 
-NOAA Atlas 14 stays the ONLY source of the storm DEPTH (damit_pmp:pointpf / basinpf). This module only supplies a
+NOAA Atlas 14 stays the ONLY source of the storm DEPTH (the Atlas 14 point / basin tables). This module only supplies a
 SHAPE: how that depth is spread in time.
 
 NOAA Atlas 14 temporal distributions (Volume 8, Midwestern States)

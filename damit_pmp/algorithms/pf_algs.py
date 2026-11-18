@@ -512,8 +512,10 @@ class FetchGrid(_GridChoice):
                 "source (https://hdsc.nws.noaa.gov/pub/hdsc/data/<region>/<region><ARI>yr<dur><a|al|au>[_ams].zip, "
                 "the same files as https://hdsc.nws.noaa.gov/pfds/pfds_gis.html), clips it to the point buffer, extent "
                 "or basin you give, and writes a GeoTIFF in INCHES (NOAA's integer thousandths of an inch x 0.001; "
-                "Float32, NAD83 geographic, nodata -9999) plus a JSON sidecar (<tif>.json) with the source URL, fetch "
-                "time, SHA-256, Atlas 14 volume and citation. Choose any of the 10 ARIs (PDS) or 9 AEPs (AMS), any of "
+                "Float32, NAD83 geographic, nodata -9999) plus a JSON sidecar (<tif>.json, always written; OUTPUT_JSON "
+                "adds a copy) with the source URL, fetch time, SHA-256, Atlas 14 volume and citation; gridbasin reads "
+                "the GeoTIFF in inches only when the sidecar sits beside it. With MASK_TO_BASIN, every cell the basin "
+                "touches is kept. Choose any of the 10 ARIs (PDS) or 9 AEPs (AMS), any of "
                 "the 19 durations, and the estimate or its 90% lower / upper bound. The region comes from the point / "
                 "extent (via a PFDS point query) unless you choose it. Without a clip area the whole regional grid "
                 "(about 25 MB of cells) is written. Downloads (3-4 MB zips) are cached; OFFLINE uses the cache only. "
@@ -525,13 +527,15 @@ class FetchGrid(_GridChoice):
         self.addParameter(QgsProcessingParameterExtent("EXTENT", "Clip extent", optional=True))
         self.addParameter(QgsProcessingParameterFeatureSource("BASIN", "Clip to basin (polygons)",
                                                               [QgsProcessing.TypeVectorPolygon], optional=True))
-        self.addParameter(QgsProcessingParameterBoolean("MASK_TO_BASIN", "Blank cells outside the basin polygons",
+        self.addParameter(QgsProcessingParameterBoolean("MASK_TO_BASIN", "Blank cells outside the basin polygons "
+                                                        "(cells the basin touches are kept)",
                                                         defaultValue=False))
         self.addParameter(QgsProcessingParameterNumber("BUFFER_KM", "Buffer around the point (km)", DOUBLE,
                                                        defaultValue=5.0, minValue=0.0, maxValue=500.0))
         self._choice_params()
         self.addParameter(QgsProcessingParameterRasterDestination("OUTPUT", "Atlas 14 grid (GeoTIFF, inches)"))
-        self.addParameter(QgsProcessingParameterFileDestination("OUTPUT_JSON", "Source record (JSON; default <GeoTIFF>.json)",
+        self.addParameter(QgsProcessingParameterFileDestination("OUTPUT_JSON", "Copy of the source record (JSON; <GeoTIFF>.json "
+                                                                "is always written)",
                                                                 "JSON files (*.json)", optional=True, createByDefault=False))
         self.addOutput(QgsProcessingOutputNumber("MEAN", "Mean of the clipped grid (in)"))
         self.addOutput(QgsProcessingOutputNumber("POINT_VALUE", "Value at the point (in), -1 if no point"))
@@ -540,7 +544,8 @@ class FetchGrid(_GridChoice):
     def processAlgorithm(self, P, context, feedback):  # noqa: N802
         ch = self._choice(P, context)
         out = self.parameterAsOutputLayer(P, "OUTPUT", context)
-        side = self.parameterAsFileOutput(P, "OUTPUT_JSON", context) or G.sidecar_path(out)
+        side = G.sidecar_path(out)              # always: gridbasin reads the GeoTIFF in inches only with it
+        copy = self.parameterAsFileOutput(P, "OUTPUT_JSON", context)
         cache = self._cache(P, context, out)
         pt = None
         if P.get("POINT") not in (None, ""):
@@ -594,11 +599,14 @@ class FetchGrid(_GridChoice):
                "atlas14_volume": vol or None, "grid_metadata": zm,
                "citation": vol.get("citation") or G.citation(rec["region"], zm.get("pubdate")),
                "note": NOTE}
-        with open(side, "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, indent=1)
+        for path in [side] + ([copy] if copy and os.path.abspath(copy) != os.path.abspath(side) else []):
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh, indent=1)
         feedback.pushInfo("mean {} in, min {}, max {} ({} cells){}".format(
             st["mean"], st["min"], st["max"], st["cells"], "; point {} in".format(pv) if pv is not None else ""))
-        return {"OUTPUT": out, "OUTPUT_JSON": side, "MEAN": st["mean"], "POINT_VALUE": pv if pv is not None else -1.0,
+        return {"OUTPUT": out, "OUTPUT_JSON": copy or side, "MEAN": st["mean"],
+                "POINT_VALUE": pv if pv is not None else -1.0,
                 "URL": rec["url"]}
 
 
@@ -615,7 +623,8 @@ class GridBasin(_GridChoice):
                 "file name, e.g. mw100yr24ha.asc, or a damit_pmp:fetchgrid GeoTIFF, already in inches) OR leave GRID "
                 "empty and choose the frequency, duration, series, bound and region (as in damit_pmp:fetchgrid): the "
                 "tool then fetches the NOAA grid itself (cached) and reports the basin statistics. The basin is a "
-                "polygon you supply; Atlas 14 values are point estimates (no areal reduction). " + NOTE)
+                "polygon you supply; every cell it touches counts. Atlas 14 values are point estimates (no areal "
+                "reduction). " + NOTE)
 
     def initAlgorithm(self, config=None):  # noqa: N802
         self.addParameter(QgsProcessingParameterRasterLayer("GRID", "NOAA Atlas 14 grid (empty = fetch from NOAA with the "

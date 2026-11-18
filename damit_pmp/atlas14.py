@@ -1,7 +1,7 @@
 """NOAA Atlas 14 precipitation-frequency estimates from the NOAA/NWS Precipitation Frequency Data
 Server (PFDS, https://hdsc.nws.noaa.gov/pfds/). Pure Python.
 
-This is (with the GIS grids of gisgrid.py) the only data source of DamIT PMP. It reads the PFDS point query
+This module (with the GIS grids of gisgrid.py) is the Atlas 14 source of the Atlas 14 tools. It reads the PFDS point query
 (cgi_readH5.py), which returns, for a latitude / longitude, the Atlas 14 estimates for 19
 durations (5 min - 60 days) and 10 average recurrence intervals (partial-duration series,
 1 - 1000 years) or 9 annual exceedance probabilities (annual-maximum series, 1/2 - 1/1000), with
@@ -26,7 +26,7 @@ DURATIONS = (("5-min", 5), ("10-min", 10), ("15-min", 15), ("30-min", 30), ("60-
              ("3-hr", 180), ("6-hr", 360), ("12-hr", 720), ("24-hr", 1440), ("2-day", 2880), ("3-day", 4320),
              ("4-day", 5760), ("7-day", 10080), ("10-day", 14400), ("20-day", 28800), ("30-day", 43200),
              ("45-day", 64800), ("60-day", 86400))
-# THE duration list of damit_pmp: every tool that offers a duration (fetchgrid / gridbasin DURATION, hyetograph /
+# THE Atlas 14 duration list: every tool that offers a duration (fetchgrid / gridbasin DURATION, hyetograph /
 # raingrid STORM) builds its choice from this one list, so the same index is the same duration everywhere
 # (0 = 5-min ... 9 = 24-hr ... 18 = 60-day). Do not reorder it: it is also the row order of PFDS tables.
 DURATION_LABELS = [d for d, _ in DURATIONS]
@@ -71,8 +71,8 @@ def parse(text):
         m = re.search(r"ErrorMsg\s*=\s*'([^']*)'", text)
         msg = m.group(1).strip() if m else "no Atlas 14 values in the answer"
         if sc.get("result") == "none":
-            raise CoverageError("NOAA Atlas 14 does not cover this location (PFDS: {}). DamIT PMP uses "
-                                "NOAA Atlas 14 only and has no other source.".format(msg))
+            raise CoverageError("NOAA Atlas 14 does not cover this location (PFDS: {}). There is no Atlas 14 "
+                                "estimate for it.".format(msg))
         raise Atlas14Error("unexpected PFDS answer: {}".format(msg if m else text[:200]))
     arrays = {}
     for name, body in _ARRAY.findall(text):

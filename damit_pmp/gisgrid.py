@@ -184,8 +184,10 @@ def zip_metadata(zpath):
 
 def read_clip(zpath, window=None, mask_wkt=None, mask_wkt_crs=None):
     """Read the Atlas 14 grid in a zip. ``window`` = (xmin, ymin, xmax, ymax) in the grid's geographic
-    degrees (None = the whole grid); ``mask_wkt`` (geographic degrees) blanks cells whose centre is
-    outside it. Returns (array in inches, float32, NODATA_OUT where empty; geotransform; EPSG-wkt)."""
+    degrees (None = the whole grid); ``mask_wkt`` (geographic degrees) blanks the cells it does not
+    touch: every cell the polygon touches is kept (GDAL ALL_TOUCHED, the same rule as
+    gridstats.basin_stats, so a fetched grid and a grid file give the same basin cells).
+    Returns (array in inches, float32, NODATA_OUT where empty; geotransform; EPSG-wkt)."""
     import numpy as np
     from osgeo import gdal, ogr, osr
     gdal.UseExceptions()

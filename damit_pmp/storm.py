@@ -1,4 +1,4 @@
-"""One storm builder for damit_pmp:hyetograph and damit_pmp:raingrid: temporal pattern, then losses (pure Python).
+"""One storm builder for the Atlas 14 hyetograph and rain-on-grid tools: temporal pattern, then losses (pure Python).
 
 Order: gross depth (Atlas 14, alternating block or a temporal curve) -> optional rescale to an Atlas 14 grid (raingrid) ->
 initial loss -> constant loss -> excess rain. Losses are applied per time step on the incremental depth:
