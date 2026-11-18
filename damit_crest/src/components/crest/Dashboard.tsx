@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
+import damitWordmark from "@/assets/damit-wordmark-light.png";
+
 import { ClientOnly } from "./ClientOnly";
 import { useOnline } from "./use-online";
 import { DEPTH_BANDS, floodStrip, type FloodStrip } from "@/lib/crest/floodstrip";
@@ -162,7 +164,10 @@ export function Dashboard({ dam, result: deskResult }: { dam: DamRecord; result:
   return (
     <section className="dash-root" data-testid="dashboard">
       <header className="dash-header">
-        <span className="dash-brand">▲ DamIT Crest</span>
+        <span className="dash-brand">
+          <img src={damitWordmark} alt="DaMiT" height={28} width={103} className="dash-wordmark" />
+          Crest
+        </span>
         <span className="chip">
           <b>Scenario:</b> Sunny-day breach · {dam.name}
         </span>

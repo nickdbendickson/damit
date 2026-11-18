@@ -47,6 +47,38 @@ PREFERRED_PORT = 47241
 
 TITLE = "DamIT Crest — Dam Breach and Hazard Desk"
 
+# Official DaMiT wordmark (docs/img/damit-wordmark-light.png), copied next to this package as icon.png
+# so python run.py and the packaged app can find it without Node or a Vite-hashed asset name.
+_ICON_NAME = "icon.png"
+
+
+def logo_path() -> Path | None:
+    """The DaMiT wordmark for the native window / packaged-app icon, or None if it is not on disk."""
+    here = Path(__file__).resolve().parent
+    candidates = [here / _ICON_NAME]
+    # A source checkout also has the original at the repo root.
+    try:
+        repo_logo = here.parents[2] / "docs" / "img" / "damit-wordmark-light.png"
+        candidates.append(repo_logo)
+    except IndexError:
+        pass
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        root = Path(meipass)
+        candidates.extend(
+            [
+                root / "damit_desktop" / _ICON_NAME,
+                root / _ICON_NAME,
+                root / "docs" / "img" / "damit-wordmark-light.png",
+            ]
+        )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+
 #: Injected into the desk after every page load (evaluate_js runs outside the page CSP, and webview_csp.py keeps it
 #: from using eval, so script-src 'self' does not block it). It keeps the window on its own 127.0.0.1 origin: a click
 #: on an off-origin http(s) link, or a window.open to one, is cancelled and handed to the OS browser via
@@ -787,7 +819,11 @@ def main() -> None:
         api._window = webview.create_window(TITLE, open_url, js_api=api, width=1280, height=860, min_size=(760, 560))
         # Re-arm the nav guard after every in-page load (the loaded event re-fires on each navigation).
         api._window.events.loaded += lambda *a: api._window.evaluate_js(NAV_GUARD_JS)
-        webview.start(private_mode=False, storage_path=str(store))
+        start_kw: dict = {"private_mode": False, "storage_path": str(store)}
+        icon = logo_path()
+        if icon is not None:
+            start_kw["icon"] = str(icon)
+        webview.start(**start_kw)
     except Exception as e:  # no GUI backend: use the system browser (downloads work there)
         print(f"DamIT Crest desktop: no webview ({e}). Opening {url} in the browser; press Ctrl+C to stop.", flush=True)
         # The token is in the fragment. On this fallback the OS passes the address to the browser on its command
