@@ -32,9 +32,20 @@ import { contentSecurityPolicy, SECURITY_HEADERS } from "./src/lib/crest/csp.ts"
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const ROOT = r("./");
 
-/** SHA-256 of a text file with CRLF folded to LF, so a Windows checkout hashes the same as Linux. */
+/** SHA-256 of a source file. Text is hashed with CRLF folded to LF so a Windows checkout matches Linux; binary assets (e.g. the wordmark PNG) are hashed as raw bytes. */
+function isUtf8Text(buf: Buffer): boolean {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buf);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function sha256(file: string): string {
-  return createHash("sha256").update(readFileSync(file, "utf8").replace(/\r\n/g, "\n")).digest("hex");
+  const buf = readFileSync(file);
+  const data = isUtf8Text(buf) ? buf.toString("utf8").replace(/\r\n/g, "\n") : buf;
+  return createHash("sha256").update(data).digest("hex");
 }
 
 /** Writes build-info.json. */

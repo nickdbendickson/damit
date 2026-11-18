@@ -38,7 +38,13 @@ TILE_HOSTS = ("basemap.nationalmap.gov", "basemaps.cartocdn.com", "tile.openstre
 
 
 def sha256_lf(path: Path) -> str:
-    return hashlib.sha256(path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")).hexdigest()
+    """SHA-256 of a source file. Text is hashed with CRLF folded to LF; binary assets as raw bytes."""
+    data = path.read_bytes()
+    try:
+        data = data.decode("utf-8").replace("\r\n", "\n").encode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    return hashlib.sha256(data).hexdigest()
 
 
 class BundleTests(unittest.TestCase):

@@ -17,7 +17,7 @@ a = Analysis(
     pathex=["."],
     binaries=[],
     # DamIT Catalog's NID-ID rule: damit_desktop/nid_rule.py loads this file (no copy of the rule in Crest).
-    datas=[("damit_desktop/web", "damit_desktop/web"), ("../../damit_catalog/handoff.py", "damit_catalog")],
+    datas=[("damit_desktop/web", "damit_desktop/web"), ("damit_desktop/icon.png", "damit_desktop"), ("../../docs/img/damit-wordmark-light.png", "docs/img"), ("../../damit_catalog/handoff.py", "damit_catalog")],
     hiddenimports=[
         "damit_desktop",
         "damit_desktop.__main__",
@@ -47,6 +47,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon="damit_crest.ico",
 )
 coll = COLLECT(
     exe,
@@ -60,7 +61,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="DamIT Crest.app",
-        icon=None,
+        icon="damit_crest.ico",
         bundle_identifier="org.damit.crest",
         info_plist={"CFBundleName": "DamIT Crest", "CFBundleDisplayName": "DamIT Crest — Dam Breach and Hazard Desk"},
     )

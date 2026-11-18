@@ -1,6 +1,6 @@
 # damit_crest — DamIT Crest desktop app
 
-**0.1.1 (2026-11-17).** The desktop Content-Security-Policy stays `script-src 'self'` (no `unsafe-eval`); pywebview's `new Function` / `eval` API binder is rewritten to a closure so the Uncaught EvalError at startup is gone. The drawn dam line is sent to `damit_run:rundam` as `DAM_LINES`. Screening settings from the offline pack also set larger clips to the local DEM (not a fresh 3DEP download).
+**0.1.2 (2026-11-18).** The official DaMiT wordmark (`docs/img/damit-wordmark-light.png`) is shown in the desk header and the Dashboard brand, is the page favicon, and is the desktop window / packaged-app icon (`webview.start(icon=…)`, PyInstaller `icon=`).
 
 DamIT Crest is the DamIT desktop desk: a pywebview window around a local web desk for dam breach screening —
 breach hydrograph, schematic and terrain flood views, receptor ranking, results import, a printable report and

@@ -17,8 +17,14 @@ describe("damit_crest desktop bundle", () => {
     const stale = Object.entries(info.sources).filter(([rel, digest]) => {
       const file = join(repo, rel);
       if (!existsSync(file)) return true;
-      const text = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
-      return createHash("sha256").update(text).digest("hex") !== digest;
+      const buf = readFileSync(file);
+      let data;
+      try {
+        data = new TextDecoder("utf-8", { fatal: true }).decode(buf).replace(/\r\n/g, "\n");
+      } catch {
+        data = buf;
+      }
+      return createHash("sha256").update(data).digest("hex") !== digest;
     });
     assert.deepEqual(stale.map(([rel]) => rel), []);
   });
