@@ -17,6 +17,7 @@ import os
 import secrets
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from functools import partial
@@ -122,6 +123,43 @@ NAV_GUARD_JS = r"""
 #: answers, so other web origins cannot reach the API from a browser.
 TOKEN_HEADER = "X-DamIT-Token"
 API_TOKEN = secrets.token_urlsafe(32)
+
+#: Browser fallback (no pywebview window): the OS starts the browser with the address on its command line, which other
+#: local users can list (ps, /proc/<pid>/cmdline, Task Manager) for as long as that browser runs. So the fallback never
+#: puts API_TOKEN there. It opens /launch?code=<one-time code> instead; the server swaps a valid code, once, for a
+#: 303 redirect to index.html#damit-token=<token>, carried only in the HTTP response to the browser's own loopback
+#: connection. The code is random, single-use, expires after LAUNCH_CODE_TTL_S and is compared in constant time, so
+#: what stays visible on the command line is dead once the page has loaded. Residual risk (no fix without a channel the
+#: other user cannot read): a local user who reads the code and uses it before the browser does gets the token; the
+#: browser then gets the "already used" page, the terminal shows a warning, and restarting the desk makes a new token.
+#: Same scheme as Crest (crest-desktop/crest/__main__.py).
+LAUNCH_PATH = "/launch"
+LAUNCH_CODE_TTL_S = 120.0
+_launch_lock = threading.Lock()
+_launch: dict = {"code": None, "expires": 0.0, "used": False}
+
+
+def issue_launch_code(ttl: float = LAUNCH_CODE_TTL_S) -> str:
+    """A fresh one-time launch code (replaces any earlier one)."""
+    code = secrets.token_urlsafe(32)
+    with _launch_lock:
+        _launch.update(code=code, expires=time.monotonic() + ttl, used=False)
+    return code
+
+
+def consume_launch_code(code: str) -> str:
+    """'ok' (and the code is spent), 'used', 'expired' or 'invalid'. Constant-time compare; one success per code."""
+    with _launch_lock:
+        current = _launch["code"]
+        if not current or not code or not hmac.compare_digest(code.encode(), current.encode()):
+            return "invalid"
+        if _launch["used"]:
+            return "used"
+        if time.monotonic() > _launch["expires"]:
+            _launch.update(used=True)
+            return "expired"
+        _launch.update(used=True)
+        return "ok"
 _LOCAL_HOSTS = ("127.0.0.1", "localhost")
 
 #: damit-crest-settings.json (last Save folder, the chosen local DEM). Set by main(); tests set it directly.
@@ -340,6 +378,30 @@ class _Handler(SimpleHTTPRequestHandler):
         # The token is NOT injected into the page (see API_TOKEN): any local peer can GET / on the loopback port.
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
+    def _serve_launch(self, query: dict) -> None:
+        """Browser fallback: swap the one-time launch code for a redirect that carries the token in the fragment."""
+        code = (query.get("code") or [""])[0]
+        result = consume_launch_code(code)
+        if result == "ok":
+            self.send_response(303)
+            self.send_header("Location", f"/index.html#damit-token={API_TOKEN}")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if result == "used":
+            print("DamIT Crest desktop: WARNING - the browser launch link was used more than once. If the desk in your "
+                  "browser says so, another program used it first: stop DamIT Crest (Ctrl+C) and start it again.",
+                  flush=True)
+        msg = {
+            "used": "This DamIT Crest launch link was already used. Use the DamIT Crest tab that is already open, or "
+                    "stop DamIT Crest (Ctrl+C in its terminal) and start it again for a new link.",
+            "expired": "This DamIT Crest launch link has expired. Stop DamIT Crest (Ctrl+C in its terminal) and start "
+                       "it again.",
+        }.get(result, "This is not a valid DamIT Crest launch link. Stop DamIT Crest (Ctrl+C in its terminal) and "
+                      "start it again.")
+        self._send(410 if result in ("used", "expired") else 403, msg.encode("utf-8"), "text/plain; charset=utf-8")
+
     def do_GET(self):
         if not self._host_ok():
             self._send(403, b"forbidden", "text/plain")
@@ -347,6 +409,9 @@ class _Handler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path in ("/", "/index.html"):
             self._serve_index()
+            return
+        if parsed.path == LAUNCH_PATH:
+            self._serve_launch(parse_qs(parsed.query))
             return
         if parsed.path.startswith("/api/") and not self._api_allowed():
             return
@@ -788,6 +853,11 @@ def desk_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/index.html#damit-token={API_TOKEN}"
 
 
+def launch_url(port: int, code: str) -> str:
+    """The address the browser fallback opens: a one-time launch code, never the API token (see LAUNCH_PATH)."""
+    return f"http://127.0.0.1:{port}{LAUNCH_PATH}?code={code}"
+
+
 def main() -> None:
     global SETTINGS_FILE
     store = storage_dir()
@@ -799,8 +869,9 @@ def main() -> None:
     # printed without the token: opening this plain address elsewhere shows the desk, but its /api/ calls are refused
     url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
     open_url = desk_url(server.server_address[1])
-    # install test 2026-11-18: the address is printed at start (flushed: the launcher's output may be a pipe),
-    # so it can be opened in a browser and the port is visible whichever window opens.
+    # install test 2026-11-18: the address is printed at start (flushed: the launcher's output may be a pipe), so the
+    # port is visible whichever window opens. It carries no token: opened by hand it shows the desk, but every /api/
+    # call is refused. Only the window (or the browser fallback's one-time launch link) gets the token.
     print(f"DamIT Crest desktop: {url}", flush=True)
     try:
         import webview
@@ -825,10 +896,15 @@ def main() -> None:
             start_kw["icon"] = str(icon)
         webview.start(**start_kw)
     except Exception as e:  # no GUI backend: use the system browser (downloads work there)
-        print(f"DamIT Crest desktop: no webview ({e}). Opening {url} in the browser; press Ctrl+C to stop.", flush=True)
-        # The token is in the fragment. On this fallback the OS passes the address to the browser on its command
-        # line, which other local users may be able to list; the pywebview window above has no such exposure.
-        webbrowser.open(open_url)
+        print(f"DamIT Crest desktop: no webview ({e}). Opening the desk in the browser with a one-time launch link; "
+              "press Ctrl+C to stop.", flush=True)
+        # The OS passes this address to the browser on its command line, which other local users may be able to
+        # list, so it carries a one-time launch code that expires, not the token (see LAUNCH_PATH).
+        link = launch_url(server.server_address[1], issue_launch_code())
+        if not webbrowser.open(link):
+            # No browser could be started (e.g. over ssh). The terminal is the user's own; the link is single-use.
+            print(f"DamIT Crest desktop: no browser started. Open this one-time link within {int(LAUNCH_CODE_TTL_S)} s: "
+                  f"{link}", flush=True)
         try:
             threading.Event().wait()
         except KeyboardInterrupt:
