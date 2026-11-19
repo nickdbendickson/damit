@@ -52,6 +52,17 @@ def _ids(text):
     return [x.strip() for x in (text or "").replace(";", ",").split(",") if x.strip()]
 
 
+def _atomic_write(path, text):
+    """Atomic text write (audit 2026-11-19): .part first, then os.replace."""
+    import os as _o
+    d = _o.path.dirname(_o.path.abspath(path)) or "."
+    _o.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    _o.replace(tmp, path)
+
+
 def _stat(path, role, note=""):
     try:
         st = os.stat(path.split("|")[0])
@@ -741,12 +752,10 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         # reports
         title = "DamIT Hazard run report" + (" - " + dam["name"] if dam.get("name") else "")
         md = os.path.join(out_dir, "damit_hazard_report.md")
-        with open(md, "w", encoding="utf-8") as f:
-            f.write(report.markdown(res, cat, title))
-        with open(os.path.join(out_dir, "damit_hazard_report.html"), "w", encoding="utf-8") as f:
-            f.write(report.html_report(res, cat, title, base_dir=out_dir))
-        with open(os.path.join(out_dir, "damit_hazard_report.json"), "w", encoding="utf-8") as f:
-            f.write(report.as_json(res))
+        _atomic_write(md, report.markdown(res, cat, title))
+        _atomic_write(os.path.join(out_dir, "damit_hazard_report.html"),
+                      report.html_report(res, cat, title, base_dir=out_dir))
+        _atomic_write(os.path.join(out_dir, "damit_hazard_report.json"), report.as_json(res))
         gpkg = os.path.join(out_dir, "damit_hazard_receptors.gpkg")
         written = self._write_gpkg(gpkg, sources, geoms, best, res, context)
         labels = cfg["labels"]

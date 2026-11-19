@@ -99,6 +99,17 @@ import datetime
 import json
 import math
 import os
+
+def _atomic_write(path, text):
+    """Atomic text write (audit 2026-11-19): .part first, then os.replace."""
+    import os as _o
+    d = _o.path.dirname(_o.path.abspath(path)) or "."
+    _o.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    _o.replace(tmp, path)
+
 import re
 import shutil
 import subprocess
@@ -878,14 +889,14 @@ def results_t0_hr(res):
 
 def _write_engine_json(res, inflow_mode, inflow_bc, info):
     info = info or res.get("info") or {}
-    with open(os.path.join(res["folder"], "hecras_engine.json"), "w", encoding="utf-8") as f:
-        json.dump({"inflow_mode": inflow_mode, "inflow_bc": inflow_bc,
+    _atomic_write(os.path.join(res["folder"], "hecras_engine.json"),
+                  json.dumps({"inflow_mode": inflow_mode, "inflow_bc": inflow_bc,
                    "cells": info.get("cells"), "comp_interval": info.get("comp_interval"),
                    "inflow_mode_requested": res.get("inflow_mode_requested", inflow_mode),
                    "inflow_fallback": res.get("inflow_fallback"),
                    "time_step": info.get("time_step"), "sim_hours": info.get("sim_hours"),
                    "model_wkt": info.get("model_wkt"), "work_wkt": info.get("work_wkt")},
-                  f, indent=1)
+                  indent=1))
 
 
 # preprocess / compute (Linux: Wine + official Linux RasUnsteady)
@@ -1692,9 +1703,9 @@ def record_timeout(dam_folder, info, log=None):
     except Exception as e:
         info["partial_hdf_copy_error"] = "{}: {}".format(type(e).__name__, e)
     try:
-        with open(os.path.join(keep, "hecras_stage.json"), "w", encoding="utf-8") as f:
-            json.dump({"engine": "hecras", "status": "timeout", "timeout": info}, f, indent=1,
-                      default=str)
+        _atomic_write(os.path.join(keep, "hecras_stage.json"),
+                      json.dumps({"engine": "hecras", "status": "timeout", "timeout": info},
+                                 indent=1, default=str))
     except Exception:
         pass
     rp = os.path.join(dam_folder, "_breach_model", "run_report.json")
@@ -1792,8 +1803,8 @@ def compute(project_dir, name, plan="01", d=None, env=None, work_dir=None, log=N
                       sim_hours=pt["sim_hours"])
         x.info["partial_hdf"] = keep_partial(work, tmp, name, plan, log=log)
         try:
-            with open(os.path.join(work, "timeout.json"), "w", encoding="utf-8") as f:
-                json.dump(x.info, f, indent=1, default=str)
+            _atomic_write(os.path.join(work, "timeout.json"),
+                          json.dumps(x.info, indent=1, default=str))
         except Exception:
             pass
         raise
@@ -2337,8 +2348,7 @@ def run_stage(dam_folder, final_paths, writer, st, log=None, env=None, d=None,
            ([fine_stop] if fine_stop else []),
            "model_wkt": r["info"].get("model_wkt"), "t0_hr": results_t0_hr(r),
            "arrival_depth_ft": arrival_ft}
-    with open(os.path.join(keep, "hecras_stage.json"), "w", encoding="utf-8") as f:
-        json.dump(rep, f, indent=1)
+    _atomic_write(os.path.join(keep, "hecras_stage.json"), json.dumps(rep, indent=1))
     warns = ["Final rasters are from HEC-RAS 2D (preliminary engine; LISFLOOD-FP "
              "rasters kept as '{}...'). Review _hecras/hecras_stage.json."
              .format(LISFLOOD_PREFIX)]
@@ -2598,8 +2608,7 @@ def reexport_hecras_results(run_dir, out_dir=None, hdf=None, terrain=None, like=
            # review round 3: a terrain whose unit had to be assumed (terrain_z_factor)
            "terrain_z": tinfo.get("z"),
            "warnings": twarn + list(info.get("datum_warnings") or [])}
-    with open(os.path.join(out_dir, REEXPORT_JSON), "w", encoding="utf-8") as f:
-        json.dump(rep, f, indent=1)
+    _atomic_write(os.path.join(out_dir, REEXPORT_JSON), json.dumps(rep, indent=1))
     say("Wrote {}".format(out_dir))
     return rep
 

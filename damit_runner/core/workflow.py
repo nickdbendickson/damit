@@ -37,6 +37,17 @@ import hashlib
 import json
 import math
 import os
+
+def _atomic_write(path, text):
+    """Atomic text write (audit 2026-11-19): .part first, then os.replace."""
+    import os as _o
+    d = _o.path.dirname(_o.path.abspath(path)) or "."
+    _o.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    _o.replace(tmp, path)
+
 import time
 
 import numpy as np
@@ -959,8 +970,8 @@ def _write_pass_products(out_folder, dem, env, arrival_m, writer, it):
         show["arrival"] = np.where(np.isfinite(arr) & (arr >= 0), arr / 3600.0, np.nan)
     for kind, a in show.items():
         writer(dem.like(a, np.nan), os.path.join(out_folder, names[kind]))
-    with open(os.path.join(out_folder, "pass_{}_checkpoint.txt".format(it)), "w", encoding="utf-8") as f:
-        f.write("Pass {} checkpoint. These rasters are this pass, not a finished flood.\n".format(it))
+    _atomic_write(os.path.join(out_folder, "pass_{}_checkpoint.txt".format(it)),
+                  "Pass {} checkpoint. These rasters are this pass, not a finished flood.\n".format(it))
     if depth is None:
         return
     wet = np.isfinite(depth) & (depth >= arrival_m)
@@ -1981,8 +1992,8 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
         # v3.10.16: the structures as the run used them (inverts after the LiDAR check, matched
         # culverts added), for the HEC-RAS model builder
         report["structures_used"] = [s.to_dict() for s in st.structures]
-        json.dump([s.to_dict() for s in st.structures],
-                  open(os.path.join(model_dir, "structures.json"), "w", encoding="utf-8"), indent=2)
+        _atomic_write(os.path.join(model_dir, "structures.json"),
+                      json.dumps([s.to_dict() for s in st.structures], indent=2))
 
     # --- LISFLOOD-FP run helper -----------------------------------------------------
     def gauge_list(bnds, gauges):
@@ -2576,10 +2587,9 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
             "note": stoprule.DEFAULTS_NOTE, "decisions": class_stop_all}
     res.gauges = dict(lf_env.gauges)
     for name, (tt, qq) in res.gauges.items():
-        with open(os.path.join(model_dir, "gauge_{}.csv".format(_safe(name))), "w", encoding="utf-8") as f:
-            f.write("time_hr,discharge_cfs\n")
-            for a, b in zip(tt, qq):
-                f.write("{:.5f},{:.3f}\n".format(a / 3600.0, b / CFS))
+        rows = ["time_hr,discharge_cfs\n"] + ["{:.5f},{:.3f}\n".format(a / 3600.0, b / CFS)
+                                               for a, b in zip(tt, qq)]
+        _atomic_write(os.path.join(model_dir, "gauge_{}.csv".format(_safe(name))), "".join(rows))
     res.plan = {"inflow_xy": tuple(inflow_xy), "path": path, "direction": direction,
                 "bounds": tuple(bounds), "sim_time": sim_time, "trace_length_m": plen}
 
@@ -3253,8 +3263,7 @@ def adopt_final_engine(out_folder, final_model, st=None, dam_xy=None, log=None):
     report.setdefault("outputs", {})["final"] = dict(paths)
     report["outputs"]["vectors"] = vec
     _write_json(rp, report)
-    with open(os.path.join(model_dir, "run_report.md"), "w", encoding="utf-8") as f:
-        f.write(render_report(report))
+    _atomic_write(os.path.join(model_dir, "run_report.md"), render_report(report))
     try:
         products.write_html_report(report, model_dir, types.SimpleNamespace(
             eap_map=res_ns.eap_map, vectors=vec, dam_id=dam_ns.dam_id))
