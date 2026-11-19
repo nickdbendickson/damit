@@ -13,6 +13,7 @@ import time
 
 import numpy as np
 
+from .engines import require_minimum as _require_engine_min
 from .lisflood import Envelopes, ModelError, Cancelled
 from . import terrain, wallclock
 from . import anuga_detach as detach   # 3.12.2: the worker runs detached from QGIS
@@ -1933,6 +1934,13 @@ def check_anuga(python, workdir):
         return {"ok": False, "message": (out.stdout + out.stderr)[-1500:]}
     ver = out.stdout.strip().splitlines()[-1]
     res = {"ok": True, "message": "ANUGA {} (Python {})".format(*ver.split()[:2])}
+    # audit follow-up 2026-11-19: enforce the pinned minimum (engines.py).
+    # Graceful, like the rest of check_*: a too-old ANUGA fails the check with a
+    # clear message instead of letting the run proceed on a substituted engine.
+    try:
+        _require_engine_min("anuga", ver.split()[0])
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
     res.update(check_gmsh(python, env))
     return res
 
