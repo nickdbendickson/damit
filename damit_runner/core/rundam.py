@@ -64,6 +64,17 @@ import datetime
 import json
 import os
 
+def _atomic_write(path, text):
+    """Atomic text write (audit 2026-11-19): .part first, then os.replace."""
+    import os as _o
+    d = _o.path.dirname(_o.path.abspath(path)) or "."
+    _o.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    _o.replace(tmp, path)
+
+
 from . import catalog_bridge as CB
 
 VERSION = "0.7.0"
@@ -197,8 +208,8 @@ def prepare_run(pkg, out_root, cat=None, engine=ENGINE_NONE, dry_run=True, now=N
                     "disclaimer": cat.disclaimer},
         "handoff": HO.FILENAME,
     }
-    with open(os.path.join(folder, RUN_SETUP), "w", encoding="utf-8") as fh:
-        json.dump(setup, fh, indent=1, ensure_ascii=False, default=str)
+    _atomic_write(os.path.join(folder, RUN_SETUP),
+                  json.dumps(setup, indent=1, ensure_ascii=False, default=str))
     _write_readme(folder, setup)
     return folder, setup
 
@@ -237,8 +248,7 @@ def _write_readme(folder, setup):
                   "with DamIT Hazard (damit:classify)."]
     lines.append("Suggested classifications only; the engineer of record and the regulating agency make the "
                  "determination.")
-    with open(os.path.join(folder, "README_run.md"), "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
+    _atomic_write(os.path.join(folder, "README_run.md"), "\n".join(lines) + "\n")
 
 
 # ------------------------------------------------------------------------------------------ 0.2.0: model run --

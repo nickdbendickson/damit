@@ -31,6 +31,32 @@ CSV_COLS = ["id", "receptor_type", "name", "hazard_type", "structure_type", "hab
             "depth_ground_ft", "velocity_fps", "dv_ft2s", "velocity_unknown", "class", "methods"]
 
 
+def _atomic_csv(path, rows):
+    """Atomic CSV write (audit 2026-11-19): buffer, .part, os.replace."""
+    import csv as _csv, io as _io, os as _o
+    buf = _io.StringIO()
+    w = _csv.DictWriter(buf, CSV_COLS, extrasaction="ignore")
+    w.writeheader()
+    w.writerows(rows)
+    d = _o.path.dirname(_o.path.abspath(path)) or "."
+    _o.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(buf.getvalue())
+    _o.replace(tmp, path)
+
+
+def _atomic_write(path, text):
+    """Atomic text write (audit 2026-11-19): .part first, then os.replace."""
+    import os as _o
+    d = _o.path.dirname(_o.path.abspath(path)) or "."
+    _o.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    _o.replace(tmp, path)
+
+
 def _number(name, label, default=None, optional=True):
     t = QgsProcessingParameterNumber.Double if hasattr(QgsProcessingParameterNumber, "Double") \
         else QgsProcessingParameterNumber.Type.Double
@@ -189,17 +215,13 @@ class ClassifyLite(QgsProcessingAlgorithm):
         inputs = {"depth": dlyr.source(), "velocity": vlyr.source() if vlyr is not None else "",
                   "model_dimension": dim, "hydraulics_source": summary["hydraulics_source"]}
         rj = os.path.join(out, "hazard_lite.json")
-        with open(rj, "w", encoding="utf-8") as fh:
-            json.dump({"result": res, "inputs": inputs, "config": {"mode": config.get("mode"),
-                       "preset_id": config.get("preset_id"), "methods": sorted(config.get("methods", {}))},
-                       "receptors": records}, fh, indent=1, default=str)
-        with open(os.path.join(out, "receptors.csv"), "w", newline="", encoding="utf-8") as fh:
-            w = csv.DictWriter(fh, CSV_COLS, extrasaction="ignore")
-            w.writeheader()
-            w.writerows(records)
+        _atomic_write(rj, json.dumps({"result": res, "inputs": inputs,
+                       "config": {"mode": config.get("mode"), "preset_id": config.get("preset_id"),
+                                  "methods": sorted(config.get("methods", {}))},
+                       "receptors": records}, indent=1, default=str))
+        _atomic_csv(os.path.join(out, "receptors.csv"), records)
         md = os.path.join(out, "hazard_lite_summary.md")
-        with open(md, "w", encoding="utf-8") as fh:
-            fh.write(E.summary_markdown(res, records, config, inputs))
+        _atomic_write(md, E.summary_markdown(res, records, config, inputs))
         sink, dest = self.parameterAsSink(P, "OUTPUT", context, make_fields(OUT_FIELDS),
                                           QgsWkbTypes.Point, rcrs if rcrs.isValid() else QgsCoordinateReferenceSystem())
         for r in records:

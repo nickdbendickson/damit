@@ -8,6 +8,13 @@ hierarchy under the suite data folder.  DamIT Runner only needs:
 * ``local_dem(folder)`` — find the user's own DEM in <folder>/dem/.
 """
 import os
+def _junk(name):
+    """Audit 2026-11-19: exclude exactly AppleDouble ._*, .DS_Store and
+    __MACOSX - never a blanket dot-prefix rule, so filenames that merely
+    contain a period keep their units and classifications."""
+    n = name.lower()
+    return n.startswith("._") or n == ".ds_store" or n == "__macosx"
+
 
 TERRAIN = "terrain"
 NLCD = "nlcd"
@@ -23,7 +30,7 @@ def rasters(folder, sub):
         return []
     out = []
     for name in sorted(os.listdir(d)):
-        if name.lower().startswith(".") or name in TILE_CACHES:
+        if _junk(name) or name in TILE_CACHES:
             continue
         p = os.path.join(d, name)
         if os.path.isfile(p) and os.path.splitext(name)[1].lower() in RASTER_EXT:

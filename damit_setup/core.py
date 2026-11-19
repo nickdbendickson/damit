@@ -6,6 +6,13 @@ osm, usa_structures). It never requires a North Dakota pack. Hand-off targets ar
 """
 import json
 import os
+def _junk(name):
+    """Audit 2026-11-19: exclude exactly AppleDouble ._*, .DS_Store and
+    __MACOSX - never a blanket dot-prefix rule, so filenames that merely
+    contain a period keep their units and classifications."""
+    n = name.lower()
+    return n.startswith("._") or n == ".ds_store" or n == "__macosx"
+
 import re
 
 from . import _deps  # noqa: F401
@@ -44,7 +51,7 @@ def scan(folder):
     for base, dirs, files in os.walk(root):
         rel_base = os.path.relpath(base, root)
         depth = 0 if rel_base == "." else rel_base.count(os.sep) + 1
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not d.endswith(".gdb")) \
+        dirs[:] = sorted(d for d in dirs if not _junk(d) and not d.endswith(".gdb")) \
             if depth < MAX_DEPTH else []
         for f in sorted(files):
             count += 1
@@ -52,7 +59,7 @@ def scan(folder):
                 notes.append("Stopped after {} files; pick a smaller folder.".format(MAX_FILES))
                 return found, notes
             low = f.lower()
-            if low.startswith(".") or low.startswith(".part_"):
+            if _junk(f) or low.startswith(".part_"):
                 continue
             ext = os.path.splitext(low)[1]
             rel = (os.path.join(rel_base, f) if rel_base != "." else f).lower().replace(os.sep, "/")
