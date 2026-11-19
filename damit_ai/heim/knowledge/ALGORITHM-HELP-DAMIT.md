@@ -432,6 +432,11 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `REFINE_DIST_MI` | Near-dam refine: flagged distance from the breach point (mi; starting value 1 is the engineer's, a screening value you choose) | number | 1 | advanced |
 | `REFINE_CELL` | Near-dam refine: fine cell size (m; 0 = half the model cell; 10 m = 32.8 ft) | number | 0 | advanced |
 | `SOLVER` | LISFLOOD-FP solver (Default = the NDBREACH_LISFLOOD_SOLVER environment variable, else the provider setting, else ACC) | enum | 0 | optional; advanced; options: 0=Default; 1=ACC (local inertial, default); 2=FV2 (second-order finite volume, slope limiter); 3=MWDG2 (adaptive multiwavelet DG2, slope limiter) |
+| `SGC` | Sub-grid river channels (LISFLOOD-FP SGC, ACC only) | boolean | False | advanced |
+| `SGC_UPSTREAM_SQMI` | Sub-grid channels: drainage area at the dam (sq mi; 0 = not known, the channel below the dam is then sized from the model domain only) | number | 0 | advanced |
+| `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
+| `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
+| `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
@@ -570,6 +575,11 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `REFINE_DIST_MI` | Near-dam refine: flagged distance from the breach point (mi; starting value 1 is the engineer's, a screening value you choose) | number | 1 | advanced |
 | `REFINE_CELL` | Near-dam refine: fine cell size (m; 0 = half the model cell; 10 m = 32.8 ft) | number | 0 | advanced |
 | `SOLVER` | LISFLOOD-FP solver (Default = the NDBREACH_LISFLOOD_SOLVER environment variable, else the provider setting, else ACC) | enum | 0 | optional; advanced; options: 0=Default; 1=ACC (local inertial, default); 2=FV2 (second-order finite volume, slope limiter); 3=MWDG2 (adaptive multiwavelet DG2, slope limiter) |
+| `SGC` | Sub-grid river channels (LISFLOOD-FP SGC, ACC only) | boolean | False | advanced |
+| `SGC_UPSTREAM_SQMI` | Sub-grid channels: drainage area at the dam (sq mi; 0 = not known, the channel below the dam is then sized from the model domain only) | number | 0 | advanced |
+| `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
+| `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
+| `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
@@ -765,6 +775,11 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `REFINE_DIST_MI` | Near-dam refine: flagged distance from the breach point (mi; starting value 1 is the engineer's, a screening value you choose) | number | 1 | advanced |
 | `REFINE_CELL` | Near-dam refine: fine cell size (m; 0 = half the model cell; 10 m = 32.8 ft) | number | 0 | advanced |
 | `SOLVER` | LISFLOOD-FP solver (Default = the NDBREACH_LISFLOOD_SOLVER environment variable, else the provider setting, else ACC) | enum | 0 | optional; advanced; options: 0=Default; 1=ACC (local inertial, default); 2=FV2 (second-order finite volume, slope limiter); 3=MWDG2 (adaptive multiwavelet DG2, slope limiter) |
+| `SGC` | Sub-grid river channels (LISFLOOD-FP SGC, ACC only) | boolean | False | advanced |
+| `SGC_UPSTREAM_SQMI` | Sub-grid channels: drainage area at the dam (sq mi; 0 = not known, the channel below the dam is then sized from the model domain only) | number | 0 | advanced |
+| `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
+| `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
+| `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
@@ -1082,6 +1097,11 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `REFINE_DIST_MI` | Near-dam refine: flagged distance from the breach point (mi; starting value 1 is the engineer's, a screening value you choose) | number | 1 | advanced |
 | `REFINE_CELL` | Near-dam refine: fine cell size (m; 0 = half the model cell; 10 m = 32.8 ft) | number | 0 | advanced |
 | `SOLVER` | LISFLOOD-FP solver (Default = the NDBREACH_LISFLOOD_SOLVER environment variable, else the provider setting, else ACC) | enum | 0 | optional; advanced; options: 0=Default; 1=ACC (local inertial, default); 2=FV2 (second-order finite volume, slope limiter); 3=MWDG2 (adaptive multiwavelet DG2, slope limiter) |
+| `SGC` | Sub-grid river channels (LISFLOOD-FP SGC, ACC only) | boolean | False | advanced |
+| `SGC_UPSTREAM_SQMI` | Sub-grid channels: drainage area at the dam (sq mi; 0 = not known, the channel below the dam is then sized from the model domain only) | number | 0 | advanced |
+| `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
+| `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
+| `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
