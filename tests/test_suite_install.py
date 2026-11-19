@@ -402,6 +402,131 @@ class TestScripts(unittest.TestCase):
     def test_bash_scripts_parse(self):
         for f in ("install-all.sh", "download-all.sh", "tools/make_package.sh"):
             subprocess.run(["bash", "-n", os.path.join(SI, f)], check=True)
+        subprocess.run(["bash", "-n", os.path.join(ROOT, "damit_ai", "install-local-ai-linux.sh")], check=True)
+
+
+AI = os.path.join(ROOT, "damit_ai")
+
+
+def slurp(*parts):
+    with open(os.path.join(*parts), encoding="utf-8") as fh:
+        return fh.read()
+
+
+@unittest.skipUnless(shutil.which("bash"), "no bash")
+class TestSandbox(unittest.TestCase):
+    """--sandbox DIR (install-all.sh), --prefix=DIR (install-local-ai-linux.sh) and their Windows
+    twins put everything in one folder: nothing is written outside it (install test 2026-11-19)."""
+
+    def run_installer(self, *args, home):
+        env = {"HOME": home, "PATH": "/usr/bin:/bin", "LANG": "C"}
+        return subprocess.run(["bash", os.path.join(SI, "install-all.sh"), *args],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def test_qgis_profiles_path_uses_qgis_own_layout(self):
+        """QGIS 3.34 keeps profiles in <path>/profiles for --profiles-path <path> and for
+        QGIS_CUSTOM_CONFIG_PATH (QgsUserProfileManager::resolveProfilesFolder). The installers
+        wrote <path>/QGIS3/profiles, so QGIS opened from the launchers made an empty profile in
+        <path>/profiles and loaded none of the plugins (seen on the box 2026-11-19)."""
+        sh = slurp(SI, "install-all.sh")
+        self.assertIn('PROFILES="$QGIS_PROFILES_PATH/profiles"; PROFILES_ARG=(--profiles-path "$QGIS_PROFILES_PATH")', sh)
+        self.assertNotIn('$QGIS_PROFILES_PATH/QGIS3/profiles', sh)
+        ps = slurp(SI, "install-all-windows.ps1")
+        self.assertIn("$Profiles = Join-Path $QgisProfilesPath 'profiles'", ps)
+        self.assertNotIn("Join-Path $QgisProfilesPath 'QGIS3\\profiles'", ps)
+
+    def test_check_in_a_sandbox_reports_its_paths_and_writes_nothing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            home = os.path.join(t, "home"); os.makedirs(home)
+            sbx = os.path.join(t, "my sandbox")
+            r = self.run_installer("--check", "--sandbox", sbx, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("QGIS profiles: %s/qgis_profile/profiles" % sbx, r.stdout)
+            self.assertIn("sandbox: %s" % sbx, r.stdout)
+            self.assertIn("sandbox port 11435", r.stdout)
+            self.assertEqual(os.listdir(home), [], "nothing may be written in the home folder")
+
+    def test_sandbox_refuses_the_options_that_place_things_one_by_one(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            for extra in (["--prefix", t], ["--qgis-profiles-path", t], ["--root", t]):
+                r = self.run_installer("--check", "--sandbox", os.path.join(t, "s"), *extra, home=t)
+                self.assertEqual(r.returncode, 2, extra)
+                self.assertIn("cannot be combined with", r.stderr)
+            r = self.run_installer("--check", "--sandbox", t, "--ollama-port", "x1", home=t)
+            self.assertEqual(r.returncode, 2)
+            r = self.run_installer("--check", "--anuga-env", t, home=t)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("only used with --qgis-env", r.stderr)
+            r = self.run_installer("--check", "--sandbox", t, home=t)
+            self.assertEqual(r.returncode, 2, "the home folder itself is not a sandbox")
+
+    def test_without_sandbox_the_defaults_are_unchanged(self):
+        """No --sandbox: the same profiles folder, suite folder and conda search as before."""
+        sh = slurp(SI, "install-all.sh")
+        self.assertIn('PREFIX="${DAMSUITE_PREFIX:-$HOME/dam-suite}"', sh)
+        self.assertIn('PROFILES="$HOME/.local/share/QGIS/QGIS3/profiles"', sh)
+        self.assertIn('PROFILES="$HOME/Library/Application Support/QGIS/QGIS3/profiles"', sh)
+        self.assertIn('SBX_ENV=()', sh)
+        self.assertIn('[ -z "$SANDBOX" ] || AIF+=("--prefix=$SANDBOX" "--ollama-port=$OLLAMA_PORT")', sh)
+
+    def ai_step5(self, sandbox, rc, home):
+        text = slurp(AI, "install-local-ai-linux.sh")
+        step = text[text.index('say "Step 5 '):text.index('say "Done"')]
+        code = ('set -euo pipefail\nsay(){ :; }; ok(){ echo "OK $*"; }; warn(){ echo "WARN $*"; }\n'
+                'RC="%s"; LOCAL_AI="%s/local-ai"; MODELS_DIR="$LOCAL_AI/models"; NUM_CTX=8192\n'
+                'VOR_DIR="$LOCAL_AI/vor"; RHOME="%s/Vor"; WATCH_MODEL=qwen3:4b; DO_HEIM=1; DO_VOR=1\n'
+                'SANDBOX="%s"; OLLAMA_PORT=11435; OLLAMA=/x/ollama\n' % (rc, sandbox, sandbox, sandbox)) + step
+        r = subprocess.run(["bash", "-c", code], env={"HOME": home, "PATH": "/usr/bin:/bin"},
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        return r.stdout
+
+    def test_ai_sandbox_writes_env_sh_and_never_the_rc_file(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            home = os.path.join(t, "home"); os.makedirs(home)
+            bashrc = os.path.join(home, ".bashrc")
+            with open(bashrc, "w") as fh:
+                fh.write("export EDITOR=vim\n")
+            sbx = os.path.join(t, "sbx"); os.makedirs(os.path.join(sbx, "local-ai"))
+            env_sh = os.path.join(sbx, "local-ai", "env.sh")
+            for _ in range(2):              # a second run rewrites the file, it does not append
+                self.ai_step5(sbx, env_sh, home)
+            self.assertEqual(slurp(bashrc), "export EDITOR=vim\n")
+            self.assertEqual(sorted(os.listdir(home)), [".bashrc"])
+            e = slurp(env_sh)
+            self.assertEqual(e.count("# >>> dam local AI (heim + vor) >>>"), 1)
+            for needle in ('export OLLAMA_HOST="127.0.0.1:11435"', 'export OLLAMA_URL="http://127.0.0.1:11435"',
+                           'HEIM_DB="%s/local-ai/knowledge.db"' % sbx, 'export VOR_HOME="%s/Vor"' % sbx,
+                           "CONDA_REGISTER_ENVS=false", "dam-ollama-serve()", "alias heim-chat="):
+                self.assertIn(needle, e)
+            r = subprocess.run(["bash", "-n", env_sh], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_ai_installer_sandbox_keeps_out_of_home(self):
+        t = slurp(AI, "install-local-ai-linux.sh")
+        for needle in ('RHOME="$SANDBOX/Vor"; RC="$LOCAL_AI/env.sh"', 'OLLAMA_PORT="${OLLAMA_PORT:-11435}"',
+                       '[[ -z "$SANDBOX" ]] || SERVE_ENV+=(HOME="$LOCAL_AI")',
+                       'conda_sb create -y -p "$envpath"', 'if [[ -z "${SANDBOX:-}" && -z "${VOR_HOME:-}"',
+                       "something else already answers on"):
+            self.assertIn(needle, t)
+        ps = slurp(AI, "install-local-ai-windows.ps1")
+        self.assertIn("if (-not $Prefix) {      # -Prefix writes no user environment variables", ps)
+        self.assertIn("$env:USERPROFILE = $LocalAI", ps)
+        w = slurp(SI, "install-all-windows.ps1")
+        self.assertIn("'/NoRegistry=1','/NoShortcuts=1'", w)
+        self.assertIn("$NoShortcuts = $true", w)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "no pwsh")
+    def test_powershell_scripts_parse(self):
+        for f in (os.path.join(SI, "install-all-windows.ps1"), os.path.join(SI, "download-all-windows.ps1"),
+                  os.path.join(AI, "install-local-ai-windows.ps1")):
+            cmd = ("$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('%s',[ref]$null,[ref]$e);"
+                   " if ($e) { $e | ForEach-Object { $_.Message }; exit 1 }" % f)
+            r = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, f + ": " + r.stdout + r.stderr)
 
 
 if __name__ == "__main__":

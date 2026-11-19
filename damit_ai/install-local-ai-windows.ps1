@@ -12,6 +12,17 @@ damit_ai/heim/setup-local-heim.sh and vor/setup-vor.zsh.
   .\install-local-ai-windows.ps1 -NoIndex         # skip indexing the knowledge pack / engine docs
   .\install-local-ai-windows.ps1 -WatchModel phi4-mini   # the SMALL run-watcher explainer (default qwen3:4b);
                                                          # -NoWatchModel skips pulling it. heim (Q&A) keeps the big model.
+  .\install-local-ai-windows.ps1 -Prefix DIR      # a SANDBOX: everything in DIR, nothing outside it. Ollama (the
+                                                 # portable zip, or an installed one only run), models, Heim tools,
+                                                 # envs (conda -p, or venvs) and databases in DIR\local-ai; Vor in
+                                                 # DIR\Vor; its own server on port 11435. NO user environment
+                                                 # variables and NO PowerShell-profile edits: the commands are in
+                                                 # DIR\local-ai\env.ps1 (dot-source it) and env.cmd. VOR_HOME is ignored.
+                                                 # Remove it: stop the server (ollama-serve.pid) and delete DIR.
+  .\install-local-ai-windows.ps1 -OllamaPort N    # the Ollama port (default 11434; 11435 with -Prefix)
+  .\install-local-ai-windows.ps1 -NoModels        # no model pulls, personas or index: server, envs, tools, commands only
+
+  Run it from the package's damit_ai\ folder: it copies heim\ and vor\ from beside itself.
 
   If 'ollama pull' fails (a proxy that breaks the registry redirect) the model's official GGUF is fetched from
   Hugging Face with curl.exe (https_proxy / $env:HF_ENDPOINT honoured), sha256-checked and loaded with 'ollama create'
@@ -41,7 +52,10 @@ param(
   [switch]$IndexKnowledge,   # on by default; kept for compatibility
   [switch]$NoIndex,
   [string]$WatchModel = $(if ($env:HEIM_WATCH_MODEL) { $env:HEIM_WATCH_MODEL } else { 'qwen3:4b' }),
-  [switch]$NoWatchModel
+  [switch]$NoWatchModel,
+  [string]$Prefix = '',
+  [int]$OllamaPort = 0,
+  [switch]$NoModels
 )
 $ErrorActionPreference = 'Stop'
 
@@ -56,6 +70,27 @@ $HeimEnv    = 'ndheim'; $VorEnv = 'ndvor'
 $OllamaUrl  = 'http://127.0.0.1:11434'
 $DoHeim     = -not $NoHeim
 $DoVor = -not $NoVor
+if ($Prefix) {
+  # -Prefix: a sandbox. Every path moves into it, and the caches and registries that would otherwise
+  # land in your profile (conda's package cache and env list, pip's cache, Ollama's key in
+  # ~\.ollama, the GGUF download folder) are pointed into it too.
+  $Prefix = [IO.Path]::GetFullPath($Prefix).TrimEnd('\')
+  if ($Prefix -eq $env:USERPROFILE -or $Prefix.Length -le 3) { Write-Host '  ERROR -Prefix needs its own folder' -ForegroundColor Red; exit 1 }
+  $LocalAI = Join-Path $Prefix 'local-ai'; $ModelsDir = Join-Path $LocalAI 'models'; $VorDir = Join-Path $LocalAI 'vor'
+  $RHome = Join-Path $Prefix 'Vor'
+  if (-not $OllamaPort) { $OllamaPort = 11435 }
+  $env:CONDA_PKGS_DIRS = Join-Path $LocalAI 'conda-pkgs'; $env:CONDA_REGISTER_ENVS = 'false'; $env:PIP_NO_CACHE_DIR = '1'
+  if (-not $env:HEIM_GGUF_DIR) { $env:HEIM_GGUF_DIR = Join-Path $LocalAI 'gguf-tmp' }
+  # the Heim tools' own defaults are ~\local-ai\...: the index step runs them, so point them here
+  $env:HEIM_DB = Join-Path $LocalAI 'knowledge.db'; $env:HEIM_RUNS_DB = Join-Path $LocalAI 'runs.db'; $env:HEIM_REPORTS = Join-Path $LocalAI 'reports'
+}
+if ($OllamaPort) {
+  $OllamaUrl = "http://127.0.0.1:$OllamaPort"
+  $env:OLLAMA_HOST = "127.0.0.1:$OllamaPort"; $env:OLLAMA_URL = $OllamaUrl   # the ollama CLI and the Heim/Vor tools
+}
+if ($DoHeim -and -not (Test-Path (Join-Path $Here 'heim\tools'))) {
+  Write-Host "  warn no heim\tools beside this script ($Here): run it from the package's damit_ai\ folder, or Heim gets no tools and no index" -ForegroundColor Yellow
+}
 
 function Say ($m) { Write-Host "`n== $m" -ForegroundColor White }
 function Ok  ($m) { Write-Host "  ok $m"   -ForegroundColor Green }
@@ -75,7 +110,7 @@ Say 'Step 1 - Directory skeleton'
 # first: the index decides, the move is only onto a name that does not exist, nothing is deleted.
 function VorHasIndex ($d) { (Test-Path (Join-Path $d 'vor.db')) -or (Test-Path (Join-Path $d 'research.db')) }
 $OldRHome = if ($env:DAMRESEARCH_HOME) { $env:DAMRESEARCH_HOME } else { Join-Path $env:USERPROFILE 'DamResearch' }
-if (-not $env:VOR_HOME -and ($OldRHome -ne $RHome) -and (VorHasIndex $OldRHome) -and -not (VorHasIndex $RHome)) {
+if (-not $Prefix -and -not $env:VOR_HOME -and ($OldRHome -ne $RHome) -and (VorHasIndex $OldRHome) -and -not (VorHasIndex $RHome)) {
   $moved = $false
   # Only the default folder is renamed; a library kept elsewhere (another disk) stays there.
   if (($OldRHome -eq (Join-Path $env:USERPROFILE 'DamResearch')) -and -not (Test-Path $RHome)) {
@@ -101,6 +136,20 @@ $cands = @(
   (Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'),
   (Join-Path $env:ProgramFiles 'Ollama\ollama.exe')
 )
+if ($Prefix) {
+  # the sandbox's own copy first; else the portable zip (no installer: it is only unzipped into the
+  # sandbox); else an Ollama already installed here, which is only run, never changed. OllamaSetup.exe
+  # and winget are not used, since both install outside the sandbox.
+  $own = Join-Path $LocalAI 'ollama\ollama.exe'
+  if (-not (Test-Path $own)) {
+    $zip = @((Join-Path $Offline 'ollama\ollama-windows-amd64.zip'), (Join-Path $Here '..\offline\tools\ollama-windows-amd64.zip'),
+             (Join-Path $Downloads 'ollama-windows-amd64.zip')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($zip) { Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $LocalAI 'ollama') -Force; Ok "Ollama unzipped to $LocalAI\ollama" }
+  }
+  $cands = @($own) + $cands
+  foreach ($c in $cands) { if ($c -and (Test-Path $c)) { $Ollama = $c; break } }
+  if (-not $Ollama) { Die "no Ollama for the sandbox: put ollama-windows-amd64.zip (the portable Ollama, github.com/ollama/ollama/releases) in $Downloads and run this again" }
+}
 foreach ($c in $cands) { if ($c -and (Test-Path $c)) { $Ollama = $c; break } }
 
 if (-not $Ollama) {
@@ -141,23 +190,39 @@ if (-not $Ollama) {
 }
 
 # model store + perf flags for this process and the server we start
+if (-not $Prefix) {      # -Prefix writes no user environment variables (env.ps1 / env.cmd carry them)
 [Environment]::SetEnvironmentVariable('OLLAMA_MODELS', $ModelsDir, 'User')
 [Environment]::SetEnvironmentVariable('OLLAMA_FLASH_ATTENTION', '1', 'User')
 [Environment]::SetEnvironmentVariable('OLLAMA_KV_CACHE_TYPE', 'q8_0', 'User')
+}
 $env:OLLAMA_MODELS = $ModelsDir; $env:OLLAMA_FLASH_ATTENTION = '1'; $env:OLLAMA_KV_CACHE_TYPE = 'q8_0'
 
+# -Prefix: the port must be this sandbox's own server, or models would go into another Ollama's store
+$PidFile = Join-Path $LocalAI 'ollama-serve.pid'
+if ($Prefix -and (ServerUp)) {
+  $sp = if (Test-Path $PidFile) { Get-Content $PidFile -TotalCount 1 } else { '' }
+  if (-not ($sp -and (Get-Process -Id $sp -ErrorAction SilentlyContinue))) {
+    Die "something else already answers on $OllamaUrl (another Ollama?). Stop it, or pick a free port with -OllamaPort N"
+  }
+}
 if (-not (ServerUp)) {
-  Ok 'starting ollama serve'
-  Start-Process -FilePath $Ollama -ArgumentList 'serve' -WindowStyle Hidden `
-    -RedirectStandardOutput (Join-Path $LocalAI 'ollama-serve.log') `
-    -RedirectStandardError  (Join-Path $LocalAI 'ollama-serve.err.log')
+  Ok "starting ollama serve on $OllamaUrl"
+  # -Prefix: the server's home is the sandbox, so its key (~\.ollama) is made there
+  $keep = @{ USERPROFILE = $env:USERPROFILE; HOME = $env:HOME }
+  if ($Prefix) { $env:USERPROFILE = $LocalAI; $env:HOME = $LocalAI }
+  try {
+    $sproc = Start-Process -FilePath $Ollama -ArgumentList 'serve' -WindowStyle Hidden -PassThru `
+      -RedirectStandardOutput (Join-Path $LocalAI 'ollama-serve.log') `
+      -RedirectStandardError  (Join-Path $LocalAI 'ollama-serve.err.log')
+  } finally { $env:USERPROFILE = $keep.USERPROFILE; $env:HOME = $keep.HOME }
+  if ($Prefix) { $sproc.Id | Set-Content $PidFile -Encoding ASCII }
   for ($i=0; $i -lt 30; $i++) { if (ServerUp) { break }; Start-Sleep 1 }
 }
 if (-not (ServerUp)) { Die "ollama server did not come up (see $LocalAI\ollama-serve.log)" }
 Ok "server up on $OllamaUrl"
 
 # seed models from a pre-downloaded offline bundle (download-all-windows.ps1), so pulls are skipped
-if ((Test-Path (Join-Path $Offline 'models\manifests')) -and -not (Test-Path (Join-Path $ModelsDir 'manifests'))) {
+if (-not $NoModels -and (Test-Path (Join-Path $Offline 'models\manifests')) -and -not (Test-Path (Join-Path $ModelsDir 'manifests'))) {
   try { Copy-Item (Join-Path $Offline 'models\*') $ModelsDir -Recurse -Force; Ok 'seeded models from offline\models (no download needed)' }
   catch { Warn 'could not seed offline models' }
 }
@@ -176,6 +241,19 @@ foreach ($c in $ccands) { if ($c -and (Test-Path $c)) { $Conda = $c; break } }
 if ($Conda) { Ok "conda: $Conda" } else { Warn 'no conda found - will use python venvs (needs python on PATH)' }
 
 function Make-Env ($name, $spec) {   # returns the python.exe path
+  if ($Conda -and $Prefix) {
+    # -Prefix: the env is made BY PATH in the sandbox (install-all -Sandbox builds it there first)
+    $ep = Join-Path $LocalAI "envs\$name"
+    if (-not (Test-Path (Join-Path $ep 'conda-meta'))) {
+      # conda's home is the sandbox while it runs (it rewrites ~\.conda\environments.txt otherwise)
+      $keep = @{ USERPROFILE = $env:USERPROFILE; HOME = $env:HOME }
+      $env:USERPROFILE = Join-Path $LocalAI '.home'; $env:HOME = $env:USERPROFILE
+      try { & $Conda create -y -p $ep -c conda-forge --override-channels @($spec -split '\s+') *> $null }
+      finally { $env:USERPROFILE = $keep.USERPROFILE; $env:HOME = $keep.HOME }
+      if ($LASTEXITCODE -ne 0) { Warn "conda create $ep failed - falling back to a venv"; $script:Conda = $null }
+    }
+    if ($Conda) { return (Join-Path $ep 'python.exe') }
+  }
   if ($Conda) {
     $envpath = ((& $Conda env list) | Select-String -Pattern "^\s*$name\s" | Select-Object -First 1)
     if (-not $envpath) {
@@ -260,6 +338,7 @@ function New-OllamaFromHf ($tag) {
 # <<< hf_gguf_fallback
 
 function Pull ($m) {
+  if ($NoModels) { return }             # -NoModels: nothing is pulled
   if (-not ((& $Ollama list) -match [regex]::Escape($m))) {
     Ok "pulling $m (first time, large)"
     & $Ollama pull $m
@@ -274,7 +353,7 @@ if ($DoHeim) {
   # the run-watcher's explainer: a SMALL model. Stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs, so an
   # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
   if ($WatchModel -eq 'phi') { $WatchModel = 'phi4-mini' } elseif ($WatchModel -eq 'small') { $WatchModel = 'qwen3:4b' }
-  if (-not $NoWatchModel) {
+  if (-not $NoWatchModel -and -not $NoModels) {
     if (-not ((& $Ollama list) -match [regex]::Escape($WatchModel))) {
       Ok "pulling $WatchModel (the small watcher model)"
       & $Ollama pull $WatchModel
@@ -316,9 +395,11 @@ STANDING RULES (Nick's; never contradict them, even if a question assumes otherw
 - Never invent a tool, algorithm id, parameter, switch, flag id or number. If a name is not in these rules or in the context you were given, say UNSURE and point to ALGORITHM-HELP-DAMIT.md.
 - The run watcher's OK / WATCH / PROBLEM verdict is set by code from the flags alone. Heim only explains the flags and never sets or changes the verdict."""
 "@ | Set-Content -Path $mf -Encoding UTF8
+  if (-not $NoModels) {
   & $Ollama create heim -f $mf | Out-Null
   if ($LASTEXITCODE -ne 0) { Die 'heim persona creation failed' }
   Ok "'heim' persona created"
+  }
   $PyL = Make-Env $HeimEnv 'python=3.12 pymupdf pypdf numpy'
   Ok "heim python: $PyL"
   foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py','true_hole.py')) {
@@ -337,8 +418,10 @@ STANDING RULES (Nick's; never contradict them, even if a question assumes otherw
 if ($DoVor) {
   Say 'vor - literature'
   $Embed = 'qwen3-embedding:0.6b'
+  if (-not $NoModels) {
   & $Ollama pull $Embed *> $null
   if ($LASTEXITCODE -ne 0) { Warn 'qwen3-embedding pull failed; using nomic-embed-text'; $Embed = 'nomic-embed-text' }
+  }
   Pull $ChatModel; Pull $Embed
   $mf = Join-Path $VorDir 'Modelfile'
 @"
@@ -367,9 +450,11 @@ HOW YOU ANSWER (this is your manner; it is about what you do, not how you sound)
 - Stop when the quotes have been given. A research answer that needs a paragraph of preamble has not been found yet.
 When source passages are supplied, use only them: every fact gets a citation to its source and page, quotes are copied exactly, numbers/units/equations and their applicability limits kept exactly, and disagreements between sources are reported, not resolved silently. When no passages are supplied, say the answer is from general knowledge, is UNVERIFIED, and must be checked against the primary publication; give the publication to check (agency, document number, year) and never invent a citation, page number, coefficient or value. You are not a licensed engineer and your output is not engineering judgement."""
 "@ | Set-Content -Path $mf -Encoding UTF8
+  if (-not $NoModels) {
   & $Ollama create vor -f $mf | Out-Null
   if ($LASTEXITCODE -ne 0) { Die 'could not create the vor model' }
   Ok "'vor' persona created"
+  }
   $RSpec = 'python=3.12 numpy pymupdf'; if ($Ocr) { $RSpec = "$RSpec ocrmypdf tesseract" }
   $PyR = Make-Env $VorEnv $RSpec
   Ok "research python: $PyR"
@@ -384,7 +469,7 @@ When source passages are supplied, use only them: every fact gets a citation to 
 }
 
 # ===========================================================================
-$DoIndex = (-not $NoIndex)
+$DoIndex = (-not $NoIndex -and -not $NoModels)
 if ($DoIndex -and $DoHeim -and (Test-Path (Join-Path $Here 'heim\knowledge'))) {
   Say 'Indexing the Heim knowledge pack'
   & $PyL (Join-Path $LocalAI 'rag_index.py') -c heim_knowledge (Join-Path $Here 'heim\knowledge')
@@ -397,8 +482,43 @@ if ($DoIndex -and $DoHeim -and (Test-Path (Join-Path $Here 'heim\knowledge'))) {
 }
 
 # ---------------------------------------------------------------------------
-Say "Step 5 - PowerShell profile ($PROFILE)"
+Say "Step 5 - PowerShell profile ($(if ($Prefix) { "$LocalAI\env.ps1" } else { $PROFILE }))"
 $mark = '# >>> dam local AI (heim + vor) >>>'
+if ($Prefix) {
+  # -Prefix: the sandbox's own files, written whole; $PROFILE and the user environment are not touched
+  $el = @("# dam local AIs in the sandbox ${Prefix}: dot-source this file ( . '$LocalAI\env.ps1' ). Nothing was added to your PowerShell profile.",
+    $mark, "`$env:OLLAMA_MODELS = '$ModelsDir'", "`$env:OLLAMA_FLASH_ATTENTION = '1'", "`$env:OLLAMA_KV_CACHE_TYPE = 'q8_0'",
+    "`$env:OLLAMA_HOST = '127.0.0.1:$OllamaPort'", "`$env:OLLAMA_URL = '$OllamaUrl'", "`$env:HEIM_WATCH_URL = '$OllamaUrl'",
+    "`$env:HEIM_DB = '$LocalAI\knowledge.db'", "`$env:HEIM_RUNS_DB = '$LocalAI\runs.db'", "`$env:HEIM_REPORTS = '$LocalAI\reports'",
+    "`$env:DAMAUDIT_REPORTS = '$LocalAI\reports'", "`$env:DAMAUDIT_GOLDEN = '$LocalAI\golden'",
+    "`$env:DAMCHAIN_BATCH_ROOT = '$LocalAI\qgis-batch'", "`$env:DAMCHAIN_CREST_DIR = '$LocalAI\crest-desktop'", "`$env:VOR_TOOL = '$VorDir\vor.py'",
+    "`$env:PIP_NO_CACHE_DIR = '1'; `$env:CONDA_PKGS_DIRS = '$LocalAI\conda-pkgs'; `$env:CONDA_REGISTER_ENVS = 'false'",
+    "function dam-ollama-serve { `$u = `$env:USERPROFILE; `$env:USERPROFILE = '$LocalAI'; try { (Start-Process '$Ollama' serve -WindowStyle Hidden -PassThru -RedirectStandardOutput '$LocalAI\ollama-serve.log' -RedirectStandardError '$LocalAI\ollama-serve.err.log').Id | Set-Content '$PidFile' } finally { `$env:USERPROFILE = `$u } }")
+  $ec = @('@echo off', "rem dam local AIs in the sandbox $Prefix (cmd.exe). Nothing was added to your user environment.",
+    "set `"OLLAMA_MODELS=$ModelsDir`"", 'set OLLAMA_FLASH_ATTENTION=1', 'set OLLAMA_KV_CACHE_TYPE=q8_0',
+    "set `"OLLAMA_HOST=127.0.0.1:$OllamaPort`"", "set `"OLLAMA_URL=$OllamaUrl`"", "set `"HEIM_WATCH_URL=$OllamaUrl`"",
+    "set `"HEIM_DB=$LocalAI\knowledge.db`"", "set `"HEIM_RUNS_DB=$LocalAI\runs.db`"", "set `"HEIM_REPORTS=$LocalAI\reports`"",
+    "set `"DAMAUDIT_REPORTS=$LocalAI\reports`"", "set `"DAMAUDIT_GOLDEN=$LocalAI\golden`"",
+    "set `"DAMCHAIN_BATCH_ROOT=$LocalAI\qgis-batch`"", "set `"DAMCHAIN_CREST_DIR=$LocalAI\crest-desktop`"", "set `"VOR_TOOL=$VorDir\vor.py`"",
+    "set `"PATH=$LocalAI;$VorDir;%PATH%`"")
+  if ($DoHeim) {
+    $el += "`$env:HEIM_NUM_CTX = '$NumCtx'"; $el += "`$env:HEIM_WATCH_MODEL = '$WatchModel'"
+    $el += "function heim     { & '$PyL' '$LocalAI\rag_query.py' @args }"
+    $el += "function damchain { & '$PyL' '$LocalAI\dam_chain.py' @args }"
+    $el += "function heim-chat { & '$PyL' '$LocalAI\rag_query.py' --chat @args }"
+    $el += "function heim-add { & '$PyL' '$LocalAI\rag_index.py' --add @args }"
+    $el += "function heim-doctor { & '$PyL' '$LocalAI\rag_index.py' --doctor @args }"
+    $el += "function heim-digest { & '$PyL' '$LocalAI\run_digest.py' @args }"
+    $el += "function heim-watch  { & '$PyL' '$LocalAI\heim_watch.py' @args }"
+    $el += "function heim-runs   { & '$PyL' '$LocalAI\run_results.py' @args }"
+    $ec += "set `"HEIM_NUM_CTX=$NumCtx`""; $ec += "set `"HEIM_WATCH_MODEL=$WatchModel`""
+  }
+  if ($DoVor) { $el += "`$env:VOR_HOME = '$RHome'"; $el += "function vor { & '$PyR' '$VorDir\vor.py' @args }"; $ec += "set `"VOR_HOME=$RHome`"" }
+  $el += '# <<< dam local AI <<<'
+  $el | Set-Content (Join-Path $LocalAI 'env.ps1') -Encoding UTF8
+  $ec | Set-Content (Join-Path $LocalAI 'env.cmd') -Encoding ASCII
+  Ok "commands written to $LocalAI\env.ps1 and env.cmd (your PowerShell profile and user environment left alone)"
+} else {
 $profExists = Test-Path $PROFILE
 # The block is REPLACED on every full install, not written once. It used to be skipped when
 # its first line was already there, so a machine installed once never received a command
@@ -454,10 +574,16 @@ if ($writeBlock) {
 } else {
   Warn "profile block in $PROFILE left as it is: this run installs only one of the two AIs. Run without -NoHeim / -NoVor to refresh it."
 }
+}
 
 # ---------------------------------------------------------------------------
 Say 'Done'
+if ($Prefix) {
+  Write-Host "  Sandbox ${Prefix}: in each PowerShell run  . '$LocalAI\env.ps1'  (cmd.exe: $LocalAI\env.cmd). Its Ollama: $OllamaUrl (dam-ollama-serve starts it again)."
+  Write-Host "  To remove it: Stop-Process -Id (Get-Content '$PidFile'), then delete $Prefix. Then:"
+} else {
 Write-Host "  Open a new PowerShell (the profile loads automatically), then:"
+}
 if ($DoHeim)     { Write-Host '    heim "where is the breach width computed"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits' }
 if ($DoVor) { Write-Host "    vor ingest    # after dropping PDFs in $RHome\library (or run vor\fetch_asdso.py --catalog)" }
 Write-Host "  .cmd launchers for cmd.exe are in $LocalAI (heim.cmd, damchain.cmd) and $VorDir (vor.cmd)."

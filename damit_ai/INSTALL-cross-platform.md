@@ -43,6 +43,12 @@ before running it:
 | `--ocr` | `-Ocr` | Add `ocrmypdf` + `tesseract` for scanned PDFs. |
 | `--small` | `-Small` | Force the small chat model (for low-RAM machines). |
 | `--index-knowledge` | `-IndexKnowledge` | Also index `heim/knowledge/` into the RAG. |
+| `--prefix=DIR` | `-Prefix DIR` | Linux/Windows: a sandbox. Ollama, models, Heim tools, envs and databases in `DIR/local-ai`, Vor in `DIR/Vor`, its own Ollama on port 11435; no rc-file / PowerShell-profile / user-environment edits: source `DIR/local-ai/env.sh` (Windows `env.ps1` / `env.cmd`). Remove: stop the server (`ollama-serve.pid`), delete `DIR`. |
+| `--ollama-port=N` | `-OllamaPort N` | The Ollama port (default 11434; 11435 with a prefix). |
+| `--no-models` | `-NoModels` | No model pulls, personas or index: server, envs, tools and commands only. |
+
+Run the installer from the package's `damit_ai/` folder: it copies `heim/` and `vor/` from beside itself, and a
+copy of the script on its own installs no tools and indexes nothing (it now warns about that).
 
 ## Which model you get
 
