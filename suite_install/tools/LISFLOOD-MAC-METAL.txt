@@ -1,0 +1,47 @@
+LISFLOOD-FP 8.3 on a Mac, with the Metal (Apple GPU) back end
+=============================================================
+
+install-all.sh builds LISFLOOD-FP 8.3 on a Mac from the official source with the DamSafety / DamIT
+Runner patch (arrival depth + sub-grid channels). Everything it needs is in this package and in the
+macOS offline set:
+
+  offline/lisflood-src/LISFLOOD-FP-8.3.zip   official source, Zenodo record 13121119 (sha256 checked)
+  lisflood/build/build_lisflood.sh           the build script
+  lisflood/build/patch_lisflood.py           the Runner patch (the installed Runner's copy is used first)
+  lisflood/build/lisflood-8.3-ndbreach.patch the same edits as a plain diff, a fallback
+  offline/conda/<platform>/ (env ndbuild)    cmake, compilers and OpenMP from conda-forge
+
+The one thing that cannot ship with it is Apple's Metal shader compiler (`metal`). It comes with
+Xcode, and from Xcode 26 it is a separate download. It is not part of the Command Line Tools.
+Without it, LISFLOOD-FP is built for the CPU only (OpenMP), and the installer says so.
+
+To add the Metal back end
+-------------------------
+1. Install Xcode from the App Store and open it once.
+2. In Terminal:
+     xcodebuild -downloadComponent MetalToolchain
+     xcrun -sdk macosx metal --version
+   (or Xcode > Settings > Components > Metal Toolchain > Get)
+3. From the package folder:
+     bash install-all.sh --rebuild-lisflood
+   The result line reads "Runner patch with sub-grid channels, Metal GPU back end". You get
+   ~/dam-suite/bin/lisflood plus ~/dam-suite/bin/metal_fv1_kernels.metallib. Keep the two files
+   together, because LISFLOOD-FP loads the kernels from its own folder.
+   The build logs are in ~/dam-suite/src/lisflood-logs/.
+
+To check what is installed:  bash install-all.sh --check
+
+What Metal speeds up
+--------------------
+LISFLOOD-FP 8.3's Metal back end runs only the FV1 solver, and only when the .par file has the
+`metal` keyword. The Runners' main pass uses the ACC solver (and sub-grid channels need ACC), which
+runs on the CPU with OpenMP. A Metal build is the same LISFLOOD-FP plus the GPU path; the Runners'
+results do not change.
+
+Build by hand (same steps as the installer)
+-------------------------------------------
+  bash lisflood/build/build_lisflood.sh --conda ~/miniforge3/bin/conda --env ndbuild \
+       --out ~/dam-suite --zip offline/lisflood-src/LISFLOOD-FP-8.3.zip \
+       --patcher lisflood/build/patch_lisflood.py --metal on
+The script prints the path of the binary it built. --metal on stops if Metal cannot be built.
+Add --apple-clang to compile with Apple's clang instead of conda-forge's.

@@ -9,7 +9,7 @@ and macOS (Apple Silicon or Intel, macOS 13+):
 | **DamIT plugins** (damit): Core, Catalog, Setup, Data, Screener, Runner, Hazard, Hazard Lite, PMP | QGIS profile `damit` (Core and Catalog first) |
 | **QGIS 3.34** | conda env `ndqgis` |
 | **ANUGA 4.1 + gmsh 4.15** (the Runners mesh with gmsh) | conda env `ndanuga` |
-| **LISFLOOD-FP 8.3** with the Runner patch (`inittm_depth`) | `~/dam-suite/bin` (Windows/Linux: shipped binary; macOS: built at install) |
+| **LISFLOOD-FP 8.3** with the Runner patch (`inittm_depth` + sub-grid channels) | `~/dam-suite/bin` (Windows/Linux: shipped binary; macOS: built at install, with the Metal GPU back end when Apple's Metal compiler is installed: `lisflood/build/README.txt`) |
 | **Local AIs**: Heim (code triage) and Vor (literature), with Ollama, models and library | `~/local-ai`, `~/Vor` (damit_ai's own installers) |
 | **Crest desks**: DamIT Crest (damit) and North Dakota Crest (crest repo), on the `ndqgis` env; they open in the browser | `~/dam-suite/damit_crest`, `~/dam-suite/nd_crest` |
 | A launcher per profile, one per Crest desk, `build-offline-pack.sh`, and the Absaraka Dam (DWR-2801) run folder | `~/dam-suite` |
@@ -57,7 +57,7 @@ deleted, and nothing downloaded is piped into a shell.
 | Windows | double-click `install-all-windows.cmd` |
 
 Options: `--no-damsafety`, `--no-damit`, `--no-ai`, `--no-heim`, `--no-vor`,
-`--skip-lisflood`, `--offline` (never download), `--check` (report what's installed).
+`--skip-lisflood`, `--rebuild-lisflood` (build LISFLOOD-FP again, e.g. after installing the Metal toolchain), `--offline` (never download), `--check` (report what's installed).
 On Windows the options are `-NoDamSafety`, `-NoDamIT`, `-NoAI`, `-NoHeim`, `-NoVor`,
 `-SkipLisflood`, `-Offline`, `-Check` and `-NoShortcuts`.
 
@@ -116,7 +116,7 @@ download-all.sh, download-all-windows.ps1/.cmd builders of offline/
 locks/<platform>/*.lock, locks/extra.lock      pinned files (url sha256 md5)
 plugins/damsafety, plugins/damit               plugin zips (VERSIONS.md, SHA256SUMS)
 nd_crest/                                      North Dakota Crest desk (crest repo crest-desktop/; COMMIT)
-lisflood/                                      LISFLOOD-FP binaries (GPL-3, see lisflood/README.txt) + macOS build script
+lisflood/                                      LISFLOOD-FP binaries (GPL-3, see lisflood/README.txt) + macOS build kit (lisflood/build/, also in the macOS offline set)
 damit_ai/                                      the local AIs and their installers
 absaraka/                                      the DWR-2801 run folder
 offline/ (from an offline set or download-all) conda/<platform>/, miniforge/, lisflood-src/

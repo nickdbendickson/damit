@@ -28,7 +28,7 @@
 #   bash install-all.sh                  # everything
 #   bash install-all.sh --offline        # refuse to download anything
 #   bash install-all.sh --check          # report what is installed
-#   options: --no-damsafety --no-damit --no-crest (both desks) --no-ai --no-heim --no-vor --skip-lisflood
+#   options: --no-damsafety --no-damit --no-crest (both desks) --no-ai --no-heim --no-vor --skip-lisflood --rebuild-lisflood
 #
 #   Somewhere other than your normal QGIS profiles and home folder (for a test install):
 #     --prefix DIR              the suite folder (launchers, LISFLOOD-FP, desks); default ~/dam-suite
@@ -56,12 +56,14 @@ QGIS_PROFILES_PATH="${DAMSUITE_QGIS_PROFILES_PATH:-}"
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
+LF_SGC_MARK="nd-breach-runner: SGC arrival depth"   # printed by the Runner patch's SGC edit
+REBUILD_LF=0
 DO_DS=1; DO_DI=1; DO_HEIM=1; DO_VOR=1; DO_CREST=1; SKIP_LISFLOOD=0; OFFLINE_ONLY=0; MODE=install
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-damsafety) DO_DS=0 ;;  --no-damit) DO_DI=0 ;;  --no-crest) DO_CREST=0 ;;
     --no-ai) DO_HEIM=0; DO_VOR=0 ;;  --no-heim) DO_HEIM=0 ;;  --no-vor) DO_VOR=0 ;;
-    --skip-lisflood) SKIP_LISFLOOD=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
+    --skip-lisflood) SKIP_LISFLOOD=1 ;;  --rebuild-lisflood) REBUILD_LF=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
     --ai) DO_HEIM=1; DO_VOR=1 ;;
     --prefix|--qgis-profiles-path|--damsafety-profile|--damit-profile|--root)
       [ $# -gt 1 ] && [ -n "$2" ] || { echo "$1 needs a value" >&2; exit 2; }
@@ -202,7 +204,9 @@ if [ "$MODE" = check ]; then
   else echo "  conda: not found"; fi
   echo "  QGIS profiles: $PROFILES$( [ -n "$QGIS_PROFILES_PATH" ] && echo " (QGIS opened with --profiles-path $QGIS_PROFILES_PATH)")"
   L="$PREFIX/bin/lisflood"
-  echo "  LISFLOOD-FP: $L $( [ -x "$L" ] && { grep -aq inittm_depth "$L" && echo 'OK (Runner patch present)' || echo UNPATCHED; } || echo missing)"
+  echo "  LISFLOOD-FP: $L $( [ -x "$L" ] && { if ! grep -aq inittm_depth "$L"; then echo UNPATCHED
+    elif ! grep -aq "$LF_SGC_MARK" "$L"; then echo 'OLD PATCH (no sub-grid channels: run install-all again to rebuild it)'
+    else echo "OK (Runner patch with sub-grid channels$( [ -f "$(dirname "$L")/metal_fv1_kernels.metallib" ] && echo ', Metal GPU back end'))"; fi; } || echo missing)"
   echo "  DamSafety profile ($DS_PROFILE):"; for p in $DS_PLUGINS; do echo "    $p $( [ -d "$DS_DIR/python/plugins/$p" ] && ver_of "$DS_DIR/python/plugins/$p" || echo missing)"; done
   echo "  DamIT profile ($DI_PROFILE):";     for p in $DI_PLUGINS; do echo "    $p $( [ -d "$DI_DIR/python/plugins/$p" ] && ver_of "$DI_DIR/python/plugins/$p" || echo missing)"; done
   echo "  Ollama: $(command -v ollama 2>/dev/null || ls "$HOME/local-ai/ollama/bin/ollama" 2>/dev/null || echo 'not on PATH')"
@@ -375,7 +379,10 @@ if [ "$DO_DI" = 1 ]; then say "DamIT plugins -> profile '$DI_PROFILE' (DamIT Cor
 # 4. LISFLOOD-FP 8.3 + Runner patch (shared by both sets)
 # ---------------------------------------------------------------------------
 LISFLOOD_EXE=""; mkdir -p "$PREFIX/bin"
-lf_ok() { [ -x "$1" ] && "$1" -version 2>&1 | grep -qi lisflood && grep -aq inittm_depth "$1"; }
+# a LISFLOOD-FP from before the Runners' sub-grid channels (DamSafety Runner 3.26.0, DamIT Runner
+# 0.7.0) has inittm_depth but not the SGC edit; it is rebuilt (or the shipped one copied) rather than
+# kept, since the Runners refuse it for a sub-grid-channel run
+lf_ok() { [ -x "$1" ] && "$1" -version 2>&1 | grep -qi lisflood && grep -aq inittm_depth "$1" && grep -aq "$LF_SGC_MARK" "$1"; }
 if [ "$SKIP_LISFLOOD" = 1 ]; then warn "LISFLOOD-FP skipped (--skip-lisflood): the Runners use their built-in engine"
 else
   if [ -n "$LFBIN" ] && [ -f "$HERE/lisflood/$LFBIN/lisflood" ]; then
@@ -383,7 +390,9 @@ else
     lf_ok "$PREFIX/bin/lisflood" && LISFLOOD_EXE="$PREFIX/bin/lisflood" \
       || warn "the shipped LISFLOOD-FP does not run here (it needs glibc 2.38+); building it instead"
   fi
-  if [ -z "$LISFLOOD_EXE" ] && lf_ok "$PREFIX/bin/lisflood"; then LISFLOOD_EXE="$PREFIX/bin/lisflood"; fi
+  if [ -z "$LISFLOOD_EXE" ] && [ "$REBUILD_LF" = 0 ] && lf_ok "$PREFIX/bin/lisflood"; then LISFLOOD_EXE="$PREFIX/bin/lisflood"; fi
+  if [ -z "$LISFLOOD_EXE" ] && [ -x "$PREFIX/bin/lisflood" ] && ! grep -aq "$LF_SGC_MARK" "$PREFIX/bin/lisflood"; then
+    say "the LISFLOOD-FP in $PREFIX/bin predates the Runners' sub-grid channels: building it again"; fi
   if [ -z "$LISFLOOD_EXE" ]; then
     SRCZIP="$HERE/offline/lisflood-src/LISFLOOD-FP-8.3.zip"
     PATCHER="$DS_DIR/python/plugins/DamSafety_Runner/scripts/patch_lisflood.py"
@@ -403,13 +412,18 @@ else
         cp "$BUILT" "$PREFIX/bin/lisflood"; chmod +x "$PREFIX/bin/lisflood"
         # the Metal kernels (built only when Apple's Metal compiler works) are loaded from the
         # folder of the executable
-        if [ -f "$(dirname "$BUILT")/metal_fv1_kernels.metallib" ]; then cp "$(dirname "$BUILT")/metal_fv1_kernels.metallib" "$PREFIX/bin/"; fi
+        # (a stale one from an earlier Metal build is removed so the two always match)
+        rm -f "$PREFIX/bin/metal_fv1_kernels.metallib"
+        if [ -f "$(dirname "$BUILT")/metal_fv1_kernels.metallib" ]; then cp "$(dirname "$BUILT")/metal_fv1_kernels.metallib" "$PREFIX/bin/"
+        elif [ "$OS" = Darwin ]; then
+          warn "LISFLOOD-FP was built WITHOUT its Metal (GPU) back end: Apple's Metal compiler is missing. With Xcode installed run  xcodebuild -downloadComponent MetalToolchain  then  bash install-all.sh --rebuild-lisflood  (lisflood/build/README.txt)"
+        fi
         lf_ok "$PREFIX/bin/lisflood" && LISFLOOD_EXE="$PREFIX/bin/lisflood"
       fi
     fi
     [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (the build's own messages are above; macOS needs Apple's Command Line Tools:  xcode-select --install ). The Runners use their built-in engine meanwhile."
   fi
-  [ -n "$LISFLOOD_EXE" ] && ok "LISFLOOD-FP: $LISFLOOD_EXE ($("$LISFLOOD_EXE" -version 2>&1 | grep -o 'LISFLOOD-FP [0-9.]*' | head -1), Runner patch present)"
+  [ -n "$LISFLOOD_EXE" ] && ok "LISFLOOD-FP: $LISFLOOD_EXE ($("$LISFLOOD_EXE" -version 2>&1 | grep -o 'LISFLOOD-FP [0-9.]*' | head -1), Runner patch with sub-grid channels$( [ -f "$PREFIX/bin/metal_fv1_kernels.metallib" ] && echo ', Metal GPU back end'))"
 fi
 
 # ---------------------------------------------------------------------------

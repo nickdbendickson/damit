@@ -107,7 +107,7 @@ if ($Check) {
     foreach ($e in 'ndqgis','ndanuga','ndvor','ndheim') { Write-Host ("    env {0}: {1}" -f $e, $(if (Test-Path "$base\envs\$e\conda-meta") {'present'} else {'missing'})) } }
   else { Write-Host '  conda: not found' }
   $lf = Join-Path $Prefix 'bin\lisflood.exe'
-  Write-Host ("  LISFLOOD-FP: $lf " + $(if (Test-Path $lf) { if (HasText $lf 'inittm_depth') {'OK (Runner patch present)'} else {'UNPATCHED'} } else {'missing'}))
+  Write-Host ("  LISFLOOD-FP: $lf " + $(if (Test-Path $lf) { if (-not (HasText $lf 'inittm_depth')) {'UNPATCHED'} elseif (HasText $lf 'nd-breach-runner: SGC arrival depth') {'OK (Runner patch with sub-grid channels)'} else {'OK (Runner patch present; no sub-grid channels in this build)'} } else {'missing'}))
   Write-Host "  DamSafety profile ($DsProfile):"; foreach ($p in $DsPlugins) { $d = Join-Path $DsDir "python\plugins\$p"; Write-Host ("    $p " + $(if (Test-Path $d) { VerOf $d } else { 'missing' })) }
   Write-Host "  DamIT profile ($DiProfile):";     foreach ($p in $DiPlugins) { $d = Join-Path $DiDir "python\plugins\$p"; Write-Host ("    $p " + $(if (Test-Path $d) { VerOf $d } else { 'missing' })) }
   $inst = Join-Path $Prefix 'INSTALLED.txt'; if (Test-Path $inst) { Write-Host ''; Get-Content $inst }

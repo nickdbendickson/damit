@@ -69,17 +69,26 @@ fi
 cp "$LFBIN/linux-x64/lisflood" "$OUT/lisflood/linux-x64/"
 [ -f "$LFBIN/windows-x64/lisflood.exe" ] && cp "$LFBIN/windows-x64/lisflood.exe" "$OUT/lisflood/windows-x64/"
 for f in "$OUT"/lisflood/*/lisflood*; do grep -aq inittm_depth "$f" || { echo "unpatched LISFLOOD-FP: $f" >&2; exit 1; }; done
+# the sub-grid channel (SGC) edit of the Runner patch (DamSafety Runner 3.26.0 / DamIT Runner 0.7.0):
+# required on Linux; a Windows build without it (no MinGW-w64 here) still ships, and the Runners
+# refuse only sub-grid-channel runs with it
+SGC_MARK="nd-breach-runner: SGC arrival depth"
+grep -aq "$SGC_MARK" "$OUT/lisflood/linux-x64/lisflood" || { echo "linux-x64 LISFLOOD-FP has no SGC edit (rebuild it)" >&2; exit 1; }
+if [ -f "$OUT/lisflood/windows-x64/lisflood.exe" ] && ! grep -aq "$SGC_MARK" "$OUT/lisflood/windows-x64/lisflood.exe"; then
+  echo "  WARNING: windows-x64 lisflood.exe has no SGC edit (sub-grid channels unavailable on Windows)" >&2; fi
 cp "$DWR/tools/mac/lisflood/build_lisflood.sh" "$DWR/tools/mac/lisflood/lisflood-8.3-ndbreach.patch" \
    "$DWR/DamSafety_Runner/scripts/patch_lisflood.py" "$OUT/lisflood/build/"
+cp "$HERE/tools/LISFLOOD-MAC-METAL.txt" "$OUT/lisflood/build/README.txt"
 # the licence texts from the official source zip (GPL-3)
 [ -f "$T/lf.zip" ] || curl -fsSL --retry 3 -o "$T/lf.zip" "https://zenodo.org/records/13121119/files/LISFLOOD-FP-8.3.zip?download=1"
 unzip -p "$T/lf.zip" LISFLOOD-FP-8.3/LICENSE > "$OUT/lisflood/LICENSE"
 unzip -p "$T/lf.zip" LISFLOOD-FP-8.3/source/LICENCE-3RD-PARTY.txt > "$OUT/lisflood/LICENCE-3RD-PARTY.txt"
 cat > "$OUT/lisflood/README.txt" <<'EOF'
 LISFLOOD-FP 8.3 (University of Bristol, GPL-3: LICENSE here; source: Zenodo record 13121119) with the DamSafety /
-ND Dam Breach Runner patch (the inittm_depth keyword the Runners require), built from the official
-source: linux-x64 with g++ (needs glibc 2.38+), windows-x64 cross-compiled with MinGW-w64 (static,
-no DLLs). macOS builds it at install (build/build_lisflood.sh). The source zip itself is in every
+ND Dam Breach Runner patch (the inittm_depth keyword and the sub-grid channel arrival depth the
+Runners require), built from the official source: linux-x64 with g++ (needs glibc 2.38+), windows-x64
+cross-compiled with MinGW-w64 (static, no DLLs). macOS builds it at install, with its Metal (GPU) back
+end when Apple's Metal compiler is installed: build/README.txt. The source zip itself is in every
 offline set (offline/lisflood-src/) or at the Zenodo record.
 EOF
 (cd "$OUT/lisflood" && sha */lisflood* > SHA256SUMS)

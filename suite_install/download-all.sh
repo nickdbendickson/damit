@@ -206,6 +206,9 @@ if [ "$PACK" = 1 ]; then
     ITEMS="offline/conda/$P"
     for f in $(awk -v p="$P" '!/^#/ && $1==p && $2!="ollama-pull" {print $3}' "$LOCKS/extra.lock" | sort -u); do if [ -f "$f" ]; then ITEMS="$ITEMS $f"; fi; done
     if [ -f damit_ai/offline/ollama/SHA256SUMS ]; then ITEMS="$ITEMS damit_ai/offline/ollama/SHA256SUMS"; fi
+    # macOS builds LISFLOOD-FP at install: the set carries the build kit (script, Runner patch,
+    # Metal how-to) next to the source zip, so the offline zip alone is enough to build it
+    case "$P" in osx-*) if [ -d lisflood/build ]; then ITEMS="$ITEMS lisflood/build"; fi ;; esac
     # shellcheck disable=SC2086
     # `zip && ok` reported success only when zip succeeded, but said NOTHING when it failed
     # (the first element of an && list is exempt from errexit), so a failed pack looked the
