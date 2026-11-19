@@ -384,7 +384,7 @@ if ($DoCrest -and (Test-Path (Join-Path $CrestSrc 'desktop'))) {
     } else { Warn "could not read damit_catalog/handoff.py from $($CatZip.Name): Crest was skipped" }
   }
 }
-# North Dakota Crest desk (crest repo, crest-desktop\). Same engine as DamIT Crest with the ND
+# North Dakota Crest desk (DWR_Plugins dwr_crest\crest-desktop\). Same engine as DamIT Crest with the ND
 # inventory and the DamSafety hand-off (profile damsafety). Standard library only; its port differs
 # from DamIT Crest's, so both desks can be open at once.
 $NdCrestSrc = Join-Path $Here 'nd_crest'

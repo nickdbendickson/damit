@@ -11,7 +11,7 @@ and macOS (Apple Silicon or Intel, macOS 13+):
 | **ANUGA 4.1 + gmsh 4.15** (the Runners mesh with gmsh) | conda env `ndanuga` |
 | **LISFLOOD-FP 8.3** with the Runner patch (`inittm_depth` + sub-grid channels) | `~/dam-suite/bin` (Windows/Linux: shipped binary; macOS: built at install, with the Metal GPU back end when Apple's Metal compiler is installed: `lisflood/build/README.txt`) |
 | **Local AIs**: Heim (code triage) and Vor (literature), with Ollama, models and library | `~/local-ai`, `~/Vor` (damit_ai's own installers) |
-| **Crest desks**: DamIT Crest (damit) and North Dakota Crest (crest repo), on the `ndqgis` env; they open in the browser | `~/dam-suite/damit_crest`, `~/dam-suite/nd_crest` |
+| **Crest desks**: DamIT Crest (damit) and North Dakota Crest (DWR_Plugins `dwr_crest/`), on the `ndqgis` env; they open in the browser | `~/dam-suite/damit_crest`, `~/dam-suite/nd_crest` |
 | A launcher per profile, one per Crest desk, `build-offline-pack.sh`, and the Absaraka Dam (DWR-2801) run folder | `~/dam-suite` |
 
 Everything installs for you only: **no sudo or admin, no pip, no system packages.** Your data
@@ -115,7 +115,7 @@ install-all.sh, install-all-windows.ps1/.cmd   installers
 download-all.sh, download-all-windows.ps1/.cmd builders of offline/
 locks/<platform>/*.lock, locks/extra.lock      pinned files (url sha256 md5)
 plugins/damsafety, plugins/damit               plugin zips (VERSIONS.md, SHA256SUMS)
-nd_crest/                                      North Dakota Crest desk (crest repo crest-desktop/; COMMIT)
+nd_crest/                                      North Dakota Crest desk (DWR_Plugins dwr_crest/crest-desktop/; COMMIT)
 lisflood/                                      LISFLOOD-FP binaries (GPL-3, see lisflood/README.txt) + macOS build kit (lisflood/build/, also in the macOS offline set)
 damit_ai/                                      the local AIs and their installers
 absaraka/                                      the DWR-2801 run folder
@@ -123,5 +123,6 @@ offline/ (from an offline set or download-all) conda/<platform>/, miniforge/, li
 ```
 
 Maintainers: `tools/make_locks.py` re-solves the conda envs (py-rattler), and
-`tools/make_package.sh --dwr <DWR_Plugins checkout> --crest <crest checkout> --out <dir> --zip`
-builds the package (without `--crest` there is no North Dakota Crest desk in it).
+`tools/make_package.sh --dwr <DWR_Plugins checkout> --out <dir> --zip`
+builds the package. The North Dakota Crest desk comes from the DWR_Plugins checkout's `dwr_crest/` (Crest moved
+there from the `nickdbendickson/crest` repo on 2026-11-19); `--crest <dir>` uses another copy, `--crest none` leaves it out.

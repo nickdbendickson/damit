@@ -5,8 +5,10 @@
 #        [--lisflood-bin DIR]   DIR/linux-x64/lisflood and DIR/windows-x64/lisflood.exe
 #                               (default: build them here from the official 8.3 source with
 #                               DWR_Plugins' Runner scripts; Windows needs MinGW-w64)
-#        [--crest ../crest]     the North Dakota Crest desk (crest repo: crest-desktop/ + README),
-#                               shipped as nd_crest/ next to DamIT Crest
+#        [--crest DIR]          the North Dakota Crest desk (DIR/crest-desktop/ + README), shipped as
+#                               nd_crest/ next to DamIT Crest. Default: <DWR_Plugins>/dwr_crest when it is
+#                               there (Crest moved from the nickdbendickson/crest repo into DWR_Plugins
+#                               on 2026-11-19); --crest none leaves the desk out
 #        [--zip]                also write <out>.zip
 #
 # The package = suite_install's scripts + locks, the DamSafety plugin zips (DWR_Plugins
@@ -21,10 +23,12 @@ DWR=""; OUT=""; LFBIN=""; ZIP=0; CREST=""
 while [ $# -gt 0 ]; do case "$1" in
   --dwr) DWR="$(cd "$2" && pwd)"; shift ;; --out) OUT="$2"; shift ;;
   --lisflood-bin) LFBIN="$(cd "$2" && pwd)"; shift ;; --zip) ZIP=1 ;;
-  --crest) CREST="$(cd "$2" && pwd)"; shift ;;
+  --crest) if [ "$2" = none ]; then CREST=none; else CREST="$(cd "$2" && pwd)"; fi; shift ;;
   *) echo "unknown option $1" >&2; exit 2 ;; esac; shift; done
 [ -n "$DWR" ] && [ -f "$DWR/tools/build_release.py" ] || { echo "--dwr <DWR_Plugins checkout> is required" >&2; exit 2; }
 [ -n "$OUT" ] || { echo "--out is required" >&2; exit 2; }
+if [ -z "$CREST" ] && [ -f "$DWR/dwr_crest/crest-desktop/run.py" ]; then CREST="$DWR/dwr_crest"; fi
+[ "$CREST" != none ] || CREST=""
 [ -z "$CREST" ] || [ -f "$CREST/crest-desktop/run.py" ] || { echo "--crest: no crest-desktop/run.py in $CREST" >&2; exit 2; }
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 

@@ -6,7 +6,8 @@ DamIT Crest is the DamIT desktop desk: a pywebview window around a local web des
 breach hydrograph, schematic and terrain flood views, receptor ranking, results import, a printable report and
 datum-aware exports — plus the hand-off of a dam to the DamIT QGIS plugins from the **Report** step.
 
-It is adapted from **Crest** ([nickdbendickson/crest](https://github.com/nickdbendickson/crest), `main` at `633d352`),
+It is adapted from **Crest** ([nickdbendickson/crest](https://github.com/nickdbendickson/crest), `main` at `633d352`; Crest now lives in
+[nickdbendickson/DWR_Plugins](https://github.com/nickdbendickson/DWR_Plugins) under `dwr_crest/`),
 the North Dakota DamSafety desk. The desk engine (`src/lib/crest/engine.ts`) and its tests are carried over unchanged;
 what changed is the posture and the hand-off:
 
