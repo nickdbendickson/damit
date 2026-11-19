@@ -43,6 +43,16 @@ MM_PER_HR = 3.6e6                                # m/s -> mm/hr
 WET_M = (0.05, 0.30)
 
 
+def _atomic_write(path, text):
+    """Atomic text write (audit 2026-11-19): .part first, then os.replace."""
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
 def runner_sources():
     """sha256 of the runner_shared copies this job uses (the CI test pins them to the runner)."""
     return {f: AR.sha256_file(os.path.join(AR.HERE, "runner_shared", f)) for f in RUNNER_FILES}
@@ -266,39 +276,38 @@ def write_inputs(folder, terrain, t, r_m_s, st, sim_time_s, gauge=None, comment=
     dem.write_asc(os.path.join(folder, NAME + ".dem.asc"))
     xmin, ymin, xmax, ymax = dem.bounds
     closed = st["closed_edges"]
-    with open(os.path.join(folder, BCI_NAME), "w", encoding="utf-8") as f:
-        if outlet is not None:                    # 0.4.2: the pipe as a point sink at its inlet cell and a point source at its outlet
-            for nm, (x, y) in (("outlet_in", outlet["end_points"][0]), ("outlet_out", outlet["end_points"][1])):
-                f.write("P {:.3f} {:.3f} QVAR {}\n".format(x - terrain.x0, y - terrain.yll, nm))
-        for edge, lo, hi in (("N", xmin, xmax), ("S", xmin, xmax), ("E", ymin, ymax), ("W", ymin, ymax)):
-            if edge not in closed:
-                f.write("{} {:.3f} {:.3f} FREE\n".format(edge, lo, hi))
+    bci_lines = []
+    if outlet is not None:                        # 0.4.2: the pipe as a point sink at its inlet cell and a point source at its outlet
+        for nm, (x, y) in (("outlet_in", outlet["end_points"][0]), ("outlet_out", outlet["end_points"][1])):
+            bci_lines.append("P {:.3f} {:.3f} QVAR {}".format(x - terrain.x0, y - terrain.yll, nm))
+    for edge, lo, hi in (("N", xmin, xmax), ("S", xmin, xmax), ("E", ymin, ymax), ("W", ymin, ymax)):
+        if edge not in closed:
+            bci_lines.append("{} {:.3f} {:.3f} FREE".format(edge, lo, hi))
+    _atomic_write(os.path.join(folder, BCI_NAME), "\n".join(bci_lines) + "\n")
     if outlet is not None:
         if outlet_q is None:
             raise JobError("an outlet needs its discharge series (outlet_q = (t, Q)): see outlet_flow_series")
         tq, qq = (np.asarray(v, float) for v in outlet_q)
-        with open(os.path.join(folder, BDY_NAME), "w", encoding="utf-8") as f:
-            f.write("principal outlet pipe flow (m3/s / cell size): sink at the inlet end, source at the outlet end"
-                    + ("; ASSUMED pipe values" if outlet.get("assumed") else "") + "\n")
-            for nm, sign in (("outlet_in", -1.0), ("outlet_out", 1.0)):
-                f.write("{}\n{} seconds\n".format(nm, len(tq)))
-                for tv, qv in zip(tq, qq):
-                    f.write("{:.6f} {:.4f}\n".format(sign * qv / dem.dx, tv))
+        bdy_lines = ["principal outlet pipe flow (m3/s / cell size): sink at the inlet end, source at the outlet end"
+                     + ("; ASSUMED pipe values" if outlet.get("assumed") else "")]
+        for nm, sign in (("outlet_in", -1.0), ("outlet_out", 1.0)):
+            bdy_lines.append("{}\n{} seconds".format(nm, len(tq)))
+            for tv, qv in zip(tq, qq):
+                bdy_lines.append("{:.6f} {:.4f}".format(sign * qv / dem.dx, tv))
+        _atomic_write(os.path.join(folder, BDY_NAME), "\n".join(bdy_lines) + "\n")
     if probe is not None:
-        with open(os.path.join(folder, STAGEPTS_NAME), "w", encoding="utf-8") as f:
-            f.write("1\n{:.3f} {:.3f}\n".format(probe[0] - terrain.x0, probe[1] - terrain.yll))
-    with open(os.path.join(folder, RAIN_NAME), "w", encoding="utf-8") as f:
-        f.write(rain_text(t, r_m_s, comment))
+        _atomic_write(os.path.join(folder, STAGEPTS_NAME),
+                      "1\n{:.3f} {:.3f}\n".format(probe[0] - terrain.x0, probe[1] - terrain.yll))
+    _atomic_write(os.path.join(folder, RAIN_NAME), rain_text(t, r_m_s, comment))
     if gauge:
         gx, gy = gauge["xy"][0] - terrain.x0, gauge["xy"][1] - terrain.yll
-        with open(os.path.join(folder, GAUGE_NAME), "w", encoding="utf-8") as f:
-            f.write("1\n")
-            f.write("{:.3f} {:.3f} {} {:.3f}\n".format(
-                *L._gauge_line(gx, gy, gauge["direction"], gauge["width_m"], dem.nx, dem.ny, dem.dx)))
+        _atomic_write(os.path.join(folder, GAUGE_NAME),
+                      "1\n" + "{:.3f} {:.3f} {} {:.3f}\n".format(
+                          *L._gauge_line(gx, gy, gauge["direction"], gauge["width_m"], dem.nx, dem.ny, dem.dx)))
     par = os.path.join(folder, PAR_NAME)
-    with open(par, "w", encoding="utf-8") as f:
-        f.write("# written by DamIT PMP (damit_pmp:lisfloodrain)\n")
-        f.write("\n".join(par_lines(st, sim_time_s, gauge=bool(gauge), bdy=outlet is not None, stage=probe is not None)) + "\n")
+    _atomic_write(par, "# written by DamIT PMP (damit_pmp:lisfloodrain)\n"
+                 + "\n".join(par_lines(st, sim_time_s, gauge=bool(gauge), bdy=outlet is not None,
+                                       stage=probe is not None)) + "\n")
     return par
 
 
