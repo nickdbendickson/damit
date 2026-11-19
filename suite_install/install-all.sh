@@ -33,14 +33,36 @@
 #   Somewhere other than your normal QGIS profiles and home folder (for a test install):
 #     --prefix DIR              the suite folder (launchers, LISFLOOD-FP, desks); default ~/dam-suite
 #                               (env DAMSUITE_PREFIX)
-#     --qgis-profiles-path DIR  QGIS profiles under DIR/QGIS3/profiles instead of QGIS's usual
-#                               folder; the launchers open QGIS with --profiles-path DIR
-#                               (env DAMSUITE_QGIS_PROFILES_PATH)
+#     --qgis-profiles-path DIR  QGIS profiles under DIR/profiles instead of QGIS's usual folder
+#                               (QGIS's own layout for --profiles-path DIR); the launchers open
+#                               QGIS with --profiles-path DIR (env DAMSUITE_QGIS_PROFILES_PATH)
 #     --damsafety-profile NAME  --damit-profile NAME   profile names (default damsafety / damit)
 #     --root DIR                all of the above under DIR: DIR/dam-suite, DIR/qgis and Miniforge in
 #                               DIR/miniforge3 when it is not installed yet. The local AIs (Heim, Vor,
 #                               Ollama) always use your home folder, so --root also turns them off
 #                               unless --ai is given after it.
+#
+#   EVERYTHING in one folder (a sandbox: nothing outside DIR is written; remove it by deleting DIR):
+#     --sandbox DIR             launchers, LISFLOOD-FP, logs, desks, the Absaraka run and env.sh in DIR;
+#                               QGIS profiles in DIR/qgis_profile/profiles/<damsafety|damit> (the
+#                               launchers set QGIS_CUSTOM_CONFIG_PATH=DIR/qgis_profile and pass
+#                               --profiles-path); Miniforge and the conda envs in DIR/miniforge3 (or
+#                               DAMSUITE_MINIFORGE / DAMSUITE_CONDA if set); on Linux the local AIs in
+#                               DIR/local-ai (Ollama, models, Heim tools) and DIR/Vor, with their own
+#                               Ollama on port 11435 and NO lines added to ~/.bashrc or ~/.zshrc.
+#                               Use it with:  . DIR/env.sh   or the launchers in DIR.
+#                               qgis_process for one profile: DIR/qgis-process-damsafety.sh / -damit.sh
+#                               It cannot be combined with --prefix, --qgis-profiles-path or --root.
+#                               On macOS the local AIs are not sandboxed yet, so they are off.
+#     --ollama-port N           the sandbox Ollama's port (default 11435, so it never meets your
+#                               usual Ollama on 11434; env DAMSUITE_OLLAMA_PORT)
+#     --qgis-env DIR            use this existing QGIS 3.34 conda env (by path) as it is, instead of
+#                               building ndqgis: NO conda env is built and no conda package is needed
+#                               (ANUGA is off unless --anuga-env is given; LISFLOOD-FP is never built).
+#                               With --sandbox, the env is only read, never changed.
+#     --anuga-env DIR           with --qgis-env: the ANUGA env (by path) to use as it is
+#   DAMSUITE_PREFIX / --prefix keep their meaning (the suite folder only); only --sandbox moves
+#   everything.
 #
 # It never touches your data folders (~/ND_Suite_Data, DamIT data), offline packs, or
 # any QGIS profile other than "damsafety" and "damit".
@@ -53,6 +75,7 @@ MINIFORGE_DIR="${DAMSUITE_MINIFORGE:-$HOME/miniforge3}"
 DS_PROFILE="${DAMSAFETY_PROFILE:-damsafety}"
 DI_PROFILE="${DAMIT_PROFILE:-damit}"
 QGIS_PROFILES_PATH="${DAMSUITE_QGIS_PROFILES_PATH:-}"
+SANDBOX=""; QGIS_ENV=""; ANUGA_ENV=""; OLLAMA_PORT="${DAMSUITE_OLLAMA_PORT:-}"; PLACED=""
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
@@ -65,19 +88,51 @@ while [ $# -gt 0 ]; do
     --no-ai) DO_HEIM=0; DO_VOR=0 ;;  --no-heim) DO_HEIM=0 ;;  --no-vor) DO_VOR=0 ;;
     --skip-lisflood) SKIP_LISFLOOD=1 ;;  --rebuild-lisflood) REBUILD_LF=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
     --ai) DO_HEIM=1; DO_VOR=1 ;;
-    --prefix|--qgis-profiles-path|--damsafety-profile|--damit-profile|--root)
+    --prefix|--qgis-profiles-path|--damsafety-profile|--damit-profile|--root|--sandbox|--qgis-env|--anuga-env|--ollama-port)
       [ $# -gt 1 ] && [ -n "$2" ] || { echo "$1 needs a value" >&2; exit 2; }
+      case "$1" in --prefix|--qgis-profiles-path|--root) PLACED="$PLACED $1" ;; esac
       case "$1" in
+        --sandbox) SANDBOX="$2" ;;  --qgis-env) QGIS_ENV="$2" ;;  --anuga-env) ANUGA_ENV="$2" ;;
+        --ollama-port) OLLAMA_PORT="$2" ;;
         --prefix) PREFIX="$2" ;;  --qgis-profiles-path) QGIS_PROFILES_PATH="$2" ;;
         --damsafety-profile) DS_PROFILE="$2" ;;  --damit-profile) DI_PROFILE="$2" ;;
         --root) PREFIX="$2/dam-suite"; QGIS_PROFILES_PATH="$2/qgis"
                 [ -x "$MINIFORGE_DIR/bin/conda" ] || MINIFORGE_DIR="$2/miniforge3"
                 DO_HEIM=0; DO_VOR=0 ;;
       esac; shift ;;
-    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^# It never touches/p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac; shift
 done
+# abs_path <path>: ~/ and relative paths made absolute (the folder need not exist yet)
+abs_path() { case "$1" in "~") echo "$HOME" ;; "~"/*) echo "$HOME/${1#"~/"}" ;; /*) echo "$1" ;; *) echo "$PWD/$1" ;; esac; }
+if [ -n "$SANDBOX" ]; then
+  # --sandbox: one folder for everything. It decides the suite folder, the QGIS profiles and the
+  # Miniforge folder itself, so the options that place those one by one would contradict it.
+  [ -z "$PLACED" ] || { echo "--sandbox puts everything in its folder; it cannot be combined with:$PLACED" >&2; exit 2; }
+  SANDBOX="$(abs_path "$SANDBOX")"; SANDBOX="${SANDBOX%/}"
+  case "$SANDBOX" in ""|"$HOME") echo "--sandbox needs its own folder (not / or your home folder)" >&2; exit 2 ;; esac
+  PREFIX="$SANDBOX"; QGIS_PROFILES_PATH="$SANDBOX/qgis_profile"
+  [ -n "${DAMSUITE_MINIFORGE:-}" ] || MINIFORGE_DIR="$SANDBOX/miniforge3"
+  OLLAMA_PORT="${OLLAMA_PORT:-11435}"
+  # conda's package cache and env registry would otherwise land in the conda base / ~/.conda
+  export CONDA_PKGS_DIRS="$SANDBOX/conda-pkgs" CONDA_REGISTER_ENVS=false PIP_NO_CACHE_DIR=1
+fi
+# SBX_ENV: run conda/mamba/Miniforge with a home inside the sandbox. Even with CONDA_REGISTER_ENVS=false
+# they rewrite ~/.conda/environments.txt and make ~/.cache/conda (install test 2026-11-19); your
+# ~/.condarc is still read (CONDARC). Empty outside a sandbox, so those commands run as before.
+SBX_ENV=()
+if [ -n "$SANDBOX" ]; then
+  SBX_ENV=(env HOME="$SANDBOX/.home" XDG_CACHE_HOME="$SANDBOX/.home/.cache")
+  if [ -z "${CONDARC:-}" ] && [ -f "$HOME/.condarc" ]; then SBX_ENV+=(CONDARC="$HOME/.condarc"); fi
+fi
+case "$OLLAMA_PORT" in ""|[0-9]|[0-9][0-9]|[0-9][0-9][0-9]|[0-9][0-9][0-9][0-9]|[0-9][0-9][0-9][0-9][0-9]) ;;
+  *) echo "--ollama-port needs a port number (got '$OLLAMA_PORT')" >&2; exit 2 ;; esac
+[ -z "$ANUGA_ENV" ] || [ -n "$QGIS_ENV" ] || { echo "--anuga-env is only used with --qgis-env" >&2; exit 2; }
+if [ -n "$QGIS_ENV" ]; then QGIS_ENV="$(abs_path "$QGIS_ENV")"; QGIS_ENV="${QGIS_ENV%/}"
+  [ -d "$QGIS_ENV/conda-meta" ] || { echo "--qgis-env: $QGIS_ENV is not a conda env (no conda-meta)" >&2; exit 2; }; fi
+if [ -n "$ANUGA_ENV" ]; then ANUGA_ENV="$(abs_path "$ANUGA_ENV")"; ANUGA_ENV="${ANUGA_ENV%/}"
+  [ -d "$ANUGA_ENV/conda-meta" ] || { echo "--anuga-env: $ANUGA_ENV is not a conda env (no conda-meta)" >&2; exit 2; }; fi
 
 say()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '  OK  %s\n' "$*"; }
@@ -97,6 +152,12 @@ case "$OS-$ARCH" in
   *) die "Unsupported system $OS $ARCH (supported: Linux x86_64, macOS Apple Silicon or Intel; Windows: install-all-windows.cmd)." ;;
 esac
 [ "$(id -u)" != 0 ] || [ "${DAMSUITE_ALLOW_ROOT:-0}" = 1 ] || die "Do not run this with sudo; run it as yourself."
+# the macOS AI installers (heim/setup-local-heim.sh, vor/setup-vor.zsh) always use ~/local-ai, ~/Vor
+# and ~/.zshrc, so a sandbox on a Mac leaves the local AIs out rather than write outside it
+if [ -n "$SANDBOX" ] && [ "$OS" = Darwin ] && [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then
+  warn "--sandbox on macOS: the local AIs (Heim, Vor) cannot be put in the sandbox yet, so they are not installed"
+  DO_HEIM=0; DO_VOR=0
+fi
 # QGIS's own settings file inside a profile. Qt names the folder after the organisation DOMAIN on
 # macOS (qgis.org) and after the organisation NAME elsewhere (QGIS). Up to 2026-11-16 this wrote
 # QGIS/QGIS3.ini on a Mac too, which QGIS there never reads: the LISFLOOD-FP and ANUGA paths, the
@@ -112,13 +173,17 @@ if [ "$OS" = Darwin ]; then
 else
   PROFILES="$HOME/.local/share/QGIS/QGIS3/profiles"; NCPU="$(nproc)"
 fi
-# --qgis-profiles-path / --root: QGIS's own --profiles-path layout (<path>/QGIS3/profiles); the
-# launchers pass it, so QGIS opened from them uses these profiles and never the usual ones
+# --qgis-profiles-path / --root / --sandbox: QGIS's own --profiles-path layout. QGIS 3.34 keeps the
+# profiles in <path>/profiles for both --profiles-path <path> and QGIS_CUSTOM_CONFIG_PATH=<path>
+# (main.cpp -> QgsUserProfileManager::resolveProfilesFolder: basePath + "/profiles"). Up to
+# 2026-11-19 this wrote <path>/QGIS3/profiles, which QGIS opened from the launchers never read: it
+# made empty profiles in <path>/profiles instead. The launchers pass it, so QGIS opened from them
+# uses these profiles and never the usual ones.
 PROFILES_ARG=()
 if [ -n "$QGIS_PROFILES_PATH" ]; then
   case "$QGIS_PROFILES_PATH" in "~"/*) QGIS_PROFILES_PATH="$HOME/${QGIS_PROFILES_PATH#"~/"}" ;; /*) ;;
     *) QGIS_PROFILES_PATH="$PWD/$QGIS_PROFILES_PATH" ;; esac
-  PROFILES="$QGIS_PROFILES_PATH/QGIS3/profiles"; PROFILES_ARG=(--profiles-path "$QGIS_PROFILES_PATH")
+  PROFILES="$QGIS_PROFILES_PATH/profiles"; PROFILES_ARG=(--profiles-path "$QGIS_PROFILES_PATH")
 fi
 case "$PREFIX" in "~"/*) PREFIX="$HOME/${PREFIX#"~/"}" ;; /*) ;; *) PREFIX="$PWD/$PREFIX" ;; esac
 for _n in "$DS_PROFILE" "$DI_PROFILE"; do
@@ -131,6 +196,15 @@ CONDA_PKGS="$HERE/offline/conda/$P"
 
 locate_conda() {
   CONDA_EXE=""
+  # --sandbox builds its envs in its own Miniforge (DIR/miniforge3, or the one DAMSUITE_CONDA /
+  # DAMSUITE_MINIFORGE names), never in the conda you already have. With --qgis-env no env is built,
+  # so any conda will do: it only runs the given env.
+  if [ -n "$SANDBOX" ] && [ -z "$QGIS_ENV" ]; then
+    for c in "${DAMSUITE_CONDA:-}" "$MINIFORGE_DIR/bin/conda"; do
+      if [ -n "$c" ] && [ -x "$c" ]; then CONDA_EXE="$c"; return; fi
+    done
+    return 0
+  fi
   for c in "${DAMSUITE_CONDA:-}" "$MINIFORGE_DIR/bin/conda" "$(command -v conda 2>/dev/null || true)" \
            "$HOME/miniforge3/bin/conda" "$HOME/miniconda3/bin/conda"; do
     if [ -n "$c" ] && [ -x "$c" ]; then CONDA_EXE="$c"; return; fi
@@ -141,7 +215,10 @@ locate_conda
 # under $MAMBA_ROOT_PREFIX (or a .mambarc root) when one is set - e.g. ~/micromamba/envs on a Mac
 # that once had micromamba - while the launchers, the QGIS settings (ANUGA python), `conda
 # activate`, --check and the local AIs all look in <conda base>/envs, so none of them found it.
-env_prefix() { echo "$CONDA_BASE/envs/$1"; }
+env_prefix() {
+  # --sandbox: the local AIs' envs live with the AIs, in DIR/local-ai/envs (the AI installer looks there)
+  if [ -n "$SANDBOX" ]; then case "$1" in ndvor|ndheim) echo "$SANDBOX/local-ai/envs/$1"; return ;; esac; fi
+  echo "$CONDA_BASE/envs/$1"; }
 # env_candidates <name>: other places an env of that name may already be (an older install, a
 # mamba root, Miniconda/Anaconda), one per line: $MAMBA_ROOT_PREFIX, the usual roots, then the envs
 # conda/mamba registered in ~/.conda/environments.txt. <conda base>/envs/<name> itself is not listed.
@@ -209,7 +286,12 @@ if [ "$MODE" = check ]; then
     else echo "OK (Runner patch with sub-grid channels$( [ -f "$(dirname "$L")/metal_fv1_kernels.metallib" ] && echo ', Metal GPU back end'))"; fi; } || echo missing)"
   echo "  DamSafety profile ($DS_PROFILE):"; for p in $DS_PLUGINS; do echo "    $p $( [ -d "$DS_DIR/python/plugins/$p" ] && ver_of "$DS_DIR/python/plugins/$p" || echo missing)"; done
   echo "  DamIT profile ($DI_PROFILE):";     for p in $DI_PLUGINS; do echo "    $p $( [ -d "$DI_DIR/python/plugins/$p" ] && ver_of "$DI_DIR/python/plugins/$p" || echo missing)"; done
+  if [ -n "$SANDBOX" ]; then
+    echo "  sandbox: $SANDBOX (QGIS_CUSTOM_CONFIG_PATH=$QGIS_PROFILES_PATH; . $SANDBOX/env.sh)"
+    echo "  Ollama: $(ls "$SANDBOX/local-ai/ollama/bin/ollama" 2>/dev/null || command -v ollama 2>/dev/null || echo 'not installed') (sandbox port $OLLAMA_PORT)"
+  else
   echo "  Ollama: $(command -v ollama 2>/dev/null || ls "$HOME/local-ai/ollama/bin/ollama" 2>/dev/null || echo 'not on PATH')"
+  fi
   [ -f "$PREFIX/INSTALLED.txt" ] && { echo; cat "$PREFIX/INSTALLED.txt"; }
   exit 0
 fi
@@ -238,6 +320,7 @@ pkg_path() { local u="${1%/*}"; echo "$CONDA_PKGS/${u##*/}/${1##*/}"; }
 missing_files() {   # prints each locked file for this platform that is absent, one per line,
   local url name    # as a path relative to this folder
   for r in $ROLES ndbuild; do
+    [ -z "$QGIS_ENV" ] || continue     # --qgis-env: no conda env is built, so no package is needed
     [ -f "$HERE/locks/$P/$r.lock" ] || continue
     while read -r url _ _; do case "$url" in ''|\#*) continue ;; esac
       name="$(pkg_path "$url")"
@@ -245,6 +328,7 @@ missing_files() {   # prints each locked file for this platform that is absent, 
     done < "$HERE/locks/$P/$r.lock"
   done
   while read -r pl kind path _; do case "$pl" in ''|\#*) continue ;; esac
+    if [ -n "$QGIS_ENV" ]; then case "$kind" in miniforge|lisflood-src) continue ;; ollama) [ $((DO_HEIM + DO_VOR)) -gt 0 ] || continue ;; esac; fi
     if [ "$pl" = "$P" ] && [ "$kind" != ollama-pull ] && [ ! -f "$HERE/$path" ]; then echo "$path"; fi
   done < "$HERE/locks/extra.lock"
 }
@@ -276,6 +360,9 @@ fi
 # ---------------------------------------------------------------------------
 # envs are built with mamba (in every Miniforge): it installs the locked file:// packages offline,
 # which conda 26 itself refuses. A conda without mamba next to it -> use (or install) Miniforge.
+if [ -n "$QGIS_ENV" ] && [ -z "$CONDA_EXE" ]; then
+  die "--qgis-env needs a conda (Miniforge) to run that env, and none was found (set DAMSUITE_CONDA to its conda)"
+fi
 if [ -n "$CONDA_EXE" ] && [ ! -x "$("$CONDA_EXE" info --base)/bin/mamba" ]; then
   warn "$CONDA_EXE has no mamba next to it; using Miniforge in $MINIFORGE_DIR instead"
   CONDA_EXE=""; [ -x "$MINIFORGE_DIR/bin/conda" ] && CONDA_EXE="$MINIFORGE_DIR/bin/conda"
@@ -287,7 +374,7 @@ if [ -z "$CONDA_EXE" ]; then
   [ -f "$MFF" ] || die "No conda found and no Miniforge installer at $MFF."
   [ "$(sha "$MFF")" = "$MFH" ] || die "Miniforge installer failed its sha256 check: $MFF"
   say "Installing Miniforge (checked) to $MINIFORGE_DIR"
-  bash "$MFF" -b -p "$MINIFORGE_DIR"
+  "${SBX_ENV[@]}" bash "$MFF" -b -p "$MINIFORGE_DIR"
   CONDA_EXE="$MINIFORGE_DIR/bin/conda"
 else ok "conda: $CONDA_EXE"; fi
 CONDA_BASE="$("$CONDA_EXE" info --base)"
@@ -298,6 +385,7 @@ MAMBA="$CONDA_BASE/bin/mamba"
 make_env() {
   local name="$1" role="$2" lock="$HERE/locks/$P/$2.lock" spec url want md5 f enc
   if [ -d "$(env_prefix "$name")/conda-meta" ]; then ok "conda env $name already exists (kept)"; return 0; fi
+  if [ -n "$QGIS_ENV" ]; then warn "--qgis-env: conda env $name is not built (no env is built with --qgis-env)"; return 1; fi
   if [ -L "$(env_prefix "$name")" ]; then warn "removing the broken link $(env_prefix "$name")"; rm -f "$(env_prefix "$name")"; fi
   [ -f "$lock" ] || { warn "no lock for $role on $P"; return 1; }
   # search first: an env of this name elsewhere that has every locked package is used as it is,
@@ -334,22 +422,30 @@ EOF_O
     echo "file://$enc#$md5" >> "$spec"
   done < "$lock"
   say "Creating conda env $name from $(($(wc -l < "$spec") - 1)) local packages (no download)"
-  "$MAMBA" create -y --offline -p "$(env_prefix "$name")" --file "$spec" || { rm -f "$spec"; return 1; }
+  "${SBX_ENV[@]}" "$MAMBA" create -y --offline -p "$(env_prefix "$name")" --file "$spec" || { rm -f "$spec"; return 1; }
   rm -f "$spec"
 }
 
 say "Conda environments"
+if [ -n "$QGIS_ENV" ]; then
+  QP="$QGIS_ENV"; ok "QGIS env: $QP (--qgis-env: used as it is, nothing built)"
+  ANUGA_PREFIX="$ANUGA_ENV"
+else
 make_env ndqgis ndqgis || die "the QGIS env could not be built"
 make_env ndanuga ndanuga || warn "the ANUGA env could not be built: the ANUGA tier will be off"
 QP="$(env_prefix ndqgis)"
+ANUGA_PREFIX="$(env_prefix ndanuga)"
+fi
 qpy() { env PYTHONPATH="$QP/share/qgis/python:$QP/share/qgis/python/plugins" QT_PLUGIN_PATH="$QP/plugins" \
             QGIS_PREFIX_PATH="$QP" PROJ_DATA="$QP/share/proj" GDAL_DATA="$QP/share/gdal" QT_QPA_PLATFORM=offscreen \
             "$MAMBA" run -p "$QP" python "$@"; }
 # `mamba run` activates the env. Calling $QP/bin/python directly works on Linux (RPATH $ORIGIN)
 # but fails on macOS, where dyld only resolves the QGIS dylibs with the env activated.
 qpy -c "import qgis.core" >/dev/null 2>&1 || die "QGIS does not import in env ndqgis$( [ -L "$QP" ] && echo " (a link to $(readlink "$QP")); remove the link with: rm \"$QP\" and run this again to build a fresh one") (see $LOG)"
-ANUGA_PY="$(env_prefix ndanuga)/bin/python"
-"$MAMBA" run -p "$(env_prefix ndanuga)" python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
+if [ -n "$ANUGA_PREFIX" ]; then
+ANUGA_PY="$ANUGA_PREFIX/bin/python"
+"$MAMBA" run -p "$ANUGA_PREFIX" python -c "import anuga, gmsh" >/dev/null 2>&1 || { warn "anuga/gmsh do not import: ANUGA tier off"; ANUGA_PY=""; }
+else ANUGA_PY=""; warn "--qgis-env without --anuga-env: ANUGA tier off"; fi
 
 # ---------------------------------------------------------------------------
 # 3. plugins (zips in plugins/; Core first so every dependency is in place)
@@ -403,10 +499,10 @@ else
       # "~/Library/Application Support/QGIS/...", and a string split that path at the space
       # ("build_lisflood.sh: unknown option Support/QGIS/..."), so the build never started.
       BARGS=(--conda "$CONDA_EXE" --env ndbuild --out "$PREFIX" --zip "$SRCZIP" --python "$QP/bin/python" --patcher "$PATCHER")
-      BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" | tail -n 1)" || BUILT=""
+      BUILT="$("${SBX_ENV[@]}" bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" | tail -n 1)" || BUILT=""
       if [ -z "$BUILT" ] && [ "$OS" = Darwin ]; then
         warn "conda clang failed; retrying with Apple's clang (Command Line Tools)"
-        BUILT="$(bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" --apple-clang | tail -n 1)" || BUILT=""
+        BUILT="$("${SBX_ENV[@]}" bash "$HERE/lisflood/build/build_lisflood.sh" "${BARGS[@]}" --apple-clang | tail -n 1)" || BUILT=""
       fi
       if [ -n "$BUILT" ] && [ -x "$BUILT" ]; then
         cp "$BUILT" "$PREFIX/bin/lisflood"; chmod +x "$PREFIX/bin/lisflood"
@@ -421,7 +517,11 @@ else
         lf_ok "$PREFIX/bin/lisflood" && LISFLOOD_EXE="$PREFIX/bin/lisflood"
       fi
     fi
+    if [ -z "$LISFLOOD_EXE" ] && [ -n "$QGIS_ENV" ]; then
+      warn "no LISFLOOD-FP: --qgis-env builds no conda env, so LISFLOOD-FP is not built either (the shipped one did not pass its check). The Runners use their built-in engine; set the LISFLOOD-FP path in the Runner later, or install without --qgis-env."
+    else
     [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (the build's own messages are above; macOS needs Apple's Command Line Tools:  xcode-select --install ). The Runners use their built-in engine meanwhile."
+    fi
   fi
   [ -n "$LISFLOOD_EXE" ] && ok "LISFLOOD-FP: $LISFLOOD_EXE ($("$LISFLOOD_EXE" -version 2>&1 | grep -o 'LISFLOOD-FP [0-9.]*' | head -1), Runner patch with sub-grid channels$( [ -f "$PREFIX/bin/metal_fv1_kernels.metallib" ] && echo ', Metal GPU back end'))"
 fi
@@ -476,11 +576,13 @@ PY
 }
 mk_launcher() {  # mk_launcher <file> <profile>
   { echo '#!/bin/bash'
-    echo "# QGIS 3.34 (conda env ndqgis) in profile '$2'. Written by $STAMP."
+    echo "# QGIS 3.34 (conda env $(basename "$QP")) in profile '$2'. Written by $STAMP."
     printf 'export PYTHONPATH=%q\n' "$QP/share/qgis/python:$QP/share/qgis/python/plugins"
     printf 'export QT_PLUGIN_PATH=%q QGIS_PREFIX_PATH=%q\n' "$QP/plugins" "$QP"
     printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
     printf 'export NDBREACH_ANUGA_MESHER=gmsh NDBREACH_ANUGA_PYTHON=%q NDBREACH_LISFLOOD=%q\n' "$ANUGA_PY" "$LISFLOOD_EXE"
+    # --sandbox: anything QGIS starts (a plugin's qgis_process, Crest) stays in the sandbox's profiles too
+    [ -z "$SANDBOX" ] || printf 'export QGIS_CUSTOM_CONFIG_PATH=%q\n' "$QGIS_PROFILES_PATH"
     printf 'exec %q --profile %q' "$QP/bin/qgis" "$2"
     [ ${#PROFILES_ARG[@]} -eq 0 ] || printf ' %q %q' "${PROFILES_ARG[@]}"
     printf ' "$@"\n'; } > "$1"
@@ -500,7 +602,8 @@ mk_pack_builder() {
     echo '# usage: build-offline-pack.sh [folder (default ~/ND_Suite_Data)] [pack_build options]'
     printf '. %q || exit 1\n' "$CONDA_BASE/etc/profile.d/conda.sh"
     printf 'conda activate %q || exit 1\n' "$QP"
-    echo 'OUT="$HOME/ND_Suite_Data"; ARGS=()'
+    if [ -n "$SANDBOX" ]; then printf 'OUT=%q; ARGS=()\n' "$SANDBOX/ND_Suite_Data"
+    else echo 'OUT="$HOME/ND_Suite_Data"; ARGS=()'; fi
     echo 'case "${1:-}" in ""|-*) ;; *) OUT="$1"; shift ;; esac'
     echo 'while [ $# -gt 0 ]; do case "$1" in'
     echo '  --out) [ $# -gt 1 ] && OUT="$2"; shift; [ $# -gt 0 ] && shift ;;'
@@ -515,7 +618,10 @@ mk_pack_builder() {
     echo 'echo "Building the offline pack in $OUT (a stopped build picks up where it left off)"'
     echo '$KEEP_AWAKE python -m DamSafety_Data.pack_build --out "$OUT" ${ARGS[@]+"${ARGS[@]}"} || exit 1'
     echo 'case " ${ARGS[*]-} " in *" --list "*|*" --verify "*|*" -h "*|*" --help "*) exit 0 ;; esac'
-    echo 'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "$OUT"'
+    # adopt_folder writes ~/.ndsuite/config.json, which is outside a sandbox: there the folder is
+    # only reported, and chosen in the DamSafety Setup dialog of the sandbox profile
+    if [ -n "$SANDBOX" ]; then echo 'echo "Pack built in $OUT. Sandbox: pick it as the data folder in DamSafety Setup (the suite-wide ~/.ndsuite/config.json is left alone)."'
+    else echo 'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "$OUT"'; fi
   } > "$1"
   chmod +x "$1"
   if [ "$OS" = Darwin ]; then cp "$1" "${1%.sh}.command"; chmod +x "${1%.sh}.command"; fi
@@ -615,35 +721,72 @@ if [ "$DO_CREST" = 1 ] && [ -f "$HERE/nd_crest/crest-desktop/run.py" ]; then
   ok "North Dakota Crest desk (open: $PREFIX/open-nd-crest.sh)"
 fi
 
+# --sandbox: qgis_process for one profile (qgis_process has no --profile; it loads the profile named
+# "default" under QGIS_CUSTOM_CONFIG_PATH, here the qgis-process/<profile> link folder), and env.sh
+mk_qgis_process() {  # mk_qgis_process <file> <profile> <profile dir>
+  local line; line="$(qgis_process_profile "$2" "$3")"
+  { echo '#!/bin/bash'
+    echo "# qgis_process (conda env $(basename "$QP")) with the plugins of sandbox profile '$2'. Written by $STAMP."
+    printf 'export PYTHONPATH=%q\n' "$QP/share/qgis/python:$QP/share/qgis/python/plugins"
+    printf 'export QT_PLUGIN_PATH=%q QGIS_PREFIX_PATH=%q\n' "$QP/plugins" "$QP"
+    printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+    printf 'export NDBREACH_ANUGA_MESHER=gmsh NDBREACH_ANUGA_PYTHON=%q NDBREACH_LISFLOOD=%q\n' "$ANUGA_PY" "$LISFLOOD_EXE"
+    echo "$line"
+    printf 'exec %q "$@"\n' "$QP/bin/qgis_process"; } > "$1"
+  chmod +x "$1"
+}
+if [ -n "$SANDBOX" ]; then
+  say "Sandbox: qgis_process launchers and env.sh"
+  [ "$DO_DS" = 1 ] && mk_qgis_process "$PREFIX/qgis-process-damsafety.sh" "$DS_PROFILE" "$DS_DIR" && ok "$PREFIX/qgis-process-damsafety.sh"
+  [ "$DO_DI" = 1 ] && mk_qgis_process "$PREFIX/qgis-process-damit.sh" "$DI_PROFILE" "$DI_DIR" && ok "$PREFIX/qgis-process-damit.sh"
+  { echo "# dam suite sandbox: source this file  ( . $SANDBOX/env.sh ). Written by $STAMP."
+    echo "# Everything this install made is in $SANDBOX; to remove it, stop its Ollama and delete the folder."
+    printf 'export DAMSUITE_SANDBOX=%q\n' "$SANDBOX"
+    printf 'export QGIS_CUSTOM_CONFIG_PATH=%q\n' "$QGIS_PROFILES_PATH"
+    printf 'export PATH=%q:"$PATH"\n' "$PREFIX/bin"
+    printf 'export NDBREACH_LISFLOOD=%q\n' "$LISFLOOD_EXE"
+    printf 'export DAMCHAIN_QGIS_PROFILES=%q\n' "$PROFILES"
+    printf '[ ! -f %q ] || . %q\n' "$SANDBOX/local-ai/env.sh" "$SANDBOX/local-ai/env.sh"
+  } > "$PREFIX/env.sh"
+  ok "$PREFIX/env.sh"
+fi
+
 # ---------------------------------------------------------------------------
 # 6. the local AIs (damit_ai's own installers; envs + Ollama + models from offline/)
 # ---------------------------------------------------------------------------
 AI_OK=""
+# --sandbox: the AIs' folders are in the sandbox (Linux; the macOS ones were turned off above)
+AI_HOME="$HOME/local-ai"; VOR_LIB="$HOME/Vor/library"
+# shellcheck disable=SC2088  # a literal ~ for display
+tildify() { case "$1" in "$HOME"/*) echo "~/${1#"$HOME"/}" ;; *) echo "$1" ;; esac; }
+if [ -n "$SANDBOX" ]; then AI_HOME="$SANDBOX/local-ai"; VOR_LIB="$SANDBOX/Vor/library"; fi
 if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then
   say "Local AIs (Heim $( [ "$DO_HEIM" = 1 ] && echo on || echo off), vor $( [ "$DO_VOR" = 1 ] && echo on || echo off))"
   # both AIs reuse these envs when they exist, so they come from the locked local packages
   [ "$DO_VOR" = 1 ] && { make_env ndvor ndvor || warn "ndvor env not built from offline/ (the AI installer will try conda-forge)"; }
   [ "$DO_HEIM" = 1 ] && { make_env ndheim ndvor || warn "ndheim env not built from offline/ (the AI installer will try conda-forge)"; }
   if [ -d "$HERE/damit_ai/offline/models/manifests" ]; then
-    mkdir -p "$HOME/local-ai/models"
-    cp -R -n "$HERE/damit_ai/offline/models/." "$HOME/local-ai/models/" 2>/dev/null || true
-    ok "models copied to ~/local-ai/models (no pull needed)"
+    mkdir -p "$AI_HOME/models"
+    cp -R -n "$HERE/damit_ai/offline/models/." "$AI_HOME/models/" 2>/dev/null || true
+    ok "models copied to $(tildify "$AI_HOME")/models (no pull needed)"
   fi
   if [ "$DO_VOR" = 1 ] && [ -d "$HERE/damit_ai/offline/Vor/library" ]; then
-    mkdir -p "$HOME/Vor/library"
-    cp -R -n "$HERE/damit_ai/offline/Vor/library/." "$HOME/Vor/library/" 2>/dev/null || true
-    ok "reference library copied to ~/Vor/library"
+    mkdir -p "$VOR_LIB"
+    cp -R -n "$HERE/damit_ai/offline/Vor/library/." "$VOR_LIB/" 2>/dev/null || true
+    ok "reference library copied to $(tildify "$VOR_LIB")"
   fi
   # install test 2026-11-18: Vor came up with nothing to search. The library is not in the zip; it
   # comes from download-all (offline/Vor) or fetch_asdso.py, and is indexed with `vor ingest`.
-  if [ "$DO_VOR" = 1 ] && ! find "$HOME/Vor/library" -type f \( -iname '*.pdf' -o -iname '*.md' \) 2>/dev/null | grep -q .; then
-    warn "Vor's library (~/Vor/library) is empty, so Vor has nothing to search yet. Get the public reference set with:  python3 $HERE/damit_ai/vor/fetch_asdso.py --catalog  (or bash download-all.sh, which puts it in offline/), then run:  vor ingest"
+  if [ "$DO_VOR" = 1 ] && ! find "$VOR_LIB" -type f \( -iname '*.pdf' -o -iname '*.md' \) 2>/dev/null | grep -q .; then
+    warn "Vor's library ($(tildify "$VOR_LIB")) is empty, so Vor has nothing to search yet. Get the public reference set with:  python3 $HERE/damit_ai/vor/fetch_asdso.py --catalog  (or bash download-all.sh, which puts it in offline/), then run:  vor ingest"
   fi
   export CONDA_EXE
   if [ "$OS" = Linux ]; then
-    AIF=""; [ "$DO_HEIM" = 1 ] || AIF="--no-heim"; [ "$DO_VOR" = 1 ] || AIF="--no-vor"
-    # shellcheck disable=SC2086
-    if PATH="$CONDA_BASE/bin:$PATH" bash "$HERE/damit_ai/install-local-ai-linux.sh" $AIF; then AI_OK=yes
+    AIF=(); [ "$DO_HEIM" = 1 ] || AIF=(--no-heim); [ "$DO_VOR" = 1 ] || AIF=(--no-vor)
+    # an array, so a sandbox path with a space stays one argument
+    [ -z "$SANDBOX" ] || AIF+=("--prefix=$SANDBOX" "--ollama-port=$OLLAMA_PORT")
+    [ -n "$SANDBOX" ] || [ -z "$OLLAMA_PORT" ] || AIF+=("--ollama-port=$OLLAMA_PORT")
+    if PATH="$CONDA_BASE/bin:$PATH" bash "$HERE/damit_ai/install-local-ai-linux.sh" ${AIF[@]+"${AIF[@]}"}; then AI_OK=yes
     else warn "local AI setup failed (the plugin sets are installed anyway); re-run: bash damit_ai/install-local-ai-linux.sh"; fi
   else
     command -v zsh >/dev/null 2>&1 || die "zsh is needed for the macOS AI installers"
@@ -684,6 +827,12 @@ if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs instal
   [ -f "$PREFIX/open-damit-crest.sh" ] && echo "  DamIT Crest desk              (open: $PREFIX/open-damit-crest.sh)"
   [ -f "$PREFIX/open-nd-crest.sh" ] && echo "  North Dakota Crest desk       (open: $PREFIX/open-nd-crest.sh)"
   [ -f "$PREFIX/build-offline-pack.sh" ] && echo "  DamSafety offline pack        (build: $PREFIX/build-offline-pack.sh)"
+  if [ -n "$SANDBOX" ]; then
+    echo "  SANDBOX: everything is in $SANDBOX (QGIS profiles in $PROFILES)"
+    echo "    use it:    . $SANDBOX/env.sh   (or the launchers above; qgis_process: $SANDBOX/qgis-process-<profile>.sh)"
+    if [ -f "$SANDBOX/local-ai/ollama-serve.pid" ]; then echo "    remove it: stop its Ollama (kill \$(cat $SANDBOX/local-ai/ollama-serve.pid)), then delete $SANDBOX"
+    else echo "    remove it: delete $SANDBOX"; fi
+  fi
   true; } > "$PREFIX/INSTALLED.txt"
 
 say "Done$( [ "$FAIL" = 0 ] && echo ': all checks passed.' || echo ", with warnings (see above and $LOG).")"

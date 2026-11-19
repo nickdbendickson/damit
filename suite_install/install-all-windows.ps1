@@ -26,12 +26,25 @@ Options: -Offline (refuse to download)  -Check  -NoDamSafety  -NoDamIT  -NoAI  -
          -NoVor  -SkipLisflood  -NoShortcuts
 Somewhere other than your normal QGIS profiles and home folder (a test install):
          -Prefix DIR  (the suite folder; default %USERPROFILE%\dam-suite, env DAMSUITE_PREFIX)
-         -QgisProfilesPath DIR  (profiles in DIR\QGIS3\profiles; the launchers pass
-                                 --profiles-path DIR; env DAMSUITE_QGIS_PROFILES_PATH)
+         -QgisProfilesPath DIR  (profiles in DIR\profiles, QGIS's own layout; the launchers
+                                 pass --profiles-path DIR; env DAMSUITE_QGIS_PROFILES_PATH)
          -DamSafetyProfile NAME  -DamitProfile NAME  (default damsafety / damit)
          -Root DIR  (all of these under DIR, Miniforge in DIR\miniforge3 when it is not
                      installed yet; the local AIs always use your home folder, so -Root
                      turns them off unless -AI is given too)
+EVERYTHING in one folder (a sandbox: nothing outside DIR is written; remove it by deleting DIR):
+         -Sandbox DIR  launchers, LISFLOOD-FP, logs, desks, the Absaraka run, env.cmd / env.ps1
+                       in DIR; QGIS profiles in DIR\qgis_profile\profiles\<damsafety|damit> (the
+                       launchers set QGIS_CUSTOM_CONFIG_PATH=DIR\qgis_profile); Miniforge and the
+                       conda envs in DIR\miniforge3 (no Start-menu entries, no registry); the local
+                       AIs in DIR\local-ai and DIR\Vor with their own Ollama on port 11435; no
+                       Desktop shortcuts, no user environment variables, no PowerShell profile edits.
+                       qgis_process for one profile: DIR\qgis-process-damsafety.cmd / -damit.cmd.
+                       Not combined with -Prefix, -QgisProfilesPath or -Root.
+         -OllamaPort N  the sandbox Ollama's port (default 11435; env DAMSUITE_OLLAMA_PORT)
+         -QgisEnv DIR  use this existing QGIS 3.34 conda env (by path) as it is: no conda env
+                       is built and no conda package is needed (ANUGA off unless -AnugaEnv DIR)
+-Prefix / DAMSUITE_PREFIX keep their meaning (the suite folder only); only -Sandbox moves everything.
 It never touches your data folders, offline packs, or other QGIS profiles.
 =============================================================================
 #>
@@ -39,7 +52,8 @@ param(
   [switch]$Offline, [switch]$Check, [switch]$NoDamSafety, [switch]$NoDamIT, [switch]$NoCrest,
   [switch]$NoAI, [switch]$NoHeim, [switch]$NoVor, [switch]$SkipLisflood, [switch]$NoShortcuts,
   [string]$Prefix = '', [string]$QgisProfilesPath = '', [string]$DamSafetyProfile = 'damsafety',
-  [string]$DamitProfile = 'damit', [string]$Root = '', [switch]$AI
+  [string]$DamitProfile = 'damit', [string]$Root = '', [switch]$AI,
+  [string]$Sandbox = '', [int]$OllamaPort = 0, [string]$QgisEnv = '', [string]$AnugaEnv = ''
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -48,6 +62,22 @@ $P = 'win-64'
 $Ver = if (Test-Path (Join-Path $Here 'VERSION')) { (Get-Content (Join-Path $Here 'VERSION') -TotalCount 1) } else { 'dev' }
 $Stamp = "dam-suite install-all $Ver"
 $MiniforgeDir = if ($env:DAMSUITE_MINIFORGE) { $env:DAMSUITE_MINIFORGE } else { Join-Path $env:USERPROFILE 'miniforge3' }
+if (-not $OllamaPort -and $env:DAMSUITE_OLLAMA_PORT) { $OllamaPort = [int]$env:DAMSUITE_OLLAMA_PORT }
+if ($Sandbox) {
+  # -Sandbox: one folder for everything; it places the suite folder, the profiles and Miniforge itself
+  if ($Prefix -or $QgisProfilesPath -or $Root) { throw '-Sandbox puts everything in its folder; it cannot be combined with -Prefix, -QgisProfilesPath or -Root' }
+  $Sandbox = [IO.Path]::GetFullPath($Sandbox).TrimEnd('\')
+  if ($Sandbox -eq $env:USERPROFILE -or $Sandbox.Length -le 3) { throw '-Sandbox needs its own folder (not a drive root or your home folder)' }
+  $Prefix = $Sandbox; $QgisProfilesPath = Join-Path $Sandbox 'qgis_profile'
+  if (-not $env:DAMSUITE_MINIFORGE) { $MiniforgeDir = Join-Path $Sandbox 'miniforge3' }
+  if (-not $OllamaPort) { $OllamaPort = 11435 }
+  $NoShortcuts = $true                  # the Desktop is outside the sandbox
+  # conda's package cache and env registry, and pip's cache, would otherwise land outside it
+  $env:CONDA_PKGS_DIRS = Join-Path $Sandbox 'conda-pkgs'; $env:CONDA_REGISTER_ENVS = 'false'; $env:PIP_NO_CACHE_DIR = '1'
+}
+if ($AnugaEnv -and -not $QgisEnv) { throw '-AnugaEnv is only used with -QgisEnv' }
+if ($QgisEnv) { $QgisEnv = [IO.Path]::GetFullPath($QgisEnv).TrimEnd('\'); if (-not (Test-Path (Join-Path $QgisEnv 'conda-meta'))) { throw "-QgisEnv: $QgisEnv is not a conda env (no conda-meta)" } }
+if ($AnugaEnv) { $AnugaEnv = [IO.Path]::GetFullPath($AnugaEnv).TrimEnd('\'); if (-not (Test-Path (Join-Path $AnugaEnv 'conda-meta'))) { throw "-AnugaEnv: $AnugaEnv is not a conda env (no conda-meta)" } }
 if ($Root) {
   if (-not $Prefix) { $Prefix = Join-Path $Root 'dam-suite' }
   if (-not $QgisProfilesPath) { $QgisProfilesPath = Join-Path $Root 'qgis' }
@@ -60,7 +90,10 @@ if (-not $QgisProfilesPath -and $env:DAMSUITE_QGIS_PROFILES_PATH) { $QgisProfile
 $ProfilesArg = ''
 if ($QgisProfilesPath) {
   $QgisProfilesPath = [IO.Path]::GetFullPath($QgisProfilesPath)
-  $Profiles = Join-Path $QgisProfilesPath 'QGIS3\profiles'; $ProfilesArg = " --profiles-path `"$QgisProfilesPath`""
+  # QGIS keeps the profiles in <path>\profiles for --profiles-path <path> and QGIS_CUSTOM_CONFIG_PATH
+  # (QgsUserProfileManager::resolveProfilesFolder); up to 2026-11-19 this wrote <path>\QGIS3\profiles,
+  # which QGIS opened from the launchers never read
+  $Profiles = Join-Path $QgisProfilesPath 'profiles'; $ProfilesArg = " --profiles-path `"$QgisProfilesPath`""
 } else { $Profiles = Join-Path $env:APPDATA 'QGIS\QGIS3\profiles' }
 $DsProfile = $DamSafetyProfile; $DiProfile = $DamitProfile
 foreach ($n in @($DsProfile, $DiProfile)) {
@@ -89,6 +122,12 @@ function ExtraLines { LockLines (Join-Path $Here 'locks\extra.lock') | Where-Obj
 if (-not [Environment]::Is64BitOperatingSystem) { Die 'This needs 64-bit Windows.' }
 
 function Find-Conda {
+  # -Sandbox builds its envs in its own Miniforge, never in a conda you already have (with -QgisEnv
+  # nothing is built, so any conda will do: it only runs the given env)
+  if ($Sandbox -and -not $QgisEnv) {
+    foreach ($c in @($env:DAMSUITE_CONDA, (Join-Path $MiniforgeDir 'Scripts\conda.exe'))) { if ($c -and (Test-Path $c)) { return $c } }
+    return $null
+  }
   foreach ($c in @($env:DAMSUITE_CONDA, (Join-Path $MiniforgeDir 'Scripts\conda.exe'),
                    (Join-Path $env:USERPROFILE 'Miniforge3\Scripts\conda.exe'),
                    (Join-Path $env:USERPROFILE 'miniconda3\Scripts\conda.exe'))) {
@@ -123,6 +162,7 @@ Say "$Stamp on $P.  Log: $Log"
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
 $Roles = @('ndqgis','ndanuga'); if ($DoHeim -or $DoVor) { $Roles += 'ndvor' }
+if ($QgisEnv) { $Roles = @() }          # -QgisEnv: no conda env is built, so no package is needed
 # 2026-11-18: name the missing files, not only count them (the local AIs' Ollama installer is in
 # damit_ai\offline\, so a copy of offline\ alone from an older package folder leaves it behind)
 $missing = @()
@@ -130,7 +170,9 @@ foreach ($r in $Roles) {
   foreach ($l in (LockLines (Join-Path $Here "locks\$P\$r.lock"))) {
     $f = PkgPath $l[0]
     if (-not (Test-Path $f)) { $missing += $f.Substring($Here.Length).TrimStart('\') } } }
-foreach ($l in ExtraLines) { if (-not (Test-Path (Join-Path $Here $l[2]))) { $missing += $l[2] } }
+foreach ($l in ExtraLines) {
+  if ($QgisEnv -and ($l[1] -eq 'miniforge' -or ($l[1] -eq 'ollama' -and -not ($DoHeim -or $DoVor)))) { continue }
+  if (-not (Test-Path (Join-Path $Here $l[2]))) { $missing += $l[2] } }
 $miss = $missing.Count
 if ($miss -gt 0) {
   Say "Missing ($miss):"
@@ -146,13 +188,16 @@ if ($miss -gt 0) {
 # ---------------------------------------------------------------------------
 # 2. conda (Miniforge 26.9.4-2 from offline\miniforge, sha256-checked, just for you)
 # ---------------------------------------------------------------------------
+if ($QgisEnv -and -not $Conda) { Die '-QgisEnv needs a conda (Miniforge) for the launchers, and none was found (set DAMSUITE_CONDA to its conda.exe)' }
 if (-not $Conda) {
   $mf = ExtraLines | Where-Object { $_[1] -eq 'miniforge' } | Select-Object -First 1
   $exe = Join-Path $Here $mf[2]
   if (-not (Test-Path $exe)) { Die "No conda found and no Miniforge installer at $exe" }
   if ((Sha $exe) -ne $mf[4]) { Die "Miniforge installer failed its sha256 check: $exe" }
   Say "Installing Miniforge (checked) to $MiniforgeDir (just for you, not on PATH)"
-  Start-Process -Wait -FilePath $exe -ArgumentList '/InstallationType=JustMe','/RegisterPython=0','/AddToPath=0','/S',"/D=$MiniforgeDir"
+  $mfArgs = @('/InstallationType=JustMe','/RegisterPython=0','/AddToPath=0','/S')
+  if ($Sandbox) { $mfArgs += @('/NoRegistry=1','/NoShortcuts=1') }   # no uninstall entry or Start-menu items outside it
+  Start-Process -Wait -FilePath $exe -ArgumentList ($mfArgs + "/D=$MiniforgeDir")
   $Conda = Join-Path $MiniforgeDir 'Scripts\conda.exe'
   if (-not (Test-Path $Conda)) { Die "Miniforge did not install to $MiniforgeDir" }
 } else { Ok "conda: $Conda" }
@@ -162,10 +207,15 @@ $CondaBase = (& $Conda info --base).Trim()
 $Mamba = @("$CondaBase\Library\bin\mamba.exe", "$CondaBase\Scripts\mamba.exe", "$CondaBase\condabin\mamba.bat") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $Mamba) { Die "no mamba in $CondaBase (install Miniforge, or set DAMSUITE_CONDA to a Miniforge conda.exe)" }
 $CondaBat = Join-Path $CondaBase 'condabin\conda.bat'
-function EnvPrefix($n) { Join-Path $CondaBase "envs\$n" }
+function EnvPrefix($n) {
+  # -Sandbox: the local AIs' envs live with the AIs, in DIR\local-ai\envs (the AI installer looks there)
+  if ($Sandbox -and ($n -eq 'ndvor' -or $n -eq 'ndheim')) { return (Join-Path $Sandbox "local-ai\envs\$n") }
+  if ($n -eq 'ndqgis' -and $QgisEnv) { return $QgisEnv }
+  Join-Path $CondaBase "envs\$n" }
 
 function Make-Env($name, $role) {
   if (Test-Path (Join-Path (EnvPrefix $name) 'conda-meta')) { Ok "conda env $name already exists (kept)"; return $true }
+  if ($QgisEnv) { Warn "-QgisEnv: conda env $name is not built (no env is built with -QgisEnv)"; return $false }
   $lock = Join-Path $Here "locks\$P\$role.lock"
   if (-not (Test-Path $lock)) { Warn "no lock for $role"; return $false }
   $spec = New-Object System.Collections.Generic.List[string]; $spec.Add('@EXPLICIT')
@@ -178,15 +228,24 @@ function Make-Env($name, $role) {
   $tmp = Join-Path $env:TEMP "damsuite-$name.txt"
   [IO.File]::WriteAllLines($tmp, $spec)
   Say "Creating conda env $name from $($spec.Count - 1) local packages (no download)"
-  & $Mamba create -y --offline -p (EnvPrefix $name) --file $tmp
+  # -Sandbox: mamba's home is the sandbox while it runs (it rewrites ~\.conda\environments.txt otherwise)
+  $keep = @{ USERPROFILE = $env:USERPROFILE; HOME = $env:HOME }
+  if ($Sandbox) { $env:USERPROFILE = Join-Path $Sandbox '.home'; $env:HOME = $env:USERPROFILE }
+  try { & $Mamba create -y --offline -p (EnvPrefix $name) --file $tmp }
+  finally { $env:USERPROFILE = $keep.USERPROFILE; $env:HOME = $keep.HOME }
   $okc = ($LASTEXITCODE -eq 0); Remove-Item $tmp -ErrorAction SilentlyContinue
   return $okc
 }
 
 Say 'Conda environments'
 if (-not (Make-Env 'ndqgis' 'ndqgis')) { Die 'the QGIS env could not be built' }
+if ($QgisEnv) {
+  Ok "QGIS env: $QgisEnv (-QgisEnv: used as it is, nothing built)"
+  $AnugaPy = if ($AnugaEnv) { Join-Path $AnugaEnv 'python.exe' } else { Warn '-QgisEnv without -AnugaEnv: ANUGA tier off'; '' }
+} else {
 $AnugaPy = Join-Path (EnvPrefix 'ndanuga') 'python.exe'
 if (-not (Make-Env 'ndanuga' 'ndanuga')) { Warn 'the ANUGA env could not be built: the ANUGA tier will be off'; $AnugaPy = '' }
+}
 if ($AnugaPy) {
   & $AnugaPy -c "import anuga, gmsh" *> $null
   if ($LASTEXITCODE -ne 0) { Warn 'anuga/gmsh do not import: ANUGA tier off'; $AnugaPy = '' }
@@ -291,7 +350,10 @@ function Make-Launcher($file, $profile) {
     "call `"$CondaBat`" activate `"$QP`"",
     'set NDBREACH_ANUGA_MESHER=gmsh',
     "set `"NDBREACH_ANUGA_PYTHON=$AnugaPy`"",
-    "set `"NDBREACH_LISFLOOD=$Lisflood`"",
+    "set `"NDBREACH_LISFLOOD=$Lisflood`"")
+  # -Sandbox: anything QGIS starts (a plugin's qgis_process, Crest) stays in the sandbox's profiles too
+  if ($Sandbox) { $lines += "set `"QGIS_CUSTOM_CONFIG_PATH=$QgisProfilesPath`"" }
+  $lines += @(
     "start `"`" `"%CONDA_PREFIX%\Library\bin\qgis.exe`" --profile $profile$ProfilesArg %*")
   [IO.File]::WriteAllLines($file, $lines)
   if (-not $NoShortcuts) {
@@ -312,14 +374,16 @@ function Make-PackBuilder($file) {
     '@echo off',
     "rem DamSafety offline pack (conda env ndqgis, profile '$DsProfile'). Written by $Stamp.",
     "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
-    'set "OUT=%USERPROFILE%\ND_Suite_Data"',
+    $(if ($Sandbox) { "set `"OUT=$Sandbox\ND_Suite_Data`"" } else { 'set "OUT=%USERPROFILE%\ND_Suite_Data"' }),
     'if not "%~1"=="" set "OUT=%~f1"',
     'if "%OUT:~-1%"=="\" set "OUT=%OUT%."',
     "pushd `"$DsDir\python\plugins`" || exit /b 1",
     'set PYTHONUNBUFFERED=1',
     'echo Building the offline pack in %OUT% (a stopped build picks up where it left off)',
     'python -m DamSafety_Data.pack_build --out "%OUT%" || exit /b 1',
-    'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "%OUT%"')
+    # adopt_folder writes ~\.ndsuite\config.json, outside a sandbox: there the folder is only reported
+    $(if ($Sandbox) { 'echo Pack built in %OUT%. Sandbox: pick it as the data folder in DamSafety Setup.' }
+      else { 'python -c "import sys, DamSafety_Core.damsuite.suitedata as S; S._qsettings = lambda: None; print(S.adopt_folder(sys.argv[1]))" "%OUT%"' }))
   [IO.File]::WriteAllLines($file, $lines)
 }
 Say 'Settings and launchers'
@@ -401,25 +465,54 @@ if ($DoCrest -and (Test-Path (Join-Path $NdCrestSrc 'crest-desktop\run.py'))) {
 }
 Remove-Item $SettingsPy -ErrorAction SilentlyContinue
 
+# -Sandbox: qgis_process for one profile (it loads the profile "default" under QGIS_CUSTOM_CONFIG_PATH,
+# here the qgis-process\<profile> junction folder), and env.cmd / env.ps1
+if ($Sandbox) {
+  Say 'Sandbox: qgis_process launchers and env files'
+  foreach ($s in @(@($DoDs, 'damsafety', $DsProfile, $DsDir), @($DoDi, 'damit', $DiProfile, $DiDir))) {
+    if (-not $s[0]) { continue }
+    $f = Join-Path $Sandbox "qgis-process-$($s[1]).cmd"
+    @('@echo off', "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+      (QgisProcessProfile $s[2] $s[3]),
+      "set `"NDBREACH_LISFLOOD=$Lisflood`"", "qgis_process %*") | Set-Content $f -Encoding ASCII
+    Ok $f
+  }
+  $aiEnv = Join-Path $Sandbox 'local-ai\env.ps1'
+  @("# dam suite sandbox: dot-source this file ( . '$Sandbox\env.ps1' ). Written by $Stamp.",
+    "# Everything this install made is in $Sandbox; to remove it, stop its Ollama and delete the folder.",
+    "`$env:DAMSUITE_SANDBOX = '$Sandbox'", "`$env:QGIS_CUSTOM_CONFIG_PATH = '$QgisProfilesPath'",
+    "`$env:Path = '$Sandbox\bin;' + `$env:Path", "`$env:NDBREACH_LISFLOOD = '$Lisflood'",
+    "if (Test-Path '$aiEnv') { . '$aiEnv' }") | Set-Content (Join-Path $Sandbox 'env.ps1') -Encoding UTF8
+  @('@echo off', "rem dam suite sandbox: run this in cmd.exe first. Written by $Stamp.",
+    "set `"DAMSUITE_SANDBOX=$Sandbox`"", "set `"QGIS_CUSTOM_CONFIG_PATH=$QgisProfilesPath`"",
+    "set `"PATH=$Sandbox\bin;%PATH%`"", "set `"NDBREACH_LISFLOOD=$Lisflood`"",
+    "if exist `"$Sandbox\local-ai\env.cmd`" call `"$Sandbox\local-ai\env.cmd`"") | Set-Content (Join-Path $Sandbox 'env.cmd') -Encoding ASCII
+  Ok "$Sandbox\env.ps1 and env.cmd"
+}
+
 # ---------------------------------------------------------------------------
 # 6. the local AIs (damit_ai's own installer; envs, Ollama and models from offline\)
 # ---------------------------------------------------------------------------
 $AiOk = $true
+$AiHome = if ($Sandbox) { Join-Path $Sandbox 'local-ai' } else { Join-Path $env:USERPROFILE 'local-ai' }
+$VorLib = if ($Sandbox) { Join-Path $Sandbox 'Vor\library' } else { Join-Path $env:USERPROFILE 'Vor\library' }
 if ($DoHeim -or $DoVor) {
   Say "Local AIs (Heim $(if ($DoHeim) {'on'} else {'off'}), vor $(if ($DoVor) {'on'} else {'off'}))"
   if ($DoVor -and -not (Make-Env 'ndvor' 'ndvor')) { Warn 'ndvor env not built from offline\ (the AI installer will try conda-forge)' }
   if ($DoHeim -and -not (Make-Env 'ndheim' 'ndvor')) { Warn 'ndheim env not built from offline\ (the AI installer will try conda-forge)' }
   $om = Join-Path $Here 'damit_ai\offline\models'
   if (Test-Path (Join-Path $om 'manifests')) {
-    $md = Join-Path $env:USERPROFILE 'local-ai\models'; New-Item -ItemType Directory -Force -Path $md | Out-Null
-    robocopy $om $md /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'models copied to ~\local-ai\models (no pull needed)'
+    $md = Join-Path $AiHome 'models'; New-Item -ItemType Directory -Force -Path $md | Out-Null
+    robocopy $om $md /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok "models copied to $md (no pull needed)"
   }
   $ol = Join-Path $Here 'damit_ai\offline\Vor\library'
   if ($DoVor -and (Test-Path $ol)) {
-    $ld = Join-Path $env:USERPROFILE 'Vor\library'; New-Item -ItemType Directory -Force -Path $ld | Out-Null
-    robocopy $ol $ld /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok 'reference library copied to ~\Vor\library'
+    $ld = $VorLib; New-Item -ItemType Directory -Force -Path $ld | Out-Null
+    robocopy $ol $ld /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null; Ok "reference library copied to $ld"
   }
   $ai = @{}; if (-not $DoHeim) { $ai.NoHeim = $true }; if (-not $DoVor) { $ai.NoVor = $true }
+  if ($Sandbox) { $ai.Prefix = $Sandbox }
+  if ($OllamaPort) { $ai.OllamaPort = $OllamaPort }
   $env:Path = "$CondaBase\Scripts;$CondaBase\condabin;$env:Path"
   try { & (Join-Path $Here 'damit_ai\install-local-ai-windows.ps1') @ai }
   catch { $AiOk = $false; Warn "local AI setup failed ($_); the plugin sets are installed anyway. Re-run: damit_ai\install-local-ai-windows.ps1" }
@@ -447,9 +540,14 @@ if ($DoDi) { $rec += "  DamIT     -> profile $DiProfile  (open: $Prefix\open-dam
 if (Test-Path (Join-Path $Prefix 'open-damit-crest.cmd')) { $rec += "  DamIT Crest desk              (open: $Prefix\open-damit-crest.cmd)" }
 if (Test-Path (Join-Path $Prefix 'open-nd-crest.cmd')) { $rec += "  North Dakota Crest desk       (open: $Prefix\open-nd-crest.cmd)" }
 if (Test-Path (Join-Path $Prefix 'build-offline-pack.cmd')) { $rec += "  DamSafety offline pack        (build: $Prefix\build-offline-pack.cmd)" }
+if ($Sandbox) {
+  $rec += "  SANDBOX: everything is in $Sandbox (QGIS profiles in $Profiles)"
+  $rec += "    use it:    . $Sandbox\env.ps1  (PowerShell) or  $Sandbox\env.cmd  (cmd.exe), or the launchers above"
+  $rec += "    remove it: stop its Ollama (Stop-Process -Id (Get-Content $Sandbox\local-ai\ollama-serve.pid)), then delete $Sandbox"
+}
 $rec | Set-Content (Join-Path $Prefix 'INSTALLED.txt')
 Say $(if ($Fail) { "Done, with warnings (see above and $Log)." } else { 'Done: all checks passed.' })
 $rec | ForEach-Object { Write-Host $_ }
-Write-Host "`n  Open one profile at a time with its launcher (Desktop shortcuts 'QGIS damsafety' / 'QGIS damit')."
+Write-Host "`n  Open one profile at a time with its launcher$(if (-not $NoShortcuts) {" (Desktop shortcuts 'QGIS damsafety' / 'QGIS damit')"})." 
 Write-Host "  Absaraka run folder: $Run     Check later:  install-all-windows.cmd -Check"
 Stop-Transcript | Out-Null

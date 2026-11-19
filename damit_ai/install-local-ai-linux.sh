@@ -13,7 +13,19 @@
 #   ./install-local-ai-linux.sh --no-index        # skip indexing the knowledge pack / engine docs
 #   ./install-local-ai-linux.sh --watch-model=TAG # the SMALL run-watcher explainer (default qwen3:4b; phi4-mini is the
 #                                                 # alternative); --no-watch-model skips pulling it. heim (Q&A) keeps the big model.
+#   ./install-local-ai-linux.sh --prefix=DIR      # a SANDBOX: everything in DIR and nothing outside it. Ollama, its models,
+#                                                 # the Heim tools, their envs (conda -p, or venvs) and Heim's databases in
+#                                                 # DIR/local-ai; Vor's library in DIR/Vor; its own Ollama server (port
+#                                                 # 11435, home DIR/local-ai). NO lines go into ~/.bashrc / ~/.zshrc: the
+#                                                 # commands are in DIR/local-ai/env.sh  ( . DIR/local-ai/env.sh ).
+#                                                 # VOR_HOME from your shell is ignored there. Remove it: kill the server
+#                                                 # (DIR/local-ai/ollama-serve.pid) and delete DIR.
+#   ./install-local-ai-linux.sh --ollama-port=N   # the Ollama port (default 11434; 11435 with --prefix)
+#   ./install-local-ai-linux.sh --no-models       # no model pulls and no personas or index (they need the models): the
+#                                                 # server, envs, tools and commands only. Re-run without it for the models.
 #
+# Run it from the package's damit_ai/ folder (it copies heim/ and vor/ from beside itself; a copy of
+# this script on its own installs no tools and indexes nothing, and says so).
 # If `ollama pull` fails (a proxy that breaks the registry redirect), the model's official GGUF is fetched from
 # Hugging Face (https_proxy / HF_ENDPOINT honoured), sha256-checked and loaded with `ollama create` under the
 # same tag (qwen3 4b/8b/14b/30b-a3b, phi4-mini, nomic-embed-text). HEIM_NO_HF_FALLBACK=1 turns that off.
@@ -41,10 +53,19 @@ OFFLINE="$HERE/offline"
 RC="$HOME/.bashrc"; [[ -n "${ZSH_VERSION:-}" || -f "$HOME/.zshrc" ]] && RC="$HOME/.zshrc"
 HEIM_ENV="ndheim"; RESEARCH_ENV="ndvor"
 OLLAMA_HOST_URL="http://127.0.0.1:11434"
-DO_HEIM=1; DO_VOR=1; OCR=0; SMALL=0; INDEX_KN=1
+DO_HEIM=1; DO_VOR=1; OCR=0; SMALL=0; INDEX_KN=1; NO_MODELS=0; SANDBOX=""; OLLAMA_PORT=""
 WATCH_MODEL="${HEIM_WATCH_MODEL:-qwen3:4b}"
 
-for a in "$@"; do case "$a" in
+# --prefix DIR / --ollama-port N are also accepted as two words
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix|--ollama-port) [[ $# -gt 1 && -n "$2" ]] || { echo "$1 needs a value" >&2; exit 1; }
+                            ARGS+=("$1=$2"); shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+for a in ${ARGS[@]+"${ARGS[@]}"}; do case "$a" in
   --no-heim) DO_HEIM=0 ;;
   --no-vor) DO_VOR=0 ;;
   --ocr) OCR=1 ;;
@@ -53,6 +74,9 @@ for a in "$@"; do case "$a" in
   --no-index) INDEX_KN=0 ;;
   --watch-model=*) WATCH_MODEL="${a#*=}" ;;
   --no-watch-model) WATCH_MODEL="" ;;
+  --prefix=*) SANDBOX="${a#*=}" ;;
+  --ollama-port=*) OLLAMA_PORT="${a#*=}" ;;
+  --no-models) NO_MODELS=1 ;;
   -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "unknown option: $a" >&2; exit 1 ;;
 esac; done
@@ -63,6 +87,38 @@ warn(){ printf '  \033[33mwarn\033[0m %s\n' "$*" >&2; }
 die(){ printf '  \033[31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
 sha(){ sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
 
+case "$OLLAMA_PORT" in ""|[0-9]|[0-9][0-9]|[0-9][0-9][0-9]|[0-9][0-9][0-9][0-9]|[0-9][0-9][0-9][0-9][0-9]) ;;
+  *) die "--ollama-port needs a port number (got '$OLLAMA_PORT')" ;; esac
+if [[ -n "$SANDBOX" ]]; then
+  # --prefix: a sandbox. Every path below moves into it, and the caches and registries that would
+  # otherwise land in your home folder (conda's package cache and env list, pip's cache, Ollama's
+  # key in ~/.ollama, the GGUF download folder) are pointed into it too.
+  case "$SANDBOX" in "~") SANDBOX="$HOME" ;; "~"/*) SANDBOX="$HOME/${SANDBOX#"~/"}" ;; /*) ;; *) SANDBOX="$PWD/$SANDBOX" ;; esac
+  SANDBOX="${SANDBOX%/}"
+  [[ -n "$SANDBOX" && "$SANDBOX" != "$HOME" ]] || die "--prefix needs its own folder (not / or your home folder)"
+  LOCAL_AI="$SANDBOX/local-ai"; MODELS_DIR="$LOCAL_AI/models"; HEIM_TOOLS="$LOCAL_AI"; VOR_DIR="$LOCAL_AI/vor"
+  RHOME="$SANDBOX/Vor"; RC="$LOCAL_AI/env.sh"
+  OLLAMA_PORT="${OLLAMA_PORT:-11435}"
+  export CONDA_PKGS_DIRS="$LOCAL_AI/conda-pkgs" CONDA_REGISTER_ENVS=false PIP_NO_CACHE_DIR=1
+  export HEIM_GGUF_DIR="${HEIM_GGUF_DIR:-$LOCAL_AI/gguf-tmp}"
+  # the Heim tools' own defaults are ~/local-ai/...: the index step below runs them, so point them here
+  export HEIM_DB="$LOCAL_AI/knowledge.db" HEIM_RUNS_DB="$LOCAL_AI/runs.db" HEIM_REPORTS="$LOCAL_AI/reports"
+fi
+# conda_sb: conda with a home inside the sandbox (even with CONDA_REGISTER_ENVS=false it rewrites
+# ~/.conda/environments.txt and makes ~/.cache/conda); your ~/.condarc is still read (CONDARC)
+conda_sb(){
+  local e=(HOME="$LOCAL_AI/.home" XDG_CACHE_HOME="$LOCAL_AI/.home/.cache")
+  [[ -n "${CONDARC:-}" || ! -f "$HOME/.condarc" ]] || e+=(CONDARC="$HOME/.condarc")
+  env "${e[@]}" "$CONDA" "$@"
+}
+if [[ -n "$OLLAMA_PORT" ]]; then
+  OLLAMA_HOST_URL="http://127.0.0.1:$OLLAMA_PORT"
+  export OLLAMA_HOST="127.0.0.1:$OLLAMA_PORT" OLLAMA_URL="$OLLAMA_HOST_URL"   # the ollama CLI and the Heim/Vor tools
+fi
+if [[ "$DO_HEIM" == 1 && ! -d "$HERE/heim/tools" ]]; then
+  warn "no heim/tools beside this script ($HERE): run it from the package's damit_ai/ folder, or Heim gets no tools and no index"
+fi
+
 # ---------------------------------------------------------------------------
 say "Step 1 — Directory skeleton"
 # Vor was called damresearch until 2026-11-13 and kept its library and index in ~/DamResearch
@@ -72,7 +128,7 @@ say "Step 1 — Directory skeleton"
 # index decides, the move happens only onto a name that does not exist, nothing is deleted.
 OLD_RHOME="${DAMRESEARCH_HOME:-$HOME/DamResearch}"
 vor_has_index() { [[ -f "$1/vor.db" || -f "$1/research.db" ]]; }
-if [[ -z "${VOR_HOME:-}" && "$OLD_RHOME" != "$RHOME" ]] && vor_has_index "$OLD_RHOME" && ! vor_has_index "$RHOME"; then
+if [[ -z "${SANDBOX:-}" && -z "${VOR_HOME:-}" && "$OLD_RHOME" != "$RHOME" ]] && vor_has_index "$OLD_RHOME" && ! vor_has_index "$RHOME"; then
   # Only the default folder is renamed. A library someone put elsewhere (another disk) stays
   # there: moving it home would be a copy of the whole library, not a rename.
   if [[ "$OLD_RHOME" == "$HOME/DamResearch" && ! -e "$RHOME" ]] && mv "$OLD_RHOME" "$RHOME" 2>/dev/null; then
@@ -91,7 +147,15 @@ ok "$LOCAL_AI, $RHOME"
 # ---------------------------------------------------------------------------
 say "Step 2 — Ollama (no sudo, no download-then-run)"
 OLLAMA=""
-for c in "$(command -v ollama 2>/dev/null)" "$LOCAL_AI/ollama/bin/ollama" "$HOME/.local/bin/ollama"; do
+OCANDS=("$(command -v ollama 2>/dev/null)" "$LOCAL_AI/ollama/bin/ollama" "$HOME/.local/bin/ollama")
+if [[ -n "$SANDBOX" ]]; then
+  # the sandbox's own copy first, then the bundled archive (extracted into the sandbox below), and
+  # only then an Ollama already on this machine (its program is only run, never changed)
+  OCANDS=("$LOCAL_AI/ollama/bin/ollama")
+  [[ -f "$OFFLINE/ollama/ollama-linux-amd64.tar.zst" || -f "$OFFLINE/ollama/ollama-linux-amd64.tgz" ]] \
+    || OCANDS+=("$(command -v ollama 2>/dev/null)" "$HOME/.local/bin/ollama")
+fi
+for c in "${OCANDS[@]}"; do
   [[ -n "$c" && -x "$c" ]] && { OLLAMA="$c"; break; }
 done
 if [[ -z "$OLLAMA" ]]; then
@@ -134,18 +198,28 @@ else
 fi
 export OLLAMA_MODELS="$MODELS_DIR" OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0
 
+# --prefix: the port must be this sandbox's own server, or models would be pulled into another
+# Ollama's store (e.g. your usual one in ~/.ollama on 11434)
+if [[ -n "$SANDBOX" ]] && curl -sf "$OLLAMA_HOST_URL/api/version" >/dev/null 2>&1; then
+  SPID="$(cat "$LOCAL_AI/ollama-serve.pid" 2>/dev/null || true)"
+  [[ -n "$SPID" ]] && kill -0 "$SPID" 2>/dev/null \
+    || die "something else already answers on $OLLAMA_HOST_URL (another Ollama?). Stop it, or pick a free port with --ollama-port=N"
+fi
 # start the server if it isn't answering
 if ! curl -sf "$OLLAMA_HOST_URL/api/version" >/dev/null 2>&1; then
-  ok "starting ollama serve (log: $LOCAL_AI/ollama-serve.log)"
-  nohup env OLLAMA_MODELS="$MODELS_DIR" OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 \
-    "$OLLAMA" serve >"$LOCAL_AI/ollama-serve.log" 2>&1 &
+  ok "starting ollama serve on $OLLAMA_HOST_URL (log: $LOCAL_AI/ollama-serve.log)"
+  SERVE_ENV=(OLLAMA_MODELS="$MODELS_DIR" OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0)
+  [[ -z "$OLLAMA_PORT" ]] || SERVE_ENV+=(OLLAMA_HOST="127.0.0.1:$OLLAMA_PORT")
+  [[ -z "$SANDBOX" ]] || SERVE_ENV+=(HOME="$LOCAL_AI")      # its key (~/.ollama) stays in the sandbox
+  nohup env "${SERVE_ENV[@]}" "$OLLAMA" serve >"$LOCAL_AI/ollama-serve.log" 2>&1 &
+  [[ -z "$SANDBOX" ]] || echo $! > "$LOCAL_AI/ollama-serve.pid"
   for i in $(seq 1 30); do curl -sf "$OLLAMA_HOST_URL/api/version" >/dev/null 2>&1 && break; sleep 1; done
 fi
 curl -sf "$OLLAMA_HOST_URL/api/version" >/dev/null 2>&1 || die "ollama server did not come up (see $LOCAL_AI/ollama-serve.log)"
 ok "server up on $OLLAMA_HOST_URL"
 
 # seed models from a pre-downloaded offline bundle (download-all-linux.sh), so pulls are skipped
-if [[ -d "$OFFLINE/models/manifests" && ! -d "$MODELS_DIR/manifests" ]]; then
+if [[ "$NO_MODELS" == 0 && -d "$OFFLINE/models/manifests" && ! -d "$MODELS_DIR/manifests" ]]; then
   cp -a "$OFFLINE/models/." "$MODELS_DIR/" 2>/dev/null && ok "seeded models from offline/models (no download needed)" || warn "could not seed offline models"
 fi
 
@@ -156,9 +230,20 @@ for c in "${CONDA_EXE:-}" "$(command -v conda 2>/dev/null)" "$HOME/miniforge3/bi
   [[ -n "$c" && -x "$c" ]] && { CONDA="$c"; break; }
 done
 [[ -n "$CONDA" ]] && ok "conda: $CONDA" || warn "no conda found — will use python3 venvs (need python3 + python3-venv)"
+[[ -z "$SANDBOX" || -z "$CONDA" ]] || ok "sandbox: envs go in $LOCAL_AI/envs (by path), none in $(conda_sb info --base 2>/dev/null || echo 'the conda base')"
 
 make_env(){  # name  "pkgspec"   -> echoes the python path
   local name="$1" spec="$2" envpath=""
+  if [[ -n "$CONDA" && -n "$SANDBOX" ]]; then
+    # --prefix: the env is made BY PATH inside the sandbox (install-all --sandbox builds it there
+    # from the offline packages first, so this finds it); never by name in the conda base
+    envpath="$LOCAL_AI/envs/$name"
+    if [[ ! -d "$envpath/conda-meta" ]]; then
+      conda_sb create -y -p "$envpath" -c conda-forge --override-channels $spec >/dev/null 2>&1 \
+        || { warn "conda create $envpath failed — falling back to a venv"; CONDA=""; }
+    fi
+    [[ -n "$CONDA" ]] && { echo "$envpath/bin/python"; return; }
+  fi
   if [[ -n "$CONDA" ]]; then
     # `|| true` inside both substitutions. A `conda env list` that exits non-zero (an
     # uninitialised or half-broken conda, or one that warns and exits 1) would otherwise
@@ -238,15 +323,17 @@ hf_gguf_create(){
 }
 # <<< hf_gguf_fallback
 pull(){ "$OLLAMA" list 2>/dev/null | grep -q "^$1" || { ok "pulling $1 (first time, large)"; "$OLLAMA" pull "$1" || hf_gguf_create "$1" || die "pull failed: $1"; }; }
+# --no-models: nothing is pulled, and the personas (heim, vor) and the index, which need the models, wait
+[[ "$NO_MODELS" == 0 ]] || warn "--no-models: no model is pulled; the heim/vor personas and the knowledge index are made when you run this again without it"
 
 # ===========================================================================
 if [[ "$DO_HEIM" == 1 ]]; then
   say "Heim — code triage"
-  pull "$CHAT_MODEL"; pull "nomic-embed-text"
+  [[ "$NO_MODELS" == 1 ]] || { pull "$CHAT_MODEL"; pull "nomic-embed-text"; }
   # the run-watcher's explainer: a SMALL model. Stock Ollama uses only NVIDIA, Apple or AMD ROCm GPUs, so an
   # Intel Arc / Intel iGPU box runs it on the CPU, which is why a 4B model is the default there.
   case "$WATCH_MODEL" in phi) WATCH_MODEL="phi4-mini" ;; small) WATCH_MODEL="qwen3:4b" ;; esac
-  if [[ -n "$WATCH_MODEL" ]]; then
+  if [[ -n "$WATCH_MODEL" && "$NO_MODELS" == 0 ]]; then
     "$OLLAMA" list 2>/dev/null | grep -q "^$WATCH_MODEL" || "$OLLAMA" pull "$WATCH_MODEL" || hf_gguf_create "$WATCH_MODEL" \
       || warn "could not pull the watcher model $WATCH_MODEL (heim-watch still gives the digest and verdict)"
   fi
@@ -283,8 +370,10 @@ STANDING RULES (Nick's; never contradict them, even if a question assumes otherw
 - Never invent a tool, algorithm id, parameter, switch, flag id or number. If a name is not in these rules or in the context you were given, say UNSURE and point to ALGORITHM-HELP-DAMIT.md.
 - The run watcher's OK / WATCH / PROBLEM verdict is set by code from the flags alone. Heim only explains the flags and never sets or changes the verdict."""
 EOF
+  if [[ "$NO_MODELS" == 0 ]]; then
   "$OLLAMA" create heim -f "$LOCAL_AI/Modelfile.heim" >/dev/null || die "heim persona creation failed"
   ok "'heim' persona created"
+  fi
   PYL="$(make_env "$HEIM_ENV" "python=3.12 pymupdf pypdf numpy")"
   ok "heim python: $PYL"
   for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py; do
@@ -298,8 +387,11 @@ fi
 # ===========================================================================
 if [[ "$DO_VOR" == 1 ]]; then
   say "vor — literature"
-  EMBED="qwen3-embedding:0.6b"; "$OLLAMA" pull "$EMBED" >/dev/null 2>&1 || { warn "qwen3-embedding pull failed; using nomic-embed-text"; EMBED="nomic-embed-text"; }
+  EMBED="qwen3-embedding:0.6b"
+  if [[ "$NO_MODELS" == 0 ]]; then
+  "$OLLAMA" pull "$EMBED" >/dev/null 2>&1 || { warn "qwen3-embedding pull failed; using nomic-embed-text"; EMBED="nomic-embed-text"; }
   pull "$CHAT_MODEL"; pull "$EMBED"
+  fi
   cat > "$VOR_DIR/Modelfile" <<EOF
 FROM $CHAT_MODEL
 PARAMETER num_ctx $NUM_CTX
@@ -326,8 +418,10 @@ HOW YOU ANSWER (this is your manner; it is about what you do, not how you sound)
 - Stop when the quotes have been given. A research answer that needs a paragraph of preamble has not been found yet.
 When source passages are supplied, use only them: every fact gets a citation to its source and page, quotes are copied exactly, numbers/units/equations and their applicability limits kept exactly, and disagreements between sources are reported, not resolved silently. When no passages are supplied, say the answer is from general knowledge, is UNVERIFIED, and must be checked against the primary publication; give the publication to check (agency, document number, year) and never invent a citation, page number, coefficient or value. You are not a licensed engineer and your output is not engineering judgement."""
 EOF
+  if [[ "$NO_MODELS" == 0 ]]; then
   "$OLLAMA" create vor -f "$VOR_DIR/Modelfile" >/dev/null || die "could not create the vor model"
   ok "'vor' persona created"
+  fi
   RSPEC="python=3.12 numpy pymupdf"; [[ "$OCR" == 1 ]] && RSPEC="$RSPEC ocrmypdf tesseract"
   PYR="$(make_env "$RESEARCH_ENV" "$RSPEC")"
   ok "research python: $PYR"
@@ -340,7 +434,7 @@ EOF
 fi
 
 # ===========================================================================
-if [[ "$INDEX_KN" == 1 && "$DO_HEIM" == 1 && -d "$HERE/heim/knowledge" ]]; then
+if [[ "$INDEX_KN" == 1 && "$NO_MODELS" == 0 && "$DO_HEIM" == 1 && -d "$HERE/heim/knowledge" ]]; then
   say "Indexing the Heim knowledge pack"
   "$PYL" "$HEIM_TOOLS/rag_index.py" -c heim_knowledge "$HERE/heim/knowledge" || warn "knowledge index failed"
   # engine docs, if the vor library has them downloaded
@@ -368,24 +462,26 @@ strip_ai_blocks() {
     { print }
     END { if (inb) printf "%s", buf }' "$1"
 }
-WRITE_BLOCK=1
-if grep -q '^# >>> dam local AI (.*) >>>$' "$RC" 2>/dev/null; then
-  if [[ "$DO_HEIM" == 1 && "$DO_VOR" == 1 ]]; then
-    cp "$RC" "$RC.bak-localai"
-    strip_ai_blocks "$RC.bak-localai" > "$RC.tmp-localai" && cat "$RC.tmp-localai" > "$RC"
-    rm -f "$RC.tmp-localai"
-  elif grep -qF "$MARK" "$RC"; then
-    WRITE_BLOCK=0
-  fi
-fi
-if [[ "$WRITE_BLOCK" == 1 ]]; then
-  [[ -f "$RC.bak-localai" ]] || cp "$RC" "$RC.bak-localai" 2>/dev/null || true
-  {
-    [[ -s "$RC" && -n "$(tail -n 1 "$RC")" ]] && echo ""
+# ai_block: the block itself (the same lines in ~/.bashrc / ~/.zshrc and in a sandbox's env.sh)
+ai_block() {
     echo "$MARK"
     echo "export OLLAMA_MODELS=\"$MODELS_DIR\""
     echo "export OLLAMA_FLASH_ATTENTION=1"
     echo "export OLLAMA_KV_CACHE_TYPE=q8_0"
+    if [[ -n "${OLLAMA_PORT:-}" ]]; then
+      echo "export OLLAMA_HOST=\"127.0.0.1:$OLLAMA_PORT\""
+      echo "export OLLAMA_URL=\"http://127.0.0.1:$OLLAMA_PORT\""
+      echo "export HEIM_WATCH_URL=\"http://127.0.0.1:$OLLAMA_PORT\""
+    fi
+    if [[ -n "${SANDBOX:-}" ]]; then
+      # the tools' defaults are ~/local-ai/...: everything they write stays in the sandbox
+      echo "export HEIM_DB=\"$LOCAL_AI/knowledge.db\" HEIM_RUNS_DB=\"$LOCAL_AI/runs.db\" HEIM_REPORTS=\"$LOCAL_AI/reports\""
+      echo "export DAMAUDIT_REPORTS=\"$LOCAL_AI/reports\" DAMAUDIT_GOLDEN=\"$LOCAL_AI/golden\""
+      echo "export DAMCHAIN_BATCH_ROOT=\"$LOCAL_AI/qgis-batch\" DAMCHAIN_CREST_DIR=\"$LOCAL_AI/crest-desktop\" VOR_TOOL=\"$VOR_DIR/vor.py\""
+      echo "export PIP_NO_CACHE_DIR=1 CONDA_PKGS_DIRS=\"$LOCAL_AI/conda-pkgs\" CONDA_REGISTER_ENVS=false"
+      # the sandbox's own server (its key in $LOCAL_AI/.ollama, not ~/.ollama); stop: kill \$(cat .../ollama-serve.pid)
+      echo "dam-ollama-serve() { ( HOME=\"$LOCAL_AI\" nohup \"$OLLAMA\" serve >>\"$LOCAL_AI/ollama-serve.log\" 2>&1 & echo \$! > \"$LOCAL_AI/ollama-serve.pid\" ); }"
+    fi
     [[ "$DO_HEIM" == 1 ]] && echo "export HEIM_NUM_CTX=$NUM_CTX"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_query.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias damchain='\"$LOCAL_AI/python\" \"$LOCAL_AI/dam_chain.py\"'"
@@ -399,17 +495,44 @@ if [[ "$WRITE_BLOCK" == 1 ]]; then
     [[ "$DO_VOR" == 1 ]] && echo "export VOR_HOME=\"$RHOME\""
     [[ "$DO_VOR" == 1 ]] && echo "alias vor='\"$VOR_DIR/python\" \"$VOR_DIR/vor.py\"'"
     echo "# <<< dam local AI <<<"
+}
+WRITE_BLOCK=1
+if [[ -n "${SANDBOX:-}" ]]; then
+  # --prefix: the sandbox's own file, written whole; ~/.bashrc and ~/.zshrc are not opened
+  { echo "# dam local AIs in the sandbox $SANDBOX: source this file ( . $RC ). Nothing was added to ~/.bashrc or ~/.zshrc."
+    ai_block; } > "$RC"
+  ok "commands written to $RC (source it; ~/.bashrc and ~/.zshrc left alone)"
+  WRITE_BLOCK=0
+elif grep -q '^# >>> dam local AI (.*) >>>$' "$RC" 2>/dev/null; then
+  if [[ "$DO_HEIM" == 1 && "$DO_VOR" == 1 ]]; then
+    cp "$RC" "$RC.bak-localai"
+    strip_ai_blocks "$RC.bak-localai" > "$RC.tmp-localai" && cat "$RC.tmp-localai" > "$RC"
+    rm -f "$RC.tmp-localai"
+  elif grep -qF "$MARK" "$RC"; then
+    WRITE_BLOCK=0
+  fi
+fi
+if [[ "$WRITE_BLOCK" == 1 ]]; then
+  [[ -f "$RC.bak-localai" ]] || cp "$RC" "$RC.bak-localai" 2>/dev/null || true
+  {
+    [[ -s "$RC" && -n "$(tail -n 1 "$RC")" ]] && echo ""
+    ai_block
   } >> "$RC"
   ok "aliases written to $RC (backup: $RC.bak-localai)"
-else
+elif [[ -z "${SANDBOX:-}" ]]; then
   warn "shell block in $RC left as it is: this run installs only one of the two AIs. Run without --no-heim / --no-vor to refresh it."
 fi
 
 # ---------------------------------------------------------------------------
 say "Done"
-cat <<EOF
+if [[ -n "$SANDBOX" ]]; then cat <<EOF
+  Sandbox $SANDBOX: in each shell run  . $RC  (its Ollama: $OLLAMA_HOST_URL; start it again with dam-ollama-serve).
+  To remove it: kill \$(cat $LOCAL_AI/ollama-serve.pid), then delete $SANDBOX. Then:
+EOF
+else cat <<EOF
   Open a new shell (or: source $RC), then:
 EOF
+fi
 [[ "$DO_HEIM" == 1 ]] && echo "    heim \"where is the breach width computed\"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits"
 [[ "$DO_VOR" == 1 ]] && echo "    vor ingest    # after dropping PDFs in $RHOME/library (or run vor/fetch_asdso.py --catalog)"
 cat <<EOF

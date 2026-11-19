@@ -62,12 +62,43 @@ On Windows the options are `-NoDamSafety`, `-NoDamIT`, `-NoAI`, `-NoHeim`, `-NoV
 `-SkipLisflood`, `-Offline`, `-Check` and `-NoShortcuts`.
 
 **A test install beside your normal one.** `--root DIR` puts the suite folder in `DIR/dam-suite`, the QGIS
-profiles in `DIR/qgis/QGIS3/profiles` (the launchers open QGIS with `--profiles-path DIR/qgis`, so your usual
+profiles in `DIR/qgis/profiles` (QGIS's own layout for `--profiles-path`; before 2026-11-19 they went to
+`DIR/qgis/QGIS3/profiles`, which QGIS never read, so the launchers opened empty profiles) (the launchers open QGIS with `--profiles-path DIR/qgis`, so your usual
 QGIS profiles are not touched) and, when Miniforge is not installed yet, Miniforge in `DIR/miniforge3`. The local
 AIs always use your home folder, so `--root` leaves them out unless you add `--ai` after it. The parts can also be
 set one by one: `--prefix DIR`, `--qgis-profiles-path DIR`, `--damsafety-profile NAME`, `--damit-profile NAME`.
 Windows: `-Root`, `-Prefix`, `-QgisProfilesPath`, `-DamSafetyProfile`, `-DamitProfile`, `-AI`. Use the same
 options with `--check` to see that install.
+
+**Everything in one folder: `--sandbox DIR`** (Windows: `-Sandbox DIR`). Nothing outside `DIR` is written, and
+deleting `DIR` removes the install completely (stop its Ollama first: `kill $(cat DIR/local-ai/ollama-serve.pid)`).
+
+| What | Where |
+|---|---|
+| launchers, LISFLOOD-FP (`bin/`), logs, Crest desks, Absaraka run, `INSTALLED.txt` | `DIR/` |
+| QGIS profiles `damsafety` and `damit` | `DIR/qgis_profile/profiles/<name>` (launchers set `QGIS_CUSTOM_CONFIG_PATH=DIR/qgis_profile`) |
+| `qgis_process` for one profile | `DIR/qgis-process-damsafety.sh`, `DIR/qgis-process-damit.sh` (`.cmd` on Windows) |
+| Miniforge, conda envs, conda package cache | `DIR/miniforge3`, `DIR/conda-pkgs` (or the conda `DAMSUITE_CONDA` / `DAMSUITE_MINIFORGE` names) |
+| local AIs: Ollama, models, Heim tools, `ndheim`/`ndvor` envs, Heim databases | `DIR/local-ai` |
+| Vor's library and index | `DIR/Vor` |
+| the commands (`heim`, `vor`, ...) and environment | `DIR/env.sh` (`. DIR/env.sh`); Windows `DIR\env.ps1` / `DIR\env.cmd` |
+
+- No lines go into `~/.bashrc` / `~/.zshrc`, no PowerShell-profile edits, no Windows user environment variables,
+  no Desktop shortcuts, no Start-menu or registry entries for Miniforge.
+- The sandbox's Ollama runs on **port 11435** (`--ollama-port N` / `-OllamaPort N`), so it never meets your
+  usual Ollama on 11434; its models are in `DIR/local-ai/models` and its key in `DIR/local-ai/.ollama`. If
+  something else already answers on that port the AI installer stops and says so.
+- conda and mamba run with their home inside the sandbox, so `~/.conda/environments.txt` and
+  `~/.cache/conda` are not touched; your `~/.condarc` is still read.
+- `--qgis-env PATH` (`-QgisEnv`) uses an existing QGIS 3.34 conda env as it is instead of building `ndqgis`:
+  no conda package is needed and no env is built (ANUGA only with `--anuga-env PATH`; LISFLOOD-FP is not
+  built). Handy for a quick sandbox on a machine that already has the suite.
+- macOS: the local AIs can't be sandboxed yet (their Mac installers always use `~/local-ai` and `~/.zshrc`),
+  so `--sandbox` leaves them out there.
+- `--prefix` and `DAMSUITE_PREFIX` keep their old meaning (the suite folder only, profiles stay in QGIS's
+  usual folder). `--sandbox` can't be combined with `--prefix`, `--qgis-profiles-path` or `--root`.
+- Still outside, by design: the offline files `download-all` fetches go into this package's `offline/`
+  folder, and data folders you pick later in the plugins are wherever you pick them.
 
 - **macOS never downloads from the installer**, the same as the earlier Mac packages. If the
   offline set is missing, it stops and asks for it, or for `download-all.sh` to be run first.
