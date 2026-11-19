@@ -108,7 +108,8 @@ def find_exe(exe, settings=None, environ=None, home=None):
     """Which engine runs, and why: {'exe', 'how', 'warning'}. exe: the LISFLOOD_EXE parameter. settings: a
     function key -> value for the provider settings (default provider_setting). 'builtin' (or 'built-in') = the
     built-in engine, on request. A path or program name that is not found is an error (DamIT does not replace a
-    LISFLOOD-FP the user named). Empty: the provider settings, NDBREACH_LISFLOOD, PATH, the usual install places;
+    LISFLOOD-FP the user named). Empty: the provider settings, NDBREACH_LISFLOOD, the dam-suite installer's bin,
+    PATH, the usual install places;
     none = the built-in engine with FALLBACK_WARNING."""
     settings = settings or provider_setting
     environ = os.environ if environ is None else environ
@@ -135,6 +136,11 @@ def find_exe(exe, settings=None, environ=None, home=None):
     v = str(environ.get(ENV_NDBREACH) or "").strip()
     if v and _executable(v):
         return {"exe": v, "how": ENV_NDBREACH, "warning": None}
+    # Runner 0.6.8: the dam-suite installer's build comes before PATH, so an older LISFLOOD-FP (or a wrapper
+    # script) on PATH does not win over the 8.3 that install-all put in <DAMSUITE_PREFIX or ~/dam-suite>/bin
+    found = suite_installer_exes(home, environ)
+    if found:
+        return {"exe": found[0], "how": "dam-suite installer (bin)", "warning": None}
     for name in PATH_NAMES:
         found = shutil.which(name)
         if found:

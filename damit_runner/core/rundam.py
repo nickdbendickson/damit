@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.6.8: LISFLOOD-FP lookup: the dam-suite installer's bin before PATH (install test 2026-11-18); no model-number changes
 0.6.7: bundled damit_runner/lib/true_hole.py so Runner+Catalog loads; oversize WSE-minus-ground, ground_source=model_dem_bilinear; no model-number changes
 0.6.6: LISFLOOD-FP .bdy times strictly increase at 4 decimals (flood/screen.py, flood/breach.py); only times within 0.002 s of another are dropped
 0.6.5: finds the dam-suite installer's LISFLOOD-FP (~/dam-suite/bin); no model-number changes
@@ -64,7 +65,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.6.7"
+VERSION = "0.6.8"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
