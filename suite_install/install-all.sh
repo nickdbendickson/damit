@@ -15,7 +15,7 @@
 #   * the local AIs from damit_ai: Heim (code triage) and vor (literature),
 #     with Ollama, their conda env, the models and the reference library
 #   * the DamIT Crest desk (damit_crest) and the North Dakota Crest desk (nd_crest, from the
-#     crest repo), both run on the ndqgis env; they open in the browser and can run side by side
+#     DWR_Plugins dwr_crest/), both run on the ndqgis env; they open in the browser and can run side by side
 #   * one launcher per profile, build-offline-pack.sh (the DamSafety offline pack from
 #     Terminal), and the Absaraka Dam (DWR-2801) run folder
 #
@@ -591,7 +591,7 @@ if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
   fi
 fi
 
-# North Dakota Crest desk (nickdbendickson/crest, crest-desktop/). Same engine as DamIT Crest, with
+# North Dakota Crest desk (nickdbendickson/DWR_Plugins, dwr_crest/crest-desktop/). Same engine as DamIT Crest, with
 # the ND inventory (DWR dams + NID + other structures), ND VERTCON grid and the DamSafety hand-off
 # (nddam:preflight / nddam:runchain / ndbreach:rundam in profile "damsafety"). It is self-contained
 # (no Catalog rule) and only needs the standard library, so it runs on the ndqgis env like DamIT

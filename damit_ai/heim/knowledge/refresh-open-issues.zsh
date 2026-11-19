@@ -9,7 +9,7 @@
 set -e
 HERE=${0:A:h}
 OUT="$HERE/OPEN-ISSUES.md"
-REPOS=(${@:-nickdbendickson/DWR_Plugins nickdbendickson/crest nickdbendickson/damit})
+REPOS=(${@:-nickdbendickson/DWR_Plugins nickdbendickson/damit})
 
 {
   echo "# Open issues (snapshot)"
