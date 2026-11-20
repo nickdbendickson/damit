@@ -70,6 +70,9 @@ class RunChain(C.DamitAlgorithm):
                             C.terrain_info(s.get("terrain")),
                             do_preflight=self.parameterAsBool(params, "PREFLIGHT", context),
                             log=feedback.pushInfo, cancel=feedback.isCanceled)
+        for did in sorted(summ.get("flood_partial") or {}):
+            # 0.3.7: a flood stopped by its time limit is a PARTIAL result: warn, but do not fail the chain
+            feedback.pushWarning("{}: {}".format(did, WF.PARTIAL_WARNING))
         if not summ["ok"] and self.parameterAsBool(params, "FAIL_ON_ERROR", context):
             raise QgsProcessingException("Screening chain {}: see the log".format(
                 "refused by the preflight" if summ.get("refused") else
