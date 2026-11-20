@@ -52,6 +52,26 @@ def _ids(text):
     return [x.strip() for x in (text or "").replace(";", ",").split(",") if x.strip()]
 
 
+def _atomic_write(path, text, newline=None):
+    """Replace `path` with `text` only once the whole text is on disk (audit 2026-11-19, damit #134): a temp file
+    unique per writer (<path>.<pid>.<thread>.tmp), flushed and fsynced, then os.replace. A classify killed mid-write
+    no longer leaves a torn report; on a failed write the temp file is removed and `path` keeps its old content."""
+    import threading
+    tmp = "{}.{}.{}.tmp".format(path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "w", encoding="utf-8", newline=newline) as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _stat(path, role, note=""):
     try:
         st = os.stat(path.split("|")[0])
@@ -741,12 +761,10 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         # reports
         title = "DamIT Hazard run report" + (" - " + dam["name"] if dam.get("name") else "")
         md = os.path.join(out_dir, "damit_hazard_report.md")
-        with open(md, "w", encoding="utf-8") as f:
-            f.write(report.markdown(res, cat, title))
-        with open(os.path.join(out_dir, "damit_hazard_report.html"), "w", encoding="utf-8") as f:
-            f.write(report.html_report(res, cat, title, base_dir=out_dir))
-        with open(os.path.join(out_dir, "damit_hazard_report.json"), "w", encoding="utf-8") as f:
-            f.write(report.as_json(res))
+        _atomic_write(md, report.markdown(res, cat, title))
+        _atomic_write(os.path.join(out_dir, "damit_hazard_report.html"),
+                      report.html_report(res, cat, title, base_dir=out_dir))
+        _atomic_write(os.path.join(out_dir, "damit_hazard_report.json"), report.as_json(res))
         gpkg = os.path.join(out_dir, "damit_hazard_receptors.gpkg")
         written = self._write_gpkg(gpkg, sources, geoms, best, res, context)
         labels = cfg["labels"]
