@@ -160,9 +160,11 @@ def fill_grid(grid, tif_path):
         kw["dstSRS"] = crs_wkt
     from .warp_opts import no_vshift             # 3.10.89: the tile's metres as stored
     warped = gdal.Warp("", ds, **no_vshift(gdal, kw))
+    ds = None                                    # audit 2026-11-20: release the tile handle
     if warped is None:
         return grid
     arr = warped.GetRasterBand(1).ReadAsArray()
+    warped = None                                # audit 2026-11-20: release the MEM warp early
     data = grid.data.copy()
     hole = ~grid.valid()
     good = np.isfinite(arr) & (arr > -1000)

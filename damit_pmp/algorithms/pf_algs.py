@@ -950,6 +950,7 @@ class RainGrid(_Base):
         ob.WriteArray(f)
         ob.FlushCache()
         o = None
+        ds = None                                   # audit 2026-11-20: release the source grid
 
 
 ALGORITHMS = (PointPF, BasinPF, Hyetograph, GridBasin, FetchGrid, RainGrid)

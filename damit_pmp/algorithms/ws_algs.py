@@ -62,6 +62,7 @@ def read_dem(path):
         raise QgsProcessingException("the DEM must be north-up with square cells")
     band = ds.GetRasterBand(1)
     a = band.ReadAsArray().astype("float64")
+    ds = None                                  # audit 2026-11-20: release the DEM handle
     nd = band.GetNoDataValue()
     if nd is not None:
         a[a == nd] = np.nan
