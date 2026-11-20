@@ -268,7 +268,7 @@
   "damit_runner/core/handoff.py": {
    "diff": "108aebf6c8b26ed4e1ddec31a70b1b8291aa08765d57ee2890676df2dd50cc0f",
    "from": "DamSafety_Runner/core/handoff.py",
-   "note": "DamIT audit fix 2026-11-20: nid_for logs an unreadable dam.json. The same lines are proposed for DamSafety_Runner/core/handoff.py in the DWR_Plugins audit PR (Runner 3.34.1); once merged and synced, this pair returns to its earlier difference."
+   "note": "DamIT audit fix 2026-11-20: nid_for logs an unreadable dam.json. The same lines are proposed for DamSafety_Runner/core/handoff.py in DWR_Plugins #441 (Runner 3.34.1); once merged and synced, this pair returns to its earlier difference."
   },
   "damit_runner/core/hecras.py": {
    "diff": "d0727c4d6f8c79f0469f5983a96f9cff81dbf083e69a8b6afd89e9dbfe2b0ca2",
