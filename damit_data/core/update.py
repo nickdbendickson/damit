@@ -205,6 +205,46 @@ def _fetch_nsi(plan, http, target, fb):
         raise
 
 
+def _arcgis_error(raw):
+    """The ArcGIS REST error text in a response that is not GeoJSON: a JSON {"error": {...}} or the HTML error page
+    (e.g. "Field name 'AADT' does not exist. Did you mean 'aadt'?"), else None."""
+    import re
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    try:
+        err = json.loads(text).get("error")
+    except (ValueError, AttributeError):
+        err = None
+    if isinstance(err, dict):
+        bits = [str(err.get("message") or "")] + [str(x) for x in (err.get("details") or []) if x]
+        return "; ".join(b for b in bits if b) or "error {}".format(err.get("code"))
+    m = re.search(r"<title>\s*(.*?)\s*</title>", text, re.S | re.I)
+    if m and "error" in m.group(1).lower():
+        return " ".join(m.group(1).split())
+    return None
+
+
+def _arcgis_fields(url, http, fields, fb, label=""):
+    """The requested outFields with the layer's own spelling (ArcGIS field names are case-sensitive on some
+    servers: FHWA HPMS is lower case, TIGERweb upper case). Reads the layer's ?f=json once; a requested field the
+    layer does not have is left out and logged. When the layer cannot be read, the request is sent as given."""
+    if not fields or fields.strip() == "*":
+        return "*"
+    want = [f.strip() for f in fields.split(",") if f.strip()]
+    try:
+        meta = json.loads(http.get_bytes(url.rstrip("/") + "?f=json", timeout=60).decode("utf-8"))
+        have = [f.get("name") for f in (meta.get("fields") or []) if isinstance(f, dict) and f.get("name")]
+    except Exception:                                            # noqa - the query itself will say what is wrong
+        return ",".join(want)
+    if not have:
+        return ",".join(want)
+    by_lower = {h.lower(): h for h in have}
+    got = [by_lower[w.lower()] for w in want if w.lower() in by_lower]
+    missing = [w for w in want if w.lower() not in by_lower]
+    if missing:
+        fb.log("{}: the layer has no field {} (left out)".format(label or url, ", ".join(missing)))
+    return ",".join(got) if got else "*"
+
+
 def _arcgis_query_all(url, http, where, fields, fb, label=""):
     """Page through an ArcGIS FeatureServer and return all features as GeoJSON."""
     import urllib.parse
@@ -225,11 +265,18 @@ def _arcgis_query_all(url, http, where, fields, fb, label=""):
         try:
             d = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as e:
-            raise UpdateError("{}: invalid JSON from {} ({})".format(label, url, e))
+            why = _arcgis_error(raw)
+            raise UpdateError("{}: {} from {}".format(label, "the server said: " + why if why
+                                                      else "invalid JSON ({})".format(e), url))
+        if isinstance(d, dict) and d.get("error"):
+            raise UpdateError("{}: the server said: {} ({})".format(label, _arcgis_error(raw), url))
         batch = d.get("features") or []
         feats.extend(batch)
         fb.log("{}: {} features (offset {})".format(label or url, len(batch), offset))
-        if len(batch) < page_size or not d.get("exceededTransferLimit", False):
+        # f=geojson puts exceededTransferLimit under "properties" (f=json at the top): before 0.2.2 only the top
+        # was read, so a GeoJSON query stopped after its first page (2000 HPMS segments of a state's many more)
+        more = d.get("exceededTransferLimit") or (d.get("properties") or {}).get("exceededTransferLimit")
+        if not batch or not more:
             break
         offset += len(batch)
     return {"type": "FeatureCollection", "features": feats}
@@ -241,8 +288,8 @@ def _fetch_arcgis(plan, http, target, fb):
     try:
         url = plan["urls"][0]
         where = plan.get("state_filter", "1=1")
-        fields = plan.get("fields", "*")
         label = plan["name"]
+        fields = _arcgis_fields(url, http, plan.get("fields", "*"), fb, label)
         fc = _arcgis_query_all(url, http, where, fields, fb, label)
         out_name = plan["filename"]
         with open(os.path.join(staging, out_name), "w", encoding="utf-8") as fh:

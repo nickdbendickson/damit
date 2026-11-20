@@ -105,6 +105,103 @@ class Store(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+HPMS_LAYER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "hpms_nd_layer_fields.json")
+HPMS_ERROR_PAGE = (b'<html lang="en">\n<head>\n<title>\nError: Field name \'AADT\' does not exist. Did you mean '
+                   b'\'aadt\'?</title>\n</head><body>ArcGIS REST Framework</body></html>')
+
+
+class FakeArcgisLayer(object):
+    """Answers like the live FHWA HPMS FeatureServer (checked 2026-11-20): ?f=json gives the layer's fields (from the
+    recorded fixture); /query refuses a field name with the wrong case (its HTML error page; the live server sends it
+    with HTTP 500, which DamIT's client raises, and some ArcGIS servers with 200) and pages GeoJSON with
+    exceededTransferLimit under "properties"."""
+
+    def __init__(self, url, total=3, page=2):
+        with open(HPMS_LAYER, encoding="utf-8") as fh:
+            self.layer = json.load(fh)
+        self.url, self.total, self.page = url.rstrip("/"), total, page
+        self.names = {f["name"] for f in self.layer["fields"]}
+        self.queries = []
+
+    def __call__(self, url):
+        import urllib.parse
+        if url == self.url + "?f=json":
+            return json.dumps(self.layer).encode()
+        base, _, query = url.partition("?")
+        assert base == self.url + "/query", url
+        q = dict(urllib.parse.parse_qsl(query))
+        self.queries.append(q)
+        fields = [f for f in q["outFields"].split(",") if f != "*"]
+        if any(f not in self.names for f in fields):
+            return HPMS_ERROR_PAGE
+        start = int(q["resultOffset"])
+        stop = min(self.total, start + min(self.page, int(q["resultRecordCount"])))
+        feats = [{"type": "Feature", "geometry": {"type": "LineString", "coordinates": [[-97.0, 47.0 + i * 1e-3],
+                                                                                         [-97.0, 47.001 + i * 1e-3]]},
+                  "properties": {f: i for f in (fields or sorted(self.names))}} for i in range(start, stop)]
+        return json.dumps({"type": "FeatureCollection", "features": feats,
+                           "properties": {"exceededTransferLimit": stop < self.total}}).encode()
+
+
+class Hpms(unittest.TestCase):
+    """0.2.2: the HPMS request used upper-case field names; the FHWA service has lower-case ones and refused it."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def test_the_plan_asks_for_fields_the_live_layer_has(self):
+        p = sources.plan("hpms", state="ND")
+        self.assertEqual(p["urls"][0], "https://geo.dot.gov/server/rest/services/Hosted/NorthDakota_2018_PR/FeatureServer/0")
+        with open(HPMS_LAYER, encoding="utf-8") as fh:
+            have = {f["name"] for f in json.load(fh)["fields"]}
+        asked = p["fields"].split(",")
+        self.assertEqual([f for f in asked if f not in have], [], "every field exactly as the service spells it")
+        self.assertIn("aadt", asked)
+        self.assertIn("f_system", asked)
+        self.assertEqual(sources.plan("hpms", state="DC")["urls"][0].split("/")[-3], "District_2018_PR")
+
+    def test_hpms_download_gets_every_page_with_the_real_field_names(self):
+        p = sources.plan("hpms", state="ND")
+        fake = FakeArcgisLayer(p["urls"][0], total=5, page=2)
+        r = update.update(p, FakeHttp(json_by_url=fake), self.root, feedback=Quiet())
+        self.assertEqual(r["status"], "updated")
+        with open(os.path.join(self.root, "ND", "hpms", "hpms.geojson"), encoding="utf-8") as fh:
+            fc = json.load(fh)
+        self.assertEqual(len(fc["features"]), 5, "GeoJSON paging reads exceededTransferLimit under properties")
+        self.assertEqual([q["resultOffset"] for q in fake.queries], ["0", "2", "4"])
+        self.assertIn("aadt", fc["features"][0]["properties"])
+        self.assertEqual(fake.queries[0]["outFields"], p["fields"])
+
+    def test_upper_case_names_are_matched_to_the_layer_and_unknown_ones_left_out(self):
+        url = sources.HPMS_FEATURE_SERVER.format(state_name="NorthDakota")
+        logs = []
+
+        class Log(update.Feedback):
+            def log(self, text):
+                logs.append(text)
+        got = update._arcgis_fields(url, FakeHttp(json_by_url=FakeArcgisLayer(url)), "AADT,F_SYSTEM,NOT_A_FIELD",
+                                    Log(), "HPMS")
+        self.assertEqual(got, "aadt,f_system")
+        self.assertTrue(any("NOT_A_FIELD" in ln for ln in logs))
+        self.assertEqual(update._arcgis_fields(url, FakeHttp(files={}), "AADT", Log()), "AADT",
+                         "layer not readable: sent as given")
+        self.assertEqual(update._arcgis_fields(url, FakeHttp(files={}), "*", Log()), "*")
+
+    def test_a_refused_field_says_what_the_server_said(self):
+        url = sources.HPMS_FEATURE_SERVER.format(state_name="NorthDakota")
+        fake = FakeArcgisLayer(url)
+        with self.assertRaises(update.UpdateError) as caught:
+            update._arcgis_query_all(url, FakeHttp(json_by_url=fake), "1=1", "AADT", Quiet(), "HPMS")
+        self.assertIn("Field name 'AADT' does not exist", str(caught.exception))
+        err = json.dumps({"error": {"code": 400, "message": "Invalid query parameters", "details": ["bad where"]}})
+        with self.assertRaises(update.UpdateError) as caught:
+            update._arcgis_query_all(url, FakeHttp(json_by_url=lambda u: err.encode()), "1=1", "*", Quiet(), "HPMS")
+        self.assertIn("Invalid query parameters; bad where", str(caught.exception))
+
+
 class Update(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
