@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.7.6: audit L-1: the flood package (flood/rasters.py) no longer switches GDAL exceptions on process-wide; no number changes
 0.7.4: numerics audit 2026-11-20: the StreamStats basin check uses the dam's state (package, dam.json or NID ID) and is
 skipped when none is known (it was "ND" for every dam); a failed check is logged. No model-number changes.
 0.7.1: one driver per dam folder (core/runlock.py) and temp names unique per writer (audit 2026-11-20); no number changes
@@ -69,7 +70,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.7.4"
+VERSION = "0.7.6"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

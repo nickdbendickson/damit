@@ -139,7 +139,7 @@ def fetch_clip(bounds, wkt, cell, folder, radius_m, log=None, opener=None, sleep
     ext = extent_5070(bounds, wkt, 2.0 * cell)
     tiles = fetch_3dep(ext, cell, out, "3dep", log=log, opener=opener, sleep=sleep, deadline=deadline)
     vrt = os.path.join(out, "3dep.vrt")
-    with R.pam_off():
+    with R.pam_off(), R.gdal_exceptions():                      # audit L-1: scoped, not process-wide
         ds = gdal.BuildVRT(vrt, tiles)
         if ds is None:
             raise TerrainError("could not mosaic the 3DEP tiles in {}".format(out))

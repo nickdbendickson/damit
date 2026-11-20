@@ -51,3 +51,59 @@ def open_vector(path, update=False):
     if ds is None:
         raise RuntimeError("OGR cannot open {}{}".format(path, ": " + last_error() if last_error() else ""))
     return ds
+
+
+def _uses_exceptions(module):
+    try:
+        return bool(module.GetUseExceptions())
+    except Exception:                                            # noqa - an old binding without the getter
+        return False
+
+
+class gdal_exceptions(object):
+    """GDAL Python exceptions on for one block (or, as a decorator, one call) only. DamIT addition (audit L-1,
+    2026-11-20), the same idea as DamSafety PMP's core/gdalsafe.gdal_exceptions() and the Atlas 14 core's
+    gdal_raising(): each osgeo module named ("gdal", "ogr", "osr"; default all three) that is off is switched on
+    on entry and off again on exit, in reverse order (GDAL >= 3.7 keeps the error handlers on a stack), so the
+    process-wide mode QGIS and the other plugins see never changes. Code inside behaves as it did under a
+    process-wide gdal.UseExceptions(): a failed call raises RuntimeError."""
+
+    def __init__(self, *names):
+        self.names = names or ("gdal", "ogr", "osr")
+        self._switched = []
+
+    def __enter__(self):
+        import importlib
+        switched = []
+        try:
+            for name in self.names:
+                module = importlib.import_module("osgeo." + name)
+                if not _uses_exceptions(module):
+                    module.UseExceptions()
+                    switched.append(module)
+        except BaseException:
+            _restore(switched)
+            raise
+        self._switched.append(switched)
+        return self
+
+    def __exit__(self, *exc):
+        _restore(self._switched.pop())
+        return False
+
+    def __call__(self, func):
+        import functools
+
+        @functools.wraps(func)
+        def wrapper(*a, **k):
+            with gdal_exceptions(*self.names):
+                return func(*a, **k)
+        return wrapper
+
+
+def _restore(switched):
+    for module in reversed(switched):
+        try:
+            module.DontUseExceptions()
+        except Exception:                                        # noqa - never fails a run
+            pass
