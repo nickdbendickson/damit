@@ -1,6 +1,7 @@
 """damit_lite:classify - suggested hazard class from depth / velocity rasters and structure, road
 and rail layers, with DamIT Catalog presets or custom methods."""
 import csv
+import io
 import json
 import os
 
@@ -29,6 +30,26 @@ OUT_FIELDS = [("rid", "String"), ("rtype", "String"), ("name", "String"), ("haza
 CSV_COLS = ["id", "receptor_type", "name", "hazard_type", "structure_type", "habitable", "road_class", "aadt",
             "trains_per_day", "passenger", "active", "m1_zone", "occupants", "in_domain", "wet", "cells", "wet_cells",
             "depth_ground_ft", "velocity_fps", "dv_ft2s", "velocity_unknown", "class", "methods"]
+
+
+def _atomic_write(path, text, newline=None):
+    """Replace `path` with `text` only once the whole text is on disk (audit 2026-11-19, damit #134): a temp file
+    unique per writer (<path>.<pid>.<thread>.tmp), flushed and fsynced, then os.replace. A classify killed mid-write
+    no longer leaves a torn report; on a failed write the temp file is removed and `path` keeps its old content."""
+    import threading
+    tmp = "{}.{}.{}.tmp".format(path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "w", encoding="utf-8", newline=newline) as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _number(name, label, default=None, optional=True):
@@ -189,17 +210,16 @@ class ClassifyLite(QgsProcessingAlgorithm):
         inputs = {"depth": dlyr.source(), "velocity": vlyr.source() if vlyr is not None else "",
                   "model_dimension": dim, "hydraulics_source": summary["hydraulics_source"]}
         rj = os.path.join(out, "hazard_lite.json")
-        with open(rj, "w", encoding="utf-8") as fh:
-            json.dump({"result": res, "inputs": inputs, "config": {"mode": config.get("mode"),
-                       "preset_id": config.get("preset_id"), "methods": sorted(config.get("methods", {}))},
-                       "receptors": records}, fh, indent=1, default=str)
-        with open(os.path.join(out, "receptors.csv"), "w", newline="", encoding="utf-8") as fh:
-            w = csv.DictWriter(fh, CSV_COLS, extrasaction="ignore")
-            w.writeheader()
-            w.writerows(records)
+        _atomic_write(rj, json.dumps({"result": res, "inputs": inputs, "config": {"mode": config.get("mode"),
+                      "preset_id": config.get("preset_id"), "methods": sorted(config.get("methods", {}))},
+                      "receptors": records}, indent=1, default=str))
+        buf = io.StringIO(newline="")
+        w = csv.DictWriter(buf, CSV_COLS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(records)
+        _atomic_write(os.path.join(out, "receptors.csv"), buf.getvalue(), newline="")
         md = os.path.join(out, "hazard_lite_summary.md")
-        with open(md, "w", encoding="utf-8") as fh:
-            fh.write(E.summary_markdown(res, records, config, inputs))
+        _atomic_write(md, E.summary_markdown(res, records, config, inputs))
         sink, dest = self.parameterAsSink(P, "OUTPUT", context, make_fields(OUT_FIELDS),
                                           QgsWkbTypes.Point, rcrs if rcrs.isValid() else QgsCoordinateReferenceSystem())
         for r in records:
