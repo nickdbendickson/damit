@@ -214,10 +214,23 @@ def write(pkg, folder):
     """Write ``damit_handoff.json`` into ``folder`` (created). Returns the path."""
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, FILENAME)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(pkg, fh, indent=1, ensure_ascii=False, default=str)
-    os.replace(tmp, path)
+    import threading
+    # audit 2026-11-20: a temp name unique per writer (pid + thread) in the same folder, fsync before the
+    # rename, and no temp file left behind when the write fails (a fixed "damit_handoff.json.tmp" let two drivers of one
+    # folder write the same temp file and rename each other's half documents into place)
+    tmp = "{}.{}.{}.tmp".format(path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(pkg, fh, indent=1, ensure_ascii=False, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return path
 
 
