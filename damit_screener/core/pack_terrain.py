@@ -19,6 +19,13 @@ from __future__ import annotations
 
 import json
 import os
+def _junk(name):
+    """Audit 2026-11-19: exclude exactly AppleDouble ._*, .DS_Store and
+    __MACOSX - never a blanket dot-prefix rule, so filenames that merely
+    contain a period keep their units and classifications."""
+    n = name.lower()
+    return n.startswith("._") or n == ".ds_store" or n == "__macosx"
+
 
 RASTER_EXT = (".tif", ".tiff", ".vrt", ".img")
 DEM_DIR = "dem"
@@ -91,7 +98,7 @@ def pack_dem(folder):
     except OSError:
         return ""
     files = [os.path.join(dem_dir, n) for n in names
-             if not n.startswith(".") and os.path.splitext(n)[1].lower() in RASTER_EXT
+             if not _junk(n) and os.path.splitext(n)[1].lower() in RASTER_EXT
              and os.path.isfile(os.path.join(dem_dir, n))]
     vrts = [p for p in files if p.lower().endswith(".vrt")]
     if vrts:

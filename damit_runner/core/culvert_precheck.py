@@ -19,6 +19,17 @@ import hashlib
 import json
 import math
 import os
+
+def _atomic_write(path, text):
+    """Atomic text write (audit 2026-11-19): .part first, then os.replace."""
+    import os as _o
+    d = _o.path.dirname(_o.path.abspath(path)) or "."
+    _o.makedirs(d, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    _o.replace(tmp, path)
+
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -655,6 +666,5 @@ def main(argv=None):
                                         summ["culverts_skipped_by_runner"], paths["md"]))
     if len(jobs) > 1:
         os.makedirs(out, exist_ok=True)
-        with open(os.path.join(out, "culvert_precheck_index.json"), "w") as f:
-            json.dump(index, f, indent=1)
+        _atomic_write(os.path.join(out, "culvert_precheck_index.json"), json.dumps(index, indent=1))
     return status
