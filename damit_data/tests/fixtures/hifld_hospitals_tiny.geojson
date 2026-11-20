@@ -1,0 +1,40 @@
+{
+ "type": "FeatureCollection",
+ "_note": "Synthetic, offline test fixture in the shape of a HIFLD FeatureServer query answer (f=geojson, outFields=*). Names and coordinates are made up; the field names follow the HIFLD layer.",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -96.8,
+     46.87
+    ]
+   },
+   "properties": {
+    "OBJECTID": 1,
+    "NAME": "TEST GENERAL HOSPITAL",
+    "STATE": "ND",
+    "BEDS": 120,
+    "TYPE": "GENERAL ACUTE CARE"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -96.78,
+     46.86
+    ]
+   },
+   "properties": {
+    "OBJECTID": 2,
+    "NAME": "TEST CRITICAL ACCESS",
+    "STATE": "ND",
+    "BEDS": 25,
+    "TYPE": "CRITICAL ACCESS"
+   }
+  }
+ ]
+}
