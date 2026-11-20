@@ -105,6 +105,19 @@ class Gate(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("not in PARITY.json", problems[0])
 
+    def test_a_note_is_kept_while_its_difference_is_unchanged(self):
+        _tree(self.me, {"damit_runner/core/grid.py": "G = 1\nPORTED = 1\n"})
+        rec = EP.update(self.dwr, self.me, self.rec_path, notes={"damit_runner/core/grid.py": "ported from abc"})
+        self.assertEqual(rec["pairs"]["damit_runner/core/grid.py"]["note"], "ported from abc")
+        self.assertEqual(self._check()[0], [])                   # a note never changes what the gate compares
+        rec = EP.update(self.dwr, self.me, self.rec_path)
+        self.assertEqual(rec["pairs"]["damit_runner/core/grid.py"]["note"], "ported from abc")
+        _tree(self.me, {"damit_runner/core/grid.py": "G = 1\nPORTED = 2\n"})
+        rec = EP.update(self.dwr, self.me, self.rec_path)        # a different difference: the old note is dropped
+        self.assertNotIn("note", rec["pairs"]["damit_runner/core/grid.py"])
+        with self.assertRaises(ValueError):
+            EP.update(self.dwr, self.me, self.rec_path, notes={"damit_runner/core/rundam.py": "x"})
+
 
 class Record(unittest.TestCase):
     """The committed PARITY.json."""

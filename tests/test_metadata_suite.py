@@ -64,7 +64,7 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.4.8"           # DamIT PMP 0.4.8: no process-wide GDAL exception switch; 0.4.7: temporal.py zip extract re-synced with DamSafety PMP; 0.4.6 (0.4.5): the Atlas 14 core shared byte-identical with DamSafety PMP (the others: Data 0.2.1, Core 0.3.1)
+PMP_VERSION = "0.4.9"           # DamIT PMP 0.4.9: feet DEMs in watershed; 0.4.8: no process-wide GDAL exception switch; 0.4.7: temporal.py zip extract re-synced with DamSafety PMP; 0.4.6 (0.4.5): the Atlas 14 core shared byte-identical with DamSafety PMP (the others: Data 0.2.1, Core 0.3.1)
 DATA_VERSION = "0.2.2"          # DamIT Data 0.2.2: HPMS lower-case field names, GeoJSON paging; 0.2.1: an update that cannot replace an open folder says so
 HAZARDLITE_VERSION = "0.2.1"     # DamIT Hazard Lite 0.2.1: no process-wide gdal.UseExceptions() at import
 CORE_VERSION = "0.3.1"          # DamIT Core 0.3.1: http download_file closes its temp file and the HTTPError on a failed request

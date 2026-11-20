@@ -98,8 +98,9 @@ def snap_to_accumulation(acc2d, rc, radius_cells, min_cells=1.0, frac=SNAP_FRACT
     return int(rr.ravel()[k]), int(cc.ravel()[k]), float(win.ravel()[k])
 
 
-def delineate(grid, x, y, snap_m=150.0, filled=None, frac=SNAP_FRACTION):
-    """Delineate the basin of (x, y) on a ``Grid`` (projected, metres). Returns a dict:
+def delineate(grid, x, y, snap_m=150.0, filled=None, frac=SNAP_FRACTION, unit_m=1.0):
+    """Delineate the basin of (x, y) on a ``Grid`` (projected; x, y and the grid in its map units, ``unit_m`` metres per
+    map unit: 1.0 for metres, 0.3048 for international feet). Returns a dict:
     mask (bool array), pour_rc, pour_xy, snapped_from_m, acc_cells, area_m2, area_sqmi, touches_edge, cell_m,
     filled (the filled DEM, so a second point need not refill)."""
     if not grid.valid().any():
@@ -113,7 +114,8 @@ def delineate(grid, x, y, snap_m=150.0, filled=None, frac=SNAP_FRACTION):
     nxt = flow_directions(filled)
     acc, order = accumulate(nxt, valid)
     acc2d = acc.reshape(grid.data.shape)
-    rad = max(int(round(snap_m / grid.dx)), 0)
+    cell_m = grid.dx * unit_m
+    rad = max(int(round(snap_m / cell_m)), 0)
     pr, pc, top = snap_to_accumulation(acc2d, (r, c), rad, frac=frac)
     outlet = pr * grid.nx + pc
     mask = np.zeros(grid.data.size, dtype=bool)
@@ -124,12 +126,12 @@ def delineate(grid, x, y, snap_m=150.0, filled=None, frac=SNAP_FRACTION):
         inside[ok] = mask[nx_[ok]]
         mask[idx] = inside | (idx == outlet)
     mask = mask.reshape(grid.data.shape)
-    area = float(mask.sum()) * grid.dx * grid.dx
+    area = float(mask.sum()) * cell_m * cell_m
     edge = bool(mask[0, :].any() or mask[-1, :].any() or mask[:, 0].any() or mask[:, -1].any())
     pxy = grid.xy(pr, pc)
-    return {"mask": mask, "pour_rc": (pr, pc), "pour_xy": pxy, "snapped_from_m": math.hypot(pxy[0] - x, pxy[1] - y),
+    return {"mask": mask, "pour_rc": (pr, pc), "pour_xy": pxy, "snapped_from_m": math.hypot(pxy[0] - x, pxy[1] - y) * unit_m,
             "acc_cells": top, "area_m2": area, "area_sqmi": area / M2_PER_SQMI, "touches_edge": edge,
-            "cell_m": grid.dx, "filled": filled, "acc": acc2d}
+            "cell_m": cell_m, "filled": filled, "acc": acc2d}
 
 
 def stream_lines(grid, min_area_m2, filled=None):
