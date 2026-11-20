@@ -10,7 +10,8 @@ from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, Qgs
                        QgsPointXY, QgsProcessing, QgsProcessingAlgorithm, QgsProcessingException,
                        QgsProcessingOutputNumber, QgsProcessingParameterFeatureSink, QgsProcessingParameterFile,
                        QgsProcessingParameterFileDestination, QgsProcessingParameterNumber, QgsProcessingParameterPoint,
-                       QgsProcessingParameterRasterDestination, QgsProcessingParameterRasterLayer, QgsProject, QgsWkbTypes)
+                       QgsProcessingParameterRasterDestination, QgsProcessingParameterRasterLayer, QgsProject, QgsUnitTypes,
+                       QgsWkbTypes)
 
 from .. import _deps  # noqa: F401
 from .. import demfetch, watershed as W
@@ -23,8 +24,26 @@ FOLDER = getattr(QgsProcessingParameterFile, "Folder", None) or QgsProcessingPar
 MAX_WIDEN = 2            # a fetched DEM is widened this many times (x1.5 each) when the basin reaches its edge
 
 
+def metres_per_map_unit(crs):
+    """Metres per map unit of a projected CRS (0.3048 for international feet, e.g. EPSG:2265). Works on QGIS 3.28
+    (QgsUnitTypes enums) and 3.30+ (Qgis.DistanceUnit). Raises QgsProcessingException for an unknown unit."""
+    try:
+        from qgis.core import Qgis
+        metres = Qgis.DistanceUnit.Meters
+    except (ImportError, AttributeError):
+        metres = QgsUnitTypes.DistanceMeters
+    f = float(QgsUnitTypes.fromUnitToUnitFactor(crs.mapUnits(), metres))
+    if not (f > 0.0 and f < 1e6):
+        raise QgsProcessingException("the DEM's CRS ({}) has no known linear unit".format(crs.authid() or crs.description()))
+    return f
+
+
 def read_dem(path):
-    """(Grid, gdal dataset's CRS wkt) of a projected north-up DEM in metres."""
+    """(Grid, gdal dataset's CRS wkt, QgsCoordinateReferenceSystem, metres per map unit) of a projected north-up DEM.
+    The Grid stays in the DEM's own map units (feet for a State Plane feet DEM) so its coordinates match the CRS;
+    watershed.delineate(..., unit_m=) turns cells into square metres. Before 2026-11-20 this called a
+    QgsCoordinateReferenceSystem.mapUnitsToMeters() that QGIS does not have, so a feet DEM's ft2 were read as m2
+    (area about 10.76 times too large)."""
     from osgeo import gdal
     import numpy as np
     from ..runner_shared.grid import Grid
@@ -46,8 +65,13 @@ def read_dem(path):
     if nd is not None:
         a[a == nd] = np.nan
     a[~np.isfinite(a)] = np.nan
-    to_m = crs.mapUnitsToMeters() if hasattr(crs, "mapUnitsToMeters") else 1.0
-    return Grid(a, gt[0], gt[3], abs(gt[1]) * to_m, crs_wkt=wkt), wkt, crs
+    # the dataset's own linear unit (GDAL keeps US survey feet apart from international feet); QGIS's unit as a fallback
+    from osgeo import osr
+    srs = osr.SpatialReference()
+    unit_m = srs.GetLinearUnits() if srs.ImportFromWkt(wkt) == 0 else 0.0
+    if not (unit_m and 0.0 < unit_m < 1e6):
+        unit_m = metres_per_map_unit(crs)
+    return Grid(a, gt[0], gt[3], abs(gt[1]), crs_wkt=wkt), wkt, crs, float(unit_m)
 
 
 def write_mask_tif(path, mask, grid, wkt):
@@ -142,11 +166,11 @@ class Watershed(QgsProcessingAlgorithm):
                 except demfetch.DemFetchError as e:
                     raise QgsProcessingException(str(e))
                 dem_path = fetched["path"]
-            grid, wkt, crs = read_dem(dem_path)
+            grid, wkt, crs, unit_m = read_dem(dem_path)
             pt_dem = QgsCoordinateTransform(pcrs, crs, QgsProject.instance()).transform(QgsPointXY(pt))
-            feedback.pushInfo("Delineating on {} x {} cells of {:g} m ...".format(grid.nx, grid.ny, grid.dx))
+            feedback.pushInfo("Delineating on {} x {} cells of {:g} m ...".format(grid.nx, grid.ny, grid.dx * unit_m))
             try:
-                res = W.delineate(grid, pt_dem.x(), pt_dem.y(), snap_m=snap)
+                res = W.delineate(grid, pt_dem.x(), pt_dem.y(), snap_m=snap, unit_m=unit_m)
             except W.WatershedError as e:
                 raise QgsProcessingException(str(e))
             if res["touches_edge"] and dem_layer is None and attempt < MAX_WIDEN:
@@ -165,7 +189,7 @@ class Watershed(QgsProcessingAlgorithm):
         geom.convertToMultiType()
         f.setGeometry(geom)
         f.setAttributes(["watershed of {:.5f},{:.5f}".format(pt.x(), pt.y()), round(res["area_sqmi"], 3),
-                         round(res["area_m2"] / 1e6, 3), nid or 0.0, grid.dx])
+                         round(res["area_m2"] / 1e6, 3), nid or 0.0, res["cell_m"]])
         sink.addFeature(f, QgsFeatureSink.FastInsert)
         out = {"OUTPUT_BASIN": dest, "OUTPUT_JSON": json_path, "AREA_SQMI": round(res["area_sqmi"], 3)}
         if P.get("OUTPUT_POUR"):
@@ -187,7 +211,7 @@ class Watershed(QgsProcessingAlgorithm):
                "point": {"x": pt.x(), "y": pt.y(), "crs": pcrs.authid()},
                "pour_point": {"x": res["pour_xy"][0], "y": res["pour_xy"][1], "crs": crs.authid(),
                               "snapped_m": round(res["snapped_from_m"], 1), "acc_cells": res["acc_cells"]},
-               "dem": {"path": dem_path, "cell_m": grid.dx, "cells": [grid.nx, grid.ny], "crs": crs.authid(),
+               "dem": {"path": dem_path, "cell_m": res["cell_m"], "cells": [grid.nx, grid.ny], "crs": crs.authid(),
                        "source": (fetched or {}).get("source") or "user DEM",
                        "citation": (fetched or {}).get("citation"), "fetched_extent": (fetched or {}).get("extent")},
                "area": {"sqmi": round(res["area_sqmi"], 3), "km2": round(res["area_m2"] / 1e6, 3),

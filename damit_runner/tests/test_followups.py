@@ -422,5 +422,85 @@ class OutflowExtend(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+def _tif_26914(path, value=200.0, tagged=True):
+    """A 10 x 10 GeoTIFF at 10 m in UTM 14N; tagged=False leaves its CRS empty (an untagged terrain)."""
+    from osgeo import osr
+    ds = gdal.GetDriverByName("GTiff").Create(path, 10, 10, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform((600000.0, 10.0, 0.0, 5200100.0, 0.0, -10.0))
+    if tagged:
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(26914)
+        ds.SetProjection(srs.ExportToWkt())
+    b = ds.GetRasterBand(1)
+    b.SetNoDataValue(-9999.0)
+    b.WriteArray(np.full((10, 10), value, dtype="float32"))
+    ds = None
+    return path
+
+
+@unittest.skipUnless(HAVE, "numpy / GDAL not installed")
+class TerrainCrsRequired(unittest.TestCase):
+    """Ported from DWR_Plugins a37e396a (#416), parts 1-2 of its test_terrain_crs_required: a terrain with no
+    coordinate system is refused at ingest (never warped as if in the work CRS or defaulted to EPSG:5070); a tagged one
+    reads as before. (Its dem_refill part needs DamSafety's #397 check_tile, which DamIT does not have yet.)"""
+
+    def test_untagged_refused_tagged_reads(self):
+        from damit_runner.core import gdal_io as G
+        d = tempfile.mkdtemp(prefix="terrain_crs_")
+        self.addCleanup(shutil.rmtree, d, True)
+        untagged = _tif_26914(os.path.join(d, "untagged.tif"), tagged=False)
+        with self.assertRaises(ValueError) as cm:
+            G.GdalTerrain(untagged, "EPSG:26914", G.Z_METERS)
+        msg = str(cm.exception)
+        for word in ("no coordinate system", "EPSG:5070", "gdal_edit"):
+            self.assertIn(word, msg)
+        tagged = _tif_26914(os.path.join(d, "tagged.tif"))
+        g = G.GdalTerrain(tagged, "EPSG:26914", G.Z_METERS).read((600000.0, 5200000.0, 600100.0, 5200100.0), 10.0)
+        z = np.asarray(g.z if hasattr(g, "z") else g.data, dtype=float)
+        self.assertTrue(np.allclose(z[np.isfinite(z)], 200.0))
+        self.assertGreater(np.isfinite(z).sum(), 0)
+
+
+class DamStateForStreamStats(unittest.TestCase):
+    """2026-11-20 audit: rundam's StreamStats basin check used state="ND" for every dam."""
+
+    def test_state_from_package_dam_json_or_nid(self):
+        from damit_runner.core import rundam as RD
+        self.assertEqual(RD.dam_state({"dam": {"dam_id": "X1", "state": "mi"}}), "MI")
+        self.assertEqual(RD.dam_state({"dam": {"dam_id": "X1"}}, {"fields": {"state": "SD"}}), "SD")
+        self.assertEqual(RD.dam_state({"dam": {"dam_id": "MI00412"}}), "MI")
+        self.assertEqual(RD.dam_state({"dam": {"dam_id": "X1"}}, {"fields": {"nid_id": "ND00123"}}), "ND")
+        self.assertIsNone(RD.dam_state({"dam": {"dam_id": "EDENVILLE"}}))     # no state: StreamStats is skipped
+        self.assertIsNone(RD.dam_state({"dam": {"dam_id": "XX12345", "state": "Michigan"}}))
+        self.assertIsNone(RD.dam_state(None))
+
+
+class NidForLogsAnUnreadableDamJson(unittest.TestCase):
+    def test_logged_then_falls_back_to_the_dam_id(self):
+        from damit_runner.core import handoff as H
+        from damit_runner.compat import dam_record
+        with mock.patch.object(dam_record, "load", side_effect=ValueError("bad json")):
+            with self.assertLogs(H.LOG, level="WARNING") as cm:
+                self.assertEqual(H.nid_for("/nowhere/dam", "ND00123"), "ND00123")
+        self.assertIn("bad json", "\n".join(cm.output))
+
+
+@unittest.skipUnless(HAVE, "numpy / GDAL not installed")
+class RefineReportUnreadableIsAWarning(unittest.TestCase):
+    """2026-11-20 audit: the grid-refine report writers returned silently when the report could not be read."""
+
+    def test_both_writers_warn(self):
+        from types import SimpleNamespace
+        from damit_runner.core import workflow as W
+        res = SimpleNamespace(report_json="/nowhere/report.json", warnings=[], summary=None)
+        W._write_refine_entry(res, {"coarse_cell_m": 20.0, "record_cell_m": 10.0})
+        self.assertEqual(len(res.warnings), 1)
+        self.assertIn("missing or unreadable", res.warnings[0])
+        res2 = SimpleNamespace(report_json="/nowhere/report.json", warnings=[], summary=None)
+        W._amend_report(res2, {"coarse_cell_m": 20.0, "record_cell_m": 10.0}, ["note"])
+        self.assertEqual(res2.warnings[0], "note")
+        self.assertIn("missing or unreadable", res2.warnings[-1])
+
+
 if __name__ == "__main__":
     unittest.main()
