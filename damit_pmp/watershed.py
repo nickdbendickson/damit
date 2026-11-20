@@ -20,7 +20,6 @@ import math
 import numpy as np
 
 from .runner_shared import terrain as _terrain
-from .runner_shared.grid import Grid
 
 M2_PER_SQMI = 2589988.110336
 SNAP_FRACTION = 0.95        # a stream cell: accumulation within 5% of the largest in the snap window

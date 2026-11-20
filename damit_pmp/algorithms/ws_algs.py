@@ -4,7 +4,6 @@ The delineation is damit_pmp/watershed.py (numpy D8 on the runner's depression-f
 damit_pmp:gridbasin / basinpf (Atlas 14 basin statistics) and the model domains of the rain-on-grid tools."""
 import json
 import os
-import tempfile
 
 from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsFeatureSink, QgsGeometry,
                        QgsPointXY, QgsProcessing, QgsProcessingAlgorithm, QgsProcessingException,
