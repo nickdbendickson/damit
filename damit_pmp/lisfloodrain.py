@@ -20,6 +20,7 @@ import os
 import numpy as np
 
 from . import anugarain as AR
+from . import atlas14 as A
 from .runner_shared import data_conventions as DC
 from .runner_shared import lisflood as L
 from .runner_shared.grid import NODATA, Grid
@@ -114,6 +115,7 @@ def model_terrain(grid, rings, buffer_m=0.0, start_xy=None, simplify_m=None):
     return cropped, info
 
 
+@A.gdal_raising("gdal")
 def write_tif(path, grid, data=None, nodata=NODATA):
     """A float32 GeoTIFF of the grid (or of `data` on its cells), north-up, in the grid's CRS."""
     gdal = AR._gdal()

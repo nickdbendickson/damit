@@ -14,6 +14,7 @@ from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, Qgs
 
 from .. import _deps  # noqa: F401
 from .. import demfetch, watershed as W
+from ..atlas14 import gdal_raising
 from damit_core.lib.qtcompat import make_fields
 
 DOUBLE = QgsProcessingParameterNumber.Double if hasattr(QgsProcessingParameterNumber, "Double") \
@@ -23,12 +24,12 @@ FOLDER = getattr(QgsProcessingParameterFile, "Folder", None) or QgsProcessingPar
 MAX_WIDEN = 2            # a fetched DEM is widened this many times (x1.5 each) when the basin reaches its edge
 
 
+@gdal_raising("gdal")                     # audit 2026-11-20: GDAL exceptions for this call only
 def read_dem(path):
     """(Grid, gdal dataset's CRS wkt) of a projected north-up DEM in metres."""
     from osgeo import gdal
     import numpy as np
     from ..runner_shared.grid import Grid
-    gdal.UseExceptions()
     ds = gdal.Open(path)
     gt = ds.GetGeoTransform()
     wkt = ds.GetProjection()
@@ -50,9 +51,9 @@ def read_dem(path):
     return Grid(a, gt[0], gt[3], abs(gt[1]) * to_m, crs_wkt=wkt), wkt, crs
 
 
+@gdal_raising("gdal")
 def write_mask_tif(path, mask, grid, wkt):
     from osgeo import gdal
-    gdal.UseExceptions()
     ds = gdal.GetDriverByName("GTiff").Create(path, grid.nx, grid.ny, 1, gdal.GDT_Byte, ["COMPRESS=DEFLATE"])
     ds.SetGeoTransform((grid.x0, grid.dx, 0.0, grid.y0, 0.0, -grid.dx))
     ds.SetProjection(wkt)
