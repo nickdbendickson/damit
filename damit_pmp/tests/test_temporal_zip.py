@@ -1,5 +1,6 @@
 """DamIT PMP temporal.py: the NOAA HDSC temporal-area shapefile zip is extracted only when it is safe
-(audit 2026-11-19, re-synced from DamSafety PMP). Pure Python, no QGIS, no GDAL, no network."""
+(audit 2026-11-19, re-synced from DamSafety PMP). numpy (temporal.py imports it), no QGIS, no GDAL, no network;
+skipped where numpy is missing (the no-QGIS job), run in the QGIS job."""
 import io
 import os
 import sys
@@ -10,7 +11,10 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
-from damit_pmp import temporal as T  # noqa: E402
+try:
+    from damit_pmp import temporal as T  # noqa: E402
+except ImportError:                                   # pragma: no cover - no numpy here
+    T = None
 
 
 def _zip(members):
@@ -22,6 +26,7 @@ def _zip(members):
     return zipfile.ZipFile(buf)
 
 
+@unittest.skipIf(T is None, "numpy is not installed")
 class SafeExtract(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
