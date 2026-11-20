@@ -64,8 +64,9 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.4.9"           # DamIT PMP 0.4.9 (feet DEMs in watershed); 0.4.7: temporal.py zip extract re-synced with DamSafety PMP; 0.4.6 (0.4.5): the Atlas 14 core shared byte-identical with DamSafety PMP (the others: Data 0.2.1, Core 0.3.1)
+PMP_VERSION = "0.4.9"           # DamIT PMP 0.4.9: feet DEMs in watershed; 0.4.8: no process-wide GDAL exception switch; 0.4.7: temporal.py zip extract re-synced with DamSafety PMP; 0.4.6 (0.4.5): the Atlas 14 core shared byte-identical with DamSafety PMP (the others: Data 0.2.1, Core 0.3.1)
 DATA_VERSION = "0.2.1"          # DamIT Data 0.2.1: an update that cannot replace an open folder says so
+HAZARDLITE_VERSION = "0.2.1"     # DamIT Hazard Lite 0.2.1: no process-wide gdal.UseExceptions() at import
 CORE_VERSION = "0.3.1"          # DamIT Core 0.3.1: http download_file closes its temp file and the HTTPError on a failed request
 
 
@@ -78,7 +79,7 @@ class Metadata(unittest.TestCase):
             # run_info records finder.VERSION); the rest are versioned with the DamIT suite
             self.assertEqual(m["version"], {"damit_finder": FINDER_VERSION, "damit_pmp": PMP_VERSION,
                                              "damit_core": CORE_VERSION,
-                                             "damit_data": DATA_VERSION}.get(folder, "0.2.0"))
+                                             "damit_data": DATA_VERSION, "damit_hazardlite": HAZARDLITE_VERSION}.get(folder, "0.2.0"))
             self.assertEqual(m["qgisMinimumVersion"], "3.28")
             self.assertEqual(m["qgisMaximumVersion"], "4.99")
             self.assertEqual(m["supportsQt6"], "True")

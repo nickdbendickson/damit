@@ -15,6 +15,7 @@ from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, Qgs
 
 from .. import _deps  # noqa: F401
 from .. import demfetch, watershed as W
+from ..atlas14 import gdal_raising
 from damit_core.lib.qtcompat import make_fields
 
 DOUBLE = QgsProcessingParameterNumber.Double if hasattr(QgsProcessingParameterNumber, "Double") \
@@ -38,6 +39,7 @@ def metres_per_map_unit(crs):
     return f
 
 
+@gdal_raising("gdal")                     # audit 2026-11-20: GDAL exceptions for this call only
 def read_dem(path):
     """(Grid, gdal dataset's CRS wkt, QgsCoordinateReferenceSystem, metres per map unit) of a projected north-up DEM.
     The Grid stays in the DEM's own map units (feet for a State Plane feet DEM) so its coordinates match the CRS;
@@ -47,7 +49,6 @@ def read_dem(path):
     from osgeo import gdal
     import numpy as np
     from ..runner_shared.grid import Grid
-    gdal.UseExceptions()
     ds = gdal.Open(path)
     gt = ds.GetGeoTransform()
     wkt = ds.GetProjection()
@@ -68,15 +69,18 @@ def read_dem(path):
     # the dataset's own linear unit (GDAL keeps US survey feet apart from international feet); QGIS's unit as a fallback
     from osgeo import osr
     srs = osr.SpatialReference()
-    unit_m = srs.GetLinearUnits() if srs.ImportFromWkt(wkt) == 0 else 0.0
+    try:                                  # osr may raise or return an error code, depending on its exception mode
+        unit_m = srs.GetLinearUnits() if srs.ImportFromWkt(wkt) == 0 else 0.0
+    except Exception:                     # noqa: BLE001 - QGIS's unit below
+        unit_m = 0.0
     if not (unit_m and 0.0 < unit_m < 1e6):
         unit_m = metres_per_map_unit(crs)
     return Grid(a, gt[0], gt[3], abs(gt[1]), crs_wkt=wkt), wkt, crs, float(unit_m)
 
 
+@gdal_raising("gdal")
 def write_mask_tif(path, mask, grid, wkt):
     from osgeo import gdal
-    gdal.UseExceptions()
     ds = gdal.GetDriverByName("GTiff").Create(path, grid.nx, grid.ny, 1, gdal.GDT_Byte, ["COMPRESS=DEFLATE"])
     ds.SetGeoTransform((grid.x0, grid.dx, 0.0, grid.y0, 0.0, -grid.dx))
     ds.SetProjection(wkt)

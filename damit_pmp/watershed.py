@@ -19,6 +19,7 @@ import math
 
 import numpy as np
 
+from . import atlas14 as A
 from .runner_shared import terrain as _terrain
 from .runner_shared.grid import Grid
 
@@ -187,11 +188,10 @@ def describe(res, nid_sqmi=None):
     return out
 
 
+@A.gdal_raising("gdal", "ogr")             # audit 2026-11-20: GDAL exceptions for this call only
 def mask_to_polygon_wkt(mask, grid):
     """The basin outline as WKT (one polygon or multipolygon; cell edges, holes dropped) via GDAL polygonize."""
     from osgeo import gdal, ogr, osr
-    gdal.UseExceptions()
-    ogr.UseExceptions()
     rows, cols = np.nonzero(mask)
     r0, r1, c0, c1 = rows.min(), rows.max() + 1, cols.min(), cols.max() + 1
     sub = mask[r0:r1, c0:c1].astype("uint8")

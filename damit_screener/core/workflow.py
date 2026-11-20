@@ -198,11 +198,24 @@ def dam_receptors(receptors, dam_id):
 
 
 def _write_json(path, data):
+    import threading
+    # audit 2026-11-20: a temp name unique per writer (pid + thread) in the same folder, fsync before the
+    # rename, and no temp file left behind when the write fails (a fixed "<path>.tmp" let two drivers of one
+    # folder write the same temp file and rename each other's half documents into place)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=1, ensure_ascii=False, default=str)
-    os.replace(tmp, path)
+    tmp = "{}.{}.{}.tmp".format(path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=1, ensure_ascii=False, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return path
 
 
@@ -270,7 +283,18 @@ def _dam_xy(dam):
 
 
 def run_dam(cat, config, dam, settings, work, receptors=None, terrain_info=None, log=print, cancel=None):
-    """All screening steps for one dam. Returns the per-step results dict (+ 'handoff_path')."""
+    """All screening steps for one dam. Returns the per-step results dict (+ 'handoff_path').
+
+    audit 2026-11-20: the dam folder is claimed for the whole chain (core/runlock.py, the same claim
+    file as the Runner's): a second Screener or Runner on the same dam folder stops with
+    runlock.RunClaimError naming this run instead of overwriting its files."""
+    from . import runlock
+    with runlock.claim(dam_folder(work, dam["dam_id"]), "DamIT Screener chain"):
+        return _run_dam_claimed(cat, config, dam, settings, work, receptors, terrain_info, log, cancel)
+
+
+def _run_dam_claimed(cat, config, dam, settings, work, receptors=None, terrain_info=None, log=print,
+                     cancel=None):
     from .pack_terrain import apply_offline_pack_terrain
     xy, xy_epsg = _dam_xy(dam)
     settings = dict(settings or {})

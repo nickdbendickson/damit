@@ -402,6 +402,10 @@
    "diff": "a6965d3eff8c916bdf29f2757b616e8ae09dd830a696a4fd8319ae1991f8844f",
    "from": "DamSafety_Runner/core/run_params.py"
   },
+  "damit_runner/core/runlock.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/runlock.py"
+  },
   "damit_runner/core/selftest.py": {
    "diff": "1463ff3900d06e442a648c431d3a55ceb80ed8e9ec457205c54df7569d9e5227",
    "from": "DamSafety_Runner/core/selftest.py"
@@ -459,5 +463,5 @@
  "schema": "damit.engine_parity",
  "schema_version": 1,
  "source": "nickdbendickson/DWR_Plugins",
- "synced_to": "25159aa92fa42fcf9be6eff35ec5bb63cfa0574c"
+ "synced_to": "ed2b141f18cbac0f0e6791dbb996580a0d6eab04"
 }

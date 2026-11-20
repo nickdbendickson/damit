@@ -20,6 +20,7 @@ import shutil
 
 import numpy as np
 
+from . import atlas14 as A
 from .runner_shared import gmsh_mesher as gmshmod
 from .runner_shared import grid as gridmod
 from .runner_shared import terrain
@@ -94,11 +95,13 @@ def check_settings(st):
 
 # ------------------------------------------------------------------ the model DEM
 def _gdal():
+    # audit 2026-11-20: no gdal.UseExceptions() here any more (process-wide, never switched back); the
+    # GDAL readers below (and lisfloodrain.write_tif) run under A.gdal_raising(), which restores the mode.
     from osgeo import gdal
-    gdal.UseExceptions()
     return gdal
 
 
+@A.gdal_raising("gdal")
 def read_model_grid(dem_path, bounds, cell_m, band=1):
     """The DEM resampled (bilinear) to the model cell over `bounds` (xmin, ymin, xmax, ymax in the
     DEM's CRS; snapped outwards to the cell) as (Grid, info). A Grid is the runner's model-DEM
@@ -131,6 +134,7 @@ def read_model_grid(dem_path, bounds, cell_m, band=1):
     return g, {"native_cell_m": native, "crs_wkt": wkt, "path": dem_path, "geotransform": list(gt)}
 
 
+@A.gdal_raising("gdal")
 def read_fine_elevation(dem_path, grid, native_m, out_path, band=1):
     """The native DEM over the grid's bounds as a float32 .npy (NaN = no data): the runner's
     "fine" elevation file (job keys elev_fine_*), sampled at the triangle vertices. Returns the
@@ -155,6 +159,7 @@ def read_fine_elevation(dem_path, grid, native_m, out_path, band=1):
             "elev_fine_dx": native_m}
 
 
+@A.gdal_raising("gdal")
 def read_factor_on_grid(raster_path, grid, target_wkt=None, band=1):
     """A factor raster (any CRS) resampled onto the model grid (bilinear; cells without data = 1).
     Returns (array, stats)."""
