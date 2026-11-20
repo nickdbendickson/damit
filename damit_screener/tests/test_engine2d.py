@@ -136,6 +136,55 @@ class Chain2D(unittest.TestCase):
             self.assertEqual(dv["status"], ST.STATUS_GAP)
             self.assertIn("matplotlib", dv["note"])
 
+    def test_time_limited_flood_is_partial_not_a_failure(self):
+        """0.3.7: the flood stops at its time limit (status partial, timed_out): the step is a PARTIAL gap, the package
+        marks it partial, and the chain does NOT fail (FAIL_ON_ERROR raises only when summary ok is False)."""
+        from damit_runner.flood import screen as SC
+        inner = SC.simulate
+
+        def timed_out(*a, **k):
+            res = inner(*a, **k)
+            res["status"], res["timed_out"] = "partial", True
+            return res
+        x, y = self.site["dam_xy"]
+        top_ft = self.site["top_m"] / 0.3048
+        h_ft = (self.site["top_m"] - self.site["floor_at_dam"]) / 0.3048
+        dams, probs = ST.prepare([{"ID": "ND00001", "HT": h_ft, "STOR": 500, "TOD": top_ft, "_x": x, "_y": y,
+                                   "_crs": "EPSG:26914"}],
+                                 {"dam_id": "ID", "height_ft": "HT", "storage_acft": "STOR",
+                                  "top_of_dam_elev_ft": "TOD"})
+        recs = [{"id": "h1", "dam_id": "ND00001", "receptor_type": "structure", "structure_type": "home",
+                 "habitable": True, "source": "nd911", "_x": x, "_y": y - 200.0, "_crs": "EPSG:26914"}]
+        s = dict(WF.DEFAULT_SETTINGS, preset="ND", terrain=self.dem)
+        logs = []
+        with mock.patch.object(SC, "simulate", timed_out), \
+                mock.patch.dict(os.environ, {"DAMIT_SCREENING_TIMEOUT_S": "500"}):
+            summ = WF.run_chain(self.work, s, dams, probs, recs, log=logs.append)
+        e = summ["dams"]["ND00001"]["engine2d"]
+        self.assertEqual(e["status"], ST.STATUS_GAP)
+        self.assertTrue(e["partial"])
+        self.assertEqual(e["partial_reason"], "time_limit")
+        self.assertIn("partial: time limit", e["detail"])
+        self.assertTrue(e["stats"]["timed_out"])
+        self.assertTrue(summ["ok"], logs)
+        self.assertEqual(summ["flood_failed"], {})
+        self.assertIn("ND00001", summ["flood_partial"])
+        self.assertTrue(summ["partial"])
+        self.assertTrue(any("PARTIAL SCREENING" in ln for ln in logs))
+        pkg = HO.read(summ["dams"]["ND00001"]["handoff_path"])
+        gap = [g for g in pkg["gaps"] if g["step"] == "engine2d"]
+        self.assertEqual(gap, [{"step": "engine2d", "status": "gap", "detail": e["detail"], "partial": True,
+                                "partial_reason": "time_limit"}])
+        self.assertEqual(HO.validate(pkg), [])
+        folder = WF.dam_folder(self.work, "ND00001")
+        self.assertTrue(os.path.isfile(os.path.join(folder, "Screening Depth (Max).tif")))
+        with open(os.path.join(folder, "steps.json")) as fh:
+            self.assertTrue(json.load(fh)["engine2d"]["partial"])
+        with open(summ["report"]) as fh:
+            text = fh.read()
+        self.assertIn("Chain result: OK - PARTIAL screening flood (time limit) for ND00001", text)
+        self.assertIn("- ND00001: PARTIAL screening flood", text)
+
     def test_dv_chart_step_without_hazard_is_not_run_and_never_fails(self):
         from damit_screener.core import runner_bridge as RB
         with mock.patch.object(RB, "dvchart", return_value=None):

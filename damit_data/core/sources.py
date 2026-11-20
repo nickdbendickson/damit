@@ -22,6 +22,10 @@ GEOFABRIK = "https://download.geofabrik.de/{path}-latest-free.gpkg.zip"
 NSI_MAX_EXTENT_DEG2 = 1.0          # one bbox request; larger areas: pick the state (per county)
 
 HPMS_FEATURE_SERVER = "https://geo.dot.gov/server/rest/services/Hosted/{state_name}_2018_PR/FeatureServer/0"
+# The FHWA HPMS layers name their fields in lower case (checked on the live service, ?f=json, 2026-11-20); the
+# server refuses upper-case outFields with "Field name 'AADT' does not exist", so 0.2.1 never got any HPMS roads.
+HPMS_FIELDS = ("aadt", "aadt_combination", "aadt_single_unit", "f_system", "through_lanes", "speed_limit",
+               "route_name", "county_code", "urban_code", "nhs", "facility_type", "ownership")
 FRA_RAIL = "https://fragis.fra.dot.gov/arcgis/rest/services/FRA/FRA_Rail_Network/FeatureServer/0"
 TIGER_COUNTIES = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_ACS2023/MapServer/86"
 NBI_CSV = "https://www.fhwa.dot.gov/bridge/nbi/2023/delimited/{state_fips}{postal}23.txt"
@@ -124,8 +128,7 @@ def plan(source_id, state=None, bbox=None, url=None):
         u = HPMS_FEATURE_SERVER.format(state_name=sname)
         return _p(source_id, s, st["postal"], "arcgis_feature_service", [u], "hpms.geojson",
                   version_mode="content", extract=False, state=st["postal"],
-                  fields="AADT,AADT_COMBINATION,AADT_SINGLE_UNIT,F_SYSTEM,THROUGH_LANES,SPEED_LIMIT,"
-                         "ROUTE_NAME,COUNTY_CODE,URBAN_CODE,NHS,FACILITY_TYPE,OWNERSHIP")
+                  fields=",".join(HPMS_FIELDS))
     if source_id == "fra_rail":
         if st is None:
             raise SourceError("FRA Rail: pick a state.")

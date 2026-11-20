@@ -245,9 +245,12 @@ def start_job(
                 if isinstance(result.get("classification"), dict):
                     # damit:classify's class for the chosen jurisdiction; the Report step stores and leads with it.
                     job["classification"] = dict(result["classification"])
-                for flag in ("noReceptors", "noDepth"):
+                for flag in ("noReceptors", "noDepth", "timedOut", "partial"):
                     if result.get(flag):
                         job[flag] = True
+                if result.get("warning"):
+                    # a PARTIAL (time-limited) screening: the warning is also in the log
+                    job["warning"] = str(result["warning"])
                 job["folder"] = result.get("folder") or ""
                 job["work"] = result.get("work") or ""
         except Exception as exc:
@@ -864,6 +867,7 @@ def main() -> None:
     store.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE = store / "damit-crest-settings.json"
     qgis_run.SETTINGS_DIR = store  # damit-handoff.json is read from here (docs/HANDOFF.md)
+    qgis_run.DESK_SETTINGS_FILE = SETTINGS_FILE  # the DEM chosen in the app goes to the plugins too
     nid.NID_DIR = store / "nid"  # the per-state NID cache (nid.py), outside the install and any repository
     server = serve()
     # printed without the token: opening this plain address elsewhere shows the desk, but its /api/ calls are refused

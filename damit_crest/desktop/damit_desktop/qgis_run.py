@@ -35,6 +35,7 @@ from damit_desktop.handoff import (
     write_named_files,
 )
 from damit_desktop.layers import data_dem, download_aoi, find_data_folder, use_data_folder, write_settings
+from damit_desktop import localdem
 from damit_desktop.receptors import LAYERS as RECEPTOR_LAYERS
 from damit_desktop.receptors import structure_points, write_receptor_layers
 
@@ -141,8 +142,24 @@ def work_dir(requested: str | None) -> Path:
     return path.resolve()
 
 
+#: The app's own settings file (set by __main__.main): the local DEM chosen with "Choose DEM" is read from it, so the
+#: plugins get the same terrain the app draws with. Same name and order as DamIT Desk (damit-desk PR #2).
+DESK_SETTINGS_FILE: Path | None = None
+
+
+def desk_dem() -> str | None:
+    """The local DEM chosen in the app (Flood step, "Choose DEM"), when that file still exists."""
+    try:
+        chosen = localdem.read_dem_path(DESK_SETTINGS_FILE) if DESK_SETTINGS_FILE else None
+    except (OSError, ValueError):
+        return None
+    return chosen if chosen and Path(chosen).is_file() else None
+
+
 def dem_path(work: Path, dam: dict, source: str = "data") -> str | None:
-    for raw in (dam.get("demPath"), os.environ.get("DAMIT_DEM"), work / "dem.tif", work / "dem.vrt"):
+    """The DEM the plugins get: the Report step's DEM field, else DAMIT_DEM, else the DEM chosen in the app, else
+    <work>/dem.tif or dem.vrt (Get layers), else the DamIT data folder's DEM."""
+    for raw in (dam.get("demPath"), os.environ.get("DAMIT_DEM"), desk_dem(), work / "dem.tif", work / "dem.vrt"):
         if not raw:
             continue
         path = Path(str(raw)).expanduser()
@@ -586,14 +603,25 @@ def _log_config(log, cfg: HandoffConfig, roles: tuple[str, ...]) -> None:
         log(f"{role}: {cfg.alg(role)}{where}")
 
 
-def _settings_path(root: Path, log, only_ids: str | None = None, classification: dict | None = None) -> Path:
-    """damit_settings.json for --SETTINGS (always written: it carries dam_ids, so the chain screens this dam only)."""
+def _settings_path(root: Path, log, only_ids: str | None = None, classification: dict | None = None,
+                   dem: str | None = None) -> Path:
+    """damit_settings.json for --SETTINGS (always written: it carries dam_ids, so the chain screens this dam only).
+
+    dem: the DEM this run hands the screener as TERRAIN (dem_path). It also goes into the settings (terrain,
+    local_dem, larger_clips 2) so every larger clip of the screening flood reads it too. Before 2026-11-20 only the
+    data folder's DEM or <work>/dem.tif went there, so with a DEM typed or chosen in the app the first clip used it
+    and every larger clip downloaded USGS 3DEP afresh (Absaraka: 3 -> 6 -> 12 km of downloads, then the time limit).
+    Same fix as DamIT Desk (damit-desk PR #2)."""
     data = find_data_folder()
-    dem = data_dem(data)
     local_dem = str(root / "dem.tif") if (root / "dem.tif").is_file() else None
-    path = write_settings(root, data, dem or local_dem, only_ids, classification)
+    terrain = dem or data_dem(data) or local_dem
+    path = write_settings(root, data, terrain, only_ids, classification)
     if data:
         log(f"Screening settings use the DamIT data folder: {data}")
+    if terrain:
+        log(f"Screening terrain: {terrain} (the larger clips read it too, not a USGS 3DEP download).")
+    else:
+        log("Screening terrain: none given, so the screener downloads USGS 3DEP for each clip.")
     return path
 
 
@@ -814,14 +842,14 @@ def run_screening(
     has_id = bool(dam.get("nid") or dam.get("nidId") or dam.get("id"))
     # only_ids is the NID ID alone (or the record id of a new dam / sample): never another inventory's id for it.
     only = dam_id if has_id else None
-    settings = _settings_path(root, log, only, _classification(dam))
+    dem = dem_path(root, dam, "data")
+    settings = _settings_path(root, log, only, _classification(dam), dem)
     point = write_dam_point(folder, dam, analysis or {})
     if point:
         log(f"Wrote {point} (this dam as a point layer for DAMS; DamIT field names, EPSG:4326).")
     else:
         log("The dam has no position (breach point, reservoir point or lon/lat), so no DAMS layer was written.")
     choice = _choice(dam)
-    dem = dem_path(root, dam, "data")
     rec_layer, rec_count = screening_receptors(folder, dam, dam_id, receptors)
     if rec_layer:
         log(f"Wrote {rec_layer} ({rec_count} structure point(s) for RECEPTORS: the 2D screening flood samples them).")
@@ -883,6 +911,7 @@ def run_screening(
     # DamIT Screener's 2D screening flood keeps its maxima (partial) at 0.8 x DAMIT_SCREENING_TIMEOUT_S, so the
     # chain finishes inside the limit with a preliminary class instead of being stopped
     chain_env = {**os.environ, "DAMIT_SCREENING_TIMEOUT_S": f"{limit:g}"} if limit else None
+    started = time.time()
     code, text = _run([exe, "run", chain_alg, *_args(exe, chain_alg, chain_values, log)], timeout=limit, cancel=cancel,
                       env=chain_env)
     log(text.rstrip())
@@ -897,9 +926,19 @@ def run_screening(
         log(f"The screening outputs also name this dam {', '.join(other)}, which is not its NID ID {dam_id}. "
             "DamIT Crest reads results by the NID ID only; check the screener's dam inventory is the NID.")
     out = {"folder": str(folder), "work": str(root), "chainIds": names}
-    if code in (STOPPED_TIMEOUT, STOPPED_CANCEL):
+    if code == STOPPED_CANCEL:
         log("The screening chain was stopped. Its outputs so far stay in the work folder; chain_log.txt has the steps that ran.")
-        return {**out, "ok": False, "stopped": True, "cancelled": code == STOPPED_CANCEL, "timedOut": code == STOPPED_TIMEOUT}
+        return {**out, "ok": False, "stopped": True, "cancelled": True, "timedOut": False}
+    # A flood stopped by its time limit is a PARTIAL result (DamIT Screener 0.3.7 finishes the chain OK and marks it
+    # partial; 0.3.5-0.3.6 failed the chain with "did not run"). Either way this run's package and steps.json say so.
+    partial = screening_partial(root, folder, dam_id, started, desk_timeout=code == STOPPED_TIMEOUT)
+    if partial is not None:
+        return _partial_result(out, partial, dam_id, log, chain_failed=code != 0)
+    if code == STOPPED_TIMEOUT:
+        log("The screening chain was stopped at its time limit before it wrote a preliminary result. Its outputs so "
+            "far stay in the work folder; chain_log.txt has the steps that ran. Raise DAMIT_SCREENING_TIMEOUT_S, or "
+            "give the screening a local DEM so its larger clips do not download USGS 3DEP.")
+        return {**out, "ok": False, "stopped": True, "cancelled": False, "timedOut": True}
     if code != 0:
         log("The screening chain failed. The flood model was not started.")
         return {**out, "ok": False, "stopped": True}
@@ -917,6 +956,94 @@ def run_screening(
         log("No hand-off package and no 10_reports/summary.csv row for this dam (the chain plan may not include them).")
     log("Screening chain finished.")
     return {**out, "ok": True, "stopped": False, "chainResult": rows}
+
+
+def _fresh_json(path: Path, since: float) -> dict | None:
+    """A JSON object written at or after `since` (this run), else None: an older run's file is never read as this one's."""
+    try:
+        if not path.is_file() or path.stat().st_mtime < since - 2:
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def screening_partial(root: Path, folder: Path, dam_id: str, since: float, desk_timeout: bool = False) -> dict | None:
+    """A screening whose 2D flood stopped at its time limit but still wrote this run's hand-off package.
+
+    DamIT Screener keeps its 2D flood's maxima when the flood reaches 0.8 x DAMIT_SCREENING_TIMEOUT_S and marks the
+    engine2d step GAP ("partial: time limit"). Screener 0.3.7+ also sets partial=true / partial_reason=time_limit on
+    the step and on the package's engine2d gap, and finishes the chain OK; 0.3.5-0.3.6 failed the chain (FAIL_ON_ERROR)
+    saying the flood "did not run". Its maxima so far are a lower bound. Returns {"screening", "handoff", "flood",
+    "otherGaps"} when this run's package exists and the flood timed out (or the app itself stopped the chain at its
+    limit), else None. Same reading as DamIT Desk (damit-desk PR #2)."""
+    package = handoff_package(root, dam_id)
+    pkg = _fresh_json(package, since)
+    if pkg is None:
+        return None
+    # The package may have no preliminary class (no receptors were screened, so the suggestion was not computed):
+    # the time-limited flood is still a partial result, with its figures and rasters, just no class.
+    screening = pkg.get("screening") if isinstance(pkg.get("screening"), dict) else {}
+    steps = _fresh_json(Path(folder) / "steps.json", since) or {}
+    engine = steps.get("engine2d") if isinstance(steps.get("engine2d"), dict) else {}
+    stats = engine.get("stats") if isinstance(engine.get("stats"), dict) else {}
+    gaps = [g for g in (pkg.get("gaps") or []) if isinstance(g, dict)]
+    flood_gap = next((g for g in gaps if g.get("step") == "engine2d"), None)
+    timed_out = (bool(engine.get("partial")) or bool((flood_gap or {}).get("partial")) or bool(stats.get("timed_out"))
+                 or "time limit" in str((flood_gap or {}).get("detail") or ""))
+    if not (timed_out or desk_timeout):
+        return None
+    flood = {"timedOut": timed_out, "detail": engine.get("detail") or (flood_gap or {}).get("detail") or "",
+             "acres": stats.get("flooded_acres"), "maxDepthFt": stats.get("max_depth_ft"),
+             "simHours": stats.get("sim_time_hr"), "runSeconds": stats.get("run_s"), "edge": stats.get("edge_flag"),
+             "rasters": {k: v for k, v in (engine.get("rasters") or {}).items() if isinstance(v, str) and Path(v).is_file()}
+             if isinstance(engine.get("rasters"), dict) else {}}
+    return {"screening": screening, "handoff": str(package), "flood": flood,
+            "otherGaps": [g for g in gaps if g.get("step") != "engine2d"]}
+
+
+def _partial_result(out: dict, partial: dict, dam_id: str, log, chain_failed: bool = True) -> dict:
+    flood = partial["flood"]
+    label = partial["screening"].get("suggested_label")
+    bits = []
+    if flood.get("acres") is not None:
+        bits.append(f"{flood['acres']:,} ac")
+    if flood.get("maxDepthFt") is not None:
+        bits.append(f"max {flood['maxDepthFt']} ft")
+    if flood.get("simHours") is not None:
+        bits.append(f"{flood['simHours']} h of model time")
+    if flood.get("runSeconds") is not None:
+        bits.append(f"stopped after {float(flood['runSeconds']) / 60:.0f} min")
+    if label:
+        warning = (f"PARTIAL SCREENING: the screening flood reached its time limit ({', '.join(bits) or 'no figures'}), "
+                   f"so the preliminary class {label} rests on a flood that had not finished spreading. It is a lower "
+                   "bound for review, not a result to rely on.")
+    else:
+        warning = (f"PARTIAL SCREENING: the screening flood reached its time limit ({', '.join(bits) or 'no figures'}). "
+                   "Its depths and wet area so far are a lower bound for review, and there is no preliminary class "
+                   "(the screener computed no suggestion for this run). Use Classify on a finished flood for the class.")
+    log("")
+    log(warning)
+    if chain_failed:
+        log("The screener's chain says the flood \"did not run\" and fails because of the time limit (FAIL_ON_ERROR, "
+            "DamIT Screener 0.3.5-0.3.6). The flood did run; its maxima so far are kept" +
+            (", and the hand-off package below has the preliminary class." if label else "."))
+    else:
+        log("The screener marked the flood PARTIAL (time limit) and finished the chain; its maxima so far are kept" +
+            (", and the hand-off package below has the preliminary class." if label else "."))
+    for name, path in (flood.get("rasters") or {}).items():
+        log(f"Partial screening raster ({name}): {path}")
+    if flood.get("edge"):
+        log("The flood also reached the edge of its terrain, so it is cut off there as well.")
+    for gap in partial.get("otherGaps") or []:
+        log(f"Also a gap in the {gap.get('step')} step: {gap.get('detail')}")
+    log(f"Hand-off package: {partial['handoff']}")
+    log(_package_line(dam_id, partial["screening"]))
+    log("Raise DAMIT_SCREENING_TIMEOUT_S, or run the flood model (LISFLOOD-FP) for a finished flood.")
+    log("Screening chain finished with a PARTIAL (preliminary) result.")
+    return {**out, "ok": True, "partial": True, "stopped": False, "timedOut": True, "warning": warning,
+            "handoff": partial["handoff"], "screening": partial["screening"], "flood": flood, "chainResult": []}
 
 
 
