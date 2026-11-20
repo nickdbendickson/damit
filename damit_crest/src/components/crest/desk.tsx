@@ -307,25 +307,15 @@ export function Desk() {
               </button>
             </p>
           ) : null}
-          <nav className="mb-4 flex gap-2 overflow-x-auto" aria-label="Workflow">
-            {STEPS.map((s) => {
-              const on = step === s.id;
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => setStep(s.id as StepId)}
-                  className={
-                    "h-11 shrink-0 rounded-sm border px-4 text-sm " +
-                    (on ? "border-water bg-water text-card" : "border-line bg-card text-ink")
-                  }
-                >
-                  {s.label}
-                </button>
-              );
-            })}
-          </nav>
-
+          {/* Map-centric redesign: the workflow moves from a horizontal tab strip to a persistent
+              three-pane layout — pipeline rail left, step content centre, inspector right — with the
+              step navigation kept inline for habit and screen readers. The old tab nav is retired. */}
+          <div className="grid min-w-0 gap-4 xl:grid-cols-[210px_minmax(0,1fr)_280px]">
+            <div className="min-w-0 flex flex-col gap-3 xl:order-1">
+              <SituationStrip dam={dam} result={result} />
+              <StepRail dam={dam} step={step} setStep={setStep} />
+            </div>
+            <div className="min-w-0 flex flex-col xl:order-2">
           {step === "setup" ? (
             <HybridSetup
               dam={dam}
@@ -350,6 +340,11 @@ export function Desk() {
           {step === "report" ? <ReportStep dam={dam} result={result} /> : null}
 
           <StepNav step={step} setStep={setStep} blocked={step === "record" ? missingForNext(dam) : []} />
+            </div>
+            <div className="min-w-0 xl:order-3">
+              <InspectorPanel dam={dam} result={result} step={step} />
+            </div>
+          </div>
 
           <div className="mt-6 lg:hidden">
             <DeskFiles onNote={setOpenNote} />
@@ -1942,6 +1937,149 @@ function AoiNote({ flood }: { flood: ReturnType<typeof analyze>["flood"] }) {
       ) : null}
       {flood.warnings.length > 0 ? <FlagList flags={floodFlags({ flood })} className="mt-2 space-y-1 text-amber" testId="flood-flags" /> : null}
     </div>
+  );
+}
+
+// Pipeline stage status for the rail: a step is done when its defining output exists on the
+// record, blocked when a hard prerequisite is missing (nid-dams.ts), else pending/current.
+const RAIL_DONE: Partial<Record<StepId, (d: DamRecord) => boolean>> = {
+  setup: (d) => Number.isFinite(d.heightFt) && Number.isFinite(d.storageAcFt),
+  record: (d) => Number.isFinite(d.crestFt) && Boolean(d.statedDatum),
+  breach: (d) => Number.isFinite(d.streambedFt),
+};
+
+function railState(id: StepId, dam: DamRecord, current: StepId): "done" | "current" | "blocked" | "todo" {
+  if (id === current) return "current";
+  if (id === "record" && missingForNext(dam).length > 0) return "blocked";
+  const done = RAIL_DONE[id];
+  if (done && done(dam)) return "done";
+  if (id === "setup" && missingForNext(dam).length > 0) return "blocked";
+  return "todo";
+}
+
+const RAIL_MARK: Record<"done" | "current" | "blocked" | "todo", { glyph: string; cls: string; label: string }> = {
+  done: { glyph: "✓", cls: "bg-water text-card border-water", label: "Complete" },
+  current: { glyph: "▶", cls: "bg-card text-water border-water", label: "Current step" },
+  blocked: { glyph: "!", cls: "bg-red-bg text-red-700 border-red-700", label: "Blocked — missing required inputs" },
+  todo: { glyph: "", cls: "bg-card text-muted border-line", label: "Not started" },
+};
+
+/**
+ * The map-centric pipeline rail (V4+V7+V3 hybrid redesign): every step stays reachable at any
+ * time — the old horizontal tab nav allowed jumping ahead, and jumping ahead is how a late,
+ * confusing failure happened — but each step now shows its state before the jump, so the
+ * prerequisite problem is visible in navigation instead of surfacing as an error later.
+ * Non-colour marks keep the state readable in grayscale and field mode.
+ */
+function StepRail({ dam, step, setStep }: { dam: DamRecord; step: StepId; setStep: (s: StepId) => void }) {
+  return (
+    <nav className="flex min-w-0 flex-col gap-0.5" aria-label="Pipeline" data-testid="step-rail">
+      {STEPS.map((s, i) => {
+        const st = railState(s.id as StepId, dam, step);
+        const m = RAIL_MARK[st];
+        const on = step === s.id;
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => setStep(s.id as StepId)}
+            aria-current={on ? "step" : undefined}
+            data-testid={`rail-${s.id}`}
+            className={
+              "group flex w-full items-start gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-smooth " +
+              (on ? "bg-water/12 ring-1 ring-water" : "hover:bg-sand")
+            }
+          >
+            <span
+              aria-hidden="true"
+              className={"mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold " + m.cls}
+            >
+              {m.glyph || String(i + 1)}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={"block font-medium " + (on ? "text-ink" : "text-ink")}>{s.label}</span>
+              <span className={"block text-xs " + (on ? "text-muted" : "text-muted")}>{m.label}</span>
+            </span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** The persistent situation strip: the map shrunk to a chip so the dam's setting stays legible
+ * while the user works on any step, the way RAS Mapper keeps the map present behind every pane. */
+function SituationStrip({ dam, result }: { dam: DamRecord; result: ReturnType<typeof analyze> }) {
+  const peak = result.breach.series.length ? Math.max(...result.breach.series.map((p) => p.qCfs)) : null;
+  return (
+    <div className="grid grid-cols-2 gap-2 border-b border-line bg-card px-3 py-2.5 text-sm xl:grid-cols-4" data-testid="situation-strip">
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted">Dam</p>
+        <p className="truncate font-medium">{dam.name}</p>
+      </div>
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted">NID</p>
+        <p className="truncate font-mono text-sm">{dam.nid || "—"}</p>
+      </div>
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted">Peak Q</p>
+        <p className="font-mono">{peak != null ? `${num(peak, 0)} cfs` : "—"}</p>
+      </div>
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted">Pipeline</p>
+        <p className="font-medium">8 steps</p>
+      </div>
+    </div>
+  );
+}
+
+/** The inspector panel (V6 residue): validation and provenance for whatever is selected,
+ * reusing the same flag machinery the screen and report rely on, so nothing here is new truth. */
+function InspectorPanel({ dam, result, step }: { dam: DamRecord; result: ReturnType<typeof analyze>; step: StepId }) {
+  const warnings = [...datumFlags(result), ...floodFlags(result)];
+  const stops = warnings.filter((w) => w.severity === "stop");
+  const others = warnings.filter((w) => w.severity !== "stop");
+  return (
+    <aside className="flex min-w-0 flex-col gap-4" aria-label="Inspector" data-testid="inspector-panel">
+      <div>
+        <h2 className="text-base font-semibold">Validation</h2>
+        <p className="text-xs text-muted">Live checks from the analysis; a stop holds the screen at Review, exactly as before.</p>
+      </div>
+      {stops.length === 0 && others.length === 0 ? (
+        <p className="rounded-md border border-line bg-green-bg px-3 py-2 text-sm text-green" data-testid="inspector-clear">
+          ✓ No flags. Values used as entered.
+        </p>
+      ) : (
+        <>
+          {stops.length > 0 ? (
+            <div className="rounded-md border border-red-700 bg-red-bg px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Holds the screen</p>
+              <FlagList flags={stops} className="mt-1 list-disc space-y-1 pl-4 text-sm text-ink" />
+            </div>
+          ) : null}
+          {others.length > 0 ? (
+            <div className="rounded-md border border-amber bg-amber-bg px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber">Check before relying</p>
+              <FlagList flags={others} className="mt-1 list-disc space-y-1 pl-4 text-sm text-ink" />
+            </div>
+          ) : null}
+        </>
+      )}
+      <div className="rounded-md border border-line bg-sand px-3 py-2 text-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Step {STEPS.find((s) => s.id === step)?.label}</p>
+        <p className="mt-1 text-muted">Required first: {missingForNext(dam).join(", ") || "nothing — the record is complete."}</p>
+      </div>
+      <div className="rounded-md border border-line bg-card px-3 py-2 text-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Provenance</p>
+        <p className="mt-1 text-muted text-xs">{result.datum.rule}</p>
+      </div>
+      {dam.outline != null ? (
+        <div className="rounded-md border border-line bg-card px-3 py-2 text-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Terrain</p>
+          <p className="mt-1 text-muted text-xs">Terrain outline on record (built from 3DEP).</p>
+        </div>
+      ) : null}
+    </aside>
   );
 }
 
