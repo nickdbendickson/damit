@@ -1,0 +1,57 @@
+{
+ "type": "FeatureCollection",
+ "_note": "Synthetic, offline test fixture in the shape of a HIFLD FeatureServer query answer (f=geojson, outFields=*). Names and coordinates are made up; the field names follow the HIFLD layer.",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -96.79,
+     46.88
+    ]
+   },
+   "properties": {
+    "OBJECTID": 1,
+    "NAME": "TEST ELEMENTARY",
+    "STATE": "ND",
+    "ENROLLMENT": 310,
+    "LEVEL_": "ELEMENTARY"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -96.81,
+     46.89
+    ]
+   },
+   "properties": {
+    "OBJECTID": 2,
+    "NAME": "TEST HIGH",
+    "STATE": "ND",
+    "ENROLLMENT": 905,
+    "LEVEL_": "HIGH"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -96.77,
+     46.85
+    ]
+   },
+   "properties": {
+    "OBJECTID": 3,
+    "NAME": "TEST MIDDLE",
+    "STATE": "ND",
+    "ENROLLMENT": -999,
+    "LEVEL_": "MIDDLE"
+   }
+  }
+ ]
+}
