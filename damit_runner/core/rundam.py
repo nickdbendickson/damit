@@ -508,8 +508,11 @@ def _run_model_claimed(pkg, out_root, values, cat=None, dams_folder=None, log=pr
                                     area, *basin_ext))
                             break
         except Exception as e:                                   # noqa: BLE001 - optional, but say why it is missing
-            log("Note: the StreamStats basin check ({}) failed and was skipped: {}: {}".format(
-                state, type(e).__name__, e))
+            try:
+                log("Note: the StreamStats basin check ({}) failed and was skipped: {}: {}".format(
+                    state, type(e).__name__, e))
+            except Exception:
+                pass  # noqa: BLE001 - logging itself must never block the run
     _, model = flood()
     t0 = _time.time()
     try:

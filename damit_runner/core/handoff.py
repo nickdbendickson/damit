@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import sys
 
 DEFAULT_IDS = {"classify": ("ndhazard:classify", "ndhazard:classifydam", "ndhazard:rundam"),
                "batch": ("ndhazard:batch", "ndhazard:batchclassify", "ndhazard:batch_classify")}
@@ -340,8 +341,10 @@ def classify_folder(folder, dam_id="", algorithm_id="", mapping=None, feedback=N
         for n in notes:
             try:
                 feedback.pushInfo("Hand-off: " + n)
-            except Exception:
-                pass
+            except Exception as e:                               # noqa: BLE001
+                # audit 2026-11-20: the note still reaches the user via stderr even when
+                # the feedback channel is broken (detached/QGIS-less contexts).
+                sys.stderr.write("Hand-off note (feedback unusable): {}\n".format(n))
     out = _run(alg, params, feedback)
     return {"outputs": out, "class": find_class(out), "algorithm": alg.id(), "notes": notes}
 
