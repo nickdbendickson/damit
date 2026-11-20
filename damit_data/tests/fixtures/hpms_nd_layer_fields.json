@@ -1,0 +1,131 @@
+{
+ "_note": "Trimmed copy of https://geo.dot.gov/server/rest/services/Hosted/NorthDakota_2018_PR/FeatureServer/0?f=json (fetched 2026-11-20): the layer's field names as the live FHWA HPMS service spells them.",
+ "name": "NorthDakota_PR_2018",
+ "maxRecordCount": 2000,
+ "fields": [
+  {
+   "name": "objectid",
+   "type": "esriFieldTypeOID"
+  },
+  {
+   "name": "year_record",
+   "type": "esriFieldTypeSmallInteger"
+  },
+  {
+   "name": "state_code",
+   "type": "esriFieldTypeSmallInteger"
+  },
+  {
+   "name": "route_id",
+   "type": "esriFieldTypeString"
+  },
+  {
+   "name": "begin_point",
+   "type": "esriFieldTypeDouble"
+  },
+  {
+   "name": "end_point",
+   "type": "esriFieldTypeDouble"
+  },
+  {
+   "name": "aadt",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "aadt_combination",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "aadt_single_unit",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "access_control_",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "county_code",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "f_system",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "facility_type",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "iri",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "iri_year",
+   "type": "esriFieldTypeDate"
+  },
+  {
+   "name": "nhs",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "ownership",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "psr",
+   "type": "esriFieldTypeDouble"
+  },
+  {
+   "name": "route_number",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "route_name",
+   "type": "esriFieldTypeString"
+  },
+  {
+   "name": "route_qualifier",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "route_signing",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "speed_limit",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "strahnet_type",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "structure_type",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "surface_type",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "through_lanes",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "toll_charged",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "toll_type",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "truck",
+   "type": "esriFieldTypeInteger"
+  },
+  {
+   "name": "urban_code",
+   "type": "esriFieldTypeInteger"
+  }
+ ]
+}

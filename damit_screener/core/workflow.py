@@ -236,7 +236,12 @@ def build_handoff(cat, config, dam, results, settings, receptors_json=None):
     for k in STEP_ORDER:
         r = results.get(k)
         if r and r["status"] in (ST.STATUS_GAP, ST.STATUS_FAIL, ST.STATUS_NOT_RUN):
-            gaps.append({"step": k, "status": r["status"], "detail": r["detail"]})
+            g = {"step": k, "status": r["status"], "detail": r["detail"]}
+            if k == "engine2d" and ST.is_partial_flood(r):
+                # 0.3.7: the package says the flood is partial (time limit), so DamIT Runner / Crest / the desk can
+                # show the preliminary result with a warning instead of treating it as missing
+                g.update(ST.partial_flags(r.get("partial_reason") or ST.PARTIAL_REASON_TIME_LIMIT))
+            gaps.append(g)
     st = results.get("storage") or {}
     hy = results.get("hydrograph") or {}
     bd = results.get("breach_direction") or {}
@@ -349,16 +354,29 @@ def flood_failures(results, flood_off=False):
     """{dam_id: why} for the dams whose screening flood (engine2d) failed or was skipped. 0.3.5
     (install test 2026-11-18): the chain said OK when the flood step failed or never ran, because
     only the hand-off package counted. A flood left out on purpose (engine2d = "off") is not a
-    failure."""
+    failure. 0.3.7: a flood that stopped at its time limit (partial, see flood_partials) is not a
+    failure either: it ran, and its maxima so far are a lower bound."""
     bad = {}
     for did, r in (results or {}).items():
         e = r.get("engine2d") or {}
         st = e.get("status")
-        if st == ST.STATUS_OK or (st == ST.STATUS_NOT_RUN and flood_off):
+        if st == ST.STATUS_OK or (st == ST.STATUS_NOT_RUN and flood_off) or ST.is_partial_flood(e):
             continue
         bad[did] = "{}: {}".format("did not run" if st in (None, ST.STATUS_NOT_RUN, ST.STATUS_GAP) else "failed",
                                    e.get("detail") or "no result")
     return bad
+
+
+def flood_partials(results):
+    """{dam_id: detail} for the dams whose screening flood stopped at its time limit (0.3.7): a PARTIAL,
+    preliminary result. The chain does not fail for it; the log, the summary and the report warn."""
+    return {did: (r.get("engine2d") or {}).get("detail") or "partial: time limit"
+            for did, r in (results or {}).items() if ST.is_partial_flood(r.get("engine2d"))}
+
+
+PARTIAL_WARNING = ("PARTIAL SCREENING: the screening flood reached its time limit, so its depths, wet area and any "
+                   "preliminary class are a lower bound for review, not a result to rely on. Raise "
+                   "DAMIT_SCREENING_TIMEOUT_S, or run the flood model, for a finished flood.")
 
 
 def run_chain(work, settings, dams, dam_problems=None, receptors=None, receptor_fields=None,
@@ -383,9 +401,14 @@ def run_chain(work, settings, dams, dam_problems=None, receptors=None, receptor_
     no_flood = flood_failures(out, flood_off)
     for did, why in no_flood.items():
         log("!!! {}: screening flood {}".format(did, why))
+    partial = flood_partials(out)
+    for did, why in partial.items():
+        log("!!! {}: {} ({})".format(did, PARTIAL_WARNING, why))
     summary = {"ok": all(r.get("handoff", {}).get("status") == ST.STATUS_OK for r in out.values())
                      and not no_flood,
                "flood_failed": no_flood,
+               "flood_partial": partial,
+               "partial": bool(partial),
                "refused": False, "checks": checks, "work": work, "mode": config["mode"],
                "preset_id": config.get("preset_id"), "scenarios": [s["id"] for s in config["scenarios"]],
                "catalog": cat.identity(), "dams": out,
@@ -427,9 +450,12 @@ def write_report(work, summary, cat, config):
              "- Domain cutoffs: {}".format(", ".join(d["id"] for d in config["domain_cutoffs"]) or "none"),
              "- Methods: {}".format(", ".join("{} ({})".format(k, m["strength"]) for k, m in config["methods"].items())),
              "- Modifiers: {}".format(", ".join(r["id"] for r in config["modifiers"]) or "none"), "",
-             "- Chain result: {}".format("OK" if summary.get("ok") else "FAILED" + (
+             "- Chain result: {}".format(("OK" + (
+                 " - PARTIAL screening flood (time limit) for {}".format(", ".join(sorted(summary["flood_partial"])))
+                 if summary.get("flood_partial") else "")) if summary.get("ok") else "FAILED" + (
                  " (no screening flood for {})".format(", ".join(sorted(summary["flood_failed"])))
                  if summary.get("flood_failed") else "")), "",
+             *(["- " + PARTIAL_WARNING, ""] if summary.get("flood_partial") else []),
              "| Dam | Suggested | Triage (M13) | Gaps | Hand-off |", "|---|---|---|---|---|"]
     for did, r in summary["dams"].items():
         sc = (r.get("suggest") or {}).get("screening") or {}
@@ -441,7 +467,8 @@ def write_report(work, summary, cat, config):
     lines += ["", "## Screening flood (engine2d)", ""]
     for did, r in summary["dams"].items():
         e = r.get("engine2d") or {}
-        lines.append("- {}: {} {}".format(did, (e.get("status") or "-").upper(), e.get("detail") or ""))
+        lines.append("- {}: {} {}".format(did, "PARTIAL" if ST.is_partial_flood(e) else (e.get("status") or "-").upper(),
+                                          e.get("detail") or ""))
         for n in e.get("notes") or []:
             lines.append("  - {}".format(n))
         dv = r.get("dv_chart") or {}
