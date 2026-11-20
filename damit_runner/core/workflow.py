@@ -1422,7 +1422,9 @@ def _run_dam_claimed(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy
 def _write_refine_entry(res, entry):
     """Put report["grid_refine"] into a finished run's report json (no other change)."""
     rep = _read_report(res)
-    if not rep:
+    if not rep:                                  # 2026-11-20 audit: say so instead of returning silently
+        res.warnings = list(res.warnings or []) + [
+            "grid-refine entry not written: the report {} is missing or unreadable".format(res.report_json)]
         return
     rep["grid_refine"] = entry
     try:
@@ -1443,7 +1445,9 @@ def _amend_report(res, entry, texts):
                                        if entry["check"].get("area_change_pct") is not None
                                        else "not run") if entry.get("check") else "")
     rep = _read_report(res)
-    if not rep:
+    if not rep:                                  # 2026-11-20 audit: say so instead of returning silently
+        res.warnings = list(res.warnings or []) + [
+            "grid-refine notes not written to the report: {} is missing or unreadable".format(res.report_json)]
         return
     rep["grid_refine"] = entry
     rep["warnings"] = list(rep.get("warnings") or []) + texts
@@ -2363,7 +2367,19 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
                 else:
                     tile = os.path.join(model_dir, "dem_refill.tif")
                     try:
-                        dem_refill.fetch_3dep(box, cs, tile, crs=getattr(dem, "crs_wkt", None))
+                        # audit (fix I): a 3DEP refill reprojects the fetched tile into the DEM's
+                        # CRS; an untagged terrain passes crs=None and fetch_3dep then defaults to
+                        # EPSG:5070 - the Edenville-Sanford 2020 storm warped off-map and left a 0 m
+                        # pit below Midland. Refuse at the refill with the real cause (covers the
+                        # no-CRS ASCII path too), rather than defaulting. (DamSafety's #397 check_tile,
+                        # which refuses a tile that carries a CRS but holds no ground, is not in DamIT yet.)
+                        _dem_crs = getattr(dem, "crs_wkt", None)
+                        if not _dem_crs:
+                            raise ValueError(
+                                "the terrain has no coordinate system, so a 3DEP refill cannot be "
+                                "reprojected into it without silently defaulting to EPSG:5070; tag "
+                                "the DEM's CRS, e.g. gdal_edit.py -a_srs EPSG:26914 <dem>")
+                        dem_refill.fetch_3dep(box, cs, tile, crs=_dem_crs)
                         refill_paths.append(tile)
                         refilled = True
                         msg = ("Wet cells sit on DEM no-data ({:,} cells). Requested one 3DEP "

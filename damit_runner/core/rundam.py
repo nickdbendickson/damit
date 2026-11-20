@@ -50,6 +50,8 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.7.4: numerics audit 2026-11-20: the StreamStats basin check uses the dam's state (package, dam.json or NID ID) and is
+skipped when none is known (it was "ND" for every dam); a failed check is logged. No model-number changes.
 0.7.1: one driver per dam folder (core/runlock.py) and temp names unique per writer (audit 2026-11-20); no number changes
 0.7.0: from DamSafety Runner 3.26.0, LISFLOOD-FP sub-grid river channels (core/sgc.py) on the ported engine: off by default; no model-number changes unless turned on
 0.6.8: LISFLOOD-FP lookup: the dam-suite installer's bin before PATH (install test 2026-11-18); no model-number changes
@@ -67,7 +69,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.7.1"
+VERSION = "0.7.4"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -297,6 +299,30 @@ def _f(v):
     return x if x == x else None
 
 
+US_STATES = frozenset((
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA "
+    "RI SC SD TN TX UT VT VA WA WV WI WY DC PR GU VI AS MP").split())
+
+
+def dam_state(pkg, dam_dir_info=None):
+    """The dam's two-letter state for StreamStats: the package's dam record ("state"), then dam.json, then the NID ID's
+    prefix (an NID ID starts with the state, e.g. ND00123). None when none of them names a US state, so the caller
+    skips StreamStats instead of asking another state's service (before 2026-11-20 this was hard-coded "ND")."""
+    dam = (pkg or {}).get("dam") or {}
+    rec = (dam_dir_info or {}).get("fields") or {}
+    for src in (dam, rec):
+        for k in ("state", "State", "STATE", "stateKey"):
+            v = str(src.get(k) or "").strip().upper()
+            if v in US_STATES:
+                return v
+    for src in (dam, rec):
+        for k in ("nid_id", "nidid", "NIDID", "federal_id", "dam_id"):
+            v = str(src.get(k) or "").strip().upper()
+            if len(v) > 2 and v[:2] in US_STATES and v[2:3].isdigit():
+                return v[:2]
+    return None
+
+
 def read_dam_folder(folder):
     """dam.json fields, the dam line, reservoir point and breach point of a dam folder (flood/damfolder.py)."""
     from ..flood import damfolder
@@ -455,10 +481,14 @@ def _run_model_claimed(pkg, out_root, values, cat=None, dams_folder=None, log=pr
     # Warn if the DEM may not cover the contributing basin (PMF/spillway use)
     dem_path = params.get("dem")
     lon, lat = params.get("lon"), params.get("lat")
-    if dem_path and lon and lat:
+    state = dam_state(pkg, info)
+    if dem_path and lon and lat and not state:
+        log("Note: the dam's state is not in the package, dam.json or its NID ID; the StreamStats basin check is "
+            "skipped.")
+    if dem_path and lon and lat and state:
         try:
             from . import streamstats as SS
-            basin = SS.delineate(lon, lat, state="ND")
+            basin = SS.delineate(lon, lat, state=state)
             area = SS.basin_area_sqmi(basin)
             if area and area > 0:
                 feats = basin.get("featurecollection") or []
@@ -474,8 +504,9 @@ def _run_model_claimed(pkg, out_root, values, cat=None, dams_folder=None, log=pr
                                 log("Basin area ~{:.1f} sq mi; extent {:.4f},{:.4f},{:.4f},{:.4f}".format(
                                     area, *basin_ext))
                             break
-        except Exception:
-            pass  # delineation is optional; do not block the run
+        except Exception as e:                                   # noqa: BLE001 - optional, but say why it is missing
+            log("Note: the StreamStats basin check ({}) failed and was skipped: {}: {}".format(
+                state, type(e).__name__, e))
     _, model = flood()
     t0 = _time.time()
     try:

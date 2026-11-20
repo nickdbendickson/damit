@@ -18,9 +18,12 @@ This gate compares every ported file with its DamSafety original. A pair is in o
 The recorded difference is a SHA-256 of the changed lines only (no line numbers), so a change made
 identically on both sides leaves it untouched. After porting a DamSafety change, or after a
 deliberate DamIT-only edit, re-record with --update and commit PARITY.json with the change.
+A pair may carry a "note" saying why its difference changed (e.g. a DamSafety commit ported ahead of
+synced_to); --note PATH=TEXT sets it, and --update keeps a pair's note while its difference is unchanged.
 
     python3 scripts/check_engine_parity.py --dwr /path/to/DWR_Plugins            # exit 1 on drift
     python3 scripts/check_engine_parity.py --dwr /path/to/DWR_Plugins --update   # re-record
+    python3 scripts/check_engine_parity.py --dwr ... --update --note damit_runner/core/x.py="ported from ..."
 
 CI (.github/workflows/engine_parity.yml) runs it two ways: on a pull request against the DamSafety
 commit PARITY.json was recorded at (so an edit to a ported file has to be acknowledged), and every
@@ -165,8 +168,9 @@ def check(dwr, record, root=ROOT):
     return problems, counts
 
 
-def update(dwr, root=ROOT, path=RECORD, keep_not_ported=None):
-    """Re-record PARITY.json from the two checkouts as they stand."""
+def update(dwr, root=ROOT, path=RECORD, keep_not_ported=None, notes=None):
+    """Re-record PARITY.json from the two checkouts as they stand. notes: {damit path: text} for the pairs whose
+    difference this update records on purpose; an earlier note stays while its pair's difference is unchanged."""
     try:
         old = load_record(path)
     except (OSError, ValueError):
@@ -181,6 +185,15 @@ def update(dwr, root=ROOT, path=RECORD, keep_not_ported=None):
         "not_ported": not_ported,
         "pairs": measure(dwr, root),
     }
+    old_pairs = old.get("pairs") or {}
+    for mine, cur in rec["pairs"].items():
+        was = old_pairs.get(mine) or {}
+        if was.get("note") and was.get("diff") == cur["diff"]:
+            cur["note"] = was["note"]
+    for mine, text in (notes or {}).items():
+        if mine not in rec["pairs"]:
+            raise ValueError("--note {}: not a recorded pair".format(mine))
+        rec["pairs"][mine]["note"] = text
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(rec, fh, indent=1, sort_keys=True)
         fh.write("\n")
@@ -191,6 +204,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dwr", required=True, help="a checkout of " + SOURCE_REPO)
     ap.add_argument("--update", action="store_true", help="re-record PARITY.json instead of checking")
+    ap.add_argument("--note", action="append", default=[], metavar="PATH=TEXT",
+                    help="with --update: why this pair's difference changed (repeatable)")
     ap.add_argument("--print-synced-to", action="store_true", help="print the recorded DamSafety commit and exit")
     a = ap.parse_args(argv)
     if a.print_synced_to:
@@ -200,7 +215,14 @@ def main(argv=None):
         print("{} is not a DWR_Plugins checkout (no DamSafety_Runner/core)".format(a.dwr), file=sys.stderr)
         return 2
     if a.update:
-        rec = update(a.dwr)
+        notes = {}
+        for item in a.note:
+            k, sep, v = item.partition("=")
+            if not sep or not k.strip() or not v.strip():
+                print("--note wants PATH=TEXT, got {!r}".format(item), file=sys.stderr)
+                return 2
+            notes[k.strip()] = v.strip()
+        rec = update(a.dwr, notes=notes)
         same = sum(1 for p in rec["pairs"].values() if not p["diff"])
         print("PARITY.json recorded at DamSafety {}: {} pairs ({} identical, {} with an accepted difference), "
               "{} DamSafety modules not ported".format(rec["synced_to"][:12] or "?", len(rec["pairs"]), same,
