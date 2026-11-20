@@ -5,6 +5,7 @@ exportImage service, EPSG:5070, float32 metres, bilinear, in tiles. Tests replac
 import os
 import time
 
+from . import atlas14 as A
 from .runner_shared import terrain3dep as T
 
 OPENER = None            # tests set a fake urlopen(url, timeout=) context manager
@@ -17,12 +18,12 @@ class DemFetchError(IOError):
     pass
 
 
+@A.gdal_raising("gdal")                    # audit 2026-11-20: GDAL exceptions for this call only
 def fetch(x5070, y5070, radius_m, cell_m, folder, log=None):
     """Download a square of half-width ``radius_m`` around an EPSG:5070 point at ``cell_m`` into ``folder`` and mosaic it
     to ``<folder>/dem_3dep_<cell>m_5070.tif``. 
     Returns {'path', 'extent', 'tiles', 'source', 'cell_m'}."""
     from osgeo import gdal
-    gdal.UseExceptions()
     ext = (x5070 - radius_m, y5070 - radius_m, x5070 + radius_m, y5070 + radius_m)
     ext = tuple(round(v / cell_m) * cell_m for v in ext)
     px = (ext[2] - ext[0]) / cell_m * ((ext[3] - ext[1]) / cell_m)

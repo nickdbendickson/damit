@@ -6,7 +6,16 @@ from osgeo import gdal
 from qgis.core import (QgsCoordinateTransform, QgsGeometry, QgsPointXY, QgsProject, QgsRectangle, QgsUnitTypes,
                        QgsWkbTypes)
 
-gdal.UseExceptions()
+# audit 2026-11-20: no gdal.UseExceptions() at import. It is process-wide, so loading Hazard Lite switched GDAL into
+# exception mode for QGIS and every other plugin. The reads below check GDAL's None returns instead and raise
+# SamplingError with GDAL's message in both modes.
+
+
+def _gdal_msg():
+    try:
+        return (gdal.GetLastErrorMsg() or "").strip() or "GDAL returned nothing"
+    except Exception:                                            # noqa
+        return "GDAL returned nothing"
 
 
 class SamplingError(ValueError):
@@ -17,9 +26,14 @@ class Raster(object):
     def __init__(self, path, scale=1.0):
         try:
             self.ds = gdal.Open(path)
-        except RuntimeError as e:
+        except RuntimeError as e:                 # GDAL exceptions on (QGIS or another plugin)
             raise SamplingError("cannot open raster {}: {}".format(path, e))
+        if self.ds is None:                       # the default mode
+            raise SamplingError("cannot open raster {}: {}".format(path, _gdal_msg()))
         self.band = self.ds.GetRasterBand(1)
+        if self.band is None:
+            raise SamplingError("raster {} has no band 1: {}".format(path, _gdal_msg()))
+        self.path = path
         self.nodata = self.band.GetNoDataValue()
         gt = self.ds.GetGeoTransform()
         if gt[2] or gt[4]:
@@ -47,7 +61,13 @@ class Raster(object):
         return c0, r0, c1 - c0 + 1, r1 - r0 + 1
 
     def read(self, win):
-        a = self.band.ReadAsArray(*win).astype("float64")
+        try:
+            a = self.band.ReadAsArray(*win)
+        except RuntimeError as e:
+            raise SamplingError("cannot read raster {}: {}".format(self.path, e))
+        if a is None:
+            raise SamplingError("cannot read raster {}: {}".format(self.path, _gdal_msg()))
+        a = a.astype("float64")
         if self.nodata is not None:
             a[a == self.nodata] = float("nan")
         return a * self.scale

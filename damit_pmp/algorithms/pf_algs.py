@@ -929,6 +929,7 @@ class RainGrid(_Base):
         return out
 
     @staticmethod
+    @A.gdal_raising("gdal")                # audit 2026-11-20: was relying on gridstats' import-time switch
     def _factor_raster(grid_path, scale, ref_in, out_path):
         import numpy as np
         from osgeo import gdal
