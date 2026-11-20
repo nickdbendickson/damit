@@ -563,8 +563,12 @@ def engine2d(dam, settings=None, folder=None, hydro_step=None, receptors=None, l
              "larger_clips": res["larger_clips"], "run_s": res["run_s"], "terrain": res.get("terrain"),
              "terrains": res.get("terrains")}
     # 0.3.0: a flood that ran is OK (2801: GAP after a finished flood); a time-limit partial result is a gap, and a
-    # flood truncated at the terrain edge stays OK with the edge flag in stats and the notes
+    # flood truncated at the terrain edge stays OK with the edge flag in stats and the notes.
+    # 0.3.7 (2026-11-20): the time-limit gap also carries partial=True and partial_reason="time_limit", so the chain
+    # (workflow.flood_failures) counts it as a PARTIAL flood - a preliminary, lower-bound result with a warning - not
+    # as a flood that "did not run". The status stays "gap" so older readers of steps.json and the package still work.
     status = STATUS_OK if res["status"] == "ok" else STATUS_GAP
+    partial = status == STATUS_GAP and bool(res["timed_out"])
     used = res.get("engine") or SC.BUILTIN_NAME
     detail = "screening flood ({}{}): {} ac, max {} ft, {} receptor(s) sampled".format(
         used, ", partial: time limit" if res["timed_out"] else (", reaches the terrain edge" if res["edge_flag"] else ""),
@@ -575,7 +579,28 @@ def engine2d(dam, settings=None, folder=None, hydro_step=None, receptors=None, l
                 inflow={"xy": list(site["inflow_xy"]), "how": site["inflow_how"], "toe_band": site["toe_band"],
                         "downstream_how": site["downstream_how"]},
                 hydrograph={"source": hsrc, "peak_cfs": round(hy.peak_cfs, 0)}, receptors=recs,
-                model_dimension="2D")
+                model_dimension="2D", **(partial_flags() if partial else {}))
+
+
+PARTIAL_REASON_TIME_LIMIT = "time_limit"
+
+
+def partial_flags(reason=PARTIAL_REASON_TIME_LIMIT):
+    """The fields that mark a step result (and its hand-off gap) as a PARTIAL result: it ran, but stopped early."""
+    return {"partial": True, "partial_reason": reason}
+
+
+def is_partial_flood(r):
+    """True for an engine2d result that ran but stopped at its time limit (a partial, lower-bound flood).
+
+    Reads the 0.3.7 flag, and for step results written before it the time-limit wording of the detail or
+    stats.timed_out, so a steps.json from Screener 0.3.0-0.3.6 is read the same way."""
+    r = r or {}
+    if r.get("status") != STATUS_GAP:
+        return False
+    if r.get("partial"):
+        return True
+    return bool((r.get("stats") or {}).get("timed_out")) or "partial: time limit" in str(r.get("detail") or "")
 
 
 # ------------------------------------------- depth-velocity chart (habitable) --

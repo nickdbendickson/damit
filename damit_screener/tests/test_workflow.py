@@ -1,9 +1,11 @@
 """DamIT Screener workflow (no QGIS): preflight flags, scenario-driven chain, hand-off packages."""
 import os
+import json
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from damit_screener.core import steps as ST       # noqa: E402
@@ -182,6 +184,45 @@ class Chain(unittest.TestCase):
         self.assertEqual(WF.flood_failures({"a": ok, "b": off}, flood_off=True), {})
         self.assertEqual(set(WF.flood_failures({"a": ok, "b": off, "c": gap, "d": bad})), {"b", "c", "d"})
         self.assertTrue(WF.flood_failures({"d": bad})["d"].startswith("failed"))
+
+    def test_time_limit_partial_is_not_a_flood_failure(self):
+        """0.3.7: a time-limited flood (GAP + partial) is PARTIAL, not "did not run"; steps.json from 0.3.0-0.3.6
+        (no partial flag) is read the same way from the detail or stats.timed_out."""
+        new = {"engine2d": {"status": "gap", "detail": "screening flood (built-in, partial: time limit): 5 ac",
+                            "partial": True, "partial_reason": "time_limit", "stats": {"timed_out": True}}}
+        old_detail = {"engine2d": {"status": "gap", "detail": "screening flood (built-in, partial: time limit): 5 ac"}}
+        old_stats = {"engine2d": {"status": "gap", "detail": "screening flood", "stats": {"timed_out": True}}}
+        gap = {"engine2d": {"status": "gap", "detail": "no terrain (DEM): the screening flood needs one"}}
+        bad = {"engine2d": {"status": "fail", "detail": "screening flood failed: boom", "stats": {"timed_out": True}}}
+        res = {"a": new, "b": old_detail, "c": old_stats, "d": gap, "e": bad}
+        self.assertEqual(set(WF.flood_failures(res)), {"d", "e"})
+        self.assertEqual(set(WF.flood_partials(res)), {"a", "b", "c"})
+        self.assertTrue(WF.flood_failures({"d": gap})["d"].startswith("did not run"))
+        self.assertFalse(ST.is_partial_flood(bad["engine2d"]), "a failed flood is never partial")
+        self.assertFalse(ST.is_partial_flood(None))
+
+    def test_chain_ok_with_a_partial_flood(self):
+        dams, probs = ST.prepare([raw_dam()], FMAP)
+        s = dict(WF.DEFAULT_SETTINGS, preset="ND", engine2d="builtin")
+        detail = "screening flood (built-in, partial: time limit): 1951.9 ac, max 15.7 ft, 0 receptor(s) sampled"
+        logs = []
+        with mock.patch.object(ST, "engine2d", lambda *a, **k: ST.step(ST.STATUS_GAP, detail,
+                                                                       stats={"timed_out": True},
+                                                                       **ST.partial_flags())):
+            summ = WF.run_chain(self.work, s, dams, probs, [], log=logs.append)
+        self.assertFalse(summ.get("refused"), logs)
+        self.assertTrue(summ["ok"], logs)
+        self.assertEqual(summ["flood_failed"], {})
+        self.assertEqual(summ["flood_partial"], {"ND00001": detail})
+        with open(os.path.join(self.work, "damit_screen", "chain_summary.json")) as fh:
+            self.assertTrue(json.load(fh)["partial"])
+        pkg = HO.read(summ["dams"]["ND00001"]["handoff_path"])
+        self.assertIn({"step": "engine2d", "status": "gap", "detail": detail, "partial": True,
+                       "partial_reason": "time_limit"}, pkg["gaps"])
+        with open(summ["report"]) as fh:
+            text = fh.read()
+        self.assertIn("Chain result: OK - PARTIAL screening flood (time limit) for ND00001", text)
+        self.assertIn("PARTIAL SCREENING", text)
 
     def test_chain_refused_on_preflight_fail(self):
         summ = WF.run_chain(self.work, dict(WF.DEFAULT_SETTINGS, preset="ND"), [], [], log=lambda *_: None)
