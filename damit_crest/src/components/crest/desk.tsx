@@ -1960,7 +1960,7 @@ function railState(id: StepId, dam: DamRecord, current: StepId): "done" | "curre
 const RAIL_MARK: Record<"done" | "current" | "blocked" | "todo", { glyph: string; cls: string; label: string }> = {
   done: { glyph: "✓", cls: "bg-water text-card border-water", label: "Complete" },
   current: { glyph: "▶", cls: "bg-card text-water border-water", label: "Current step" },
-  blocked: { glyph: "!", cls: "bg-red-bg text-red-700 border-red-700", label: "Blocked — missing required inputs" },
+  blocked: { glyph: "!", cls: "bg-red-bg text-flag-red border-flag-red", label: "Blocked — missing required inputs" },
   todo: { glyph: "", cls: "bg-card text-muted border-line", label: "Not started" },
 };
 
@@ -2046,20 +2046,20 @@ function InspectorPanel({ dam, result, step }: { dam: DamRecord; result: ReturnT
         <p className="text-xs text-muted">Live checks from the analysis; a stop holds the screen at Review, exactly as before.</p>
       </div>
       {stops.length === 0 && others.length === 0 ? (
-        <p className="rounded-md border border-line bg-green-bg px-3 py-2 text-sm text-green" data-testid="inspector-clear">
+        <p className="rounded-md border border-line bg-green-bg px-3 py-2 text-sm text-flag-green" data-testid="inspector-clear">
           ✓ No flags. Values used as entered.
         </p>
       ) : (
         <>
           {stops.length > 0 ? (
-            <div className="rounded-md border border-red-700 bg-red-bg px-3 py-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Holds the screen</p>
+            <div className="rounded-md border border-flag-red bg-red-bg px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-flag-red">Holds the screen</p>
               <FlagList flags={stops} className="mt-1 list-disc space-y-1 pl-4 text-sm text-ink" />
             </div>
           ) : null}
           {others.length > 0 ? (
-            <div className="rounded-md border border-amber bg-amber-bg px-3 py-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-amber">Check before relying</p>
+            <div className="rounded-md border border-flag-amber bg-amber-bg px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-flag-amber">Check before relying</p>
               <FlagList flags={others} className="mt-1 list-disc space-y-1 pl-4 text-sm text-ink" />
             </div>
           ) : null}
