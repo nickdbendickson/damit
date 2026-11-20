@@ -160,6 +160,12 @@ def test_usa_structures_cross_check_inside_near_none_and_class_comparison():
     assert U.cross_check({"b": (-8, 5, "RES")}, fps, 5.0)["b"]["usa_struct_match"] == "none"
     o = U.cross_check({"b": (-26.25, 5, "RES")}, fps, 10.0, unit_m=0.3048)["b"]
     assert o["usa_struct_match"] == "near" and 7.9 < o["usa_struct_dist_m"] < 8.1
+    # 2026-11-20 audit: a feet boundary pair. 10 m = 32.81 ft; 32.5 ft (9.91 m) off the footprint is just inside the
+    # tolerance and 33.2 ft (10.12 m) just outside, so a tolerance read as feet (10 ft) or scaled the wrong way fails
+    i = U.cross_check({"i": (-32.5, 5, "RES")}, fps, 10.0, unit_m=0.3048)["i"]
+    assert i["usa_struct_match"] == "near" and i["usa_struct_dist_m"] == 9.9 and i["usa_struct_id"] == "B1"
+    x = U.cross_check({"x": (-33.2, 5, "RES")}, fps, 10.0, unit_m=0.3048)["x"]
+    assert x["usa_struct_match"] == "none" and x["usa_struct_dist_m"] is None
     assert U.cross_check({"a": (1, 1, "RES")}, [], 12.0)["a"]["usa_struct_match"] == "none"   # an empty layer
     # advisory only: a match, footprint and agreeing class never make a non-911 structure habitable
     r = R.make("structure:1", "structure", None, depth_ft=2.0, velocity_fps=1.0, occtype="RES1")

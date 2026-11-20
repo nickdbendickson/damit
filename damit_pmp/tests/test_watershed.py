@@ -219,5 +219,56 @@ class Fetch(unittest.TestCase):
         self.assertIn("3DEP", str(cm.exception))
 
 
+US_FT = 0.3048                                                 # metres per international foot (EPSG:2265: ND uses ft)
+
+
+@unittest.skipUnless(HAVE, "numpy / scipy / GDAL not installed")
+class FeetDem(unittest.TestCase):
+    """2026-11-20: a DEM in a feet CRS (ND State Plane, EPSG:2265) gives the same basin area in m2 as the metre DEM."""
+
+    def _feet_copy(self, g):
+        return Grid(g.data.copy(), g.x0 / US_FT, g.y0 / US_FT, g.dx / US_FT, NODATA, None)
+
+    def test_area_snap_and_cell_size_are_in_metres(self):
+        g, rc = valley()
+        gf = self._feet_copy(g)
+        x, y = g.xy(rc, 2)
+        ref = W.delineate(g, x, y, snap_m=60.0)
+        got = W.delineate(gf, x / US_FT, y / US_FT, snap_m=60.0, unit_m=US_FT)
+        self.assertTrue((got["mask"] == ref["mask"]).all())
+        self.assertAlmostEqual(got["area_m2"], ref["area_m2"], delta=1e-6 * ref["area_m2"])
+        self.assertAlmostEqual(got["cell_m"], 30.0, places=6)
+        self.assertAlmostEqual(got["snapped_from_m"], ref["snapped_from_m"], places=6)
+        wrong = W.delineate(gf, x / US_FT, y / US_FT, snap_m=60.0)    # the old reading: ft2 taken as m2
+        self.assertGreater(wrong["area_m2"] / ref["area_m2"], 10.7)
+
+    def test_read_dem_of_an_epsg_2265_geotiff(self):
+        try:
+            from qgis.core import QgsCoordinateReferenceSystem
+            from damit_pmp.algorithms import ws_algs
+        except ImportError:
+            self.skipTest("QGIS not installed")
+        g, rc = valley()
+        gf = self._feet_copy(g)
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "dem_ft.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(path, gf.nx, gf.ny, 1, gdal.GDT_Float64)
+        ds.SetGeoTransform((1900000.0, gf.dx, 0.0, 700000.0, 0.0, -gf.dx))
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(2265)                                     # NAD83 / North Dakota North (ft)
+        ds.SetProjection(srs.ExportToWkt())
+        b = ds.GetRasterBand(1)
+        b.SetNoDataValue(NODATA)
+        b.WriteArray(gf.data)
+        ds = None
+        grid, wkt, crs, unit_m = ws_algs.read_dem(path)
+        self.assertAlmostEqual(unit_m, US_FT, places=9)                 # EPSG:2265 is international feet
+        self.assertAlmostEqual(ws_algs.metres_per_map_unit(QgsCoordinateReferenceSystem("EPSG:26914")), 1.0)
+        self.assertAlmostEqual(ws_algs.metres_per_map_unit(QgsCoordinateReferenceSystem("EPSG:2265")), US_FT, places=9)
+        self.assertAlmostEqual(grid.dx, gf.dx, places=6)                # the grid stays in feet (its CRS's units)
+        res = W.delineate(grid, *grid.xy(rc, 2), snap_m=60.0, unit_m=unit_m)
+        self.assertAlmostEqual(res["area_m2"], res["mask"].sum() * 900.0, delta=1e-3)
+
+
 if __name__ == "__main__":
     unittest.main()
