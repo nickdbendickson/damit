@@ -1,0 +1,2 @@
+ErrorMsg = 'data source is offline for maintenance';
+result = 'other';

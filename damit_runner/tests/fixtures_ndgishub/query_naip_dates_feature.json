@@ -1,0 +1,36 @@
+{
+ "displayFieldName": "IDATE",
+ "fieldAliases": {
+  "IDATE": "IDATE"
+ },
+ "fields": [
+  {
+   "name": "IDATE",
+   "type": "esriFieldTypeString",
+   "alias": "IDATE",
+   "length": 10
+  }
+ ],
+ "features": [
+  {
+   "attributes": {
+    "IDATE": "2025-07-13"
+   }
+  },
+  {
+   "attributes": {
+    "IDATE": "2025-07-13"
+   }
+  },
+  {
+   "attributes": {
+    "IDATE": "2025-07-13"
+   }
+  },
+  {
+   "attributes": {
+    "IDATE": "2025-07-13"
+   }
+  }
+ ]
+}
