@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.7.1: one driver per dam folder (core/runlock.py) and temp names unique per writer (audit 2026-11-20); no number changes
 0.7.0: from DamSafety Runner 3.26.0, LISFLOOD-FP sub-grid river channels (core/sgc.py) on the ported engine: off by default; no model-number changes unless turned on
 0.6.8: LISFLOOD-FP lookup: the dam-suite installer's bin before PATH (install test 2026-11-18); no model-number changes
 0.6.7: bundled damit_runner/lib/true_hole.py so Runner+Catalog loads; oversize WSE-minus-ground, ground_source=model_dem_bilinear; no model-number changes
@@ -66,7 +67,7 @@ import os
 
 from . import catalog_bridge as CB
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -414,7 +415,21 @@ def model_params(values, pkg, dam_dir_info=None):
 
 def run_model(pkg, out_root, values, cat=None, dams_folder=None, log=print, cancel=None, now=None):
     """Prepare a NEW run folder, run the flood model there (LISFLOOD-FP / built-in engine, ANUGA tier) and copy
-    the final rasters and vectors into <dams_folder>/<dam id>/. Returns (run_folder, run_setup)."""
+    the final rasters and vectors into <dams_folder>/<dam id>/. Returns (run_folder, run_setup).
+
+    audit 2026-11-20: the dam folder the results are copied into is claimed for the whole run
+    (core/runlock.py): a second driver of the same dam stops with runlock.RunClaimError naming this run
+    instead of copying its rasters over this one's."""
+    from . import runlock
+    _, _, HO = CB.modules()
+    dam_dir = os.path.join(dams_folder, HO.safe_name(pkg["dam"]["dam_id"])) if dams_folder else None
+    if not dam_dir:
+        return _run_model_claimed(pkg, out_root, values, cat, dams_folder, log, cancel, now)
+    with runlock.claim(dam_dir, "DamIT Runner rundam"):
+        return _run_model_claimed(pkg, out_root, values, cat, dams_folder, log, cancel, now)
+
+
+def _run_model_claimed(pkg, out_root, values, cat=None, dams_folder=None, log=print, cancel=None, now=None):
     import shutil
     import time as _time
     _, _, HO = CB.modules()
@@ -493,7 +508,21 @@ def run_model(pkg, out_root, values, cat=None, dams_folder=None, log=print, canc
 
 
 def _save(folder, setup):
-    tmp = os.path.join(folder, RUN_SETUP + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(setup, fh, indent=1, ensure_ascii=False, default=str)
-    os.replace(tmp, os.path.join(folder, RUN_SETUP))
+    import threading
+    # audit 2026-11-20: a temp name unique per writer (pid + thread) in the same folder, fsync before the
+    # rename, and no temp file left behind when the write fails (a fixed "RUN_SETUP.tmp" let two drivers of one
+    # folder write the same temp file and rename each other's half documents into place)
+    path = os.path.join(folder, RUN_SETUP)
+    tmp = "{}.{}.{}.tmp".format(path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(setup, fh, indent=1, ensure_ascii=False, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
