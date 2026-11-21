@@ -70,6 +70,16 @@ class RunnerSharedDefaultsTest(unittest.TestCase):
         self.assertTrue(warnings and "top of dam" in warnings[0])
         json.dumps(e)
 
+    def test_assumptions_record_xu_zhang_method(self):
+        """Runner 0.7.11 (DamSafety 07ab314c M3b): an Xu & Zhang (2009) run records its failure mode and the
+        xu_zhang2009 equation in dam.json's assumptions instead of null."""
+        for mid, mode in ((br.METHOD_XZ_PIPING, "piping"), (br.METHOD_XZ_OVERTOPPING, "overtopping")):
+            st = types.SimpleNamespace(scenario=wf.SCENARIO_SUNNY, breach_method=mid, manning_n=0.06, flood=None)
+            e = wf._assumptions(st, "0.9", [].append, [])
+            self.assertEqual(e["used"]["failure_mode"], mode, e["used"])
+            self.assertEqual(e["used"]["breach_method"], "xu_zhang2009", e["used"])
+            json.dumps(e)
+
     def test_start_pool_is_recorded_and_follows_the_file(self):
         """Runner 0.5.0: the sunny-day starting pool is a choice (START_POOL). The record says which pool the
         run started at, and the tool opens at the shared file's value."""
