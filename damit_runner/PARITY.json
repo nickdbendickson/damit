@@ -110,7 +110,7 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "e232bfa1bdbb6036814d3101b6188cd889a6d3de2b6031804f63832753a8515e",
+   "diff": "2ecdba5d6a0ab87b8c1c7c093c46726078817b61ebc3f51bcff0b6d40f0e39e7",
    "from": "DamSafety_Runner/algorithms.py",
    "note": "Ported ahead of synced_to from DWR_Plugins e2725333 (#412): BatchAlgorithm lifts the open-file limit (import adapted to ..core). The other DamSafety main changes to algorithms.py are not ported yet (RUNNER_PORT_PLAN.md). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): bd9f159d (help text) ported ahead of synced_to. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ_DAM_TYPE / XZ_ERODIBILITY parameters, _xz_overrides); DamIT keeps its popup_logic ImportError fallback. Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f (MANNING default) ported ahead of synced_to; the DAM_POINT_CHECK parameter of the same hunk waits for group D. Runner 0.7.14 (port group G): POTHOLE_START_FILL from DWR_Plugins 3f224500, ahead of synced_to."
   },
@@ -345,7 +345,7 @@
    "from": "DamSafety_Runner/core/impacts.py"
   },
   "damit_runner/core/lisflood.py": {
-   "diff": "98c27bf22ceb414ca0d9223ecd446fd4d7b2aaee326ae18facd5bea42f0cc0b7",
+   "diff": "dee2d966af34ce7f6ed022a8ca7e3474c13fb65249b4ad220cd4cd5c2fb55d5c",
    "from": "DamSafety_Runner/core/lisflood.py"
   },
   "damit_runner/core/model_terrain.py": {
@@ -387,7 +387,7 @@
    "from": "DamSafety_Runner/core/qa_maps.py"
   },
   "damit_runner/core/refine.py": {
-   "diff": "319a0a4122e0b058623fce01390166a375bfcdfe1a976c16a3a567978e35b5a1",
+   "diff": "979319397d051a41b74936877e01abb2898cad8c92629e91714448d4024268e2",
    "from": "DamSafety_Runner/core/refine.py"
   },
   "damit_runner/core/report_docx.py": {
@@ -424,7 +424,7 @@
    "from": "DamSafety_Runner/core/runlock.py"
   },
   "damit_runner/core/selftest.py": {
-   "diff": "1463ff3900d06e442a648c431d3a55ceb80ed8e9ec457205c54df7569d9e5227",
+   "diff": "3d4747298dcf26093ba30bc9396f90573c20f302f75a8ba961847cb6d7b7ca70",
    "from": "DamSafety_Runner/core/selftest.py"
   },
   "damit_runner/core/sensitivity.py": {
@@ -470,7 +470,7 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "b8391fbbe3d9ef3c2c81c4dd695e83f77c09fae941dcd65e336d75d962bc9e89",
+   "diff": "34213fdc72b87ce943d937c1a05046a2d85c567fc89a12618f8b92951b1b1376",
    "from": "DamSafety_Runner/core/workflow.py",
    "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): a 3DEP refill on a terrain with no CRS is refused (comment adapted: DamIT has no #397 check_tile, so the dem_refill hunk is not ported). Plus a DamIT-only audit fix 2026-11-20: _write_refine_entry / _amend_report warn when the report is missing or unreadable. Plus a DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): the pass checkpoint note, structures.json, the gauge CSVs and run_report.md go through _write_text (whole file or nothing); not yet in DamSafety. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4b assumptions in run_report.md, H9 manning_coverage), 07ab314c (S7 crossing_check, H6-1 on_dam warning without the DWR wording, H12 tailwater_breach_warning, S6a burn width warning) and 6dfd42cd (S3 dem_edits record / raster / layer). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d (spread_rule, extension cap, lower-bound arrival flag). Runner 0.7.10 (port group C2, #397): 0ca91de6 check_tile after the 3DEP download, kept after DamIT's own no-CRS refusal (audit fix I). Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ overrides) ported ahead of synced_to. Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f / 2863c0a1 (RunSettings.manning_n) ported ahead of synced_to. Runner 0.7.14 (port group G, #442 pothole_start_fill; no change at the default 0): ported ahead of synced_to from DWR_Plugins 3f224500 (start_depth, key_settings)."
   },
