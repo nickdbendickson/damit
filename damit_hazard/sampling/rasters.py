@@ -581,11 +581,6 @@ def true_hole_mask(dep):
     return nodata_analysis(dep)["hole"]
 
 
-def oversize_mask(dep):
-    """Oversize-component mask of a depth Raster, cached with the hole mask."""
-    return nodata_analysis(dep)["oversize"]
-
-
 def _cell_flags(dep, points):
     """(is_true_hole, is_oversize) for a receptor's in-domain sample points.
 
@@ -606,16 +601,6 @@ def _cell_flags(dep, points):
     if n == 0:
         return False, False
     return all(holes), all(overs)
-
-
-def receptor_is_true_hole(dep, points):
-    """True when every in-domain sample point of this receptor sits on a TRUE_HOLE cell."""
-    return _cell_flags(dep, points)[0]
-
-
-def receptor_is_oversize(dep, points):
-    """True when every in-domain sample point sits in an oversize enclosed component."""
-    return _cell_flags(dep, points)[1]
 
 
 def _stamp_nodata(hyd, policy, sampling, neighbourhood=False, true_hole=False, oversize=False):

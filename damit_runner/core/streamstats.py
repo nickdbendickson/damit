@@ -188,18 +188,6 @@ def flood_frequency(basin_result, state=None):
     return out
 
 
-def quick_estimate(lon, lat, state, return_intervals=(100, 500)):
-    """One-call convenience: delineate + flood frequency.
-
-    Returns {Q100: cfs, Q500: cfs, area_sqmi: float, ...} or raises on failure.
-    Note: flood frequency uses the legacy endpoint which may be unavailable;
-    use pmf_inflow for a volume-based estimate from Atlas 14 instead.
-    """
-    basin = delineate(lon, lat, state=state)
-    flows = flood_frequency(basin, state=state)
-    return {k: v for k, v in flows.items() if k != "_raw"}
-
-
 def basin_area_sqmi(basin_result):
     """Approximate drainage area (sq mi) from a delineation result.
 
@@ -259,27 +247,3 @@ def pmf_inflow(area_sqmi, depth_in, duration_hr=24.0, runoff_ratio=1.0):
         "depth_in": depth_in,
         "runoff_ratio": runoff_ratio,
     }
-
-
-def dem_covers_basin(dem_extent, basin_extent, buffer_m=1000):
-    """Check if a DEM extent covers a basin extent (with buffer).
-
-    Both extents are (lon_min, lat_min, lon_max, lat_max) in WGS84.
-    Returns (covers: bool, message: str).
-    """
-    import math
-    dem_lon0, dem_lat0, dem_lon1, dem_lat1 = dem_extent
-    bas_lon0, bas_lat0, bas_lon1, bas_lat1 = basin_extent
-    buf_deg = buffer_m / 111320
-    need_lon0 = bas_lon0 - buf_deg
-    need_lat0 = bas_lat0 - buf_deg
-    need_lon1 = bas_lon1 + buf_deg
-    need_lat1 = bas_lat1 + buf_deg
-    covers = (dem_lon0 <= need_lon0 and dem_lat0 <= need_lat0 and
-              dem_lon1 >= need_lon1 and dem_lat1 >= need_lat1)
-    if covers:
-        msg = "DEM covers the basin with {:.0f} m buffer".format(buffer_m)
-    else:
-        msg = ("DEM does not cover the basin. Need at least "
-               "{:.4f},{:.4f},{:.4f},{:.4f}").format(need_lon0, need_lat0, need_lon1, need_lat1)
-    return covers, msg

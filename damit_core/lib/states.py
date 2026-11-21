@@ -15,10 +15,6 @@ def table():
     return _CACHE
 
 
-def postal_codes():
-    return [s["postal"] for s in table()]
-
-
 def get(code):
     """State record by postal code, name or 2-digit FIPS (case-insensitive). Raises KeyError."""
     c = str(code or "").strip()

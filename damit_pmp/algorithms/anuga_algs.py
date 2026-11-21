@@ -5,13 +5,12 @@ are the damit_runner ANUGA gmsh pipeline (damit_pmp/runner_shared holds its file
 anugarain.py). Nothing here launches a process: damit_pmp/launch.py does, and only when an ANUGA
 Python is given (mesh build) or RUN_ANUGA is switched on (default off).
 """
-import json
 import os
 import sys
 import time
 
 import numpy as np
-from qgis.core import (Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsGeometry, QgsProcessing,
+from qgis.core import (Qgis, QgsCoordinateTransform, QgsGeometry, QgsProcessing,
                        QgsProcessingException, QgsProcessingOutputNumber, QgsProcessingOutputString,
                        QgsProcessingParameterBoolean, QgsProcessingParameterDefinition, QgsProcessingParameterEnum,
                        QgsProcessingParameterExtent, QgsProcessingParameterFeatureSource,
