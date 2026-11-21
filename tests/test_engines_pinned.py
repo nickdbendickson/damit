@@ -115,6 +115,12 @@ class LaunchersAreCovered(unittest.TestCase):
             "live probes that call probe_and_require",
         "damit_pmp/runner_shared/engines.py":
             "sha-pinned twin of the runner's engines.py; the pin infrastructure itself",
+        "damit_runner/core/metalflood/backends.py":
+            "compiles this engine's own CPU kernels with the system C++ compiler; "
+            "not a pinned external solver",
+        "damit_runner/core/metalflood/bench.py":
+            "local speed-test CLI, not a production launcher; a real LISFLOOD-FP run "
+            "is pinned in core/lisflood.check_log_version",
         "damit_runner/core/anuga_detach.py":
             "detached ANUGA worker launcher; the ANUGA version pin is enforced upstream "
             "in check_anuga (anuga_model.py) before any worker starts",

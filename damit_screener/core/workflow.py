@@ -27,7 +27,7 @@ DEFAULT_SETTINGS = {
     "summary": {},               # dam-level facts for the suggestion (model_dimension, hydraulics_source, ...)
     "dam_ids": [],               # limit the chain to these dams (empty = all)
     # 0.2.0 engine2d: the DamSafety Screening tool-7 2D flood (built-in engine) and its window defaults
-    "engine2d": "builtin",       # builtin | lisflood (0.3.0: LISFLOOD-FP ACC) | off
+    "engine2d": "builtin",       # builtin | lisflood (0.3.0: LISFLOOD-FP ACC) | gpu (0.3.6: metalflood) | off
     "lisflood_exe": "",          # engine2d lisflood: the executable; "" = an installed one, else the built-in engine
     "grid_m": 20.0,              # model cell (m); 0 = automatic by reservoir size (CELL_TABLE)
     "simh": 12.0, "simmax": 96.0,   # first clock and the longest clock (h)

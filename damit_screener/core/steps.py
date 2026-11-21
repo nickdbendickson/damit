@@ -421,14 +421,15 @@ ENGINE_CONTRACT = {
                 "Screening DV (Max).tif (ft2/s, max of depth x velocity over the event)",
                 "Screening Arrival Time.tif (h)", "receptor depth_ground_ft / velocity_fps / dv_ft2s / m1_zone"],
     "settings": {"engine2d": "builtin (default, the DamSafety Screening default) | lisflood (LISFLOOD-FP ACC; "
-                              "lisflood_exe, else an installed one, else the built-in engine with a warning) | off",
+                              "lisflood_exe, else an installed one, else the built-in engine with a warning) | "
+                              "gpu (metalflood: the GPU engine on a Metal Mac, else its CPU build) | off",
                  "larger_clips": "1 (default) = a fresh USGS 3DEP download for each larger clip | 2 = local_dem | "
                                  "0 = the first clip only"},
-    "note": "DamSafety Screening tool 7 (built-in 2D engine or LISFLOOD-FP, hydrograph injection at the downstream "
+    "note": "DamSafety Screening tool 7 (built-in 2D engine, LISFLOOD-FP or the GPU engine, hydrograph injection at the downstream "
             "toe). A screening flood for the preliminary class; DamIT Runner (damit_run:rundam) runs the model of "
             "record.",
 }
-ENGINES = ("builtin", "lisflood", "off")   # 0.3.0: lisflood = LISFLOOD-FP ACC (DamIT Runner's launcher)
+ENGINES = ("builtin", "lisflood", "gpu", "off")   # 0.3.0: lisflood = LISFLOOD-FP ACC; 0.3.6: gpu = metalflood (DamIT Runner's launcher)
 SCREEN_TIMEOUT_SHARE = 0.8      # of DAMIT_SCREENING_TIMEOUT_S: the rest is for the other steps and the report
 
 
@@ -516,7 +517,7 @@ def engine2d(dam, settings=None, folder=None, hydro_step=None, receptors=None, l
               "local_dem": S.get("local_dem") or "", "timeout_s": screening_timeout_s(S), "engine": eng,
               "lisflood_exe": S.get("lisflood_exe") or "", "workdir": folder or ""}
         log("  engine2d: {} 2D screening flood, {} m cell, clock {} h (to {} h), larger clips: {}, time limit "
-            "{:.0f} s; hydrograph: {}".format("LISFLOOD-FP" if eng == "lisflood" else "built-in", cell or "automatic",
+            "{:.0f} s; hydrograph: {}".format("GPU engine" if eng == "gpu" else "LISFLOOD-FP" if eng == "lisflood" else "built-in", cell or "automatic",
                                               sp["simh"], sp["simmax"], SC.LARGER_CLIPS[int(sp["larger_clips"])],
                                               sp["timeout_s"], hsrc))
         res = SC.simulate(sp, hy.t_s, hy.q_cms, {"inflow_xy": site["inflow_xy"], "downstream": site["downstream"],

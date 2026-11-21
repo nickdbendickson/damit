@@ -40,7 +40,7 @@ DEFAULTS = dict(grid_m=20.0, simh=12.0, simmax=96.0, corridor=True, corridor_hw_
                 max_attempts=8, z_units="auto", dem_cell=1.0, engine="builtin", lisflood_exe="", workdir="",
                 threads=1, arrival_m=0.03048)
 LARGER_CLIPS = ("first clip only", "larger clips from a fresh USGS 3DEP download", "larger clips from a local DEM")
-ENGINES = ("builtin", "lisflood")
+ENGINES = ("builtin", "lisflood", "gpu")
 BUILTIN_NAME = "DamIT Screener built-in 2D engine (finite volume, from DamSafety Screening fv_engine)"
 
 
@@ -118,11 +118,15 @@ def choose_engine(engine, lisflood_exe="", find_exe=None):
     e = str(engine or "builtin").lower()
     if e in ("lisflood-acc", "lisflood-fp"):
         e = "lisflood"
+    if e in ("metal", "metalflood", "gpu engine"):
+        e = "gpu"
     if e not in ENGINES:
         raise ValueError("unknown screening engine {!r} (one of {})".format(engine, ", ".join(ENGINES)))
     if e == "builtin":
         return "builtin", None, "engine2d = builtin", None
     from . import lisflood as LF
+    if e == "gpu":
+        return "gpu", LF.GPU, "engine2d = gpu", None
     sel = (find_exe or LF.find_exe)(lisflood_exe)
     if LF.is_builtin(sel["exe"]):
         warn = None if not sel["warning"] else (
@@ -170,7 +174,9 @@ def simulate(p, hydro_t_s, hydro_q_cms, site, wkt, log=print, cancel=None, engin
     if warn:
         notes.append(warn)
         log(warn)
-    engine_name = BUILTIN_NAME if kind == "builtin" else "LISFLOOD-FP ACC ({})".format(exe)
+    engine_name = (BUILTIN_NAME if kind == "builtin" else
+                   "GPU engine (metalflood, LISFLOOD-FP ACC)" if kind == "gpu" else
+                   "LISFLOOD-FP ACC ({})".format(exe))
     if engine_factory is None:
         if kind == "builtin":
             def engine_factory(grid, dem_m, cell, manning):
