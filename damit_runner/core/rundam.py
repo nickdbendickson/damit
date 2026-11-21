@@ -51,6 +51,9 @@ LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), a
 runners pass. No change to this module's run or its numbers.
 
 0.7.7: DamSafety port group A (#394 cancel pid check, OMP #15 hint, #412 open-file limit); no number changes
+0.7.6: audit L-1: the flood package (flood/rasters.py) no longer switches GDAL exceptions on process-wide; no number changes
+0.7.5: run_setup.json and README_run.md are written whole or not at all (core/atomicio, audit 2026-11-19, damit #134);
+no number changes
 0.7.4: numerics audit 2026-11-20: the StreamStats basin check uses the dam's state (package, dam.json or NID ID) and is
 skipped when none is known (it was "ND" for every dam); a failed check is logged. No model-number changes.
 0.7.1: one driver per dam folder (core/runlock.py) and temp names unique per writer (audit 2026-11-20); no number changes
@@ -68,6 +71,7 @@ import datetime
 import json
 import os
 
+from . import atomicio
 from . import catalog_bridge as CB
 
 VERSION = "0.7.7"
@@ -201,8 +205,8 @@ def prepare_run(pkg, out_root, cat=None, engine=ENGINE_NONE, dry_run=True, now=N
                     "disclaimer": cat.disclaimer},
         "handoff": HO.FILENAME,
     }
-    with open(os.path.join(folder, RUN_SETUP), "w", encoding="utf-8") as fh:
-        json.dump(setup, fh, indent=1, ensure_ascii=False, default=str)
+    atomicio.write_text(os.path.join(folder, RUN_SETUP),
+                        json.dumps(setup, indent=1, ensure_ascii=False, default=str))
     _write_readme(folder, setup)
     return folder, setup
 
@@ -241,8 +245,7 @@ def _write_readme(folder, setup):
                   "with DamIT Hazard (damit:classify)."]
     lines.append("Suggested classifications only; the engineer of record and the regulating agency make the "
                  "determination.")
-    with open(os.path.join(folder, "README_run.md"), "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
+    atomicio.write_text(os.path.join(folder, "README_run.md"), "\n".join(lines) + "\n")
 
 
 # ------------------------------------------------------------------------------------------ 0.2.0: model run --

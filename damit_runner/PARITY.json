@@ -217,8 +217,9 @@
    "from": "DamSafety_Runner/core/culvert_guess.py"
   },
   "damit_runner/core/culvert_precheck.py": {
-   "diff": "a886a2ff489e8678faf0acf37af2c0555163f74ccb490c3f6822be3e0efcb586",
-   "from": "DamSafety_Runner/core/culvert_precheck.py"
+   "diff": "1555205af72f763d234e8357d866cf01ee49b5e22a7f6a79f565255f75373d54",
+   "from": "DamSafety_Runner/core/culvert_precheck.py",
+   "note": "DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): files read back on resume are written atomically (core/atomicio.write_text: unique temp, fsync, os.replace). Not yet in DamSafety; propose the same lines there, then this pair returns to its earlier difference."
   },
   "damit_runner/core/culvert_prep.py": {
    "diff": "78dce0da20638c8068f3a3800421f18fe0c9e08e9e59955fe71b7f0d2a1cbdbe",
@@ -292,8 +293,9 @@
    "from": "DamSafety_Runner/core/hecras_crest.py"
   },
   "damit_runner/core/hecras_engine.py": {
-   "diff": "40ec8f7ccf33a8d3958c72c9b6170eba0143ad7a7fd1d4ee950f61baaaa7eae8",
-   "from": "DamSafety_Runner/core/hecras_engine.py"
+   "diff": "35cd2d49ce28c1563897b9b7ece07729c80269ccc6bf9b576135b9020c14c978",
+   "from": "DamSafety_Runner/core/hecras_engine.py",
+   "note": "DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): files read back on resume are written atomically (core/atomicio.write_text: unique temp, fsync, os.replace). Not yet in DamSafety; propose the same lines there, then this pair returns to its earlier difference."
   },
   "damit_runner/core/hecras_fine.py": {
    "diff": "",
@@ -456,9 +458,9 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "31335e6ef5f65c760ffde7fd4b7cf00d5254950bd3923fe5f42456c153051d2d",
+   "diff": "81de0b39330fe451837c17557d7effa0e818ae51809189fcb746fac0d1f2e621",
    "from": "DamSafety_Runner/core/workflow.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): a 3DEP refill on a terrain with no CRS is refused (comment adapted: DamIT has no #397 check_tile, so the dem_refill hunk is not ported). Plus a DamIT-only audit fix 2026-11-20: _write_refine_entry / _amend_report warn when the report is missing or unreadable."
+   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): a 3DEP refill on a terrain with no CRS is refused (comment adapted: DamIT has no #397 check_tile, so the dem_refill hunk is not ported). Plus a DamIT-only audit fix 2026-11-20: _write_refine_entry / _amend_report warn when the report is missing or unreadable. Plus a DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): the pass checkpoint note, structures.json, the gauge CSVs and run_report.md go through _write_text (whole file or nothing); not yet in DamSafety."
   },
   "damit_runner/flood/breach.py": {
    "diff": "286c69caed0db7c6756cf9bc15e5cf15aa36b0798bb1ee5f40b5841c1f5b8065",

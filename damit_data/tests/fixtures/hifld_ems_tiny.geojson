@@ -1,0 +1,5 @@
+{
+ "type": "FeatureCollection",
+ "_note": "Synthetic, offline test fixture in the shape of a HIFLD FeatureServer query answer (f=geojson, outFields=*). Names and coordinates are made up; the field names follow the HIFLD layer.",
+ "features": []
+}

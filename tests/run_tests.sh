@@ -22,12 +22,12 @@ PY="${DAMIT_PYTHON:-python3}"
 QPY="${DAMIT_QGIS_PYTHON:-python3}"
 echo "== pure Python ($PY)"
 nice -n 19 $PY -m unittest -v damit_catalog.tests.test_catalog damit_screener.tests.test_workflow damit_screener.tests.test_pack_terrain \
-    damit_screener.tests.test_engine2d damit_runner.tests.test_rundam damit_runner.tests.test_flood damit_runner.tests.test_scenarios damit_runner.tests.test_followups damit_runner.tests.test_batch_workers damit_runner.tests.test_ckpt_sign damit_runner.tests.test_qa_maps_headless damit_runner.tests.test_engine_sync3 damit_runner.tests.test_sgc damit_runner.tests.test_anuga_passes damit_runner.tests.test_dam_point_line damit_runner.tests.test_zunit_hecras damit_runner.tests.test_nodata_true_hole damit_runner.tests.test_port_robustness tests.test_metadata tests.test_engine_parity tests.test_atlas14_shared damit_runner.tests.test_runner_min_install tests.test_true_hole_parity \
+    damit_screener.tests.test_engine2d damit_runner.tests.test_rundam damit_runner.tests.test_flood damit_runner.tests.test_scenarios damit_runner.tests.test_followups damit_runner.tests.test_batch_workers damit_runner.tests.test_ckpt_sign damit_runner.tests.test_qa_maps_headless damit_runner.tests.test_engine_sync3 damit_runner.tests.test_sgc damit_runner.tests.test_anuga_passes damit_runner.tests.test_dam_point_line damit_runner.tests.test_zunit_hecras damit_runner.tests.test_nodata_true_hole damit_runner.tests.test_port_robustness tests.test_metadata tests.test_engine_parity tests.test_atlas14_shared damit_runner.tests.test_runner_min_install tests.test_true_hole_parity damit_runner.tests.test_gdal_mode damit_runner.tests.test_atomicio \
     tests.test_hazard_screener_agree
 nice -n 19 $PY damit_hazard/tests/run_tests.py
 echo "== DamIT Core, Setup, Data, Hazard Lite, PMP: pure Python ($PY)"
 export DAMIT_SETTINGS="$SCRATCH/damit_settings.json"
-nice -n 19 $PY -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup damit_data.tests.test_data \
+nice -n 19 $PY -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup damit_data.tests.test_data damit_data.tests.test_providers \
     damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 tests.test_metadata_suite
 echo "== real QGIS, offscreen, scratch profile $QGIS_CUSTOM_CONFIG_PATH ($QPY)"
 nice -n 19 $QPY -m unittest -v tests.test_qgis_integration
