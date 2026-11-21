@@ -55,7 +55,7 @@ QA_RASTERS = {"depth": "hmax_ft.tif", "velocity": "vmax_fps.tif", "arrival": "ar
 VECTORS = {"depth_polygons": "Flood Polygons (Max Depth).geojson", "extent": "Flood Extent.geojson",
            "arrival_zones": "Arrival Zones.geojson"}
 
-DEFAULTS = dict(method=BR.METHOD_PIPING, tier=TIER_LISFLOOD, force_anuga=False, cell_m=10.0, manning=0.06,
+DEFAULTS = dict(method=BR.METHOD_PIPING, tier=TIER_LISFLOOD, force_anuga=False, cell_m=10.0, manning=0.05,
                 arrival_ft=0.1, edge_tol_ft=1.0, outflow_extend_pct=5.0, length_mi=4.0, half_width_mi=1.0,
                 step_mi=3.0, max_extent_mi=20.0, max_runs=6, max_wall_s=0.0, max_total_wall_s=0.0, duration_hr=0.0,
                 duration_max_hr=96.0, grid_refine=True, grid_check_cell_m=0.0, lisflood_exe="", anuga_python="",

@@ -421,7 +421,7 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `MANNING` | Manning's n (where there is no n raster) | number | 0.06 | - |
+| `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |
 | `NLCD_N` | NLCD: your own n for some classes, JSON like {"82": 0.05} | string | - | optional; advanced |
@@ -564,7 +564,7 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `MANNING` | Manning's n (where there is no n raster) | number | 0.06 | - |
+| `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |
 | `NLCD_N` | NLCD: your own n for some classes, JSON like {"82": 0.05} | string | - | optional; advanced |
@@ -766,7 +766,7 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `MANNING` | Manning's n (where there is no n raster) | number | 0.06 | - |
+| `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |
 | `NLCD_N` | NLCD: your own n for some classes, JSON like {"82": 0.05} | string | - | optional; advanced |
@@ -949,7 +949,7 @@ DEM_Z 'Detect from the raster' reads the band unit or vertical CRS; if neither i
 | `CELL` | Model cell size (m; 10 m = 32.8 ft default) | number | 10 | - |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off) | number | 0 | advanced |
-| `MANNING` | Manning's n | number | 0.06 | - |
+| `MANNING` | Manning's n | number | 0.05 | - |
 | `ARRIVAL_FT` | Arrival depth (ft) | number | 0.1 | - |
 | `EDGE_TOL_FT` | Extend the domain while the flood leaves an edge deeper than (ft) | number | 1 | - |
 | `OUTFLOW_EXTEND_PCT` | Also extend the edges the water leaves through (under the edge tolerance too) once this % of the breach volume has left the model (0 = off) | number | 5 | advanced |
@@ -1092,7 +1092,7 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `MANNING` | Manning's n (where there is no n raster) | number | 0.06 | - |
+| `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |
 | `NLCD_N` | NLCD: your own n for some classes, JSON like {"82": 0.05} | string | - | optional; advanced |

@@ -761,7 +761,7 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
                        "at 10 m and keep that as the record."))
         self._num("GRID_CHECK_CELL", "Finer grid: check run cell (m; 0 = off, 5 = a 5 m check)",
                   workflow.GRID_CHECK_CELL_M, minimum=0.0, advanced=True)
-        self._num("MANNING", "Manning's n (where there is no n raster)", 0.06, minimum=0.005,
+        self._num("MANNING", "Manning's n (where there is no n raster)", 0.05, minimum=0.005,
                   maximum=1.0)
         self.addParameter(QgsProcessingParameterRasterLayer(
             "MANNING_RASTER", "Manning's n raster (values of n)", optional=True))
@@ -1225,7 +1225,7 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         except Exception:
             pass
         n_default = self.parameterAsDouble(parameters, "MANNING", context) \
-            if has("MANNING") else 0.06
+            if has("MANNING") else 0.05
         kw = {}
         if man is None and nlcd is not None:
             try:

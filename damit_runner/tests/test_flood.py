@@ -238,7 +238,7 @@ class ModelRun(unittest.TestCase):
         self.assertTrue(setup["model_launched"])
         self.assertEqual(setup["model_dimension"], "2D")
         self.assertEqual(setup["parameters"]["cell_m"], 10.0)
-        self.assertEqual(setup["parameters"]["manning"], 0.06)
+        self.assertEqual(setup["parameters"]["manning"], 0.05)
         self.assertEqual(setup["parameters"]["method"], "piping")
         self.assertTrue(any("PMF_FT" in n for n in setup["parameter_notes"]))
         self.assertEqual(setup["run_notes"], setup["model"]["warnings"])         # 0.3.3: the run's warnings are in the setup too
@@ -252,7 +252,7 @@ class ModelRun(unittest.TestCase):
 
     def test_defaults_match_damsafety_runner(self):
         from damit_runner.flood import model as M
-        want = {"CELL": 10.0, "MANNING": 0.06, "ARRIVAL_FT": 0.1, "EDGE_TOL_FT": 1.0, "LENGTH_MI": 4.0,
+        want = {"CELL": 10.0, "MANNING": 0.05, "ARRIVAL_FT": 0.1, "EDGE_TOL_FT": 1.0, "LENGTH_MI": 4.0,
                 "HALF_WIDTH_MI": 1.0, "STEP_MI": 3.0, "MAX_EXTENT_MI": 20.0, "MAX_RUNS": 6, "DURATION_MAX_HR": 96.0,
                 "GRID_REFINE": True, "ANUGA_FINE": 100.0, "ANUGA_COARSE": 1000.0, "ANUGA_NEAR_MI": 1.0,
                 "ANUGA_BUFFER": 500.0, "PIPE_FRACTION": 0.5, "PIPE_DIA_FT": 0.5, "KEEP_FILES": True,

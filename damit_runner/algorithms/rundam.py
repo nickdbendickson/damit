@@ -41,8 +41,8 @@ except Exception:                                                 # noqa - no / 
 def _shared_start():
     """(METHOD index, Manning's n) the tool opens with: the shared defaults file
     (damit_core.lib.shared_defaults, DamIT Core 0.3.0) when DamIT Core is installed, else
-    (0 = piping Froehlich 2008, 0.06). A run dialog still changes either for one run."""
-    method_i, n = 0, 0.06
+    (0 = piping Froehlich 2008, 0.05; Runner 0.7.12, DamSafety 3.27.0). A run dialog still changes either for one run."""
+    method_i, n = 0, 0.05
     try:
         from damit_core.lib import shared_defaults as SD
         vals = SD.load().values
