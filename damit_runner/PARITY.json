@@ -186,8 +186,9 @@
    "from": "DamSafety_Runner/core/bridge_snap.py"
   },
   "damit_runner/core/builtin_lisflood.py": {
-   "diff": "965de37ac60489548317173417914fa56790fe16f0c6520a8277cf70c5f60b48",
-   "from": "DamSafety_Runner/core/builtin_lisflood.py"
+   "diff": "f3f015f1535c8608e7abc7b776d9f3f7c5a3f66df75d95f66abc9929e1d647cb",
+   "from": "DamSafety_Runner/core/builtin_lisflood.py",
+   "note": "0.7.13 already carries DWR 005aa147 (#432 inflow_lf_order, newer than the pin); the re-pin PR syncs it."
   },
   "damit_runner/core/cascade.py": {
    "diff": "",
