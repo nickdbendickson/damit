@@ -100,8 +100,12 @@ def basin_characteristics(workspace_id, state):
               "includeparameters": "true"}
     url = SS_API + "/parameters.json?" + urllib.parse.urlencode(params)
     data = _get(url, timeout=60)
+    # audit 2026-11-20: the live service (golden capture 2026-10-29) answers the bare
+    # parameter list [{code, value, ...}]; the wrapped {"parameters": [...]} shape is kept
+    # for older answers. Both are accepted; anything else answers {}.
+    params_list = data.get("parameters") if isinstance(data, dict) else data
     out = {}
-    for p in data.get("parameters", []):
+    for p in params_list if isinstance(params_list, list) else []:
         code = p.get("code", "")
         val = p.get("value")
         if code and val is not None:
@@ -126,13 +130,18 @@ def flood_frequency(basin_result, state=None):
     """
     ws = basin_result.get("workspaceID", "")
     if state is None:
+        # audit 2026-11-20: the live capture nests each featuregroup as [[{name, feature}]];
+        # accept both the flat {name, feature} and the nested shape when sniffing STABBR.
         feats = (basin_result.get("featurecollection") or [{}])
         for fc in feats:
-            for feat in fc.get("feature", {}).get("features", []):
-                st = (feat.get("properties") or {}).get("STABBR")
-                if st:
-                    state = st
-                    break
+            for group in (fc if isinstance(fc, list) else [fc]):
+                if not isinstance(group, dict):
+                    continue
+                for feat in group.get("feature", {}).get("features", []):
+                    st = (feat.get("properties") or {}).get("STABBR")
+                    if st:
+                        state = st
+                        break
     if not state or not ws:
         raise ValueError("Cannot determine state or workspace from basin result")
 
@@ -142,15 +151,36 @@ def flood_frequency(basin_result, state=None):
     data = _get(url, timeout=120)
 
     out = {"_raw": data, "area_sqmi": None}
+    # audit 2026-11-20: the live NSS services (captured 2026-10-29, golden fixtures in
+    # tests/fixtures_streamstats/) answer [[{statisticGroupName, regressionRegions:
+    # [{code, results: [{code: "PK2AEP", value: 667.0, ...}]}]}]]: lower-case keys and
+    # AEP codes, not the decommissioned shape of English "Peak Flood, 100-Year ..." names
+    # (the old parser below found nothing against the live answer and returned only
+    # area_sqmi). The new shape is parsed first; the old one kept for older cached answers.
     for group in data if isinstance(data, list) else [data]:
-        for stat in group.get("RegressionRegions", []):
-            for result in stat.get("Results", []):
-                name = result.get("Name", "")
-                val = result.get("Value")
-                # Map "Peak Flood, 100-Year Recurrence Interval" → Q100
-                for ri in (2, 5, 10, 25, 50, 100, 200, 500):
-                    if str(ri) in name and "peak" in name.lower():
+        if not isinstance(group, dict):
+            continue
+        regions = group.get("regressionRegions") or group.get("RegressionRegions") or []
+        for stat in regions if isinstance(regions, list) else []:
+            results = stat.get("results") or stat.get("Results") or []
+            for result in results if isinstance(results, list) else []:
+                code = str(result.get("code") or result.get("Code") or "")
+                val = result.get("value", result.get("Value"))
+                # "PK2AEP" -> Q50 (2% AEP = 50-year); "PK0_2AEP" -> Q500 (0.2% AEP)
+                if code.startswith("PK") and code.endswith("AEP") and val is not None:
+                    aep = code[2:-3].replace("_", ".")
+                    try:
+                        ri = int(round(100.0 / float(aep)))
+                    except ValueError:
+                        continue
+                    if ri in (2, 5, 10, 25, 50, 100, 200, 500):
                         out["Q{}".format(ri)] = val
+                else:
+                    name = str(result.get("name") or result.get("Name") or "")
+                    # the decommissioned shape: "Peak Flood, 100-Year Recurrence Interval" -> Q100
+                    for ri in (2, 5, 10, 25, 50, 100, 200, 500):
+                        if str(ri) in name and "peak" in name.lower() and val is not None:
+                            out["Q{}".format(ri)] = val
     # Basin area from parameters
     for p in basin_result.get("parameters", []):
         if isinstance(p, dict) and p.get("code") == "DRNAREA":
