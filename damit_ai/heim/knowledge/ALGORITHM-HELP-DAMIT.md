@@ -437,6 +437,7 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
@@ -580,6 +581,7 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
@@ -782,6 +784,7 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
@@ -1108,6 +1111,7 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
 | `STOP_CONFIRM` | Class-stop rule: stations that confirm the first station below the threshold (starting value 3 = ND Dam Hazard's default) | number | 3 | advanced |
