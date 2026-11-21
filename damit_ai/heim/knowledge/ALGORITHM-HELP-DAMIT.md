@@ -450,7 +450,7 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `LISFLOOD_MAX_WALL_S` | LISFLOOD-FP: longest wall-clock time for one run (s; 0 = automatic) | number | 0 | advanced |
 | `LISFLOOD_MAX_TOTAL_WALL_S` | LISFLOOD-FP: wall-clock budget for all runs (s; 0 = automatic) | number | 0 | advanced |
 | `DURATION_HR` | Simulation duration (hr), 0 = automatic | number | 0 | - |
-| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still moving | number | 96 | - |
+| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still spreading (v3.20.9: by area, at most 4 times per domain run) | number | 96 | - |
 | `WORK_CRS` | Model CRS (metric; empty = NAD83 UTM zone of the dam) | crs | - | optional; advanced |
 | `ANUGA_KEEP_FINE_MAXIMA` | ANUGA: keep native triangle maxima and fine GeoTIFFs | boolean | False | - |
 | `ANUGA_KEEP_FINE_SUPPORT` | ANUGA: also keep fine elevation and checkpoints | boolean | False | - |
@@ -593,7 +593,7 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `LISFLOOD_MAX_WALL_S` | LISFLOOD-FP: longest wall-clock time for one run (s; 0 = automatic) | number | 0 | advanced |
 | `LISFLOOD_MAX_TOTAL_WALL_S` | LISFLOOD-FP: wall-clock budget for all runs (s; 0 = automatic) | number | 0 | advanced |
 | `DURATION_HR` | Simulation duration (hr), 0 = automatic | number | 0 | - |
-| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still moving | number | 96 | - |
+| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still spreading (v3.20.9: by area, at most 4 times per domain run) | number | 96 | - |
 | `WORK_CRS` | Model CRS (metric; empty = NAD83 UTM zone of the dam) | crs | - | optional; advanced |
 | `ANUGA_KEEP_FINE_MAXIMA` | ANUGA: keep native triangle maxima and fine GeoTIFFs | boolean | False | - |
 | `ANUGA_KEEP_FINE_SUPPORT` | ANUGA: also keep fine elevation and checkpoints | boolean | False | - |
@@ -793,7 +793,7 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `LISFLOOD_MAX_WALL_S` | LISFLOOD-FP: longest wall-clock time for one run (s; 0 = automatic) | number | 0 | advanced |
 | `LISFLOOD_MAX_TOTAL_WALL_S` | LISFLOOD-FP: wall-clock budget for all runs (s; 0 = automatic) | number | 0 | advanced |
 | `DURATION_HR` | Simulation duration (hr), 0 = automatic | number | 0 | - |
-| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still moving | number | 96 | - |
+| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still spreading (v3.20.9: by area, at most 4 times per domain run) | number | 96 | - |
 | `WORK_CRS` | Model CRS (metric; empty = NAD83 UTM zone of the dam) | crs | - | optional; advanced |
 | `ANUGA_KEEP_FINE_MAXIMA` | ANUGA: keep native triangle maxima and fine GeoTIFFs | boolean | False | - |
 | `ANUGA_KEEP_FINE_SUPPORT` | ANUGA: also keep fine elevation and checkpoints | boolean | False | - |
@@ -1115,7 +1115,7 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `LISFLOOD_MAX_WALL_S` | LISFLOOD-FP: longest wall-clock time for one run (s; 0 = automatic) | number | 0 | advanced |
 | `LISFLOOD_MAX_TOTAL_WALL_S` | LISFLOOD-FP: wall-clock budget for all runs (s; 0 = automatic) | number | 0 | advanced |
 | `DURATION_HR` | Simulation duration (hr), 0 = automatic | number | 0 | - |
-| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still moving | number | 96 | - |
+| `DURATION_MAX_HR` | Longest simulated time (hr): the clock is lengthened up to this while the flood is still spreading (v3.20.9: by area, at most 4 times per domain run) | number | 96 | - |
 | `WORK_CRS` | Model CRS (metric; empty = NAD83 UTM zone of the dam) | crs | - | optional; advanced |
 | `ANUGA_KEEP_FINE_MAXIMA` | ANUGA: keep native triangle maxima and fine GeoTIFFs | boolean | False | - |
 | `ANUGA_KEEP_FINE_SUPPORT` | ANUGA: also keep fine elevation and checkpoints | boolean | False | - |
