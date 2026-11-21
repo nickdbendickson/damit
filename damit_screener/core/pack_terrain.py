@@ -114,7 +114,13 @@ def raster_bounds(path):
         from osgeo import gdal, osr
     except ImportError:
         return None
-    ds = gdal.Open(path)
+    # audit L-1 (2026-11-20): the same answer in both GDAL exception modes. Another plugin may have switched
+    # GDAL's process-wide exceptions on, and then Open / ImportFromWkt raise RuntimeError instead of returning
+    # None / an error code; both are read as "cannot be read" here, as in the default mode.
+    try:
+        ds = gdal.Open(path)
+    except RuntimeError:
+        ds = None
     if ds is None:
         return None
     try:
@@ -125,14 +131,14 @@ def raster_bounds(path):
         epsg = None
         wkt = ds.GetProjection()
         if wkt:
-            srs = osr.SpatialReference()
-            if srs.ImportFromWkt(wkt) == 0:
-                try:
+            try:
+                srs = osr.SpatialReference()
+                if srs.ImportFromWkt(wkt) == 0:
                     srs.AutoIdentifyEPSG()
                     code = srs.GetAuthorityCode(None)
                     epsg = int(code) if code else None
-                except Exception:
-                    epsg = None
+            except Exception:
+                epsg = None
         return (min(xs), min(ys), max(xs), max(ys), epsg)
     finally:
         ds = None

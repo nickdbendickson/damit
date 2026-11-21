@@ -10,12 +10,16 @@ import os
 
 import numpy as np
 
+from ..compat.gdalsafe import gdal_exceptions
 from .geom import Grid, NODATA
 
 
 def _gdal():
+    """(gdal, ogr, osr). audit L-1 (2026-11-20): no gdal.UseExceptions() here any more. It is process-wide in the
+    GDAL bindings QGIS ships and was never switched back, so the first DamIT flood read changed GDAL for QGIS and
+    every other plugin. The functions below that call GDAL run under gdal_exceptions() instead (exceptions on for
+    that call only, the previous mode put back afterwards), so a failed GDAL call still raises RuntimeError in them."""
     from osgeo import gdal, ogr, osr      # GDAL ships with QGIS
-    gdal.UseExceptions()
     return gdal, ogr, osr
 
 
@@ -30,6 +34,7 @@ def pam_off():
         gdal.SetConfigOption("GDAL_PAM_ENABLED", old)
 
 
+@gdal_exceptions()
 def srs_from(text):
     _, _, osr = _gdal()
     s = osr.SpatialReference()
@@ -44,6 +49,7 @@ def utm_wkt(lon, lat):
     return srs_from("EPSG:{}".format(epsg)).ExportToWkt()
 
 
+@gdal_exceptions()
 def dem_info(path):
     """{'wkt', 'bounds', 'cell', 'metric', 'z_unit', 'size'} of a DEM, read with PAM off."""
     gdal, _, osr = _gdal()
@@ -162,6 +168,7 @@ def z_scale(info, z_units="auto"):
     return resolve_z(info, z_units)[0]
 
 
+@gdal_exceptions()
 def transform_points(points, src, dst):
     _, _, osr = _gdal()
     ct = osr.CoordinateTransformation(srs_from(src), srs_from(dst))
@@ -183,6 +190,7 @@ def extent_in(path, dst_wkt):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+@gdal_exceptions()
 def read_window(path, bounds, cell, dst_wkt, z_units="auto", resample="bilinear"):
     """The DEM warped onto a north-up grid of `cell` m covering `bounds` (metres, dst_wkt); no-data is NaN; z in
     metres. Read with PAM off; nothing is written beside the source."""
@@ -211,6 +219,7 @@ def read_window(path, bounds, cell, dst_wkt, z_units="auto", resample="bilinear"
     return g
 
 
+@gdal_exceptions()
 def write_tif(path, grid_or_array, wkt, ref=None, nodata=NODATA):
     """A float32 GeoTIFF (no-data -9999); `ref` gives the georeferencing when an array is passed."""
     gdal, _, _ = _gdal()
@@ -232,6 +241,7 @@ def write_tif(path, grid_or_array, wkt, ref=None, nodata=NODATA):
     return path
 
 
+@gdal_exceptions()
 def read_tif(path):
     """(Grid, wkt) of a GeoTIFF (north-up), no-data as NaN, read with PAM off."""
     gdal, _, _ = _gdal()
@@ -248,6 +258,7 @@ def read_tif(path):
     return Grid(a, gt[0], gt[3], gt[1]), wkt
 
 
+@gdal_exceptions()
 def polygonize(path, classes, ref, wkt, layer="flood", field="class", labels=None):
     """Polygons of an integer class grid (0 = none) written to a new GeoJSON (in the model CRS, the 'crs'
     member set). `labels` maps a class to a text attribute."""
