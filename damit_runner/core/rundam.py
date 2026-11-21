@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.7.12: DamSafety port group C4 (default uniform Manning's n 0.06 -> 0.05); CHANGES RESULTS for runs that take the default
 0.7.11: DamSafety port group C3 (#401 Xu & Zhang methods and the peak-flow regression range); no change for existing methods
 0.7.10: DamSafety port group C2 (#397: a 3DEP refill with no ground is refused); changes results only for such refills
 0.7.9: DamSafety port group C1 (#383 area-based spread rule); CHANGES RESULTS (run length)
@@ -78,7 +79,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.7.11"
+VERSION = "0.7.12"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
@@ -257,7 +258,7 @@ def _write_readme(folder, setup):
 # DamSafety Runner algorithms.py RunDamAlgorithm): name -> (model key, default)
 MODEL_PARAMS = {
     "METHOD": ("method", 0), "TIER": ("tier", 0), "FORCE_ANUGA": ("force_anuga", False), "CELL": ("cell_m", 10.0),
-    "MANNING": ("manning", 0.06), "ARRIVAL_FT": ("arrival_ft", 0.1), "EDGE_TOL_FT": ("edge_tol_ft", 1.0),
+    "MANNING": ("manning", 0.05), "ARRIVAL_FT": ("arrival_ft", 0.1), "EDGE_TOL_FT": ("edge_tol_ft", 1.0),
     "OUTFLOW_EXTEND_PCT": ("outflow_extend_pct", 5.0), "LENGTH_MI": ("length_mi", 4.0),
     "HALF_WIDTH_MI": ("half_width_mi", 1.0), "STEP_MI": ("step_mi", 3.0), "MAX_EXTENT_MI": ("max_extent_mi", 20.0),
     "MAX_RUNS": ("max_runs", 6), "LISFLOOD_MAX_WALL_S": ("max_wall_s", 0.0),

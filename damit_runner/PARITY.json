@@ -110,9 +110,9 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "0f0b7991123f6765094861e2a2c1e869e7a37fb6fa03f3171c393e50c9a20f0b",
+   "diff": "9ac19c51a08b7b3a764149b580fe22b921aa25c42dd3cf6eb9ef973280be4ca2",
    "from": "DamSafety_Runner/algorithms.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins e2725333 (#412): BatchAlgorithm lifts the open-file limit (import adapted to ..core). The other DamSafety main changes to algorithms.py are not ported yet (RUNNER_PORT_PLAN.md). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): bd9f159d (help text) ported ahead of synced_to. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ_DAM_TYPE / XZ_ERODIBILITY parameters, _xz_overrides); DamIT keeps its popup_logic ImportError fallback."
+   "note": "Ported ahead of synced_to from DWR_Plugins e2725333 (#412): BatchAlgorithm lifts the open-file limit (import adapted to ..core). The other DamSafety main changes to algorithms.py are not ported yet (RUNNER_PORT_PLAN.md). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): bd9f159d (help text) ported ahead of synced_to. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ_DAM_TYPE / XZ_ERODIBILITY parameters, _xz_overrides); DamIT keeps its popup_logic ImportError fallback. Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f (MANNING default) ported ahead of synced_to; the DAM_POINT_CHECK parameter of the same hunk waits for group D."
   },
   "damit_runner/compat/nodata_sample.py": {
    "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
@@ -203,9 +203,9 @@
    "from": "DamSafety_Runner/core/ckpt_sign.py"
   },
   "damit_runner/core/conditioning.py": {
-   "diff": "042717a01a1363930f3a75463105f73a1a86994a4aab4b1d1b115e831f8a8286",
+   "diff": "d403bb14d309a20760c9829bb93f98239a81abc8c405e19f405eaf5e254a325d",
    "from": "DamSafety_Runner/core/conditioning.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 07ab314c (S6a channel_width_warning)."
+   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 07ab314c (S6a channel_width_warning). Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f ported ahead of synced_to."
   },
   "damit_runner/core/consequences.py": {
    "diff": "",
@@ -256,9 +256,9 @@
    "note": "Ported ahead of synced_to from DWR_Plugins 07ab314c (Runner 3.23.0): the CREST_C_US citation comment. The file then matches DamSafety main except DamIT's own differences."
   },
   "damit_runner/core/gdal_io.py": {
-   "diff": "aadcb998cb400d8e16b217e16a52fb2929188079a1e3f85024cfe04a6ec0148b",
+   "diff": "0ae5b6a06034c1be22a889aa55402a0b8a321d450ff1f7fca187c64d3779162c",
    "from": "DamSafety_Runner/core/gdal_io.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): GdalTerrain refuses a terrain with no CRS. Not accepted drift: this hunk is identical to DamSafety a37e396a; re-recording at a synced_to that includes #416 should leave only DamIT naming differences. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): 6023cc1b (H9 Manning coverage count) ported ahead of synced_to; DamIT reads NLCD through data_conventions.nlcd_to_manning (DamSafety: nd_data)."
+   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): GdalTerrain refuses a terrain with no CRS. Not accepted drift: this hunk is identical to DamSafety a37e396a; re-recording at a synced_to that includes #416 should leave only DamIT naming differences. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): 6023cc1b (H9 Manning coverage count) ported ahead of synced_to; DamIT reads NLCD through data_conventions.nlcd_to_manning (DamSafety: nd_data). Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f ported ahead of synced_to."
   },
   "damit_runner/core/geom2d.py": {
    "diff": "",
@@ -390,9 +390,9 @@
    "from": "DamSafety_Runner/core/refine.py"
   },
   "damit_runner/core/report_docx.py": {
-   "diff": "6fe13229b1783a3cff97a9e991f9c76ab333ce4f2398d0115c173aad24a1966e",
+   "diff": "bf6b0afdb2166de8ed821fa2a99da52036135c18937f71481c3b0502a55f11c5",
    "from": "DamSafety_Runner/core/report_docx.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4a/H4b/A5 run-built assumptions), 07ab314c (H12 tailwater limitation, S7 crossings sentence). DamIT drops the ND 5.1.1 citation from the starting-pool basis text (DamIT is multi-state). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): bd9f159d (spread-rule report lines) ported ahead of synced_to. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ method text, regression range) ported ahead of synced_to."
+   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4a/H4b/A5 run-built assumptions), 07ab314c (H12 tailwater limitation, S7 crossings sentence). DamIT drops the ND 5.1.1 citation from the starting-pool basis text (DamIT is multi-state). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): bd9f159d (spread-rule report lines) ported ahead of synced_to. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ method text, regression range) ported ahead of synced_to. Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f / 2863c0a1 display fallbacks ported ahead of synced_to."
   },
   "damit_runner/core/report_metrics.py": {
    "diff": "44e4b9e61c5defbafde3ef3411336429bb690b1a9d5f2c7e90a60edc5e5057a1",
@@ -469,9 +469,9 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "cb2b3d2d65b5b2a3252090671e52c513def19fe931d668e55ecc56c3be2a370a",
+   "diff": "1efea3284356a722096c86aea7aac93a44dec97175888e59f053ca52a7c67acb",
    "from": "DamSafety_Runner/core/workflow.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): a 3DEP refill on a terrain with no CRS is refused (comment adapted: DamIT has no #397 check_tile, so the dem_refill hunk is not ported). Plus a DamIT-only audit fix 2026-11-20: _write_refine_entry / _amend_report warn when the report is missing or unreadable. Plus a DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): the pass checkpoint note, structures.json, the gauge CSVs and run_report.md go through _write_text (whole file or nothing); not yet in DamSafety. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4b assumptions in run_report.md, H9 manning_coverage), 07ab314c (S7 crossing_check, H6-1 on_dam warning without the DWR wording, H12 tailwater_breach_warning, S6a burn width warning) and 6dfd42cd (S3 dem_edits record / raster / layer). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d (spread_rule, extension cap, lower-bound arrival flag). Runner 0.7.10 (port group C2, #397): 0ca91de6 check_tile after the 3DEP download, kept after DamIT's own no-CRS refusal (audit fix I). Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ overrides) ported ahead of synced_to."
+   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): a 3DEP refill on a terrain with no CRS is refused (comment adapted: DamIT has no #397 check_tile, so the dem_refill hunk is not ported). Plus a DamIT-only audit fix 2026-11-20: _write_refine_entry / _amend_report warn when the report is missing or unreadable. Plus a DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): the pass checkpoint note, structures.json, the gauge CSVs and run_report.md go through _write_text (whole file or nothing); not yet in DamSafety. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4b assumptions in run_report.md, H9 manning_coverage), 07ab314c (S7 crossing_check, H6-1 on_dam warning without the DWR wording, H12 tailwater_breach_warning, S6a burn width warning) and 6dfd42cd (S3 dem_edits record / raster / layer). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d (spread_rule, extension cap, lower-bound arrival flag). Runner 0.7.10 (port group C2, #397): 0ca91de6 check_tile after the 3DEP download, kept after DamIT's own no-CRS refusal (audit fix I). Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ overrides) ported ahead of synced_to. Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f / 2863c0a1 (RunSettings.manning_n) ported ahead of synced_to."
   },
   "damit_runner/flood/breach.py": {
    "diff": "34ecff47b05f68842068a6b6c8fdb19b024a44d76543d1dba41ee83373db1b8c",

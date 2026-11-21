@@ -80,6 +80,23 @@ class RunnerSharedDefaultsTest(unittest.TestCase):
             self.assertEqual(e["used"]["breach_method"], "xu_zhang2009", e["used"])
             json.dumps(e)
 
+    def test_suite_default_manning_n_is_0_05(self):
+        """Runner 0.7.12 (DamSafety 3.27.0, d4ba451f / 2863c0a1): the uniform Manning's n for cells with no n raster /
+        NLCD class is 0.05 (was 0.06) everywhere a run can take it by default; an explicit value still wins."""
+        from damit_runner.core import conditioning as cond
+        from damit_runner.core import data_conventions as dc
+        from damit_runner.flood import model as M
+        from damit_runner.algorithms import rundam as RA
+        with open(SD.shipped_path(), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["values"]["manning_n"], 0.05)      # damit_core/data/defaults.json
+        self.assertEqual(wf.RunSettings().manning_n, 0.05)
+        self.assertEqual(dc.manning_lut()["default"], 0.05)
+        self.assertEqual(dc.nlcd_to_manning([999])[0], 0.05)
+        self.assertEqual(cond.ConditionedTerrain(None, None).default_n, 0.05)
+        self.assertEqual(dc.manning_lut(default=0.08)["default"], 0.08)
+        self.assertEqual(M.DEFAULTS["manning"], 0.05)
+        self.assertEqual(RA._shared_start()[1], 0.05)
+
     def test_start_pool_is_recorded_and_follows_the_file(self):
         """Runner 0.5.0: the sunny-day starting pool is a choice (START_POOL). The record says which pool the
         run started at, and the tool opens at the shared file's value."""
@@ -90,7 +107,7 @@ class RunnerSharedDefaultsTest(unittest.TestCase):
                 br.set_start_pool(d, kind, wse, 1100.0)
             return d
         st = types.SimpleNamespace(scenario=wf.SCENARIO_SUNNY, breach_method=br.METHOD_PIPING,
-                                   manning_n=0.06, flood=None)
+                                   manning_n=0.05, flood=None)
         warnings, log = [], []
         e = wf._assumptions(st, "0.9", log.append, warnings, dam=dam(br.START_NORMAL, 1090.0))
         self.assertEqual(e["used"]["sunny_day_start_pool"], "normal_pool")
@@ -100,7 +117,7 @@ class RunnerSharedDefaultsTest(unittest.TestCase):
         self.assertIsNone(e["used"]["sunny_day_start_pool"])
         self.assertTrue(any("7.00 ft below the top of dam" in x for x in log), log)
         st_nb = types.SimpleNamespace(scenario=wf.SCENARIO_FLOOD_NO_BREACH, breach_method=br.METHOD_PIPING,
-                                      manning_n=0.06, flood=None)
+                                      manning_n=0.05, flood=None)
         e = wf._assumptions(st_nb, "0.9", [].append, [], dam=dam())
         self.assertNotIn("sunny_day_start_pool", e["used"])
         self.assertIsNone(e["used"]["breach_method"])
