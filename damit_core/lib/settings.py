@@ -96,10 +96,6 @@ def set(key, value):  # noqa: A001 - mirrors QgsSettings
     _write_json(path, d)
 
 
-def all_settings():
-    return {k: get(k) for k in KEYS}
-
-
 def fill_empty(values):
     """Set each key of ``values`` only where the stored value is empty. Returns the keys set."""
     done = []
