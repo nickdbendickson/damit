@@ -9,11 +9,14 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
+import shutil
 import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from xml.sax.saxutils import escape, unescape
 
 THREEDEP = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage"
 NHD = "https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer"
@@ -79,6 +82,65 @@ def data_dem(folder: str | None) -> str | None:
     return str(sorted(found)[0].resolve())
 
 
+#: <work>/screen_dem: the chosen DEM alone (a link to it, or a copy of a VRT with its tiles made absolute).
+STAGED_DEM_DIR = "screen_dem"
+_DEM_SIDECARS = (".aux.xml", ".ovr", ".msk")
+_WORLD_FILES = (".tfw", ".tifw", ".wld", ".prj")
+
+
+def _place(src: Path, dst: Path) -> None:
+    """dst = src: a symlink, else a hard link, else a copy (Windows without symlink rights)."""
+    for make in (lambda: os.symlink(src, dst), lambda: os.link(src, dst)):
+        try:
+            make()
+            return
+        except (OSError, NotImplementedError):
+            continue
+    shutil.copy2(src, dst)
+
+
+def _vrt_with_absolute_sources(vrt: Path) -> str | None:
+    """The VRT's text with every relativeToVRT="1" source made absolute (so it still reads its tiles from another
+    folder), or None when it has no relative source (a plain link then works)."""
+    try:
+        text = vrt.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    pattern = re.compile(r'(<SourceFilename[^>]*?)relativeToVRT="1"([^>]*>)([^<]*)(</SourceFilename>)')
+    if not pattern.search(text):
+        return None
+
+    def absolute(m: re.Match) -> str:
+        src = (vrt.resolve().parent / unescape(m.group(3).strip())).resolve()
+        return f'{m.group(1)}relativeToVRT="0"{m.group(2)}{escape(str(src))}{m.group(4)}'
+
+    return pattern.sub(absolute, text)
+
+
+def stage_dem_folder(work: Path, dem_file: str) -> Path:
+    """A folder that holds the chosen DEM and nothing else, for settings that want a DEM FOLDER (local_dem with
+    terrain_source 1). <work>/screen_dem is emptied of what an earlier run put there and gets: the DEM (a link; a
+    VRT with relative tile paths is written out with absolute ones) and its own sidecars (.aux.xml, .ovr, world
+    file). The DEM's own folder is only read."""
+    dem = Path(dem_file).resolve()
+    folder = Path(work) / STAGED_DEM_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    if dem.parent == folder.resolve():
+        return folder                       # the DEM chosen IS the staged one: keep it as it is
+    for old in folder.iterdir():
+        if old.is_symlink() or old.is_file():
+            old.unlink()
+    rewritten = _vrt_with_absolute_sources(dem) if dem.suffix.lower() == ".vrt" else None
+    if rewritten is not None:
+        (folder / dem.name).write_text(rewritten, encoding="utf-8")
+    else:
+        _place(dem, folder / dem.name)
+    for side in [dem.with_name(dem.name + ext) for ext in _DEM_SIDECARS] + [dem.with_suffix(ext) for ext in _WORLD_FILES]:
+        if side.is_file() and not (folder / side.name).exists():
+            _place(side, folder / side.name)
+    return folder
+
+
 def write_settings(
     work: Path,
     data_folder: str | None,
@@ -100,7 +162,11 @@ def write_settings(
         data["suite_folder"] = data_folder
     if dem_file:
         data["terrain_source"] = 1
-        data["local_dem"] = str(Path(dem_file).resolve().parent)
+        # The local DEM FOLDER holds this DEM only (stage_dem_folder): a DamSafety-style screener's tool 2 mosaics
+        # every raster in that folder, and the DEM's own folder can hold model results (hmax, vmax, arrival) next to
+        # it (DamIT Desk install test 2026-11-21: inputs/ had hmax_ft.tif, vmax_fps.tif, arr_hr.tif and a second DEM
+        # beside cass_10m_3dep.vrt).
+        data["local_dem"] = str(stage_dem_folder(work, dem_file))
         # Growing clips must use the same local / pack DEM; the screening default (1) is a fresh 3DEP download.
         data["larger_clips"] = 2
         # DamIT Screener's key: the terrain raster itself.

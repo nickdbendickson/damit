@@ -29,6 +29,23 @@ describe("damit_crest desktop bundle", () => {
     assert.deepEqual(stale.map(([rel]) => rel), []);
   });
 
+  it("lays the rail's situation strip out by its own width, so its four facts never overlap (2026-11-21)", () => {
+    // The strip sits in the 210 px left rail of the three-pane layout; four columns chosen on the window width (xl:)
+    // ran "Swa… / PIPELINE 8 steps" into each other. Two columns unless the strip itself is 28rem wide.
+    const desk = readFileSync(join(repo, "src", "components", "crest", "desk.tsx"), "utf8");
+    const strip = desk.slice(desk.indexOf("function SituationStrip("), desk.indexOf("/** The inspector panel"));
+    assert.ok(strip.length > 100, "SituationStrip found");
+    assert.doesNotMatch(strip, /\bxl:grid-cols-4\b/);
+    assert.match(strip, /"@container /);
+    assert.match(strip, /grid-cols-2 [^"]*@md:grid-cols-4/);
+    const css = readdirSync(join(web, "assets"))
+      .filter((f) => f.endsWith(".css"))
+      .map((f) => readFileSync(join(web, "assets", f), "utf8"))
+      .join("\n");
+    assert.match(css, /\.\\@container\{container-type:inline-size/);
+    assert.match(css, /@container \(width>=28rem\)\{\.\\@md\\:grid-cols-4\{/);
+  });
+
   it("runs the shared engine: DWR-2801 H 27.50 / V 1615.5 / SA 154.5 -> 28,671 cfs", async () => {
     const m = await import(pathToFileURL(join(web, "assets", "engine.js")).href);
     const s = m.SAMPLE_DAMS.find((x) => x.nid === "ND00199");

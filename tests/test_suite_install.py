@@ -529,5 +529,141 @@ class TestSandbox(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f + ": " + r.stdout + r.stderr)
 
 
+
+FAKE_PACKAGER = """import os, sys, zipfile
+out = sys.argv[1]
+os.makedirs(out, exist_ok=True)
+for name in os.environ.get("FAKE_PLUGINS", "").split():
+    path = os.path.join(out, name + "_0_1_0.zip")
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(name + "/metadata.txt", "[general]\\nversion=0.1.0\\n")
+    print("  {} v0.1.0: 1 files, 1 KB -> {}".format(name, os.path.basename(path)))
+"""
+
+
+@unittest.skipUnless(shutil.which("bash"), "no bash")
+@unittest.skipIf(os.name == "nt", "install-all.sh is the Linux/macOS installer")
+class TestCheckoutInstall(unittest.TestCase):
+    """Install test 2026-11-21: install-all.sh run from a git checkout of damit (no plugins/, no lisflood/)
+    installed no plugin, warned "no zip for ..." ten times, and still ended "Done, with warnings" with exit 0.
+    A fake checkout here: the installer must build the DamIT zips, or stop with a clear error and exit 1, before
+    anything is installed."""
+
+    def make_tree(self, t, packager=True):
+        repo = os.path.join(t, "repo")
+        os.makedirs(os.path.join(repo, "suite_install"))
+        shutil.copy(os.path.join(SI, "install-all.sh"), os.path.join(repo, "suite_install"))
+        os.makedirs(os.path.join(repo, "damit_core"))
+        os.makedirs(os.path.join(repo, "scripts"))
+        if packager:
+            with open(os.path.join(repo, "scripts", "package_plugins.py"), "w") as fh:
+                fh.write(FAKE_PACKAGER)
+        env_dir = os.path.join(t, "qgisenv")
+        os.makedirs(os.path.join(env_dir, "conda-meta"))
+        home = os.path.join(t, "home")
+        os.makedirs(home)
+        return repo, env_dir, home
+
+    def run_it(self, repo, env_dir, home, sbx, *extra, plugins=""):
+        env = {"HOME": home, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C", "FAKE_PLUGINS": plugins}
+        return subprocess.run(["bash", os.path.join(repo, "suite_install", "install-all.sh"), "--sandbox", sbx,
+                               "--qgis-env", env_dir, "--no-ai", "--offline", *extra],
+                              env=env, capture_output=True, text=True, timeout=120)
+
+    def test_damsafety_without_zips_stops_with_exit_1_and_says_no_damsafety(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            repo, env_dir, home = self.make_tree(t)
+            r = self.run_it(repo, env_dir, home, os.path.join(t, "sb"))
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            out = r.stdout + r.stderr   # the installer tees stderr into stdout
+            self.assertIn("no DamSafety plugin zips", out)
+            self.assertIn("--no-damsafety", out)
+            self.assertIn("git checkout of damit", out)
+            self.assertNotIn("Done", r.stdout)
+            self.assertFalse(os.path.isdir(os.path.join(t, "sb", "qgis_profile")), "nothing installed")
+
+    def test_a_checkout_builds_the_damit_zips(self):
+        import tempfile
+        names = "damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
+        with tempfile.TemporaryDirectory() as t:
+            repo, env_dir, home = self.make_tree(t)
+            sbx = os.path.join(t, "sb")
+            r = self.run_it(repo, env_dir, home, sbx, "--no-damsafety", plugins=names)
+            out = r.stdout + r.stderr
+            self.assertIn("building the DamIT plugin zips from " + os.path.realpath(repo), out)
+            built = sorted(os.listdir(os.path.join(sbx, "plugins-from-checkout", "damit")))
+            self.assertEqual(len([b for b in built if b.endswith(".zip")]), 10, built)
+            self.assertIn("    damit_core 0.1.0", r.stdout)
+            self.assertNotIn("no DamIT plugin zips", out)
+            # (the fake QGIS env stops it later, at "QGIS does not import"; that is not what is tested here)
+
+    def test_no_zips_after_the_build_stops_with_exit_1(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            repo, env_dir, home = self.make_tree(t)
+            r = self.run_it(repo, env_dir, home, os.path.join(t, "sb"), "--no-damsafety", plugins="")
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            out = r.stdout + r.stderr
+            self.assertIn("no DamIT plugin zips", out)
+            self.assertIn("python3 scripts/package_plugins.py suite_install/plugins/damit", out)
+
+    def test_a_missing_plugin_ends_in_an_error_not_done(self):
+        sh = slurp(SI, "install-all.sh")
+        self.assertIn('MISSING_PLUGINS="$MISSING_PLUGINS $p"', sh)
+        a = sh.index('if [ -n "$MISSING_PLUGINS" ]; then')
+        self.assertLess(a, sh.index('say "Done$('))
+        self.assertIn('die "not installed:$MISSING_PLUGINS.', sh[a:a + 300])
+
+
+class TestLisfloodMessages(unittest.TestCase):
+    """Install test 2026-11-21: --qgis-env from a checkout said LISFLOOD-FP was skipped because "the shipped one did
+    not pass its check"; a checkout ships none (tools/make_package.sh adds lisflood/), and nothing said so in the
+    README. The real reason is named now, loudly, repeated in INSTALLED.txt, and --lisflood-exe is the way around."""
+
+    def test_the_real_reason_is_named_and_the_old_wording_is_gone(self):
+        sh = slurp(SI, "install-all.sh")
+        self.assertNotIn("the shipped one did not pass its check", sh)
+        self.assertIn("this folder ships no LISFLOOD-FP", sh)
+        self.assertIn("a git checkout has none", sh)
+        self.assertIn('[ -z "$LF_WHY" ] || echo "  NO LISFLOOD-FP: $LF_WHY"', sh)
+        self.assertIn("--lisflood-exe) LF_EXE_ARG=", sh)
+        readme = slurp(SI, "README.md")
+        self.assertIn("--lisflood-exe", readme)
+        self.assertIn("no LISFLOOD-FP binary", readme)
+
+    @unittest.skipUnless(shutil.which("bash"), "no bash")
+    def test_lisflood_exe_is_checked_before_it_is_used(self):
+        import tempfile
+        sh = slurp(SI, "install-all.sh")
+        lf_ok = next(l for l in sh.splitlines() if l.startswith("lf_ok() {"))
+        with tempfile.TemporaryDirectory() as t:
+            good = os.path.join(t, "lisflood")
+            with open(good, "w") as fh:
+                fh.write('#!/bin/sh\n# inittm_depth nd-breach-runner: SGC arrival depth\necho "LISFLOOD-FP 8.3.0"\n')
+            os.chmod(good, 0o755)
+            bad = os.path.join(t, "old")
+            with open(bad, "w") as fh:
+                fh.write('#!/bin/sh\n# inittm_depth\necho "LISFLOOD-FP 8.2"\n')
+            os.chmod(bad, 0o755)
+            code = 'LF_SGC_MARK="nd-breach-runner: SGC arrival depth"\n' + lf_ok + '\nlf_ok "$1" && echo OK || echo NO'
+            self.assertEqual(subprocess.run(["bash", "-c", code, "x", good], capture_output=True, text=True).stdout.strip(), "OK")
+            self.assertEqual(subprocess.run(["bash", "-c", code, "x", bad], capture_output=True, text=True).stdout.strip(), "NO")
+
+
+class TestWindowsCheckoutInstall(unittest.TestCase):
+    """The same checkout case in install-all-windows.ps1: a set with no zips stops before installing anything,
+    and a plugin that is missing at the self-check ends in an error (exit 1), not "Done, with warnings"."""
+
+    def test_missing_zips_stop_the_windows_installer(self):
+        ps = slurp(SI, "install-all-windows.ps1")
+        self.assertIn("function Assert-Zips", ps)
+        self.assertIn("python scripts\\package_plugins.py suite_install\\plugins\\damit", ps)
+        self.assertIn("-NoDamSafety", ps[ps.index("function Assert-Zips"):])
+        self.assertIn("$MissingPlugins", ps)
+        a = ps.index("if ($MissingPlugins.Count)")
+        self.assertLess(a, ps.index("Say $(if ($Fail)"))
+
+
 if __name__ == "__main__":
     unittest.main()
