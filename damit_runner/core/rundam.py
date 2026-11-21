@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.7.7: DamSafety port group A (#394 cancel pid check, OMP #15 hint, #412 open-file limit); no number changes
 0.7.6: audit L-1: the flood package (flood/rasters.py) no longer switches GDAL exceptions on process-wide; no number changes
 0.7.5: run_setup.json and README_run.md are written whole or not at all (core/atomicio, audit 2026-11-19, damit #134);
 no number changes
@@ -73,7 +74,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.7.6"
+VERSION = "0.7.7"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

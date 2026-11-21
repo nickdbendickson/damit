@@ -109,8 +109,9 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "e24b6162904205d03485bed0e361c76f88c990be273d85e083951766efc6f28e",
-   "from": "DamSafety_Runner/algorithms.py"
+   "diff": "47ff09c486d571851dbe72578bcd52d3fcb4155652d3d70c676b5a1283fad006",
+   "from": "DamSafety_Runner/algorithms.py",
+   "note": "Ported ahead of synced_to from DWR_Plugins e2725333 (#412): BatchAlgorithm lifts the open-file limit (import adapted to ..core). The other DamSafety main changes to algorithms.py are not ported yet (RUNNER_PORT_PLAN.md)."
   },
   "damit_runner/compat/nodata_sample.py": {
    "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
@@ -137,8 +138,9 @@
    "from": "DamSafety_Runner/core/anuga_crest.py"
   },
   "damit_runner/core/anuga_detach.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/anuga_detach.py"
+   "diff": "a2681ef4d289e9793d8c8ff9b69f536feb1b89d8de3db5ee69f6c151fe3a3c5b",
+   "from": "DamSafety_Runner/core/anuga_detach.py",
+   "note": "Ported ahead of synced_to from DWR_Plugins 8a153696 (#394): signalable() and the Attached._signal re-check (a cancel never signals a cross-host, dead or recycled pid). The file is now byte-identical to DamSafety main de2c93ad."
   },
   "damit_runner/core/anuga_dtdiag.py": {
    "diff": "",
@@ -149,8 +151,9 @@
    "from": "DamSafety_Runner/core/anuga_fine_maxima.py"
   },
   "damit_runner/core/anuga_model.py": {
-   "diff": "df864582acee166dd5dace6ea71f97c0efcc58dd0ca6fe5343bc9aa7ce994bb5",
-   "from": "DamSafety_Runner/core/anuga_model.py"
+   "diff": "a47fe468b608f2502bfdf0e0b500c2f12fce4136998e4535c981a547af11161c",
+   "from": "DamSafety_Runner/core/anuga_model.py",
+   "note": "Ported ahead of synced_to from DWR_Plugins 8d43bf62 (Runner 3.20.7): omp_duplicate_hint for 'OMP: Error #15'. Otherwise only DamIT's own import / wording differences."
   },
   "damit_runner/core/anuga_slowcheck.py": {
    "diff": "",
@@ -189,8 +192,9 @@
    "from": "DamSafety_Runner/core/cascade.py"
   },
   "damit_runner/core/chain.py": {
-   "diff": "d35e10f1773b4ab5fa878c627e8dd309331dd5fd8142d6cf36098827842716f4",
-   "from": "DamSafety_Runner/core/chain.py"
+   "diff": "1ddca4624659a9d799b3fd5df3e69f83751f71698121931a12c4683be8b20540",
+   "from": "DamSafety_Runner/core/chain.py",
+   "note": "Ported ahead of synced_to from DWR_Plugins e2725333 (#412): raise_open_files / open_files_note. The #392 dam-line hunks of DamSafety main are not ported yet (RUNNER_PORT_PLAN.md group D)."
   },
   "damit_runner/core/ckpt_sign.py": {
    "diff": "1a7825762893179ee92eb1e130d3bade9ccf9e3024ab9cead7b6c83d53e2155a",
@@ -242,8 +246,9 @@
    "from": "DamSafety_Runner/core/estimate.py"
   },
   "damit_runner/core/flood.py": {
-   "diff": "d5dc0727b966f52413a2e62a927c5028584a2d8b0fe5b9113a08327647f49bf3",
-   "from": "DamSafety_Runner/core/flood.py"
+   "diff": "1bf349e0aabc309f42faa6652337e87422ca5285e68413186062eb4d31d7cfe3",
+   "from": "DamSafety_Runner/core/flood.py",
+   "note": "Ported ahead of synced_to from DWR_Plugins 07ab314c (Runner 3.23.0): the CREST_C_US citation comment. The file then matches DamSafety main except DamIT's own differences."
   },
   "damit_runner/core/gdal_io.py": {
    "diff": "85f96ab1641d730b18024d07c4b8c2aadd3bd79e26b2da0923bca392f342f2fa",
