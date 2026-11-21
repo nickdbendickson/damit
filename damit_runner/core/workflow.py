@@ -2708,8 +2708,8 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
                         # CRS; an untagged terrain passes crs=None and fetch_3dep then defaults to
                         # EPSG:5070 - the Edenville-Sanford 2020 storm warped off-map and left a 0 m
                         # pit below Midland. Refuse at the refill with the real cause (covers the
-                        # no-CRS ASCII path too), rather than defaulting. (DamSafety's #397 check_tile,
-                        # which refuses a tile that carries a CRS but holds no ground, is not in DamIT yet.)
+                        # no-CRS ASCII path too), rather than defaulting. DamSafety's #397 check_tile
+                        # (Runner 0.7.10) then refuses a tile that carries a CRS but holds no ground.
                         _dem_crs = getattr(dem, "crs_wkt", None)
                         if not _dem_crs:
                             raise ValueError(
@@ -2717,6 +2717,7 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
                                 "reprojected into it without silently defaulting to EPSG:5070; tag "
                                 "the DEM's CRS, e.g. gdal_edit.py -a_srs EPSG:26914 <dem>")
                         dem_refill.fetch_3dep(box, cs, tile, crs=_dem_crs)
+                        dem_refill.check_tile(tile)      # 3.20.14: no 0 m pit from a tile of no ground
                         refill_paths.append(tile)
                         refilled = True
                         # v3.20.9: the next pass re-runs this domain run on the refilled DEM:

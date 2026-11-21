@@ -238,9 +238,9 @@
    "from": "DamSafety_Runner/core/dashboard_html.py"
   },
   "damit_runner/core/dem_refill.py": {
-   "diff": "55be54d047d2647be1c23220ee08dbf34bd160e1ef5c27224fd949ad85d000ef",
+   "diff": "5f4f64338745e68ad2224c168d1656f520f6821f9aa524b44b82987753e5c4a3",
    "from": "DamSafety_Runner/core/dem_refill.py",
-   "note": "DamIT-only edit from damit #149 (GDAL dataset released in fill_grid; no number change), recorded in Runner 0.7.8."
+   "note": "DamIT-only edit from damit #149 (GDAL dataset released in fill_grid; no number change), recorded in Runner 0.7.8. Runner 0.7.10 (port group C2, #397): ported ahead of synced_to from DWR_Plugins 0ca91de6 (fetch_3dep asks noData, check_tile refuses a tile of no ground; opens through compat.gdalsafe, DamSafety: damsuite.gdalsafe)."
   },
   "damit_runner/core/dem_zunit.py": {
    "diff": "",
@@ -469,9 +469,9 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "a8403f8cb5cf9a1ec8b23ce8e9170862872e7200647655b0de940d5a87b29ea2",
+   "diff": "ab33a77787dd2c66d1c7a953c357200e436b756f886b5a5bcc5ceb913b684a5f",
    "from": "DamSafety_Runner/core/workflow.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): a 3DEP refill on a terrain with no CRS is refused (comment adapted: DamIT has no #397 check_tile, so the dem_refill hunk is not ported). Plus a DamIT-only audit fix 2026-11-20: _write_refine_entry / _amend_report warn when the report is missing or unreadable. Plus a DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): the pass checkpoint note, structures.json, the gauge CSVs and run_report.md go through _write_text (whole file or nothing); not yet in DamSafety. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4b assumptions in run_report.md, H9 manning_coverage), 07ab314c (S7 crossing_check, H6-1 on_dam warning without the DWR wording, H12 tailwater_breach_warning, S6a burn width warning) and 6dfd42cd (S3 dem_edits record / raster / layer). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d (spread_rule, extension cap, lower-bound arrival flag)."
+   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): a 3DEP refill on a terrain with no CRS is refused (comment adapted: DamIT has no #397 check_tile, so the dem_refill hunk is not ported). Plus a DamIT-only audit fix 2026-11-20: _write_refine_entry / _amend_report warn when the report is missing or unreadable. Plus a DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): the pass checkpoint note, structures.json, the gauge CSVs and run_report.md go through _write_text (whole file or nothing); not yet in DamSafety. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4b assumptions in run_report.md, H9 manning_coverage), 07ab314c (S7 crossing_check, H6-1 on_dam warning without the DWR wording, H12 tailwater_breach_warning, S6a burn width warning) and 6dfd42cd (S3 dem_edits record / raster / layer). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d (spread_rule, extension cap, lower-bound arrival flag). Runner 0.7.10 (port group C2, #397): 0ca91de6 check_tile after the 3DEP download, kept after DamIT's own no-CRS refusal (audit fix I)."
   },
   "damit_runner/flood/breach.py": {
    "diff": "6c8a054338491caaf5fcd86f127bcc844dacfda4d6c64107fb71fa392c1fa9ae",
