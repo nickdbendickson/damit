@@ -15,6 +15,7 @@ truth. Do not edit them here: edit the runner, then run `python3 scripts/sync_pm
 | `ckpt_sign.py` | (0.4.2) the worker's signed-checkpoint check; the worker imports it at its top, so it is copied next to the generated script with the four files above. The rainfall script writes and resumes no checkpoints, so nothing is signed or read here |
 | `terrain3dep.py` | (0.4.0, `damit_pmp:watershed`) the USGS 3DEP ImageServer tile download; copied from `damit_runner/flood/terrain3dep.py` (the only file here not from `core/`) |
 | `wallclock.py` | the runner's launcher (wall-clock timeout, SIGTERM then SIGKILL), used by `damit_pmp/launch.py` |
+| `engines.py` | (audit 2026-11-19) the engine version pins (`ENGINES`): minimum versions, banner parsing, `require_minimum`; `lisflood.check_log_version` enforces the LISFLOOD-FP pin from the run log |
 
 Only `damit_pmp/launch.py` starts a process, and only for the optional gmsh mesh build, the
 optional ANUGA run (both need an explicit ANUGA Python path) and the optional LISFLOOD-FP run
