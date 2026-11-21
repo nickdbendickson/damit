@@ -37,7 +37,7 @@ class ScreeningDemTests(Base):
         s = self.settings()
         self.assertEqual(Path(s["terrain"]), dem.resolve())
         self.assertEqual(s["larger_clips"], 2, "larger clips read the DEM, not a fresh 3DEP download")
-        self.assertEqual(Path(s["local_dem"]), (self.root / "work" / "screen_dem"))
+        self.assertEqual(Path(s["local_dem"]).resolve(), (self.root / "work" / "screen_dem").resolve())
         self.assertEqual(sorted(x.name for x in Path(s["local_dem"]).iterdir()), ["cass_10m_3dep.vrt"])
         self.assertIn(f"--TERRAIN={dem.resolve()}", self.calls_text())
         self.assertTrue(any(line.startswith("Screening terrain: ") and "cass_10m_3dep.vrt" in line for line in self.lines))
