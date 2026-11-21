@@ -57,7 +57,31 @@ deleted, and nothing downloaded is piped into a shell.
 | Windows | double-click `install-all-windows.cmd` |
 
 Options: `--no-damsafety`, `--no-damit`, `--no-ai`, `--no-heim`, `--no-vor`,
-`--skip-lisflood`, `--rebuild-lisflood` (build LISFLOOD-FP again, e.g. after installing the Metal toolchain), `--offline` (never download), `--check` (report what's installed).
+`--skip-lisflood`, `--rebuild-lisflood` (build LISFLOOD-FP again, e.g. after installing the Metal toolchain),
+`--lisflood-exe PATH` (use this LISFLOOD-FP 8.3 with the Runner patch as it is), `--offline` (never download), `--check` (report what's installed).
+
+If a plugin set has no zips, or a plugin is missing at the self-check, the installer stops with an **ERROR** and
+exit code 1 (before 2026-11-21 it said "Done, with warnings" and exited 0 with nothing installed).
+
+### Installing from a git checkout
+
+This README describes the **built package** (`tools/make_package.sh` adds `plugins/`, `lisflood/` and
+`VERSION`). A git checkout of damit has none of those:
+
+- **DamIT plugins:** `install-all.sh` builds their zips from the checkout (`scripts/package_plugins.py`) into
+  `<suite folder>/plugins-from-checkout/damit` and installs those. (On Windows build them first:
+  `python scripts\package_plugins.py suite_install\plugins\damit`.)
+- **DamSafety plugins:** they come only in a built package (from DWR_Plugins), so pass `--no-damsafety`
+  (`-NoDamSafety`); without it the installer stops and says so.
+- **LISFLOOD-FP:** a checkout has no LISFLOOD-FP binary. Without `--qgis-env` it is built from the offline set's
+  source (`offline/lisflood-src/`) when that is there; with `--qgis-env` nothing is built. Either way, when there is
+  no LISFLOOD-FP the installer prints a boxed **NO LISFLOOD-FP INSTALLED** warning with the reason, `INSTALLED.txt`
+  repeats it, and the Runners use their built-in engine. Pass `--lisflood-exe PATH` to use one you already have.
+
+```bash
+# from the damit checkout, into one throw-away folder, with a QGIS 3.34 env you already have
+bash suite_install/install-all.sh --sandbox ~/damit-sb --qgis-env ~/miniforge3/envs/qgis334 --no-damsafety --no-ai
+```
 On Windows the options are `-NoDamSafety`, `-NoDamIT`, `-NoAI`, `-NoHeim`, `-NoVor`,
 `-SkipLisflood`, `-Offline`, `-Check` and `-NoShortcuts`.
 
@@ -92,7 +116,8 @@ deleting `DIR` removes the install completely (stop its Ollama first: `kill $(ca
   `~/.cache/conda` are not touched; your `~/.condarc` is still read.
 - `--qgis-env PATH` (`-QgisEnv`) uses an existing QGIS 3.34 conda env as it is instead of building `ndqgis`:
   no conda package is needed and no env is built (ANUGA only with `--anuga-env PATH`; LISFLOOD-FP is not
-  built). Handy for a quick sandbox on a machine that already has the suite.
+  built: the shipped Linux binary is used when the package has one, else `--lisflood-exe PATH`, else the Runners'
+  built-in engine, with a loud warning). Handy for a quick sandbox on a machine that already has the suite.
 - macOS: the local AIs can't be sandboxed yet (their Mac installers always use `~/local-ai` and `~/.zshrc`),
   so `--sandbox` leaves them out there.
 - `--prefix` and `DAMSUITE_PREFIX` keep their old meaning (the suite folder only, profiles stay in QGIS's

@@ -61,6 +61,14 @@
 #                               (ANUGA is off unless --anuga-env is given; LISFLOOD-FP is never built).
 #                               With --sandbox, the env is only read, never changed.
 #     --anuga-env DIR           with --qgis-env: the ANUGA env (by path) to use as it is
+#     --lisflood-exe PATH       use this LISFLOOD-FP (8.3 with the Runner patch) as it is, instead of the
+#                               shipped or built one; the way to get LISFLOOD-FP with --qgis-env or from a
+#                               git checkout, which has no shipped binary (tools/make_package.sh adds it)
+#
+#   FROM A GIT CHECKOUT (not a built package): plugins/ and lisflood/ are not there. The DamIT plugin
+#   zips are built from the checkout (scripts/package_plugins.py) into PREFIX/plugins-from-checkout;
+#   the DamSafety zips come only in a built package, so pass --no-damsafety. A plugin that cannot be
+#   installed stops the install with an error (exit 1) instead of "Done, with warnings".
 #   DAMSUITE_PREFIX / --prefix keep their meaning (the suite folder only); only --sandbox moves
 #   everything.
 #
@@ -75,7 +83,7 @@ MINIFORGE_DIR="${DAMSUITE_MINIFORGE:-$HOME/miniforge3}"
 DS_PROFILE="${DAMSAFETY_PROFILE:-damsafety}"
 DI_PROFILE="${DAMIT_PROFILE:-damit}"
 QGIS_PROFILES_PATH="${DAMSUITE_QGIS_PROFILES_PATH:-}"
-SANDBOX=""; QGIS_ENV=""; ANUGA_ENV=""; OLLAMA_PORT="${DAMSUITE_OLLAMA_PORT:-}"; PLACED=""
+SANDBOX=""; QGIS_ENV=""; ANUGA_ENV=""; OLLAMA_PORT="${DAMSUITE_OLLAMA_PORT:-}"; PLACED=""; LF_EXE_ARG=""
 DS_PLUGINS="DamSafety_Core DamSafety_Setup DamSafety_Data DamSafety_Screening DamSafety_Runner DamSafety_Hazard DamSafety_HazardLite DamSafety_PMP DamSafety_Finder"
 DI_PLUGINS="damit_core damit_catalog damit_setup damit_data damit_screener damit_runner damit_hazard damit_hazardlite damit_pmp damit_finder"
 
@@ -88,12 +96,12 @@ while [ $# -gt 0 ]; do
     --no-ai) DO_HEIM=0; DO_VOR=0 ;;  --no-heim) DO_HEIM=0 ;;  --no-vor) DO_VOR=0 ;;
     --skip-lisflood) SKIP_LISFLOOD=1 ;;  --rebuild-lisflood) REBUILD_LF=1 ;;  --offline) OFFLINE_ONLY=1 ;;  --check) MODE=check ;;
     --ai) DO_HEIM=1; DO_VOR=1 ;;
-    --prefix|--qgis-profiles-path|--damsafety-profile|--damit-profile|--root|--sandbox|--qgis-env|--anuga-env|--ollama-port)
+    --prefix|--qgis-profiles-path|--damsafety-profile|--damit-profile|--root|--sandbox|--qgis-env|--anuga-env|--ollama-port|--lisflood-exe)
       [ $# -gt 1 ] && [ -n "$2" ] || { echo "$1 needs a value" >&2; exit 2; }
       case "$1" in --prefix|--qgis-profiles-path|--root) PLACED="$PLACED $1" ;; esac
       case "$1" in
         --sandbox) SANDBOX="$2" ;;  --qgis-env) QGIS_ENV="$2" ;;  --anuga-env) ANUGA_ENV="$2" ;;
-        --ollama-port) OLLAMA_PORT="$2" ;;
+        --ollama-port) OLLAMA_PORT="$2" ;;  --lisflood-exe) LF_EXE_ARG="$2" ;;
         --prefix) PREFIX="$2" ;;  --qgis-profiles-path) QGIS_PROFILES_PATH="$2" ;;
         --damsafety-profile) DS_PROFILE="$2" ;;  --damit-profile) DI_PROFILE="$2" ;;
         --root) PREFIX="$2/dam-suite"; QGIS_PROFILES_PATH="$2/qgis"
@@ -310,6 +318,35 @@ fi
 say "$STAMP on $P ($OS $ARCH).  Log: $LOG"
 
 # ---------------------------------------------------------------------------
+# 0b. plugin zips: a built package has them in plugins/; a git checkout of damit has none
+# ---------------------------------------------------------------------------
+# Install test 2026-11-21: run from a checkout, every plugin was "no zip for ..." and the install still ended
+# "Done, with warnings" (exit 0) with an empty profile. Now the DamIT zips are built from the checkout, and a set
+# with no zips stops here, before anything is installed.
+DS_ZIPS="$HERE/plugins/damsafety"; DI_ZIPS="$HERE/plugins/damit"
+has_zips() { ls "$1"/*_[0-9]*.zip >/dev/null 2>&1; }
+CHECKOUT=""; [ -f "$HERE/../scripts/package_plugins.py" ] && [ -d "$HERE/../damit_core" ] && CHECKOUT="$(cd "$HERE/.." && pwd)"
+if [ "$DO_DS" = 1 ] && ! has_zips "$DS_ZIPS"; then
+  die "no DamSafety plugin zips in $DS_ZIPS. They come only in a package made by tools/make_package.sh (from DWR_Plugins)$( [ -n "$CHECKOUT" ] && echo '; this is a git checkout of damit'). To install the DamIT plugins only, add  --no-damsafety"
+fi
+if [ "$DO_DI" = 1 ] && ! has_zips "$DI_ZIPS" && [ -n "$CHECKOUT" ]; then
+  PYPACK=""
+  for c in python3 ${QGIS_ENV:+"$QGIS_ENV/bin/python"} "$MINIFORGE_DIR/bin/python"; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import zipfile' >/dev/null 2>&1; then PYPACK="$c"; break; fi
+  done
+  [ -n "$PYPACK" ] || die "this is a git checkout of damit with no DamIT plugin zips, and no Python was found to build them. Run:  python3 scripts/package_plugins.py suite_install/plugins/damit  (or install from a package made by tools/make_package.sh)"
+  DI_ZIPS="$PREFIX/plugins-from-checkout/damit"
+  rm -rf "$DI_ZIPS"; mkdir -p "$DI_ZIPS"
+  say "No plugins/damit in this folder (a git checkout): building the DamIT plugin zips from $CHECKOUT"
+  "$PYPACK" "$CHECKOUT/scripts/package_plugins.py" "$DI_ZIPS" > "$PREFIX/plugins-from-checkout/package_plugins.log" 2>&1 \
+    || die "building the DamIT plugin zips failed: see $PREFIX/plugins-from-checkout/package_plugins.log"
+  sed -n 's/^  \(damit_[a-z]*\) v\([^:]*\):.*/    \1 \2/p' "$PREFIX/plugins-from-checkout/package_plugins.log"
+fi
+if [ "$DO_DI" = 1 ] && ! has_zips "$DI_ZIPS"; then
+  die "no DamIT plugin zips in $DI_ZIPS, so nothing would be installed. Use a package made by tools/make_package.sh, or from a git checkout of damit run:  python3 scripts/package_plugins.py suite_install/plugins/damit"
+fi
+
+# ---------------------------------------------------------------------------
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
 ROLES="ndqgis ndanuga"
@@ -466,10 +503,10 @@ install_set() {  # install_set <profile dir> <zip folder> <plugin names in order
 }
 if [ "$DO_DS" = 1 ]; then say "DamSafety plugins -> profile '$DS_PROFILE' (DamSafety Core first)"
   # shellcheck disable=SC2086
-  install_set "$DS_DIR" "$HERE/plugins/damsafety" $DS_PLUGINS; fi
+  install_set "$DS_DIR" "$DS_ZIPS" $DS_PLUGINS; fi
 if [ "$DO_DI" = 1 ]; then say "DamIT plugins -> profile '$DI_PROFILE' (DamIT Core and Catalog first)"
   # shellcheck disable=SC2086
-  install_set "$DI_DIR" "$HERE/plugins/damit" $DI_PLUGINS; fi
+  install_set "$DI_DIR" "$DI_ZIPS" $DI_PLUGINS; fi
 
 # ---------------------------------------------------------------------------
 # 4. LISFLOOD-FP 8.3 + Runner patch (shared by both sets)
@@ -479,12 +516,31 @@ LISFLOOD_EXE=""; mkdir -p "$PREFIX/bin"
 # 0.7.0) has inittm_depth but not the SGC edit; it is rebuilt (or the shipped one copied) rather than
 # kept, since the Runners refuse it for a sub-grid-channel run
 lf_ok() { [ -x "$1" ] && "$1" -version 2>&1 | grep -qi lisflood && grep -aq inittm_depth "$1" && grep -aq "$LF_SGC_MARK" "$1"; }
+# Why there is no LISFLOOD-FP, for the loud warning below (install test 2026-11-21: with --qgis-env from a git
+# checkout it blamed a failed check of the shipped binary, but a checkout ships none: lisflood/ is made by
+# tools/make_package.sh, and --qgis-env builds no ndbuild env to compile one).
+LF_WHY=""
+lf_banner() {  # lf_banner <why>: a warning that is hard to miss, repeated in the summary at the end
+  LF_WHY="$1"
+  warn "================================================================================"
+  warn "NO LISFLOOD-FP INSTALLED: $1"
+  warn "The Runners will use their BUILT-IN engine instead of LISFLOOD-FP."
+  warn "To get LISFLOOD-FP: install from a package made by tools/make_package.sh, or pass"
+  warn "  --lisflood-exe /path/to/lisflood   (LISFLOOD-FP 8.3 with the Runner patch),"
+  warn "or set the LISFLOOD-FP path in the Runner later."
+  warn "================================================================================"
+}
 if [ "$SKIP_LISFLOOD" = 1 ]; then warn "LISFLOOD-FP skipped (--skip-lisflood): the Runners use their built-in engine"
 else
-  if [ -n "$LFBIN" ] && [ -f "$HERE/lisflood/$LFBIN/lisflood" ]; then
+  if [ -n "$LF_EXE_ARG" ]; then
+    LF_EXE_ARG="$(abs_path "$LF_EXE_ARG")"
+    if lf_ok "$LF_EXE_ARG"; then LISFLOOD_EXE="$LF_EXE_ARG"; ok "LISFLOOD-FP from --lisflood-exe: $LF_EXE_ARG (used as it is)"
+    else warn "--lisflood-exe $LF_EXE_ARG is not a LISFLOOD-FP 8.3 with the Runner patch (it must run with -version and carry inittm_depth and the sub-grid-channel edit); not used"; fi
+  fi
+  if [ -z "$LISFLOOD_EXE" ] && [ -n "$LFBIN" ] && [ -f "$HERE/lisflood/$LFBIN/lisflood" ]; then
     cp "$HERE/lisflood/$LFBIN/lisflood" "$PREFIX/bin/lisflood"; chmod +x "$PREFIX/bin/lisflood"
     lf_ok "$PREFIX/bin/lisflood" && LISFLOOD_EXE="$PREFIX/bin/lisflood" \
-      || warn "the shipped LISFLOOD-FP does not run here (it needs glibc 2.38+); building it instead"
+      || { LF_SHIPPED_BAD=1; warn "the shipped LISFLOOD-FP does not run here (it needs glibc 2.38+); building it instead"; }
   fi
   if [ -z "$LISFLOOD_EXE" ] && [ "$REBUILD_LF" = 0 ] && lf_ok "$PREFIX/bin/lisflood"; then LISFLOOD_EXE="$PREFIX/bin/lisflood"; fi
   if [ -z "$LISFLOOD_EXE" ] && [ -x "$PREFIX/bin/lisflood" ] && ! grep -aq "$LF_SGC_MARK" "$PREFIX/bin/lisflood"; then
@@ -518,9 +574,15 @@ else
       fi
     fi
     if [ -z "$LISFLOOD_EXE" ] && [ -n "$QGIS_ENV" ]; then
-      warn "no LISFLOOD-FP: --qgis-env builds no conda env, so LISFLOOD-FP is not built either (the shipped one did not pass its check). The Runners use their built-in engine; set the LISFLOOD-FP path in the Runner later, or install without --qgis-env."
-    else
-    [ -n "$LISFLOOD_EXE" ] || warn "no LISFLOOD-FP (the build's own messages are above; macOS needs Apple's Command Line Tools:  xcode-select --install ). The Runners use their built-in engine meanwhile."
+      if [ -n "$LFBIN" ] && [ ! -f "$HERE/lisflood/$LFBIN/lisflood" ]; then
+        lf_banner "this folder ships no LISFLOOD-FP ($HERE/lisflood/$LFBIN/lisflood is missing$( [ -n "$CHECKOUT" ] && echo ': a git checkout has none')), and --qgis-env builds no conda env to compile one."
+      elif [ "${LF_SHIPPED_BAD:-0}" = 1 ]; then
+        lf_banner "the shipped LISFLOOD-FP does not run on this system (it needs glibc 2.38+), and --qgis-env builds no conda env to compile one."
+      else
+        lf_banner "--qgis-env builds no conda env, so LISFLOOD-FP is not built on $P."
+      fi
+    elif [ -z "$LISFLOOD_EXE" ]; then
+      lf_banner "it could not be built (the build's own messages are above; macOS needs Apple's Command Line Tools:  xcode-select --install )."
     fi
   fi
   [ -n "$LISFLOOD_EXE" ] && ok "LISFLOOD-FP: $LISFLOOD_EXE ($("$LISFLOOD_EXE" -version 2>&1 | grep -o 'LISFLOOD-FP [0-9.]*' | head -1), Runner patch with sub-grid channels$( [ -f "$PREFIX/bin/metal_fv1_kernels.metallib" ] && echo ', Metal GPU back end'))"
@@ -811,8 +873,10 @@ case "$QV" in 3.34.*) ok "QGIS $QV" ;; *) warn "QGIS 3.34 does not import"; FAIL
 [ -n "$ANUGA_PY" ] && ok "ANUGA $("$ANUGA_PY" -c 'import anuga,gmsh;print(anuga.__version__,"| gmsh",gmsh.__version__)' 2>/dev/null | tail -n 1)"
 [ -n "$ANUGA_PY" ] || { warn "no ANUGA tier"; FAIL=1; }
 [ -n "$LISFLOOD_EXE" ] || [ "$SKIP_LISFLOOD" = 1 ] || FAIL=1
+MISSING_PLUGINS=""
 chk() { local dir="$1" p; shift; for p in "$@"; do
-  if [ -f "$dir/python/plugins/$p/metadata.txt" ]; then ok "$p $(ver_of "$dir/python/plugins/$p")"; else warn "$p missing"; FAIL=1; fi; done; }
+  if [ -f "$dir/python/plugins/$p/metadata.txt" ]; then ok "$p $(ver_of "$dir/python/plugins/$p")"
+  else warn "$p missing"; FAIL=1; MISSING_PLUGINS="$MISSING_PLUGINS $p"; fi; done; }
 # shellcheck disable=SC2086
 [ "$DO_DS" = 1 ] && chk "$DS_DIR" $DS_PLUGINS
 # shellcheck disable=SC2086
@@ -822,6 +886,8 @@ if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs instal
 { echo "Installed by $STAMP on $(date)"
   if [ -f "$HERE/plugins/VERSIONS.md" ]; then grep -E '^Source|^- ' "$HERE/plugins/VERSIONS.md" | head -4 || true; fi
   echo "  platform $P | QGIS ${QV:-?} | ANUGA python ${ANUGA_PY:-none} | LISFLOOD-FP ${LISFLOOD_EXE:-built-in engine}"
+  [ -z "$LF_WHY" ] || echo "  NO LISFLOOD-FP: $LF_WHY"
+  [ -z "$MISSING_PLUGINS" ] || echo "  NOT INSTALLED:$MISSING_PLUGINS"
   [ "$DO_DS" = 1 ] && echo "  DamSafety -> profile $DS_PROFILE  (open: $PREFIX/open-damsafety-qgis.sh)"
   [ "$DO_DI" = 1 ] && echo "  DamIT     -> profile $DI_PROFILE  (open: $PREFIX/open-damit-qgis.sh)"
   [ -f "$PREFIX/open-damit-crest.sh" ] && echo "  DamIT Crest desk              (open: $PREFIX/open-damit-crest.sh)"
@@ -835,6 +901,10 @@ if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs instal
   fi
   true; } > "$PREFIX/INSTALLED.txt"
 
+if [ -n "$MISSING_PLUGINS" ]; then
+  cat "$PREFIX/INSTALLED.txt"
+  die "not installed:$MISSING_PLUGINS. The install is NOT complete (see above and $LOG)."
+fi
 say "Done$( [ "$FAIL" = 0 ] && echo ': all checks passed.' || echo ", with warnings (see above and $LOG).")"
 cat "$PREFIX/INSTALLED.txt"
 cat <<EOF

@@ -19,6 +19,9 @@ DamSafety plugins and shares their engine.
 
 1. **Install.** Easiest: the one-step installer in [`suite_install/`](suite_install/README.md)
    (Windows, Linux, macOS; no admin rights). It sets up QGIS, the flood models and the plugins.
+   Use a package built by `suite_install/tools/make_package.sh`: a plain git checkout has no plugin zips and no
+   LISFLOOD-FP. Run from a checkout, `install-all.sh --no-damsafety` builds the DamIT zips itself (see
+   [Installing from a git checkout](suite_install/README.md#installing-from-a-git-checkout)).
    Or build the plugin zips yourself with `python3 scripts/package_plugins.py dist/` and install them in
    QGIS (*Plugins → Install from ZIP*): **DamIT Core first, then DamIT Catalog, then the rest.**
 2. **Open *Plugins → DamIT → Start here*** (DamIT Setup). Pick your state and data folder.
