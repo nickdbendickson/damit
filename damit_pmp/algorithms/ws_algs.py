@@ -63,6 +63,7 @@ def read_dem(path):
     band = ds.GetRasterBand(1)
     a = band.ReadAsArray().astype("float64")
     nd = band.GetNoDataValue()
+    ds = None                                  # audit 2026-11-20: release the DEM handle
     if nd is not None:
         a[a == nd] = np.nan
     a[~np.isfinite(a)] = np.nan

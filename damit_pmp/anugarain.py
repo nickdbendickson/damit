@@ -130,6 +130,8 @@ def read_model_grid(dem_path, bounds, cell_m, band=1):
                     xRes=cell_m, yRes=cell_m, resampleAlg="bilinear", dstNodata=gridmod.NODATA,
                     srcNodata=nd, outputType=gdal.GDT_Float64)
     arr = dst.GetRasterBand(1).ReadAsArray().astype(np.float64)
+    src = None                                   # audit 2026-11-20: release the source DEM
+    dst = None                                   # audit 2026-11-20: release the MEM warp
     g = gridmod.Grid(arr, x0, y0, cell_m, gridmod.NODATA, wkt)
     return g, {"native_cell_m": native, "crs_wkt": wkt, "path": dem_path, "geotransform": list(gt)}
 
@@ -152,7 +154,9 @@ def read_fine_elevation(dem_path, grid, native_m, out_path, band=1):
     dst = gdal.Warp("", src, format="MEM", outputBounds=(x0, y0 - ny * native_m, x0 + nx * native_m, y0),
                     xRes=native_m, yRes=native_m, resampleAlg="bilinear", dstNodata=-9999.0, srcNodata=nd,
                     outputType=gdal.GDT_Float32)
+    src = None                                   # audit 2026-11-20: release the source DEM
     a = dst.GetRasterBand(1).ReadAsArray().astype(np.float32)
+    dst = None                                   # audit 2026-11-20: release the MEM warp
     a[a == -9999.0] = np.nan
     np.save(out_path, a)
     return {"elev_fine_file": os.path.basename(out_path), "elev_fine_x0": x0, "elev_fine_y0": y0,
@@ -172,7 +176,9 @@ def read_factor_on_grid(raster_path, grid, target_wkt=None, band=1):
                     outputBounds=(grid.x0, grid.y0 - grid.ny * grid.dx, grid.x0 + grid.nx * grid.dx, grid.y0),
                     xRes=grid.dx, yRes=grid.dx, resampleAlg="bilinear", dstNodata=-9999.0, srcNodata=nd,
                     outputType=gdal.GDT_Float64)
+    src = None                                   # audit 2026-11-20: release the factor raster
     a = dst.GetRasterBand(1).ReadAsArray().astype(np.float64)
+    dst = None                                   # audit 2026-11-20: release the MEM warp
     bad = ~np.isfinite(a) | (a == -9999.0)
     n_bad = int(bad.sum())
     a[bad] = np.nan

@@ -195,6 +195,9 @@ class ClassifyLite(QgsProcessingAlgorithm):
                 if xf is not None:
                     g.transform(xf)
                 geoms[rid] = g
+        depth.close()                                # audit 2026-11-20: release rasters before
+        if vel is not None:                          # writing outputs (Windows rename-after-write)
+            vel.close()
         summary = {"hydraulics_source": HYDRAULICS[self.parameterAsEnum(P, "HYDRAULICS_SOURCE", context)]}
         dim = DIMENSIONS[self.parameterAsEnum(P, "MODEL_DIMENSION", context)]
         if dim != "not given":

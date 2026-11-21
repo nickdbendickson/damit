@@ -72,6 +72,18 @@ class Raster(object):
             a[a == self.nodata] = float("nan")
         return a * self.scale
 
+    def close(self):
+        """Release the dataset handle early (audit 2026-11-20): Windows locks files until a
+        dataset is dropped, which delayed the classify outputs' rename-after-write."""
+        self.ds = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
     def centre(self, col, row):
         return self.x0 + (col + 0.5) * self.dx, self.y0 + (row + 0.5) * self.dy
 
