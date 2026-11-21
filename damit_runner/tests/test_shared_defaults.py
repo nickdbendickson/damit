@@ -86,7 +86,10 @@ class RunnerSharedDefaultsTest(unittest.TestCase):
         from damit_runner.core import conditioning as cond
         from damit_runner.core import data_conventions as dc
         from damit_runner.flood import model as M
-        from damit_runner.algorithms import rundam as RA
+        try:
+            from damit_runner.algorithms import rundam as RA     # a QGIS Processing module
+        except ImportError:                                       # the no-QGIS smoke job
+            RA = None
         with open(SD.shipped_path(), encoding="utf-8") as f:
             self.assertEqual(json.load(f)["values"]["manning_n"], 0.05)      # damit_core/data/defaults.json
         self.assertEqual(wf.RunSettings().manning_n, 0.05)
@@ -95,7 +98,8 @@ class RunnerSharedDefaultsTest(unittest.TestCase):
         self.assertEqual(cond.ConditionedTerrain(None, None).default_n, 0.05)
         self.assertEqual(dc.manning_lut(default=0.08)["default"], 0.08)
         self.assertEqual(M.DEFAULTS["manning"], 0.05)
-        self.assertEqual(RA._shared_start()[1], 0.05)
+        if RA is not None:
+            self.assertEqual(RA._shared_start()[1], 0.05)
 
     def test_start_pool_is_recorded_and_follows_the_file(self):
         """Runner 0.5.0: the sunny-day starting pool is a choice (START_POOL). The record says which pool the
