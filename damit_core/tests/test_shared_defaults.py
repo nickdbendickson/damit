@@ -36,7 +36,7 @@ class SharedDefaultsTest(unittest.TestCase):
         self.assertEqual(vals, {"sunny_day_start_pool": "max_pool",
                                 "pmf_breach_volume": "storage_at_start_pool",
                                 "failure_mode": "piping", "breach_method": "froehlich2008",
-                                "manning_n": 0.06})
+                                "manning_n": 0.05})
 
     def test_same_format_and_keys_as_damsafety_core(self):
         self.assertEqual(SD.FORMAT, "dam-defaults")
@@ -69,7 +69,7 @@ class SharedDefaultsTest(unittest.TestCase):
         with open(p, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["values"], {"manning_n": 0.08})
         SD.save_user({}, p)
-        self.assertEqual(SD.load(user=p).get("manning_n"), 0.06)
+        self.assertEqual(SD.load(user=p).get("manning_n"), 0.05)
 
     def test_runner_method_and_assumptions(self):
         self.assertEqual(SD.runner_method({"failure_mode": "piping", "breach_method": "froehlich2008"}),

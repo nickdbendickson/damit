@@ -1,4 +1,4 @@
-# DamIT Core 0.3.2
+# DamIT Core 0.3.3
 
 Shared library of the DamIT plugins (`damit_core.lib`). As a QGIS plugin it adds one menu entry,
 **Plugins > DamIT > About DamIT Core…**, which lists the DamIT plugins found and their versions.
