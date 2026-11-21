@@ -2011,23 +2011,32 @@ function StepRail({ dam, step, setStep }: { dam: DamRecord; step: StepId; setSte
  * while the user works on any step, the way RAS Mapper keeps the map present behind every pane. */
 function SituationStrip({ dam, result }: { dam: DamRecord; result: ReturnType<typeof analyze> }) {
   const peak = result.breach.series.length ? Math.max(...result.breach.series.map((p) => p.qCfs)) : null;
+  // DamIT Desk install test 2026-11-21: the strip sat in the 210 px left rail of the three-pane layout but switched to
+  // four columns on the window width (xl:), so "Swa… / PIPELINE 8 steps" ran into each other. The columns now follow
+  // the strip's own width (a container query): two in the rail, four when it spans the page.
+  const cell = "min-w-0";
+  const label = "truncate text-xs uppercase tracking-wide text-muted";
   return (
-    <div className="grid grid-cols-2 gap-2 border-b border-line bg-card px-3 py-2.5 text-sm xl:grid-cols-4" data-testid="situation-strip">
-      <div>
-        <p className="text-xs uppercase tracking-wide text-muted">Dam</p>
-        <p className="truncate font-medium">{dam.name}</p>
-      </div>
-      <div>
-        <p className="text-xs uppercase tracking-wide text-muted">NID</p>
-        <p className="truncate font-mono text-sm">{dam.nid || "—"}</p>
-      </div>
-      <div>
-        <p className="text-xs uppercase tracking-wide text-muted">Peak Q</p>
-        <p className="font-mono">{peak != null ? `${num(peak, 0)} cfs` : "—"}</p>
-      </div>
-      <div>
-        <p className="text-xs uppercase tracking-wide text-muted">Pipeline</p>
-        <p className="font-medium">8 steps</p>
+    <div className="@container border-b border-line bg-card px-3 py-2.5 text-sm" data-testid="situation-strip">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2 @md:grid-cols-4">
+        <div className={cell}>
+          <p className={label}>Dam</p>
+          <p className="truncate font-medium" title={dam.name}>
+            {dam.name}
+          </p>
+        </div>
+        <div className={cell}>
+          <p className={label}>NID</p>
+          <p className="truncate font-mono text-sm">{dam.nid || "—"}</p>
+        </div>
+        <div className={cell}>
+          <p className={label}>Peak Q</p>
+          <p className="truncate font-mono">{peak != null ? `${num(peak, 0)} cfs` : "—"}</p>
+        </div>
+        <div className={cell}>
+          <p className={label}>Pipeline</p>
+          <p className="truncate font-medium">8 steps</p>
+        </div>
       </div>
     </div>
   );

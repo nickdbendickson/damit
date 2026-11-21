@@ -191,6 +191,9 @@ Needs QGIS 3.28–4.x with the DamIT plugins installed. The buttons do nothing i
   dam only (DamIT Screener 0.2.0 runs its 2D screening flood on the mapped structures and writes a preliminary
   class). A missing algorithm or a FAIL stops there. Cancel stops `qgis_process`; `DAMIT_SCREENING_TIMEOUT_S` sets a
   limit (default none); the screening flood keeps its maxima at 0.8 x that limit.
+  With a DEM chosen, `damit_settings.json` gets it as `terrain` and `<work>/screen_dem` (that DEM alone: a link, or a
+  VRT copy with absolute tile paths) as the DEM folder `local_dem`, so results rasters or another DEM kept next to
+  the DEM are never read as terrain by a screener that mosaics the folder.
 - **Run the flood model** — one dam: `damit_run:rundam` (with the screening's `damit_handoff.json` when there is
   one, `DRY_RUN=false`: DamIT Runner 0.2.0 launches LISFLOOD-FP, the built-in engine or LISFLOOD-FP then ANUGA with the
   DamSafety Runner's parameters and copies Depth (Max), hmax and the flood polygons into the dam folder), or a DamIT

@@ -158,6 +158,17 @@ $Log = Join-Path $Prefix ("logs\install_{0}.log" -f (Get-Date -Format 'yyyyMMdd_
 Start-Transcript -Path $Log | Out-Null
 Say "$Stamp on $P.  Log: $Log"
 
+# Install test 2026-11-21 (install-all.sh, the same here): run from a git checkout of damit, which has no plugins\
+# folder, every plugin was "no zip for ..." and the install still ended "Done, with warnings". A set with no zips now
+# stops here, before anything is installed.
+function Assert-Zips($zipDir, $what, $hint) {
+  $z = @(Get-ChildItem -LiteralPath $zipDir -Filter '*_*.zip' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '_[0-9]' })
+  if ($z.Count -eq 0) { Die "no $what plugin zips in $zipDir, so nothing would be installed. $hint" }
+}
+$IsCheckout = (Test-Path (Join-Path $Here '..\scripts\package_plugins.py')) -and (Test-Path (Join-Path $Here '..\damit_core'))
+if ($DoDs) { Assert-Zips (Join-Path $Here 'plugins\damsafety') 'DamSafety' ("They come only in a package made by tools/make_package.sh (from DWR_Plugins)$(if ($IsCheckout) {'; this is a git checkout of damit'}). To install the DamIT plugins only, add -NoDamSafety.") }
+if ($DoDi) { Assert-Zips (Join-Path $Here 'plugins\damit') 'DamIT' 'Use a package made by tools/make_package.sh, or from a git checkout of damit run:  python scripts\package_plugins.py suite_install\plugins\damit' }
+
 # ---------------------------------------------------------------------------
 # 1. offline files: use them, or fetch what is missing (pinned + sha256-checked)
 # ---------------------------------------------------------------------------
@@ -523,6 +534,7 @@ if ($DoHeim -or $DoVor) {
 # ---------------------------------------------------------------------------
 Say 'Self-check'
 $Fail = $false
+$MissingPlugins = @()
 $qv = (QPy -c "import qgis.core as q, numpy; print(q.Qgis.QGIS_VERSION, '| numpy', numpy.__version__)" | Select-Object -Last 1)
 if ("$qv" -match '^3\.34') { Ok "QGIS $qv" } else { Warn 'QGIS 3.34 does not import'; $Fail = $true }
 if ($AnugaPy) { Ok ("ANUGA " + (& $AnugaPy -c "import anuga,gmsh;print(anuga.__version__,'| gmsh',gmsh.__version__)" 2>$null | Select-Object -Last 1)) } else { $Fail = $true }
@@ -530,7 +542,7 @@ if (-not $Lisflood -and -not $SkipLisflood) { $Fail = $true }
 foreach ($pair in @(@($DoDs, $DsDir, $DsPlugins), @($DoDi, $DiDir, $DiPlugins))) {
   if (-not $pair[0]) { continue }
   foreach ($p in $pair[2]) { $d = Join-Path $pair[1] "python\plugins\$p"
-    if (Test-Path (Join-Path $d 'metadata.txt')) { Ok "$p $(VerOf $d)" } else { Warn "$p missing"; $Fail = $true } } }
+    if (Test-Path (Join-Path $d 'metadata.txt')) { Ok "$p $(VerOf $d)" } else { Warn "$p missing"; $Fail = $true; $MissingPlugins += $p } } }
 if (($DoHeim -or $DoVor) -and -not $AiOk) { $Fail = $true }
 
 $rec = @("Installed by $Stamp on $(Get-Date)",
@@ -546,6 +558,12 @@ if ($Sandbox) {
   $rec += "    remove it: stop its Ollama (Stop-Process -Id (Get-Content $Sandbox\local-ai\ollama-serve.pid)), then delete $Sandbox"
 }
 $rec | Set-Content (Join-Path $Prefix 'INSTALLED.txt')
+if ($MissingPlugins.Count) {
+  $rec | ForEach-Object { Write-Host $_ }
+  Write-Host "ERROR: not installed: $($MissingPlugins -join ' '). The install is NOT complete (see above and $Log)." -ForegroundColor Red
+  Stop-Transcript | Out-Null
+  exit 1
+}
 Say $(if ($Fail) { "Done, with warnings (see above and $Log)." } else { 'Done: all checks passed.' })
 $rec | ForEach-Object { Write-Host $_ }
 Write-Host "`n  Open one profile at a time with its launcher$(if (-not $NoShortcuts) {" (Desktop shortcuts 'QGIS damsafety' / 'QGIS damit')"})." 
