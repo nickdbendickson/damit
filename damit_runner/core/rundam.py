@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.7.10: DamSafety port group C2 (#397: a 3DEP refill with no ground is refused); changes results only for such refills
 0.7.9: DamSafety port group C1 (#383 area-based spread rule); CHANGES RESULTS (run length)
 0.7.8: DamSafety port group B (report provenance and disclosure flags: DWR 6023cc1b, 07ab314c, 6dfd42cd); no number changes
 0.7.7: DamSafety port group A (#394 cancel pid check, OMP #15 hint, #412 open-file limit); no number changes
@@ -76,7 +77,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.7.9"
+VERSION = "0.7.10"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
