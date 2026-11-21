@@ -993,6 +993,7 @@ def _run(workdir, par, st, progress=None, cancel=None, log=None, name="run"):
                             STABLE_THETA, STABLE_CFL))
     with open(log_path, errors="replace", encoding="utf-8") as f:
         logtxt = f.read()
+    check_log_version(logtxt, log=log)           # audit follow-up: engine version pin
     if proc.returncode != 0:
         raise ModelError("LISFLOOD-FP stopped with code {}:\n{}".format(proc.returncode,
                                                                       logtxt[-1500:]))
@@ -1010,6 +1011,28 @@ def _run(workdir, par, st, progress=None, cancel=None, log=None, name="run"):
     if log:
         log("LISFLOOD-FP finished in {:.1f} min".format((time.time() - t0) / 60.0))
     return time.time() - t0
+
+
+def check_log_version(logtxt, engine="lisflood_fp", log=None):
+    """audit follow-up 2026-11-19: the engine version pin, read from the engine's own
+    log output after the run. Fail-open by design: an unparseable banner (stub exes in
+    tests, exotic builds) passes with a warning; a *parseable* banner below the ENGINES
+    minimum fails the run with a clear message. Detectable substitution is what this
+    catches - the silent CUDA-solver-swap class of failure."""
+    from .engines import parse_banner, require_minimum, EngineVersionError
+    try:
+        ver = parse_banner(logtxt, engine)
+    except EngineVersionError:
+        ver = None
+    if ver is None:
+        if log:
+            log("WARNING: {} printed no recognizable version; the version pin is skipped "
+                "(fail-open, engines.py)".format(engine))
+        return None
+    try:
+        return require_minimum(engine, ver)
+    except Exception as e:                       # noqa: BLE001 - below-minimum is fatal
+        raise ModelError(str(e))
 
 
 def read_gauges(workdir, st, name="run"):
