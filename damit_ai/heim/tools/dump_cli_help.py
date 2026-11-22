@@ -31,6 +31,8 @@ TOOLS = [
     (os.path.join(HERE, "run_digest.py"), "heim-digest", "the deterministic run checks and the verdict (no model)"),
     (os.path.join(HERE, "heim_watch.py"), "heim-watch", "run the digest at each pass end and at run end"),
     (os.path.join(HERE, "run_results.py"), "heim runs  /  heim-runs", "dam-breach run results in a database: exact depth, velocity, arrival, peak flow"),
+    (os.path.join(HERE, "ai_doctor.py"), "ai-doctor", "both assistants' checks in one go, one summary line each"),
+    (os.path.join(HERE, "what_changed.py"), "what_changed.py", "regenerate the knowledge pack's WHAT-CHANGED.md from git history"),
     (os.path.join(HERE, "audit_plugin.py"), "heim-audit", "ask Heim to review one plugin's code"),
     (os.path.join(HERE, "suite_check.py"), "heim-test", "check the installed plugin sets and run their self-tests"),
     (os.path.join(HERE, "repo_audit.py"), "damchain audit", "repo audit: packaging, security patterns, hosts, golden runs"),

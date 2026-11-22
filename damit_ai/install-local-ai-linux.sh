@@ -376,7 +376,7 @@ EOF
   fi
   PYL="$(make_env "$HEIM_ENV" "python=3.12 pymupdf pypdf numpy")"
   ok "heim python: $PYL"
-  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py; do
+  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py ai_doctor.py; do
     [[ -f "$HERE/heim/tools/$t" ]] && cp "$HERE/heim/tools/$t" "$HEIM_TOOLS/$t"
   done
   [[ -d "$HERE/heim/eval" ]] && cp -r "$HERE/heim/eval" "$HEIM_TOOLS/eval"   # code-triage eval set (eval_heim.py)
@@ -492,6 +492,7 @@ ai_block() {
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-digest='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_digest.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-watch='\"$LOCAL_AI/python\" \"$LOCAL_AI/heim_watch.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-runs='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_results.py\"'"
+    [[ "$DO_HEIM" == 1 ]] && echo "alias ai-doctor='\"$LOCAL_AI/python\" \"$LOCAL_AI/ai_doctor.py\"'"
     [[ "$DO_VOR" == 1 ]] && echo "export VOR_HOME=\"$RHOME\""
     [[ "$DO_VOR" == 1 ]] && echo "alias vor='\"$VOR_DIR/python\" \"$VOR_DIR/vor.py\"'"
     echo "# <<< dam local AI <<<"

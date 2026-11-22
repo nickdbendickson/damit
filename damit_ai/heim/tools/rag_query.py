@@ -60,10 +60,69 @@ except ImportError:
 
 
 def post(url, payload, timeout=900):
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+    """POST to Ollama. When nothing answers (connection refused), start it once and try again."""
+    def once():
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    try:
+        return once()
+    except urllib.error.HTTPError:
+        raise
+    except urllib.error.URLError:
+        if not ensure_ollama(BASE):
+            raise
+        return once()
+
+
+_OLLAMA_CHECKED = []
+
+
+def ensure_ollama(base, log=print):
+    """Start Ollama in the background when it is not answering at `base` (a local address only), and wait
+    up to 30 s for it. Returns True when it answers. Before this, every assistant failed with "connection
+    refused" until `heim-start` had been run in a tab of its own. HEIM_NO_AUTOSTART=1 turns it off.
+    The same function is in rag_query.py, run_results.py and vor.py (a test keeps them identical)."""
+    import shutil, subprocess, time, urllib.parse  # nosec B404 - starts the local Ollama server only
+    if _OLLAMA_CHECKED:
+        return _OLLAMA_CHECKED[0]
+
+    def up():
+        try:
+            with urllib.request.urlopen(base.rstrip("/") + "/api/tags", timeout=3) as r:
+                return r.status == 200
+        except Exception:
+            return False
+    if up():
+        _OLLAMA_CHECKED.append(True)
+        return True
+    host = urllib.parse.urlparse(base).hostname or ""
+    if os.environ.get("HEIM_NO_AUTOSTART") == "1" or host not in ("127.0.0.1", "localhost", "::1"):
+        return False
+    home = os.path.expanduser("~")
+    exe = next((p for p in (os.path.join(home, "local-ai", "bin", "Ollama.app", "Contents", "Resources", "ollama"),
+                            shutil.which("ollama"), "/Applications/Ollama.app/Contents/Resources/ollama",
+                            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe"))
+                if p and os.path.isfile(p)), None)
+    if not exe:
+        log("Ollama is not running and no ollama program was found to start. Start it (heim-start or the Ollama app).")
+        return False
+    logf = os.path.join(home, "local-ai", "ollama-serve.log")
+    os.makedirs(os.path.dirname(logf), exist_ok=True)
+    env = dict(os.environ, OLLAMA_FLASH_ATTENTION=os.environ.get("OLLAMA_FLASH_ATTENTION", "1"),
+               OLLAMA_KV_CACHE_TYPE=os.environ.get("OLLAMA_KV_CACHE_TYPE", "q8_0"))
+    log("Ollama was not running: starting it in the background (log: %s) ..." % logf)
+    with open(logf, "ab") as out:
+        kw = {"creationflags": 0x00000008} if os.name == "nt" else {"start_new_session": True}   # detached
+        subprocess.Popen([exe, "serve"], stdout=out, stderr=out, stdin=subprocess.DEVNULL, env=env, **kw)  # nosec B603
+    for _ in range(60):
+        if up():
+            _OLLAMA_CHECKED.append(True)
+            return True
+        time.sleep(0.5)
+    log("Ollama did not answer within 30 s; see %s" % logf)
+    return False
 
 
 class Store(object):
@@ -416,6 +475,22 @@ def chat(coll, top_k, ask=input):
             earlier = (q, ans.strip())
 
 
+HELP = """\
+The commands you will use (the rest: heim --help, heim runs --help, vor --help):
+
+  heim "question"            ask about the suite's code, tools and known behaviours (cited)
+  heim chat                  a conversation; drag a file or a run folder in to add it
+  heim runs add FOLDER       read finished runs, then:  heim runs show 2801 | at 2801 "Main St" |
+                             compare 2801 | ask "how deep at County Road 26 for 2801?"
+  vor ask "question"         an answer from your library of publications, every quote checked
+  vor research "question"    a longer cited brief, saved in ~/Vor/reports
+  ai-doctor                  is everything installed, indexed and reading what you think?
+
+Ollama is started for you when it is not running (heim-start still works).
+More: heim add FILE, heim doctor, heim-digest / heim-watch (run watcher), damchain, heim-index.
+"""
+
+
 RUN_WORDS = ("depth", "deep", "velocity", "fast", "arrival", "arrive", "peak", "discharge", "flow", "cfs",
              "wse", "water surface", "elevation", "structure", "house", "home", "building", "address",
              "road", "rail", "bridge", "culvert", "flooded", "inundat", "breach", "hydrograph", "storage",
@@ -471,9 +546,12 @@ def command_word(argv):
     flags, `chat` only alone, and `add` only when every word after it is a file or folder that
     exists (or there is none, which gets the usage line). "add a culvert to the run?" is a
     question; "doctor" on its own is not one."""
-    if not argv or argv[0] not in ("doctor", "add", "chat", "runs"):
+    if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "help"):
         return None
     word, rest = argv[0], argv[1:]
+    if word == "help" and not rest:
+        print(HELP)
+        sys.exit(0)
     if word == "runs":
         return ("runs", rest)
     if word == "doctor" and all(r.startswith("-") for r in rest):
