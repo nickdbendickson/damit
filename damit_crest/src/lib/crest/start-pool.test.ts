@@ -81,7 +81,7 @@ describe("Manning's n on a record", () => {
   it("nothing set is the built-in roughness itself; a set value is held to 0.01 - 0.3", () => {
     assert.equal(roughnessOf(undefined), DEFAULT_ROUGHNESS);
     assert.equal(roughnessOf({}), DEFAULT_ROUGHNESS);
-    assert.equal(roughnessOf({ nChannel: 0.035, nFloodplain: 0.06 }), DEFAULT_ROUGHNESS);
+    assert.equal(roughnessOf({ nChannel: 0.035, nFloodplain: 0.05 }), DEFAULT_ROUGHNESS);
     assert.equal(roughnessOf({ nFloodplain: Number.NaN, nChannel: 0 }), DEFAULT_ROUGHNESS);
     assert.deepEqual(roughnessOf({ nFloodplain: 0.08 }), { nChannel: 0.035, nFloodplain: 0.08, bankfullM: 1.5 });
     assert.deepEqual(roughnessOf({ nChannel: 5, nFloodplain: 0.001 }), { nChannel: 0.3, nFloodplain: 0.01, bankfullM: 1.5 });
@@ -90,7 +90,7 @@ describe("Manning's n on a record", () => {
   it("the terrain layer's fingerprint moves only when the record leaves the defaults", () => {
     const base = fp(dwr2801());
     assert.equal(fp(dwr2801({ startPool: "top", roughness: {} })), base, "defaults spelled out: the saved layer still matches");
-    assert.equal(fp(dwr2801({ roughness: { nFloodplain: 0.06 } })), base);
+    assert.equal(fp(dwr2801({ roughness: { nFloodplain: 0.05 } })), base);
     assert.notEqual(fp(dwr2801({ roughness: { nFloodplain: 0.08 } })), base);
     assert.notEqual(fp(dwr2801({ roughness: { nChannel: 0.05 } })), base);
     assert.notEqual(fp(dwr2801({ startPool: "normal", normalPoolFt: 1061.09 })), base);
@@ -99,7 +99,7 @@ describe("Manning's n on a record", () => {
 
   it("the LISFLOOD export carries the record's floodplain n", () => {
     const series = analyze(dwr2801()).breach.series;
-    assert.match(generateLisfloodPackage(dwr2801({ lisflood: { pointX: 1, pointY: 2 } }), series).par, /^fpfric 0\.0600$/m);
+    assert.match(generateLisfloodPackage(dwr2801({ lisflood: { pointX: 1, pointY: 2 } }), series).par, /^fpfric 0\.0500$/m);
     assert.match(generateLisfloodPackage(dwr2801({ lisflood: { pointX: 1, pointY: 2 }, roughness: { nFloodplain: 0.045 } }), series).par, /^fpfric 0\.0450$/m);
   });
 });
