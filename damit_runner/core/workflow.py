@@ -556,26 +556,33 @@ def _check_solver(st, model_dir, log=None):
             raise brmod.BreachInputError(
                 "Sub-grid channels run with the ACC solver only (LISFLOOD-FP's SGC model is local "
                 "inertial); choose ACC or turn sub-grid channels off.")
-        if lfmod.is_builtin(st.lisflood_exe):
-            raise brmod.BreachInputError(
-                "Sub-grid channels need LISFLOOD-FP; the built-in engine has none. Set the "
-                "LISFLOOD-FP executable or turn sub-grid channels off.")
         if str(getattr(st, "sgc_start", "auto")) not in sgcmod.START_MODES:
             raise brmod.BreachInputError("Sub-grid channel start must be auto, empty or full.")
-        key = (os.path.abspath(str(st.lisflood_exe or "")), "sgc")
-        chk = _SOLVER_CHECKED.get(key)
-        if chk is None:
-            if log:
-                log("Checking that this LISFLOOD-FP runs sub-grid channels with the arrival-depth "
-                    "patch...")
-            chk = lfmod.check_lisflood(st.lisflood_exe, os.path.join(model_dir, "solver_check_sgc"),
-                                       lfmod.SOLVER_ACC, sgc=True)
-            if chk.get("ok") and chk.get("patched"):
-                _SOLVER_CHECKED[key] = chk
-        if not (chk.get("ok") and chk.get("patched")):
-            raise brmod.BreachInputError(
-                "LISFLOOD-FP sub-grid channels cannot be used: {}".format(
-                    chk.get("message", "") if not chk.get("ok") else lfmod.SGC_PATCH_MISSING_MSG))
+        if lfmod.is_inprocess(st.lisflood_exe):
+            # 0.8.0 (DamSafety Runner 3.36.0): the GPU engine with sub-grid channels (gpu-sgc) runs
+            # the channels natively, with no LISFLOOD-FP binary to check. The built-in engine and
+            # the plain GPU engine (ACC) have no channel model, so that is a configuration error.
+            if not lfmod.is_gpu_sgc(st.lisflood_exe):
+                raise brmod.BreachInputError(
+                    "Sub-grid channels need LISFLOOD-FP or the GPU engine with sub-grid channels "
+                    "(gpu-sgc); {} has no channel model. Choose one of those or turn sub-grid "
+                    "channels off.".format(lfmod.engine_name(st.lisflood_exe)))
+        else:
+            key = (os.path.abspath(str(st.lisflood_exe or "")), "sgc")
+            chk = _SOLVER_CHECKED.get(key)
+            if chk is None:
+                if log:
+                    log("Checking that this LISFLOOD-FP runs sub-grid channels with the "
+                        "arrival-depth patch...")
+                chk = lfmod.check_lisflood(st.lisflood_exe,
+                                           os.path.join(model_dir, "solver_check_sgc"),
+                                           lfmod.SOLVER_ACC, sgc=True)
+                if chk.get("ok") and chk.get("patched"):
+                    _SOLVER_CHECKED[key] = chk
+            if not (chk.get("ok") and chk.get("patched")):
+                raise brmod.BreachInputError(
+                    "LISFLOOD-FP sub-grid channels cannot be used: {}".format(
+                        chk.get("message", "") if not chk.get("ok") else lfmod.SGC_PATCH_MISSING_MSG))
     if solver == lfmod.SOLVER_ACC:
         return
     name = lfmod.SOLVER_SHORT.get(solver, solver)
@@ -2615,6 +2622,16 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
         if gmsg not in warnings:
             warnings.append(gmsg)
             log(gmsg)
+    if lfmod.is_gpu_sgc(st.lisflood_exe):
+        smsg = ("This run uses the GPU engine with LISFLOOD-FP's sub-grid channels (the ACC scheme "
+                "with a rectangular channel narrower than the cell, rewritten as GPU kernels, on {}), "
+                "not LISFLOOD-FP itself. Below bankfull it matches the analytic Manning depth; on the "
+                "Lake Delhi 2010 survey it came within about 0.1 ft of LISFLOOD-FP 8.3's own SGC at "
+                "the bridges. It is new: confirm a final hazard classification with a LISFLOOD-FP "
+                "run.".format(lfmod.gpu_backend_note()))
+        if smsg not in warnings:
+            warnings.append(smsg)
+            log(smsg)
 
     # --- LISFLOOD-FP with domain extension ----------------------------------------
     iterations = list(state.get("iterations", []))
@@ -3453,7 +3470,10 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     report["flood_engine"] = ("Built-in engine (local inertial, numpy; NOT LISFLOOD-FP)"
                               if _builtin_run else
                               "GPU engine (LISFLOOD-FP ACC scheme on the GPU; NOT LISFLOOD-FP)"
-                              if lfmod.is_gpu(st.lisflood_exe) else "LISFLOOD-FP (inertial solver)")
+                              if lfmod.is_gpu(st.lisflood_exe) else
+                              "GPU engine, sub-grid channels (ACC + LISFLOOD-FP sub-grid channels; "
+                              "NOT LISFLOOD-FP)"
+                              if lfmod.is_gpu_sgc(st.lisflood_exe) else "LISFLOOD-FP (inertial solver)")
     report["flood_engine_short"] = lfmod.engine_name(st.lisflood_exe)
     summary["flood_engine_short"] = report["flood_engine_short"]
     # 3.15.0 (ND 3.27.7): a coarse cell over a wide, shallow flood on flat terrain can

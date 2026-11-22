@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.8.0: the GPU engine with sub-grid channels (gpu-sgc) as a further engine choice; default unchanged
 0.7.15: the GPU flood engine (core/metalflood) as a separate engine choice (LISFLOOD_EXE = gpu); default unchanged
 0.7.14: DamSafety #442 - potholes can start partly or fully full (pothole_start_fill, default 0 = dry: no change).
 0.7.13: DamSafety #432 - the built-in engine adds a breach's point source in LISFLOOD-FP's order by default ('physicalinflow' keeps the mass-conserving order); moves near-breach depths for built-in runs.
@@ -82,7 +83,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.7.15"
+VERSION = "0.8.0"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
