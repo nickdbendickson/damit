@@ -147,13 +147,13 @@ ok "$LOCAL_AI, $RHOME"
 # ---------------------------------------------------------------------------
 say "Step 2 — Ollama (no sudo, no download-then-run)"
 OLLAMA=""
-OCANDS=("$(command -v ollama 2>/dev/null)" "$LOCAL_AI/ollama/bin/ollama" "$HOME/.local/bin/ollama")
+OCANDS=("$(command -v ollama 2>/dev/null || true)" "$LOCAL_AI/ollama/bin/ollama" "$HOME/.local/bin/ollama")
 if [[ -n "$SANDBOX" ]]; then
   # the sandbox's own copy first, then the bundled archive (extracted into the sandbox below), and
   # only then an Ollama already on this machine (its program is only run, never changed)
   OCANDS=("$LOCAL_AI/ollama/bin/ollama")
   [[ -f "$OFFLINE/ollama/ollama-linux-amd64.tar.zst" || -f "$OFFLINE/ollama/ollama-linux-amd64.tgz" ]] \
-    || OCANDS+=("$(command -v ollama 2>/dev/null)" "$HOME/.local/bin/ollama")
+    || OCANDS+=("$(command -v ollama 2>/dev/null || true)" "$HOME/.local/bin/ollama")
 fi
 for c in "${OCANDS[@]}"; do
   [[ -n "$c" && -x "$c" ]] && { OLLAMA="$c"; break; }
@@ -376,10 +376,10 @@ EOF
   fi
   PYL="$(make_env "$HEIM_ENV" "python=3.12 pymupdf pypdf numpy")"
   ok "heim python: $PYL"
-  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py ai_doctor.py ai_ui.py; do
+  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py ai_doctor.py ai_ui.py ai_score.py; do
     [[ -f "$HERE/heim/tools/$t" ]] && cp "$HERE/heim/tools/$t" "$HEIM_TOOLS/$t"
   done
-  [[ -d "$HERE/heim/eval" ]] && cp -r "$HERE/heim/eval" "$HEIM_TOOLS/eval"   # code-triage eval set (eval_heim.py)
+  [[ -d "$HERE/heim/eval" ]] && mkdir -p "$HEIM_TOOLS/eval" && cp -R "$HERE/heim/eval/." "$HEIM_TOOLS/eval/"   # code-triage eval set (eval_heim.py); contents, so a re-run does not nest eval/eval
   printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$PYL" > "$LOCAL_AI/python"; chmod +x "$LOCAL_AI/python"
   ok "heim tools -> $LOCAL_AI"
 fi
@@ -428,7 +428,7 @@ EOF
   for t in vor.py fetch_asdso.py eval_vor.py reference_sources.json; do
     [[ -f "$HERE/vor/$t" ]] && cp "$HERE/vor/$t" "$VOR_DIR/$t"
   done
-  [[ -d "$HERE/vor/eval" ]] && cp -r "$HERE/vor/eval" "$VOR_DIR/eval"
+  [[ -d "$HERE/vor/eval" ]] && mkdir -p "$VOR_DIR/eval" && cp -R "$HERE/vor/eval/." "$VOR_DIR/eval/"
   printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$PYR" > "$VOR_DIR/python"; chmod +x "$VOR_DIR/python"
   ok "vor tools -> $VOR_DIR; drop PDFs in $RHOME/library"
 fi
@@ -494,6 +494,8 @@ ai_block() {
     [[ "$DO_HEIM" == 1 ]] && echo "alias heim-runs='\"$LOCAL_AI/python\" \"$LOCAL_AI/run_results.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias ai-doctor='\"$LOCAL_AI/python\" \"$LOCAL_AI/ai_doctor.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias ai='\"$LOCAL_AI/python\" \"$LOCAL_AI/ai_ui.py\"'"
+    [[ "$DO_HEIM" == 1 ]] && echo "alias ai-score='\"$LOCAL_AI/python\" \"$LOCAL_AI/ai_score.py\"'"
+    [[ "$DO_HEIM" == 1 ]] && echo "alias heim-index='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_index.py\"'"
     [[ "$DO_VOR" == 1 ]] && echo "export VOR_HOME=\"$RHOME\""
     [[ "$DO_VOR" == 1 ]] && echo "alias vor='\"$VOR_DIR/python\" \"$VOR_DIR/vor.py\"'"
     echo "# <<< dam local AI <<<"

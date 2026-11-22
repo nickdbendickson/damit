@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.3.3 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.0 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -34,6 +34,8 @@
 #     --per-doc N      passages allowed from any one publication (default 3; with --doc
 #                      the cap is lifted unless you set it, so a long guideline can give
 #                      up all -k passages).
+#   vor tables                 add the PDFs' tables as their own passages (documents indexed
+#                                      before 1.4.0; new ones get them at ingest). Needs PyMuPDF.
 #   vor ocr                    OCR the scanned PDFs (needs ocrmypdf) and re-ingest them
 #   vor remove DOC             drop a document from the index (file is not touched)
 #   vor doctor                 check Ollama, the two models and the database
@@ -47,6 +49,10 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.0: tables are read as tables. A table on a PDF page became running text, so a row's numbers lost
+#   their column headings (a Manning n table read "0.025 0.030 0.033 ..."). With PyMuPDF, ingest now also
+#   stores each table it finds as its own passage: its caption and the table in Markdown, header kept on
+#   every piece. `vor tables` adds them to documents indexed before 1.4.0 without re-reading the rest.
 # 1.3.3: Ollama is started in the background when it is not running (ensure_ollama, the same
 #   function as Heim's), instead of failing with "cannot reach Ollama" until heim-start had run.
 # 1.3.2: `vor ocr`, `vor ingest` and `vor doctor` no longer send you round in a circle. `vor ocr`
@@ -77,7 +83,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.3.3"
+VERSION = "1.4.0"
 
 
 def _home():
@@ -604,6 +610,159 @@ def extract_pdf(path):
         raise RuntimeError("no PDF reader: install PyMuPDF (pip install pymupdf) or poppler (pdftotext)")
 
 
+TABLE_IDX = 1000            # chunk idx of a page's first table passage (text passages count from 0)
+TABLE_MIN_NUMBER_LINES = 6  # a page is searched for tables only with this many lines of numbers (the finder
+                            # takes about 0.7 s a page; USGS WSP 2339: 13 of 44 pages searched, every n table found)
+
+
+def table_markdown(rows):
+    """A table (list of rows of cells, the first row the header) as Markdown, or '' when it is not a table
+    worth keeping (fewer than 2 rows or 2 columns, or almost empty)."""
+    rows = [[re.sub(r"\s+", " ", str(c or "")).strip().replace("|", "/") for c in r] for r in rows or []]
+    rows = [r for r in rows if any(r)]
+    if len(rows) < 2 or max(len(r) for r in rows) < 2:
+        return ""
+    n = max(len(r) for r in rows)
+    rows = [r + [""] * (n - len(r)) for r in rows]
+    if sum(1 for r in rows for c in r if c) < 4:
+        return ""
+    out = ["| " + " | ".join(rows[0]) + " |", "|" + "---|" * n]
+    out += ["| " + " | ".join(r) + " |" for r in rows[1:]]
+    return "\n".join(out)
+
+
+def table_chunks(caption, md):
+    """Passages for one table: the caption and the header on every piece, rows never split."""
+    lines = md.split("\n")
+    head, body = lines[:2], lines[2:]
+    lead = ("Table: %s\n" % caption) if caption else "Table:\n"
+    out, cur = [], []
+    for ln in body:
+        if cur and len(lead) + sum(len(x) + 1 for x in head + cur + [ln]) > CHUNK_MAX:
+            out.append(lead + "\n".join(head + cur))
+            cur = []
+        cur.append(ln)
+    if cur:
+        out.append(lead + "\n".join(head + cur))
+    return out
+
+
+_NUMBER_LINE = re.compile(r"[\s\d.,\-\u2013%()<>=+/]*\d[\s\d.,\-\u2013%()<>=+/]*")
+
+
+def table_candidate(text):
+    """Worth running the (slow) table finder on: enough lines that are only numbers (a table whose cells are
+    read one per line), or a few lines holding three numbers or more (a table read row by row)."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    only = sum(1 for ln in lines if _NUMBER_LINE.fullmatch(ln))
+    rows = sum(1 for ln in lines if len(re.findall(r"\d+(?:\.\d+)?", ln)) >= 3)
+    return only >= TABLE_MIN_NUMBER_LINES or rows >= 3
+
+
+def _cell_words(words, bbox, pm):
+    """The page's words whose centre falls in bbox, in reading order (block, line, word)."""
+    r = pm.Rect(bbox)
+    ws = [w for w in words if r.contains(pm.Point((w[0] + w[2]) / 2, (w[1] + w[3]) / 2))]
+    ws.sort(key=lambda w: (w[5], w[6], w[7]))
+    return " ".join(w[4] for w in ws)
+
+
+def _table_rows(t, words=None, pm=None):
+    """A PyMuPDF table's rows. Each cell is rebuilt from the page's words when they are given: that keeps
+    the spaces between words and numbers like .017 whole (to_markdown() can drop the spaces, extract() can
+    put a decimal point after its digits). to_markdown() and then extract() are the fallbacks."""
+    if words and pm is not None and getattr(t, "rows", None):
+        try:
+            rows = [[_cell_words(words, c, pm) if c else "" for c in r.cells] for r in t.rows]
+            if any(any(c for c in r) for r in rows):
+                return rows
+        except Exception:
+            pass
+    try:
+        md = t.to_markdown()
+    except Exception:
+        md = ""
+    rows = []
+    for ln in (md or "").splitlines():
+        ln = ln.strip()
+        if not ln.startswith("|") or re.match(r"^\|(\s*:?-+:?\s*\|)+$", ln):
+            continue
+        rows.append([c.replace("<br>", " ").strip() for c in ln.strip("|").split("|")])
+    return rows or t.extract()
+
+
+_CAPTION = re.compile(r"^\s*table\s+[0-9A-Z]+[.:\s-]", re.I)
+
+
+def _table_caption(words, bbox, pm):
+    """The caption above a table: the nearest line within 150 pt that starts 'Table N' (plus a bracketed
+    note line right after it), else the last line within 60 pt."""
+    x0, y0, x1, _ = bbox
+    lines = {}
+    for w in words:
+        if w[3] <= y0 + 1 and w[1] >= y0 - 150:
+            lines.setdefault((w[5], w[6]), []).append(w)
+    ordered = []
+    for k in sorted(lines):
+        ws = sorted(lines[k], key=lambda w: w[7])
+        ordered.append((min(w[1] for w in ws), " ".join(w[4] for w in ws)))
+    for n in range(len(ordered) - 1, -1, -1):
+        if _CAPTION.match(ordered[n][1]):
+            cap = ordered[n][1]
+            if n + 1 < len(ordered) and ordered[n + 1][1].lstrip().startswith("["):
+                cap += " " + ordered[n + 1][1]
+            return cap.strip()[:200]
+    near = [t for y, t in sorted(ordered) if y >= y0 - 60]
+    return (near[-1].strip() if near else "")[:200]
+
+
+def extract_pdf_tables(path, pages_text=None):
+    """{page_no: [table passage, ...]} found by PyMuPDF's table finder; {} without PyMuPDF or on error.
+    Only pages that look like they hold a table are searched (the finder is slow and most pages hold none)."""
+    try:
+        import pymupdf as pm
+    except ImportError:
+        try:
+            import fitz as pm
+        except ImportError:
+            return {}
+    out = {}
+    try:
+        d = pm.open(path)
+    except Exception:
+        return {}
+    try:
+        for i, pg in enumerate(d):
+            text = pages_text.get(i + 1) if pages_text else None
+            if text is None:
+                text = pg.get_text("text") or ""
+            if not table_candidate(text) or not hasattr(pg, "find_tables"):
+                continue
+            try:
+                found = pg.find_tables()
+            except Exception:
+                continue
+            try:
+                words = pg.get_text("words") or []
+            except Exception:
+                words = []
+            for t in getattr(found, "tables", []) or []:
+                try:
+                    md = table_markdown(_table_rows(t, words, pm))
+                except Exception:
+                    md = ""
+                if not md:
+                    continue
+                try:
+                    cap = _table_caption(words, t.bbox, pm)
+                except Exception:
+                    cap = ""
+                out.setdefault(i + 1, []).extend(table_chunks(cap, md))
+    finally:
+        d.close()
+    return out
+
+
 def extract_text_file(path):
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         t = f.read()
@@ -1080,6 +1239,13 @@ def ingest_one(db, path, h, side, n, total):
     for p, label, t in pages:
         for i, c in enumerate(chunk_page(t)):
             items.append((p, label, i, c))
+    if backend == "pymupdf":
+        labels = {p: label for p, label, _ in pages}
+        tables = extract_pdf_tables(path, {p: t for p, _, t in pages})
+        for p in sorted(tables):
+            for k, c in enumerate(tables[p]):
+                items.append((p, labels.get(p, ""), TABLE_IDX + k, c))
+        backend = "pymupdf+tables"
     if not items:
         say("  [%d/%d] NO TEXT (scanned? run `vor ocr`): %s" % (n, total, name))
         db.execute("INSERT INTO docs(sha1,path,title,authors,year,org,number,pages,notext,backend,added,meta_src)"
@@ -1931,6 +2097,61 @@ def cmd_bib(a):
     say("%d BibTeX entries read, %d library documents updated." % (len(entries), hit))
 
 
+def cmd_tables(a):
+    """Add table passages to PDFs indexed before 1.4.0 (backend 'pymupdf'), embedding only the tables."""
+    try:
+        import pymupdf  # noqa: F401
+    except ImportError:
+        try:
+            import fitz  # noqa: F401
+        except ImportError:
+            die("`vor tables` needs PyMuPDF (the installer puts it in Vor's Python).")
+    db = connect()
+    try:
+        _add_tables(db)
+    finally:
+        db.close()
+
+
+def _add_tables(db):
+    rows = db.execute("SELECT id, path, title FROM docs WHERE backend = 'pymupdf' ORDER BY id").fetchall()
+    if not rows:
+        say("Every PDF already has its tables (or none was read with PyMuPDF). Nothing to do.")
+        return
+    say("Looking for tables in %d document(s) indexed before Vor 1.4.0 (only pages with numbers are searched) ..."
+        % len(rows))
+    pre = doc_prefix(EMBED_MODEL)
+    added = 0
+    for n, (did, path, title) in enumerate(rows, 1):
+        if not os.path.isfile(path):
+            say("  [%d/%d] file gone, skipped: %s" % (n, len(rows), path))
+            continue
+        labels = dict(db.execute("SELECT page, label FROM chunks WHERE doc_id=? GROUP BY page", (did,)).fetchall())
+        tables = extract_pdf_tables(path)
+        items = [(p, labels.get(p, ""), TABLE_IDX + k, c) for p in sorted(tables) for k, c in enumerate(tables[p])]
+        vecs = []
+        for b in range(0, len(items), EMBED_BATCH):
+            batch = items[b:b + EMBED_BATCH]
+            vecs += embed([pre + "%s (p.%s)\n%s" % (title, lab or p, c) for p, lab, _, c in batch], EMBED_MODEL)
+        cur = db.cursor()
+        cur.execute("BEGIN")
+        if db.fts:
+            for cid, txt in db.execute("SELECT id, txt FROM chunks WHERE doc_id=? AND idx >= ?", (did, TABLE_IDX)).fetchall():
+                cur.execute("INSERT INTO chunks_fts(chunks_fts, rowid, txt, title) VALUES('delete',?,?,?)",
+                            (cid, txt, title or ""))
+        cur.execute("DELETE FROM chunks WHERE doc_id=? AND idx >= ?", (did, TABLE_IDX))
+        for (p, lab, i, c), v in zip(items, vecs):
+            cur.execute("INSERT INTO chunks(doc_id,page,label,idx,txt,vec) VALUES(?,?,?,?,?,?)",
+                        (did, p, lab, i, c, array("f", v).tobytes()))
+            if db.fts:
+                cur.execute("INSERT INTO chunks_fts(rowid, txt, title) VALUES(?,?,?)", (cur.lastrowid, c, title))
+        cur.execute("UPDATE docs SET backend = 'pymupdf+tables' WHERE id=?", (did,))
+        db.commit()
+        added += len(items)
+        say("  [%d/%d] %s: %d table passage(s)" % (n, len(rows), os.path.basename(path), len(items)))
+    say("Added %d table passage(s). Searches see them now." % added)
+
+
 def cmd_remove(a):
     db = connect()
     did = find_doc(db, a.doc)
@@ -2113,8 +2334,13 @@ def library_checks():
             used = meta_get(db, "embed_model")
             rows = db.execute("SELECT path, notext, added, sha1, id, pages FROM docs").fetchall()
             fts = db.fts
+            no_tables = db.execute("SELECT COUNT(*) FROM docs WHERE backend = 'pymupdf'").fetchone()[0]
         finally:
             db.close()
+        if no_tables:
+            add("WATCH", "%d PDF(s) were indexed before Vor 1.4.0 read tables as tables: a table row's numbers "
+                         "are only in running text, without their column headings. Run: vor tables "
+                         "(embeds only the tables)" % no_tables)
         if not nc:
             add("PROBLEM", "the index is empty (%d documents, 0 passages): every question will get "
                 "'no passage'. %s" % (nd, ("%d file(s) are in the library. Run: vor ingest" % len(on_disk))
@@ -2312,6 +2538,8 @@ def main():
     s.add_argument("-k", type=int, default=8)
     add_scope_args(s)
     s.set_defaults(fn=cmd_chat)
+    s = sub.add_parser("tables", help="add the PDFs' tables as their own passages (documents indexed before 1.4.0)")
+    s.set_defaults(fn=cmd_tables)
     s = sub.add_parser("ocr", help="OCR scanned PDFs (needs ocrmypdf) and re-index them")
     s.add_argument("--min-fraction", type=float, default=OCR_MIN_FRACTION,
                    help="OCR a PDF when at least this share of its pages has no text (default 0.3; "

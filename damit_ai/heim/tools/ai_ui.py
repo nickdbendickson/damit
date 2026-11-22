@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ai_ui.py 1.0.0 - one local page for both assistants (the `ai` command).
 
-    ai                 open the page in your browser (http://127.0.0.1:<port>/, this Mac only)
+    ai                 open the page in your browser (http://127.0.0.1:<port>/, this computer only)
     ai --port 8765     a fixed port
     ai --no-browser    print the address instead of opening it
 
@@ -307,7 +307,7 @@ def serve(port=0, open_browser=True):
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     Handler.port = httpd.server_address[1]
     url = "http://127.0.0.1:%d/?k=%s" % (Handler.port, Handler.key)
-    print("Heim and Vor: %s\n(this Mac only; Ctrl+C stops it)" % url, flush=True)
+    print("Heim and Vor: %s\n(this computer only; Ctrl+C stops it)" % url, flush=True)
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
@@ -350,7 +350,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border-rad
 .ok{color:var(--ok)}.watch{color:var(--watch)}.bad{color:var(--bad)}
 pre:empty{display:none}svg{width:100%;height:280px}svg text{fill:var(--muted);font-size:11px}
 </style></head><body>
-<header><h1>Heim and Vor</h1><small>runs on this Mac only · ai_ui __VERSION__</small>
+<header><h1>Heim and Vor</h1><small>runs on this computer only · ai_ui __VERSION__</small>
 <nav><button data-t="ask" class="on">Ask</button><button data-t="runs">Runs</button><button data-t="add">Add</button><button data-t="health">Health</button></nav></header>
 <main>
 <section id="ask" class="on"><div class="card">

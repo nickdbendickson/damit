@@ -308,6 +308,8 @@ printf '#!/bin/sh\nexec "%s" "$@"\n' "$PY" > "$TOOL_DIR/python" && chmod +x "$TO
 # ---------------------------------------------------------------------------
 say "5/6  Tool, folders, commands"
 cp "$HERE/vor.py" "$TOOL_DIR/vor.py"
+[[ -f "$HERE/eval_vor.py" ]] && cp "$HERE/eval_vor.py" "$TOOL_DIR/eval_vor.py"
+[[ -d "$HERE/eval" ]] && mkdir -p "$TOOL_DIR/eval" && cp -R "$HERE/eval/." "$TOOL_DIR/eval/"
 mkdir -p "$RHOME/library" "$RHOME/reports"
 [[ -f "$RHOME/library/library.csv" ]] || cp "$HERE/library.csv.example" "$RHOME/library/library.csv.example" 2>/dev/null
 ok "tool -> $TOOL_DIR/vor.py; drop PDFs in $RHOME/library"

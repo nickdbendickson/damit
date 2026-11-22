@@ -485,7 +485,8 @@ The commands you will use (the rest: heim --help, heim runs --help, vor --help):
   vor ask "question"         an answer from your library of publications, every quote checked
   vor research "question"    a longer cited brief, saved in ~/Vor/reports
   ai-doctor                  is everything installed, indexed and reading what you think?
-  ai                         all of the above on one page in your browser (this Mac only)
+  ai                         all of the above on one page in your browser (this computer only)
+  ai-score                   run both answer tests and keep a dated score history
 
 Ollama is started for you when it is not running (heim-start still works).
 More: heim add FILE, heim doctor, heim-digest / heim-watch (run watcher), damchain, heim-index.

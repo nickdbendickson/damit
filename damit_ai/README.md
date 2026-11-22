@@ -99,6 +99,16 @@ plugin zip or CI job.
    PDF at the cited page), the run results (show, compare, depth at a place, the hydrograph as a
    chart), adding a file or run folder, and `ai-doctor`. It runs the same commands as the terminal.
 
+   **Scores over time:** `ai-score` runs Heim's answer test (26 questions) and Vor's (24, five of them
+   read from tables), adds both scores to `~/local-ai/reports/score-history.jsonl`, and rewrites
+   `SCORE-HISTORY.md` next to it: one table per assistant and model, and which questions started or
+   stopped passing since the run before. `ai-score --history` shows it without running anything.
+
+   **Vor reads tables (vor 1.4.0):** a PDF table is now also kept as one table passage (its caption
+   and header row on every piece), so "what n for a cobble bed?" finds the row instead of a column of
+   numbers torn from it. New documents get this when added. For a library added before, run
+   `vor tables` once; `vor doctor` says when it is needed. It re-reads only the PDFs, not the text.
+
    **Short list:** `heim help` prints the commands most people use. `ai-doctor` runs Heim's and
    Vor's checks together and ends with one OK / WATCH / PROBLEM line for each. Ollama is started in
    the background when a command needs it and it is not running (`HEIM_NO_AUTOSTART=1` turns that

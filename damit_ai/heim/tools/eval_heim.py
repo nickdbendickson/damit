@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_heim.py v1.1 - score Heim's code-triage answers against questions with known answers.
+# eval_heim.py v1.2 - score Heim's code-triage answers against questions with known answers.
 # The Heim counterpart of vor/eval_vor.py.
 #
 #   python3 eval_heim.py                        # the 'heim' persona, all questions
@@ -17,7 +17,8 @@
 #                sentence that does not negate it ("there is no --no-refine" is fine, "use --no-refine" is not).
 # With --no-context nothing is retrieved and the question goes to the persona as it is (the `heim-chat --bare` path), so
 # step 1 is skipped: this is what the 11 Nov 2026 test asked when the 8B model reversed the sunny-day rule and invented
-# tool names. v1.1 adds --no-context and forbid_unless_negated.
+# tool names. v1.1 adds --no-context and forbid_unless_negated. v1.2 adds the run time and minutes to the .json
+# report, which `ai-score` (ai_score.py) reads for its score history.
 # Questions whose source is not indexed are skipped (reported as SKIP), so the score reflects
 # only what Heim could actually have grounded. The eval uses the same retrieval + prompt as
 # `heim` (rag_query.py), so it measures the real pipeline. Nothing is sent off the machine.
@@ -149,8 +150,10 @@ def main():
     stamp = datetime.now().strftime("%Y-%m-%d")
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", model) + ("_nocontext" if a.no_context else "")
     base = os.path.join(REPORTS, "eval_heim_%s_%s" % (safe, stamp))
-    json.dump({"model": model, "collection": coll, "passed": npass, "scored": scored,
-               "skipped": nskip, "rows": rows}, open(base + ".json", "w"), indent=2)
+    with open(base + ".json", "w") as f:
+        json.dump({"model": model, "collection": coll, "passed": npass, "scored": scored, "skipped": nskip,
+                   "when": datetime.now().isoformat(timespec="seconds"),
+                   "minutes": round(sum(r.get("seconds") or 0 for r in rows) / 60, 1), "rows": rows}, f, indent=2)
     with open(base + ".md", "w") as f:
         f.write("# Heim eval - %s (%s)\n\n%d/%d passed, %d skipped.\n\n" % (model, stamp, npass, scored, nskip))
         for r in rows:
