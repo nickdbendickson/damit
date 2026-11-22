@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_vor.py v1.3 - score vor's answers against questions with known answers.
+# eval_vor.py v1.4 - score vor's answers against questions with known answers.
 #
 #   python3 eval_vor.py                         # the vor model, all questions
 #   python3 eval_vor.py --model qwen3.6:27b     # any Ollama model (run once per model)
@@ -90,6 +90,13 @@ def main():
         # A pass earned that way is the tool working, not the model writing, so it is counted apart.
         r["answer_from"] = getattr(ev, "answer_from", "model")
         r["answer_note"] = getattr(ev, "answer_note", "")
+        # 1.4: what Vor printed while it worked, each model call (passages, tokens, seconds, done_reason)
+        # and any passage it had to cut. On 2026-11-22 three questions failed in 1-2 s with "the model
+        # drew no quote" and nothing in the report could say why.
+        r["calls"] = list(getattr(ev, "calls", []))
+        r["cut"] = list(getattr(ev, "cut", []))
+        lg = log.getvalue()
+        r["log"] = lg if len(lg) <= 6000 else lg[:3000] + "\n[...]\n" + lg[-3000:]
         if missing:
             invented = [f for f in q.get("forbid", []) if re.search(f, text, re.I)]
             ok = (not ev.findings or bool(NOT_COVERED.search(text))) and not invented
