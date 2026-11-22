@@ -1,0 +1,317 @@
+{
+"type": "FeatureCollection",
+"features": [
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.330379,
+42.430964
+]
+},
+"properties": {
+"fd_id": 64598383,
+"occtype": "IND2",
+"st_damcat": "IND",
+"bldgtype": "W",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 0.25,
+"found_type": "S",
+"pop2amu65": 0,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "H",
+"sqft": 8789
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.330479,
+42.431511
+]
+},
+"properties": {
+"fd_id": 64598384,
+"occtype": "RES1-1SWB",
+"st_damcat": "RES",
+"bldgtype": "S",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 1,
+"pop2pmu65": 1,
+"pop2pmo65": 1,
+"source": "P",
+"sqft": 1702
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.330482,
+42.430319
+]
+},
+"properties": {
+"fd_id": 64598385,
+"occtype": "RES1-1SNB",
+"st_damcat": "RES",
+"bldgtype": "W",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "C",
+"pop2amu65": 1,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "P",
+"sqft": 2152
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.330483,
+42.43209
+]
+},
+"properties": {
+"fd_id": 64598386,
+"occtype": "RES1-1SWB",
+"st_damcat": "RES",
+"bldgtype": "W",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "P",
+"sqft": 1575
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.327634,
+42.434224
+]
+},
+"properties": {
+"fd_id": 64598387,
+"occtype": "RES1-1SWB",
+"st_damcat": "RES",
+"bldgtype": "W",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "P",
+"sqft": 1102
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.327662,
+42.430016
+]
+},
+"properties": {
+"fd_id": 64598388,
+"occtype": "RES1-1SWB",
+"st_damcat": "RES",
+"bldgtype": "M",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "P",
+"sqft": 1448
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.330435,
+42.43337
+]
+},
+"properties": {
+"fd_id": 64598390,
+"occtype": "RES1-2SWB",
+"st_damcat": "RES",
+"bldgtype": "W",
+"num_story": 2,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "P",
+"sqft": 2591
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.330448,
+42.433682
+]
+},
+"properties": {
+"fd_id": 64598391,
+"occtype": "RES1-1SWB",
+"st_damcat": "RES",
+"bldgtype": "W",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 1,
+"pop2pmu65": 1,
+"pop2pmo65": 1,
+"source": "P",
+"sqft": 1860
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.326902,
+42.430484
+]
+},
+"properties": {
+"fd_id": 64598392,
+"occtype": "RES1-2SWB",
+"st_damcat": "RES",
+"bldgtype": "W",
+"num_story": 2,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "P",
+"sqft": 2380
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.329732,
+42.430002
+]
+},
+"properties": {
+"fd_id": 64598393,
+"occtype": "IND2",
+"st_damcat": "IND",
+"bldgtype": "M",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 0.25,
+"found_type": "S",
+"pop2amu65": 0,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "H",
+"sqft": 7998
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.32672,
+42.434679
+]
+},
+"properties": {
+"fd_id": 64598394,
+"occtype": "RES1-1SWB",
+"st_damcat": "RES",
+"bldgtype": "W",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 2,
+"pop2amo65": 1,
+"pop2pmu65": 1,
+"pop2pmo65": 1,
+"source": "P",
+"sqft": 2792
+}
+},
+{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+-91.328718,
+42.434213
+]
+},
+"properties": {
+"fd_id": 64598395,
+"occtype": "RES1-1SWB",
+"st_damcat": "RES",
+"bldgtype": "M",
+"num_story": 1,
+"med_yr_blt": 1975,
+"found_ht": 2,
+"found_type": "B",
+"pop2amu65": 1,
+"pop2amo65": 0,
+"pop2pmu65": 0,
+"pop2pmo65": 0,
+"source": "P",
+"sqft": 2332
+}
+}
+]
+}

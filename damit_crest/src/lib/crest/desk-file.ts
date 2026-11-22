@@ -140,7 +140,7 @@ const READ: { [K in keyof Required<DamRecord>]: (v: unknown) => unknown } = {
   nd911: obj,
   outline: obj,
   judgmentAsProbable: bool,
-  receptorSource: oneOf(["nd911"] as const),
+  receptorSource: oneOf(["nd911", "nsi"] as const),
   nd911AutoAdded: bool,
   nidId: longText,
   nidHazard: oneOf(["Low", "Significant", "High", "Undetermined"] as const),
