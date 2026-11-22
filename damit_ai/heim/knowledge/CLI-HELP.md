@@ -514,7 +514,7 @@ Local audit report for a dam-suite repo.
 
 ---
 
-## eval_heim.py 1.2
+## eval_heim.py 1.3
 
 Installed command: `eval_heim.py`. Score a model on the code-triage questions.
 
@@ -714,7 +714,7 @@ Download public ASDSO-listed dam-safety references into the vor library.
 
 ---
 
-## eval_vor.py 1.2
+## eval_vor.py 1.3
 
 Installed command: `eval_vor.py`. Score a model on the literature questions.
 

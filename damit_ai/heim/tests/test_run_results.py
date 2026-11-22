@@ -483,6 +483,34 @@ class AskTest(Base):
         self.assertEqual(ans, "")
         self.assertIn("heim runs show", text)
 
+    def test_a_dam_with_no_runs_is_said_before_any_query(self):
+        # 2026-11-22 real-model run: the model counted 0 rows for a dam that was not in the database and
+        # wrote "No habitable structures flood more than 2 feet deep". It must not be asked at all.
+        ans, text, calls = self.ask("how many habitable structures flood more than 2 feet deep for 9999?", [])
+        self.assertEqual((ans, calls), ("", []))
+        self.assertIn("No runs for 9999", text)
+
+    def test_an_empty_database_says_so(self):
+        empty = os.path.join(self.tmp, "empty.db")
+        self.R.connect(empty, write=True).close()
+        out, called = [], []
+        ans = self.R.ask("peak flow for 2801?", db_path=empty, out=out.append,
+                         chat=lambda *a, **k: called.append(1) or "")
+        self.assertEqual((ans, called), ("", []))
+        self.assertIn("the database has no runs", "\n".join(out))
+
+    def test_an_address_number_is_not_a_dam(self):
+        self.assertEqual(self.R.missing_dams("depth at 3021 County Road 26 for 2801", ["DWR-2801"]), [])
+        self.assertEqual(self.R.missing_dams("which dams peak over 5000 cfs?", ["DWR-2801"]), [])
+        self.assertEqual(self.R.missing_dams("depth for DWR-2801?", ["DWR-2645"]), ["2801"])
+
+    def test_the_models_reasoning_is_cut(self):
+        ans, text, _c = self.ask("depth at 4512 Main St, DWR-2801?", [
+            self.SQL, "Hmm, the user asks about the year 2100.\n</think>\n\nThe depth at 4512 Main St is 3.42 ft."])
+        self.assertEqual(ans, "The depth at 4512 Main St is 3.42 ft.")
+        self.assertNotIn("Hmm", text)
+        self.assertNotIn("CHECK:", text)          # 2100 was only in the reasoning
+
     def test_rounding_is_allowed(self):
         rows = [("DWR-2801", 28671.4, 0.944)]
         self.assertEqual(self.R.unsupported_numbers("peak 28,671 cfs at 0.94 h", rows), [])

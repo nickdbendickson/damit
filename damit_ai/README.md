@@ -104,7 +104,7 @@ plugin zip or CI job.
    `SCORE-HISTORY.md` next to it: one table per assistant and model, and which questions started or
    stopped passing since the run before. `ai-score --history` shows it without running anything.
 
-   **Vor reads tables (vor 1.4.0):** a PDF table is now also kept as one table passage (its caption
+   **Vor reads tables (vor 1.4.0; 1.4.1 reads a report the question names first):** a PDF table is now also kept as one table passage (its caption
    and header row on every piece), so "what n for a cobble bed?" finds the row instead of a column of
    numbers torn from it. New documents get this when added. For a library added before, run
    `vor tables` once; `vor doctor` says when it is needed. It re-reads only the PDFs, not the text.

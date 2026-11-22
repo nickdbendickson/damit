@@ -49,6 +49,11 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.1 (from the first real-model test, 2026-11-22): a question that names a report ('FEMA 333',
+#   'P-946', 'TD-39') reads that report's passages first; four FEMA 333 questions had never read FEMA 333,
+#   because other FEMA manuals repeat its definitions. And a cited sentence whose quote holds the opposite
+#   term ('high hazard' with the low-hazard definition) is called out under Checks: the quote checker
+#   passed it, because the quote was on its page.
 # 1.4.0: tables are read as tables. A table on a PDF page became running text, so a row's numbers lost
 #   their column headings (a Manning n table read "0.025 0.030 0.033 ..."). With PyMuPDF, ingest now also
 #   stores each table it finds as its own passage: its caption and the table in Markdown, header kept on
@@ -83,7 +88,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 
 def _home():
@@ -530,6 +535,78 @@ def find_docs(db, key):
                 ids.append(r[0])
                 labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
     return ids, labels
+
+
+_NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bulletin|Circular)[\s_-]*"
+                    r"(\d+(?:[.-]\d+)*)", re.I)
+
+
+def named_docs(db, question):
+    """Documents the question names by report number ('FEMA 333', 'P-946', 'TD-39', 'WSP 2339'), as
+    (ids, labels). The 2026-11-22 real-model test asked four FEMA 333 questions and FEMA 333 was never
+    among the passages read: other FEMA manuals repeat its definitions and outranked it. A match needs
+    the prefix and number together ('p946' in 'FEMA P946.pdf'), or, for a number of 3+ digits, the
+    number on its own as a whole number plus the prefix anywhere ('FEMA ... 333_04.pdf')."""
+    want = [(m.group(1), m.group(2)) for m in _NAMED.finditer(question or "")]
+    if not want:
+        return [], []
+    rows = db.execute("SELECT id, title, path, number, org FROM docs").fetchall()
+    ids, labels = [], []
+    for pfx, num in want:
+        tight = squash(pfx + num)
+        for r in rows:
+            raw = " ".join(x or "" for x in (os.path.basename(r[2] or ""), r[1], r[3], r[4]))
+            sq = squash(raw)
+            ok = tight in sq
+            if not ok and len(re.sub(r"\D", "", num)) >= 3:
+                ok = bool(re.search(r"(?<![\d.])%s(?![\d])" % re.escape(num), raw)) and squash(pfx) in sq
+            if ok and r[0] not in ids:
+                ids.append(r[0])
+                labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
+    return ids[:6], labels[:6]
+
+
+def merge_hits(first, rest, k):
+    """first (the named documents' passages), then rest, without repeats, k in all."""
+    out, seen = [], set()
+    for h in list(first) + list(rest):
+        if h.cid in seen:
+            continue
+        seen.add(h.cid)
+        out.append(h)
+        if len(out) >= k:
+            break
+    return out
+
+
+_OPPOSITES = (("high", "low", "significant"), ("upstream", "downstream"), ("minimum", "maximum"),
+              ("increase", "decrease"), ("above", "below"))
+
+
+def opposite_terms(text, ev):
+    """Cited sentences whose quotes hold the opposite term and not the sentence's own: 'High hazard
+    potential dams are those where failure results in no probable loss of human life [F1]' when F1 is
+    the LOW hazard definition. The quote checker passes that (the quote is on its page); this does not.
+    Returns one line per suspect sentence."""
+    fmap = {f["F"]: f for f in ev.findings}
+    flags = []
+    for sent in re.split(r"(?<=[.!?])\s+", text or ""):
+        cited = [fmap[int(n)] for n in re.findall(r"F(\d+)", sent) if int(n) in fmap]
+        if not cited:
+            continue
+        bare = re.sub(r"\[F[^\]]*\]", "", sent).lower()
+        quotes = " ".join(f["quote"] for f in cited).lower()
+        for group in _OPPOSITES:
+            said = [w for w in group if re.search(r"\b%s\b" % w, bare)]
+            if len(said) != 1:
+                continue
+            w = said[0]
+            other = [o for o in group if o != w and re.search(r"\b%s\b" % o, quotes)]
+            if other and not re.search(r"\b%s\b" % w, quotes):
+                flags.append("a sentence says '%s' but its quote(s) %s say '%s' instead: %s" % (
+                    w, ", ".join("F%d" % f["F"] for f in cited), other[0], textwrap_short(bare.strip(), 90)))
+                break
+    return flags
 
 
 def scope_note(labels):
@@ -1548,6 +1625,7 @@ class Evidence:
         self.not_covered = []
         self.answer_note = ""    # set when the model's own write-up could not be used
         self.answer_from = "model"   # "model" | "model, second attempt" | "findings"
+        self.term_flags = []     # opposite_terms(): a sentence whose quote says the opposite
 
     def add_source(self, h):
         if h.cid not in self.by_cid:
@@ -1792,10 +1870,17 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
             say("  - " + s)
         if terms:
             say("  search terms: " + "; ".join(terms))
+    named = []
+    if not keep:
+        named, named_labels = named_docs(db, question)
+        if named:
+            say("The question names: " + "; ".join(named_labels) + " (their passages are read first)")
     log = []
     for i, s in enumerate(subs, 1):
         q = s + ((" " + " ".join(terms)) if (i == 1 and terms) else "")
         hits = idx.search(q, k=k, per_doc=per_doc if per_doc is not None else 3, keep=keep)
+        if named:
+            hits = merge_hits(idx.search(q, k=min(3, k), per_doc=3, keep=set(named)), hits, k)
         log.append((s, hits))
         say("[%d/%d] reading %d passages for: %s" % (i, len(subs), len(hits), textwrap_short(s, 90)))
         extract(ev, s, hits)
@@ -1810,6 +1895,7 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
         body = synthesize(question, ev, mode, out)
     rendered, order, unknown, used_f = render_citations(body, ev)
     unc = uncited_sentences(body) if (ev.findings and ev.answer_from != "findings") else 0
+    ev.term_flags = opposite_terms(body, ev) if ev.findings else []
     report = build_report(question, mode, subs, terms, log, ev, rendered, order, unknown, used_f, unc,
                           time.time() - t0, scope=scope)
     path = None
@@ -1826,7 +1912,7 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
     for n, did in enumerate(order, 1):
         h = next(s for s in ev.sources if s.doc_id == did)
         say("  [%d] %s" % (n, cite_line(h)))
-    if unknown or unc or ev.answer_note or any(f["numbers"] for f in ev.findings if f["F"] in used_f):
+    if unknown or unc or ev.answer_note or ev.term_flags or any(f["numbers"] for f in ev.findings if f["F"] in used_f):
         say("\nChecks: %s" % "; ".join(checks_summary(ev, unknown, used_f, unc)))
     if path:
         say("\nReport (evidence table, quotes, rejected items): %s" % path)
@@ -1864,6 +1950,8 @@ def checks_summary(ev, unknown, used_f, unc):
                  % (len(close), ", ".join("F%d" % f["F"] for f in close)))
     if unc:
         c.append("%d long sentence(s) carry no citation - treat them as the model's own words" % unc)
+    for t in getattr(ev, "term_flags", []):
+        c.append("CHECK " + t)
     if not c:
         c.append("all cited quotes found on their pages; no uncited sentences")
     if ev.answer_note:
