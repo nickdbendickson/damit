@@ -3,14 +3,14 @@ name: damit_suite
 on:
   push:
     paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**", "damit_finder/**",
-            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", "damit_runner/core/gmsh_mesher.py", "damit_runner/core/grid.py",
+            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "scripts/package_plugins.py", "scripts/make_plugins_xml.py", "suite_install/**", "damit_runner/core/gmsh_mesher.py", "damit_runner/core/grid.py",
             "damit_runner/core/terrain.py", "damit_runner/core/anuga_worker.py", "damit_runner/core/omp_probe.py",
             "damit_runner/core/anuga_dtdiag.py", "damit_runner/core/wallclock.py", "damit_runner/core/anuga_model.py",
             "damit_runner/flood/rasters.py", "damit_runner/flood/terrain3dep.py", "damit_runner/compat/gdalsafe.py",
             "damit_runner/tests/test_gdal_mode.py", "scripts/sync_pmp_runner_shared.py", ".github/workflows/damit_suite.yml"]
   pull_request:
     paths: ["damit_core/**", "damit_setup/**", "damit_data/**", "damit_hazardlite/**", "damit_pmp/**", "damit_finder/**",
-            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "suite_install/**", "damit_runner/core/gmsh_mesher.py", "damit_runner/core/grid.py",
+            "damit_catalog/**", "damit_hazard/**", "damit_screener/**", "tests/**", "scripts/package_plugins.py", "scripts/make_plugins_xml.py", "suite_install/**", "damit_runner/core/gmsh_mesher.py", "damit_runner/core/grid.py",
             "damit_runner/core/terrain.py", "damit_runner/core/anuga_worker.py", "damit_runner/core/omp_probe.py",
             "damit_runner/core/anuga_dtdiag.py", "damit_runner/core/wallclock.py", "damit_runner/core/anuga_model.py",
             "damit_runner/flood/rasters.py", "damit_runner/flood/terrain3dep.py", "damit_runner/compat/gdalsafe.py",
@@ -31,7 +31,7 @@ jobs:
         run: >-
           python3 -m unittest -v damit_core.tests.test_core damit_core.tests.test_shared_defaults damit_setup.tests.test_setup
           damit_data.tests.test_data damit_data.tests.test_providers damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 damit_pmp.tests.test_temporal_zip damit_pmp.tests.test_gis_rain damit_pmp.tests.test_runner_shared_sync
-          tests.test_metadata_suite tests.test_hazard_screener_agree tests.test_suite_install
+          tests.test_metadata_suite tests.test_hazard_screener_agree tests.test_suite_install tests.test_release_channel
 
   qgis:
     name: QGIS 3.34 offscreen

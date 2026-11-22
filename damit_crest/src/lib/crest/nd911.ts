@@ -3,6 +3,7 @@ import { csvCell } from "./csv.ts";
 import { damLocation } from "./engine.ts";
 import { DEPTH_BANDS, exportFloodStripGeoJson, exportFloodStripKml, type FloodStrip } from "./floodstrip.ts";
 import { bboxContains, padBbox, plssKmlLines, plssProperties, stripBbox, type Bbox, type PlssTable } from "./plss.ts";
+import { fetchNsi, NSI_ID_PREFIX, NSI_OFFLINE, structureSource } from "./nsi.ts";
 import type { Analysis, DamRecord, ReceptorSeed } from "./types.ts";
 
 /**
@@ -97,6 +98,15 @@ export type Nd911Point = {
   updated: string;
   lon: number;
   lat: number;
+  /** NSI structures only (nsi.ts): building material, stories, median year built, foundation height (ft above
+   * ground) and type, and the NSI's modelled day / night population. Absent on 911 points. */
+  building?: string;
+  stories?: number;
+  yearBuilt?: number;
+  foundHtFt?: number;
+  foundType?: string;
+  popDay?: number;
+  popNight?: number;
 };
 
 export type Nd911Cache = {
@@ -276,6 +286,15 @@ export async function fetchNd911(
   };
 }
 
+/** The lookup for this dam's structure source: NSI structures outside ND, the ND 911 address points in ND. */
+export function fetchStructures(
+  dam: Pick<DamRecord, "receptorSource" | "nd911">,
+  area: FloodStrip | Bbox,
+  fetchFn?: Fetch,
+): Promise<Nd911Cache> {
+  return structureSource(dam) === "nsi" ? fetchNsi(area, fetchFn) : fetchNd911(area, fetchFn);
+}
+
 // ---- geometry ------------------------------------------------------------------------------------------------
 
 function inRing(r: number[][], x: number, y: number) {
@@ -355,20 +374,28 @@ export function nd911Table(dam: DamRecord, area: FloodStrip, cache: Nd911Cache, 
   };
 }
 
-/** What the desk can show for the 911 list right now (same rules as plssState). */
+/** What the desk calls the structures it looks up, by source. */
+export function structureWords(dam: Pick<DamRecord, "receptorSource" | "nd911">) {
+  return structureSource(dam) === "nsi"
+    ? { noun: "NSI structures", short: "NSI", service: "the USACE National Structure Inventory", offline: NSI_OFFLINE }
+    : { noun: "911 address points", short: "911", service: "the ND GIS Hub", offline: ND911_OFFLINE };
+}
+
+/** What the desk can show for the 911 (or NSI) list right now (same rules as plssState). */
 export function nd911State(dam: DamRecord, area: FloodStrip | null, online: boolean, against = "flood strip"): Nd911State {
-  if (!area) return { state: "none", message: "No flood strip, so no 911 address points." };
+  const w = structureWords(dam);
+  if (!area) return { state: "none", message: `No flood strip, so no ${w.noun}.` };
   const cache = dam.nd911;
   if (cache && bboxContains(cache.bbox, stripBbox(area))) {
     return { state: "ready", table: nd911Table(dam, area, cache, against), message: null };
   }
   if (cache) {
-    const msg = `The ${against} now reaches past the 911 address points saved with this dam.`;
-    return online ? { state: "lookup", message: `${msg} Look them up again.` } : { state: "offline", message: `${msg} ${ND911_OFFLINE}` };
+    const msg = `The ${against} now reaches past the ${w.noun} saved with this dam.`;
+    return online ? { state: "lookup", message: `${msg} Look them up again.` } : { state: "offline", message: `${msg} ${w.offline}` };
   }
   return online
-    ? { state: "lookup", message: "911 address points are not looked up yet for this strip (one query to the ND GIS Hub)." }
-    : { state: "offline", message: ND911_OFFLINE };
+    ? { state: "lookup", message: `${w.noun[0].toUpperCase()}${w.noun.slice(1)} are not looked up yet for this strip (one query to ${w.service}).` }
+    : { state: "offline", message: w.offline };
 }
 
 // ---- receptors for review -------------------------------------------------------------------------------------
@@ -400,7 +427,7 @@ export function nd911Seed(row: Nd911Row, result: Pick<Analysis, "flood">): Recep
   const lateral = Math.max(-1, Math.min(1, row.offsetM / Math.max(half, 1)));
   return {
     id: seedId(row.nguid, row.lon, row.lat),
-    name: `911: ${row.address}`,
+    name: `${row.nguid.startsWith(NSI_ID_PREFIX) ? "NSI" : "911"}: ${row.address}`,
     kind: "house",
     station: 0,
     distanceKm: xKm,
@@ -424,9 +451,10 @@ export function removeNd911Seeds(receptors: ReceptorSeed[], ids?: string[]): Rec
   return receptors.filter((r) => !(r.source === "nd911" && (!only || only.has(r.id))));
 }
 
-/** True when a picked ND dam (receptorSource "nd911") should look its 911 points up without a click. */
+/** True when a picked dam (receptorSource "nd911" for ND, "nsi" elsewhere) should look its structures up without a
+ * click. */
 export function wantsNd911Lookup(dam: DamRecord, state: Nd911State): boolean {
-  return dam.receptorSource === "nd911" && !dam.nd911AutoAdded && state.state === "lookup";
+  return (dam.receptorSource === "nd911" || dam.receptorSource === "nsi") && !dam.nd911AutoAdded && state.state === "lookup";
 }
 
 /**
@@ -434,7 +462,7 @@ export function wantsNd911Lookup(dam: DamRecord, state: Nd911State): boolean {
  * removals and classifications stick). Null when there is nothing to do.
  */
 export function nd911AutoPatch(dam: DamRecord, state: Nd911State, result: Pick<Analysis, "flood">): Partial<DamRecord> | null {
-  if (dam.receptorSource !== "nd911" || dam.nd911AutoAdded || state.state !== "ready") return null;
+  if ((dam.receptorSource !== "nd911" && dam.receptorSource !== "nsi") || dam.nd911AutoAdded || state.state !== "ready") return null;
   return { receptors: addNd911Seeds(dam.receptors, state.table.rows, result), nd911AutoAdded: true };
 }
 

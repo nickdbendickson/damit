@@ -13,8 +13,9 @@ Installs, for you only (no admin, no pip, no system packages):
   * QGIS 3.34 (conda env ndqgis), ANUGA 4.1 + gmsh 4.15 (env ndanuga)
   * LISFLOOD-FP 8.3 with the Runner patch (lisflood\windows-x64\lisflood.exe, no DLLs)
   * the local AIs from damit_ai: Heim and vor (Ollama, env, models, library)
-  * the DamIT Crest desk (damit_crest) and the North Dakota Crest desk (nd_crest, from the crest
-    repo), both run on the ndqgis env; they open in the browser and can run side by side
+  * DamIT Desk (damit_desk, from the damit-desk repository), the one desk with a United States and a
+    North Dakota profile (it replaces DamIT Crest and the North Dakota Crest desk); it runs on the ndqgis
+    env, opens in the browser, and has one launcher per profile
   * a launcher per profile (in %USERPROFILE%\dam-suite and on the Desktop), and
     build-offline-pack.cmd (the DamSafety offline pack without opening QGIS)
 
@@ -362,7 +363,7 @@ function Make-Launcher($file, $profile) {
     'set NDBREACH_ANUGA_MESHER=gmsh',
     "set `"NDBREACH_ANUGA_PYTHON=$AnugaPy`"",
     "set `"NDBREACH_LISFLOOD=$Lisflood`"")
-  # -Sandbox: anything QGIS starts (a plugin's qgis_process, Crest) stays in the sandbox's profiles too
+  # -Sandbox: anything QGIS starts (a plugin's qgis_process, DamIT Desk) stays in the sandbox's profiles too
   if ($Sandbox) { $lines += "set `"QGIS_CUSTOM_CONFIG_PATH=$QgisProfilesPath`"" }
   $lines += @(
     "start `"`" `"%CONDA_PREFIX%\Library\bin\qgis.exe`" --profile $profile$ProfilesArg %*")
@@ -402,15 +403,7 @@ if ($DoDs) { Write-Settings $DsDir 'damsafety' $DsPlugins; Make-Launcher (Join-P
              Make-PackBuilder (Join-Path $Prefix 'build-offline-pack.cmd') }
 if ($DoDi) { Write-Settings $DiDir 'damit' $DiPlugins;     Make-Launcher (Join-Path $Prefix 'open-damit-qgis.cmd') $DiProfile }
 
-# DamIT Crest desk. It runs on the ndqgis env: that env already has pyproj (Crest's only
-# third-party import) and puts qgis_process on PATH, which Crest's Report step calls. pywebview is
-# not installed, so the desk opens in the browser, which is Crest's documented fallback.
-#
-# The tree layout matters: damit_desktop\nid_rule.py loads DamIT Catalog's NID-ID rule from
-# <parents[3]>\damit_catalog\handoff.py and refuses to start without it, so Crest keeps its
-# damit_crest\desktop nesting and gets a damit_catalog\handoff.py beside it, taken from the
-# Catalog plugin zip we just installed so the rule always matches the plugin.
-# QgisProcessProfile <profile> <profile dir>: the line a Crest launcher needs so the desk's Report
+# QgisProcessProfile <profile> <profile dir>: the line a qgis_process launcher needs so DamIT Desk's Report
 # step finds that profile's plugins. qgis_process (3.34) has no profile option and always loads the
 # profile named "default" under QGIS_CUSTOM_CONFIG_PATH, so the launcher points that at
 # <prefix>\qgis-process\<profile>, whose profiles\default is a junction to the real profile (a
@@ -429,50 +422,59 @@ function QgisProcessProfile($profile, $dir) {
   cmd /c mklink /J "`"$link`"" "`"$dir`"" | Out-Null
   $made = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
   if (-not $made -or -not ($made.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path (Join-Path $link 'python'))) {
-    Warn "could not link ${link} -> ${dir}: Crest's Report step will not find the $profile plugins"
+    Warn "could not link ${link} -> ${dir}: DamIT Desk's Report step will not find the $profile plugins"
     return "rem QGIS_CUSTOM_CONFIG_PATH not set: the junction $link was not made"
   }
   return "set `"QGIS_CUSTOM_CONFIG_PATH=$root`""
 }
-$CrestSrc = Join-Path $Here 'damit_crest'
-$CatZip = Get-ChildItem (Join-Path $Here 'plugins\damit') -Filter 'damit_catalog_*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($DoCrest -and (Test-Path (Join-Path $CrestSrc 'desktop'))) {
-  if (-not $CatZip) { Warn "no DamIT Catalog zip: the Crest desk needs its NID-ID rule, so Crest was skipped" }
-  else {
-    Say "DamIT Crest desk -> $Prefix\damit_crest"
-    $CrestDir = Join-Path $Prefix 'damit_crest'
-    New-Item -ItemType Directory -Force -Path $CrestDir, (Join-Path $Prefix 'damit_catalog') | Out-Null
-    Copy-Item -Recurse -Force (Join-Path $CrestSrc '*') $CrestDir
-    $ho = Join-Path $Prefix 'damit_catalog\handoff.py'
+# DamIT Desk (nickdbendickson/damit-desk; Nick, 2026-11-22: the one desk, with a United States and a North Dakota
+# profile; DamIT Crest and the North Dakota Crest desk retire into it). It runs on the ndqgis env and opens in the
+# browser. Each profile hands off to its own plugin set in its own QGIS profile: US -> the DamIT plugins through
+# qgis-process-damit.cmd, ND -> the DWR DamSafety plugins through qgis-process-damsafety.cmd. Both are written here
+# (outside -Sandbox too) and the desk is told where they are (DAMSUITE_PREFIX, DAMIT_ND_QGIS_PROCESS), so the desk
+# process sets no QGIS_CUSTOM_CONFIG_PATH and can switch profiles in Settings. open-damit-desk.cmd opens it in the
+# US profile, open-damit-desk-nd.cmd in ND. damit_catalog\handoff.py (the US profile's NID-ID rule) is refreshed from
+# the Catalog plugin zip we just installed, so the rule always matches the plugin.
+$DeskSrc = Join-Path $Here 'damit_desk'
+if ($DoCrest -and (Test-Path (Join-Path $DeskSrc 'app\desktop\run.py'))) {
+  Say "DamIT Desk -> $Prefix\damit_desk"
+  $DeskDir = Join-Path $Prefix 'damit_desk'
+  if (Test-Path $DeskDir) { Remove-Item -Recurse -Force $DeskDir }
+  New-Item -ItemType Directory -Force -Path $DeskDir | Out-Null
+  Copy-Item -Recurse -Force (Join-Path $DeskSrc '*') $DeskDir
+  $CatZip = Get-ChildItem (Join-Path $Here 'plugins\damit') -Filter 'damit_catalog_*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($CatZip) {
+    $ho = Join-Path $DeskDir 'damit_catalog\handoff.py'
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zf = [System.IO.Compression.ZipFile]::OpenRead($CatZip.FullName)
     try {
       $ent = $zf.Entries | Where-Object { $_.FullName -eq 'damit_catalog/handoff.py' } | Select-Object -First 1
       if ($ent) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($ent, $ho, $true) }
     } finally { $zf.Dispose() }
-    if (Test-Path $ho) {
-      $cl = Join-Path $Prefix 'open-damit-crest.cmd'
-      @("@echo off", "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
-        (QgisProcessProfile $DiProfile $DiDir),
-        "cd /d `"$CrestDir\desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
-      Ok "Crest desk (open: $cl)"
-    } else { Warn "could not read damit_catalog/handoff.py from $($CatZip.Name): Crest was skipped" }
   }
-}
-# North Dakota Crest desk (DWR_Plugins dwr_crest\crest-desktop\). Same engine as DamIT Crest with the ND
-# inventory and the DamSafety hand-off (profile damsafety). Standard library only; its port differs
-# from DamIT Crest's, so both desks can be open at once.
-$NdCrestSrc = Join-Path $Here 'nd_crest'
-if ($DoCrest -and (Test-Path (Join-Path $NdCrestSrc 'crest-desktop\run.py'))) {
-  Say "North Dakota Crest desk -> $Prefix\nd_crest"
-  $NdCrestDir = Join-Path $Prefix 'nd_crest'
-  New-Item -ItemType Directory -Force -Path $NdCrestDir | Out-Null
-  Copy-Item -Recurse -Force (Join-Path $NdCrestSrc '*') $NdCrestDir
-  $cl = Join-Path $Prefix 'open-nd-crest.cmd'
-  @("@echo off", "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
-    (QgisProcessProfile $DsProfile $DsDir),
-    "cd /d `"$NdCrestDir\crest-desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
-  Ok "North Dakota Crest desk (open: $cl)"
+  foreach ($s in @(@($DoDs, 'damsafety', $DsProfile, $DsDir), @($DoDi, 'damit', $DiProfile, $DiDir))) {
+    if (-not $s[0]) { continue }
+    $f = Join-Path $Prefix "qgis-process-$($s[1]).cmd"
+    @('@echo off', "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+      (QgisProcessProfile $s[2] $s[3]),
+      "set `"NDBREACH_LISFLOOD=$Lisflood`"", "qgis_process %*") | Set-Content $f -Encoding ASCII
+  }
+  foreach ($deskP in @('us', 'nd')) {
+    $cl = Join-Path $Prefix ($(if ($deskP -eq 'nd') { 'open-damit-desk-nd.cmd' } else { 'open-damit-desk.cmd' }))
+    @("@echo off", "rem DamIT Desk, $deskP profile (conda env ndqgis). Written by $Stamp.",
+      "call `"$CondaBat`" activate `"$QP`" || exit /b 1",
+      "set `"DAMSUITE_PREFIX=$Prefix`"", "set `"DAMIT_ND_QGIS_PROCESS=$Prefix\qgis-process-damsafety.cmd`"",
+      "set `"DAMIT_DESK_PROFILE=$deskP`"",
+      "cd /d `"$DeskDir\app\desktop`"", "python run.py %*") | Set-Content $cl -Encoding ASCII
+  }
+  # the two desks it replaces: their launchers go, so an old desk is not opened by mistake
+  foreach ($old in @('open-damit-crest.cmd', 'open-nd-crest.cmd')) { Remove-Item (Join-Path $Prefix $old) -ErrorAction SilentlyContinue }
+  foreach ($old in @('damit_crest', 'nd_crest')) {
+    if (Test-Path (Join-Path $Prefix $old)) { Warn "$Prefix\$old is the retired desk it replaces; delete it when you no longer need it" }
+  }
+  Ok "DamIT Desk (open: $Prefix\open-damit-desk.cmd, North Dakota: $Prefix\open-damit-desk-nd.cmd)"
+} elseif ($DoCrest) {
+  Warn "no damit_desk\ in the package (make_package.sh --desk <damit-desk checkout>): no desk installed"
 }
 Remove-Item $SettingsPy -ErrorAction SilentlyContinue
 
@@ -549,8 +551,8 @@ $rec = @("Installed by $Stamp on $(Get-Date)",
          "  platform $P | QGIS $qv | ANUGA python $(if ($AnugaPy) {$AnugaPy} else {'none'}) | LISFLOOD-FP $(if ($Lisflood) {$Lisflood} else {'built-in engine'})")
 if ($DoDs) { $rec += "  DamSafety -> profile $DsProfile  (open: $Prefix\open-damsafety-qgis.cmd)" }
 if ($DoDi) { $rec += "  DamIT     -> profile $DiProfile  (open: $Prefix\open-damit-qgis.cmd)" }
-if (Test-Path (Join-Path $Prefix 'open-damit-crest.cmd')) { $rec += "  DamIT Crest desk              (open: $Prefix\open-damit-crest.cmd)" }
-if (Test-Path (Join-Path $Prefix 'open-nd-crest.cmd')) { $rec += "  North Dakota Crest desk       (open: $Prefix\open-nd-crest.cmd)" }
+if (Test-Path (Join-Path $Prefix 'open-damit-desk.cmd')) { $rec += "  DamIT Desk, United States     (open: $Prefix\open-damit-desk.cmd)" }
+if (Test-Path (Join-Path $Prefix 'open-damit-desk-nd.cmd')) { $rec += "  DamIT Desk, North Dakota      (open: $Prefix\open-damit-desk-nd.cmd)" }
 if (Test-Path (Join-Path $Prefix 'build-offline-pack.cmd')) { $rec += "  DamSafety offline pack        (build: $Prefix\build-offline-pack.cmd)" }
 if ($Sandbox) {
   $rec += "  SANDBOX: everything is in $Sandbox (QGIS profiles in $Profiles)"
