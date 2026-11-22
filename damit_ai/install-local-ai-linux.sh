@@ -147,13 +147,13 @@ ok "$LOCAL_AI, $RHOME"
 # ---------------------------------------------------------------------------
 say "Step 2 — Ollama (no sudo, no download-then-run)"
 OLLAMA=""
-OCANDS=("$(command -v ollama 2>/dev/null)" "$LOCAL_AI/ollama/bin/ollama" "$HOME/.local/bin/ollama")
+OCANDS=("$(command -v ollama 2>/dev/null || true)" "$LOCAL_AI/ollama/bin/ollama" "$HOME/.local/bin/ollama")
 if [[ -n "$SANDBOX" ]]; then
   # the sandbox's own copy first, then the bundled archive (extracted into the sandbox below), and
   # only then an Ollama already on this machine (its program is only run, never changed)
   OCANDS=("$LOCAL_AI/ollama/bin/ollama")
   [[ -f "$OFFLINE/ollama/ollama-linux-amd64.tar.zst" || -f "$OFFLINE/ollama/ollama-linux-amd64.tgz" ]] \
-    || OCANDS+=("$(command -v ollama 2>/dev/null)" "$HOME/.local/bin/ollama")
+    || OCANDS+=("$(command -v ollama 2>/dev/null || true)" "$HOME/.local/bin/ollama")
 fi
 for c in "${OCANDS[@]}"; do
   [[ -n "$c" && -x "$c" ]] && { OLLAMA="$c"; break; }
