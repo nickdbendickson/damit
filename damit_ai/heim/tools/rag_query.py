@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-# rag_query.py v2.5 — query the RAG store, streaming output (stdlib only; numpy if present)
+# rag_query.py v2.6 — query the RAG store, streaming output (stdlib only; numpy if present)
 #
 #   rag_query.py "question"            one question, answered from the indexed documents
 #   rag_query.py -c standards "..."    from one collection
 #   rag_query.py --chat                a conversation: every question is looked up first
 #   rag_query.py runs ...              the run results database (run_results.py: heim runs)
 #
+# v2.6: search by meaning AND by exact words, fused by rank (as Vor does). A name such as
+#   ndbreach.rundam, STABILITY_RETRY_PCT or a function name is found by its word even where
+#   prose about the same topic is closer in meaning. Vectors stored as bytes (rag_index 2.9)
+#   load in a fraction of a second; text vectors from older indexes still load, slowly, until
+#   `heim-index --compact` converts them. With no word index (an older index, or a SQLite
+#   without FTS5) the search is by meaning alone, as before.
 # v2.5: dam-breach run results. `heim runs add FOLDER` reads runs into ~/local-ai/runs.db
 #   (run_results.py) and `heim runs ...` is passed to it. A question that names a dam in that
 #   database and asks for a result (depth, velocity, arrival, peak flow, a structure, ...) is
@@ -30,7 +36,8 @@
 #   - num_ctx sent per request, sized to the prompt, so Ollama never trims the
 #     front of the prompt (the instructions) without saying so.
 #   - qwen3 "thinking" is streamed separately and kept out of the answer.
-import os, sys, json, sqlite3, urllib.request, urllib.error, math, argparse, shlex
+import os, sys, re, json, sqlite3, urllib.request, urllib.error, math, argparse, shlex
+from array import array
 
 DB = os.path.expanduser(os.environ.get("HEIM_DB", "~/local-ai/knowledge.db"))
 BASE = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
@@ -39,6 +46,13 @@ QUERY_PREFIX = "search_query: "
 CHAT_MODEL = os.environ.get("HEIM_MODEL", "heim")
 NUM_CTX = int(os.environ.get("HEIM_NUM_CTX", "16384"))
 TOP_K = 10
+POOL = 60                 # candidates taken from each of the two searches before fusing
+RRF_K = 60                # reciprocal-rank fusion constant (as Vor)
+FTS = "chunks_fts"
+STOP = set("""a an and are as at be by can could did do does for from has have how if in into is it its
+of on or should than that the their there these this those to was were what when where which who why
+will with would about between during under over per using used use based any all also more most not
+you your heim does doesn tell show explain""".split())
 try:
     import numpy as np
 except ImportError:
@@ -60,6 +74,7 @@ class Store(object):
     def __init__(self, coll):
         self.coll = coll
         self.rows, self.M, self.stamp = [], None, None
+        self.pos, self.fts, self.text_vectors = {}, False, 0
         self.load()
 
     def _stamp(self):
@@ -82,28 +97,33 @@ class Store(object):
 
     def load(self):
         self.stamp = self._stamp()
-        self.rows, self.M = [], None
+        self.rows, self.M, self.pos, self.fts = [], None, {}, False
         if self.stamp is None:
             return
         db = sqlite3.connect(DB)
         try:
             if self.coll == "all":
-                rows = db.execute("SELECT collection,path,idx,txt,vec FROM chunks "
+                rows = db.execute("SELECT collection,path,idx,txt,vec,id FROM chunks "
                                   "WHERE collection NOT LIKE '\\_\\_%' ESCAPE '\\'").fetchall()
             else:
-                rows = db.execute("SELECT collection,path,idx,txt,vec FROM chunks WHERE collection=?",
+                rows = db.execute("SELECT collection,path,idx,txt,vec,id FROM chunks WHERE collection=?",
                                   (self.coll,)).fetchall()
+            self.fts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone())
         except sqlite3.OperationalError:      # a file that is not an index yet
             rows = []
         finally:
             db.close()
-        vecs = [json.loads(r[4]) for r in rows]
         self.rows = [r[:4] for r in rows]
-        if np is not None and vecs:
-            self.M = np.array(vecs, dtype=np.float32)
+        self.pos = dict((r[5], i) for i, r in enumerate(rows))
+        self.text_vectors = sum(1 for r in rows if not isinstance(r[4], bytes))
+        if np is not None and rows:
+            if not self.text_vectors:
+                self.M = np.frombuffer(b"".join(r[4] for r in rows), dtype=np.float32).reshape(len(rows), -1)
+            else:
+                self.M = np.array([unpack_vec(r[4]) for r in rows], dtype=np.float32)
             self.norms = np.linalg.norm(self.M, axis=1)
         else:
-            self.vecs = vecs
+            self.vecs = [unpack_vec(r[4]) for r in rows]
 
     def changed(self):
         return self._stamp() != self.stamp
@@ -128,7 +148,10 @@ class Store(object):
 
     def search(self, queries, top_k):
         """Best passages for any of the queries (a follow-up is searched on its own and
-        together with the question before it; each passage keeps its better score)."""
+        together with the question before it). Two lists are fused by rank: the passages
+        closest in meaning (each keeps its better score over the queries) and, when the index
+        has its word index, the passages that contain the question's exact words. The score
+        shown is the meaning score, so a passage found by its words alone shows a low one."""
         if not self.rows:
             return []
         qvs = post(BASE + "/api/embed", {"model": EMBED_MODEL,
@@ -137,8 +160,50 @@ class Store(object):
         for qv in qvs:
             sims = self._sims(qv)
             best = sims if best is None else [max(a, b) for a, b in zip(best, sims)]
-        order = sorted(range(len(best)), key=lambda i: -best[i])[:top_k]
+        by_meaning = sorted(range(len(best)), key=lambda i: -best[i])[:max(POOL, top_k)]
+        by_words = self.lexical(queries, max(POOL, top_k))
+        fused = {}
+        for lst in (by_meaning, by_words):
+            for rank, i in enumerate(lst):
+                fused[i] = fused.get(i, 0.0) + 1.0 / (RRF_K + rank)
+        order = sorted(fused, key=lambda i: (-fused[i], -best[i]))[:top_k]
         return [(float(best[i]),) + tuple(self.rows[i]) for i in order]
+
+    def lexical(self, queries, n):
+        """Row positions of the passages holding the queries' words, best first (BM25), or []
+        when the index has no word index."""
+        if not self.fts:
+            return []
+        words = []
+        for q in queries:
+            for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*(?:[.\-][A-Za-z0-9_]+)*|\d+(?:\.\d+)?", q):
+                if len(t) >= 3 and t.lower() not in STOP and t not in words:
+                    words.append(t)
+        if not words:
+            return []
+        expr = " OR ".join('"%s"' % w.replace('"', "") for w in words)
+        if self.coll == "all":
+            where, args = "c.collection NOT LIKE '\\_\\_%' ESCAPE '\\'", [expr, n]
+        else:
+            where, args = "c.collection = ?", [expr, self.coll, n]
+        db = sqlite3.connect(DB)
+        try:
+            got = db.execute("SELECT f.rowid FROM %s f JOIN chunks c ON c.id = f.rowid WHERE %s MATCH ? AND %s "
+                             "ORDER BY bm25(%s) LIMIT ?" % (FTS, FTS, where, FTS), args).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            db.close()
+        return [self.pos[r[0]] for r in got if r[0] in self.pos]
+
+
+def unpack_vec(v):
+    """A stored vector: float32 bytes (rag_index 2.9) or JSON text (before)."""
+    if isinstance(v, bytes):
+        a = array("f")
+        a.frombytes(v)
+        return a.tolist()
+    return json.loads(v)
 
 
 def retrieve(q, coll, top_k):
@@ -148,7 +213,14 @@ def retrieve(q, coll, top_k):
     if not store.rows:
         h = (" Collection '%s' empty — index it: rag_index.py -c %s <folder>" % (coll, coll)) if coll != "all" else ""
         sys.exit("Index is empty.%s" % h)
+    slow_note(store)
     return store.search([q], top_k)
+
+
+def slow_note(store):
+    if store.text_vectors:
+        print("(%d passages are stored in the old, slow format. One-time fix, nothing re-embedded: "
+              "heim-index --compact)" % store.text_vectors)
 
 
 def chat_payload(prompt, stream, think=True):
@@ -276,6 +348,7 @@ def add_dropped(paths):
 
 def chat(coll, top_k, ask=input):
     store = Store(coll)
+    slow_note(store)
     print("Heim chat (%s): every question is looked up in the indexed documents first.\n"
           "Blank line or Ctrl+D quits. Drag a file into this window to add it." % CHAT_MODEL)
     cols = store.collections()

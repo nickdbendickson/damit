@@ -119,7 +119,7 @@ open the Crest desk wired to one plugin set
 
 ---
 
-## rag_index.py 2.8
+## rag_index.py 2.9
 
 Installed command: `heim-index  (and heim-add = --add)`. Build Heim's document index.
 
@@ -136,10 +136,11 @@ Index folders (text+PDFs) into a named collection.
 | `--allow-empty` |  |  | allow a run with 0 chunks to replace (clear) the collection |
 | `--doctor` |  |  | check, without changing anything, that the index is there, holds the knowledge pack and is level with the folders it was built from |
 | `--library` |  |  | with --doctor: check the index and folders only (no Ollama needed) |
+| `--compact` |  |  | convert stored vectors to the compact format and build the exact-word index, in place (nothing is re-embedded; no Ollama needed) |
 
 ---
 
-## rag_query.py 2.5
+## rag_query.py 2.6
 
 Installed command: `heim  /  heim-query  /  heim-chat (with --chat)`. Ask Heim a question, or hold a conversation, answered from the index.
 

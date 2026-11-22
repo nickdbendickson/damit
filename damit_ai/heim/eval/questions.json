@@ -122,6 +122,38 @@
       "doc": "CLI-HELP",
       "facts": ["--add"],
       "forbid": ["--file\\b", "--single\\b", "--input\\b"]
+    },
+    {
+      "id": "boann-engine-words",
+      "q": "Which engine word runs the Boann sub-grid finite-volume solver, and what does its r setting do?",
+      "doc": "BOANN-ENGINES",
+      "facts": ["gpu-subfv", "subgrid|SUBGRID_R", "coarse|dx.?r|r.?x.?r|r²|r\\^2"]
+    },
+    {
+      "id": "boann-dg2-limiter",
+      "q": "Why is the slope limiter on by default in Boann's DG2 solver, and how is it turned off?",
+      "doc": "BOANN-ENGINES",
+      "facts": ["float32|round-off", "nolimitslopes"]
+    },
+    {
+      "id": "boann-ponds-flat",
+      "q": "A Boann sub-grid run shows the lower valley ponded flat 17 ft above the high-water marks. What do I check first?",
+      "doc": "BOANN-ENGINES|FAILURE-CASEBOOK",
+      "facts": ["outflow|Qout", "\\.mass", "multiple of r|padd"],
+      "forbid": ["(lower|reduce|change) (the )?Manning"]
+    },
+    {
+      "id": "boann-cfl-ceiling",
+      "q": "What CFL ceiling does each Boann solver clamp to?",
+      "doc": "BOANN-ENGINES",
+      "facts": ["1/3|0\\.33", "0\\.45"]
+    },
+    {
+      "id": "manning-default",
+      "q": "What is the Runner's default uniform Manning n now?",
+      "doc": "BOANN-ENGINES",
+      "facts": ["0\\.05"],
+      "forbid": ["default (uniform )?(Manning )?n (is|of) 0\\.06"]
     }
   ]
 }

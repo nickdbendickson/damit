@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-# rag_index.py v2.8 — multi-collection RAG indexer (stdlib only)
+# rag_index.py v2.9 — multi-collection RAG indexer (stdlib only)
 # Atomic rebuilds via a hidden per-collection stage; auto-migrates v1 DBs;
 # PDF backends: pdftotext -> pymupdf -> pypdf -> skip.
 #
+# v2.9: vectors are stored as float32 bytes, not JSON text, and an exact-word index
+#   (SQLite FTS5, table chunks_fts) sits beside them. A JSON vector is ~16 KB of text, so a
+#   124,000-passage index held about 2 GB of it, and every `heim` question parsed all of it
+#   again before searching (about 26 s here on random vectors). The bytes are 3 KB a passage and
+#   load in a fraction of a second. `heim-index --compact` converts an existing index in place
+#   (nothing is re-embedded) and builds the word index; any index run does the same. The word
+#   index lets rag_query find exact names (ndbreach.rundam, STABILITY_RETRY_PCT, a function
+#   name) that a meaning-only search ranks below prose about the same topic.
 # v2.8: the doctor compares each file with what was indexed, not with the clock. An index run
 #   now records every file's size, date and content hash (table file_stamps), and a file has
 #   "changed" when its content differs from that. Before, it had changed when its date was
@@ -32,6 +40,7 @@
 #   - Stage name is per collection, so two indexers cannot clobber each other.
 import os, sys, json, sqlite3, argparse, subprocess, urllib.request, urllib.error, time, re
 import hashlib, shutil
+from array import array
 
 DB = os.path.expanduser(os.environ.get("HEIM_DB", "~/local-ai/knowledge.db"))
 EMBED_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434") + "/api/embed"
@@ -45,6 +54,7 @@ MINIFIED_AVG_LINE = 300  # average chars per line above this = generated/minifie
 MINIFIABLE_EXT = (".js", ".mjs", ".cjs", ".json")
 BATCH = 16
 STAGE_PREFIX = "__stage__"
+FTS = "chunks_fts"
 SKIP_DIRS = {"__MACOSX", ".git", "node_modules", "__pycache__", ".venv",
              "testhazard", "_ocr_staging_tmp", "dist", "build", ".vite"}
 SKIP_PREFIX = ("._",)
@@ -158,6 +168,63 @@ def ensure_schema(db):
     db.execute("""CREATE TABLE IF NOT EXISTS file_stamps (collection TEXT NOT NULL, path TEXT NOT NULL,
         mtime REAL NOT NULL, size INTEGER NOT NULL, sha TEXT NOT NULL, PRIMARY KEY (collection, path))""")
     rename_legacy_collections(db)
+    ensure_fts(db)
+
+
+def pack_vec(v):
+    """A vector as float32 bytes (v2.9; JSON text before)."""
+    return array("f", v).tobytes()
+
+
+def ensure_fts(db):
+    """The exact-word index over chunks.txt, kept level by triggers. Returns False when this
+    SQLite has no FTS5 (search then falls back to meaning alone, as before v2.9).
+
+    `_` is part of a word, so STABILITY_RETRY_PCT and rag_index are one word each; a dotted
+    name such as ndbreach.rundam is searched as a two-word phrase. The triggers fire on a
+    change of txt only: renaming a stage to its collection, or converting vectors, leaves the
+    word index alone."""
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone():
+        return True
+    try:
+        db.execute("CREATE VIRTUAL TABLE %s USING fts5(txt, content='chunks', content_rowid='id', "
+                   "tokenize=\"unicode61 tokenchars '_'\")" % FTS)
+    except sqlite3.OperationalError:
+        return False
+    db.execute("CREATE TRIGGER IF NOT EXISTS chunks_fts_ai AFTER INSERT ON chunks BEGIN "
+               "INSERT INTO %s(rowid, txt) VALUES (new.id, new.txt); END" % FTS)
+    db.execute("CREATE TRIGGER IF NOT EXISTS chunks_fts_ad AFTER DELETE ON chunks BEGIN "
+               "INSERT INTO %s(%s, rowid, txt) VALUES ('delete', old.id, old.txt); END" % (FTS, FTS))
+    db.execute("CREATE TRIGGER IF NOT EXISTS chunks_fts_au AFTER UPDATE OF txt ON chunks BEGIN "
+               "INSERT INTO %s(%s, rowid, txt) VALUES ('delete', old.id, old.txt); "
+               "INSERT INTO %s(rowid, txt) VALUES (new.id, new.txt); END" % (FTS, FTS, FTS))
+    n = db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    if n:
+        print("  building the exact-word index over %d passages (once) ..." % n, flush=True)
+    db.execute("INSERT INTO %s(%s) VALUES ('rebuild')" % (FTS, FTS))
+    return True
+
+
+def compact_vectors(db, vacuum=False):
+    """Convert vectors stored as JSON text (rag_index <= 2.8) to float32 bytes, in place.
+    Nothing is re-embedded. Returns the number converted."""
+    n = 0
+    while True:
+        rows = db.execute("SELECT id, vec FROM chunks WHERE typeof(vec) = 'text' LIMIT 2000").fetchall()
+        if not rows:
+            break
+        if n == 0:
+            left = db.execute("SELECT COUNT(*) FROM chunks WHERE typeof(vec) = 'text'").fetchone()[0]
+            print("  converting %d stored vectors from text to bytes (once; nothing re-embedded) ..." % left,
+                  flush=True)
+        db.execute("BEGIN")
+        db.executemany("UPDATE chunks SET vec = ? WHERE id = ?", [(pack_vec(json.loads(v)), i) for i, v in rows])
+        db.execute("COMMIT")
+        n += len(rows)
+    if n and vacuum:
+        print("  giving the freed space back to the disk (VACUUM) ...", flush=True)
+        db.execute("VACUUM")
+    return n
 
 
 def rename_legacy_collections(db):
@@ -296,7 +363,7 @@ def index_collection(collection, roots, allow_empty=False):
         vecs = embed([t for _, _, t in pending])
         db.execute("BEGIN")
         db.executemany("INSERT INTO chunks (collection,path,idx,txt,vec) VALUES (?,?,?,?,?)",
-                       [(stage, p, i, t, json.dumps(v)) for (p, i, t), v in zip(pending, vecs)])
+                       [(stage, p, i, t, pack_vec(v)) for (p, i, t), v in zip(pending, vecs)])
         db.execute("COMMIT")
         nc += len(pending)
         pending.clear()
@@ -386,6 +453,7 @@ def index_collection(collection, roots, allow_empty=False):
             pass
         db.close()
         sys.exit("ERROR: swap failed (%s). Live collection untouched." % e)
+    compact_vectors(db)
     db.close()
     print("Indexed collection '%s': %d files, %d chunks in %.0fs" % (collection, nf, nc, time.time() - t0))
     if nnp and pdf_backend_names():
@@ -499,6 +567,27 @@ def _walk_indexable(roots):
                 yield rel, full, kind
 
 
+WHAT_CHANGED_DAYS = 21
+
+
+def what_changed_age(path, today=None):
+    """Days since the pack's WHAT-CHANGED.md was generated (its line "Generated YYYY-MM-DD ..."),
+    or None when there is no such file or line."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            head = f.read(2000)
+    except OSError:
+        return None
+    m = re.search(r"^Generated (\d{4}-\d{2}-\d{2})", head, re.M)
+    if not m:
+        return None
+    try:
+        made = time.mktime(time.strptime(m.group(1), "%Y-%m-%d"))
+    except ValueError:
+        return None
+    return int(((today or time.time()) - made) // 86400)
+
+
 def doctor_checks(ollama=True):
     """[(level, text)], level one of OK / WATCH / PROBLEM. Reads the index; never writes it
     (not even the schema upgrade a normal run does), so running it cannot hide what it finds."""
@@ -520,6 +609,11 @@ def doctor_checks(ollama=True):
         paths = {}
         for c, p in db.execute("SELECT DISTINCT collection, path FROM chunks"):
             paths.setdefault(c, set()).add(p)
+        try:
+            text_vecs = db.execute("SELECT COUNT(*) FROM chunks WHERE typeof(vec) = 'text'").fetchone()[0]
+        except sqlite3.Error:
+            text_vecs = 0
+        has_fts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone())
         stamps = {}
         try:
             for c, p, m, sz, sha in db.execute("SELECT collection, path, mtime, size, sha FROM file_stamps"):
@@ -547,6 +641,13 @@ def doctor_checks(ollama=True):
     elif legacy:
         add("WATCH", "old collection(s) %s are still in the index beside '%s' and are searched too: a stale "
                      "copy of the pack can out-rank the current one" % (", ".join(legacy), KNOWLEDGE))
+    if text_vecs:
+        add("WATCH", "%d passages keep their vectors as text, the pre-2.9 format: every question re-reads them, "
+                     "which takes seconds on a large index. One-time fix, nothing re-embedded: heim-index --compact"
+            % text_vecs)
+    if live and not has_fts:
+        add("WATCH", "no exact-word index: names such as ndbreach.rundam or STABILITY_RETRY_PCT are found by "
+                     "meaning only. Build it (nothing re-embedded): heim-index --compact")
     stages = [c for c in counts if c.startswith(STAGE_PREFIX)]
     if stages:
         add("WATCH", "an indexing run was interrupted and left %s (%d passages, not searched). Run that "
@@ -629,6 +730,13 @@ def doctor_checks(ollama=True):
             add("WATCH", "%s: %d file(s) are over the size limit (%d KB for text) and are never indexed, "
                          "however often it is re-run (first: %s). Split them if Heim should read them"
                 % (c, len(big), MAX_TEXT_BYTES // 1024, big[0]))
+    for r in (roots.get(KNOWLEDGE) or ([], None))[0]:
+        age = what_changed_age(os.path.join(r, "WHAT-CHANGED.md"))
+        if age is not None and age > WHAT_CHANGED_DAYS:
+            add("WATCH", "the knowledge pack's change list (WHAT-CHANGED.md) is %d days old: Heim does not know "
+                         "what changed in the suite since. Install a newer pack, or regenerate it: python3 "
+                         "damit_ai/heim/tools/what_changed.py --repo <damit checkout> --repo <DWR_Plugins checkout>, then heim-index "
+                         "-c %s '%s'" % (age, KNOWLEDGE, r))
     if ollama:
         base = EMBED_URL.rsplit("/api/", 1)[0]
         chat_model = os.environ.get("HEIM_MODEL", "heim")
@@ -675,9 +783,23 @@ def main():
                          "knowledge pack and is level with the folders it was built from")
     ap.add_argument("--library", action="store_true",
                     help="with --doctor: check the index and folders only (no Ollama needed)")
+    ap.add_argument("--compact", action="store_true",
+                    help="convert stored vectors to the compact format and build the exact-word index, "
+                         "in place (nothing is re-embedded; no Ollama needed)")
     args = ap.parse_args()
     if args.doctor:
         sys.exit(doctor(ollama=not args.library))
+    if args.compact:
+        if not os.path.exists(DB):
+            sys.exit("No index at %s yet: nothing to compact." % DB)
+        db = connect()
+        ensure_schema(db)
+        n = compact_vectors(db, vacuum=True)
+        fts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone())
+        db.close()
+        print("Compacted: %d vector(s) converted; exact-word index %s." % (n, "ready" if fts else
+              "NOT available (this Python's SQLite has no FTS5; search works by meaning alone)"))
+        return
     if args.list_collections:
         list_collections()
         return

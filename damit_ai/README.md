@@ -89,6 +89,11 @@ plugin zip or CI job.
    Any HIGH finding gives exit code 1, so the audit can gate a merge. `--only release,security`
    runs a subset.
 
+   **Upgrading from a Heim installed before 2026-11-22:** run `heim-index --compact` once. It converts
+   the stored vectors to a compact format (a 124,000-passage index loads in about a second instead of
+   half a minute) and builds the exact-word index, without re-embedding anything. `heim-doctor` says
+   when it is needed.
+
    Run the first command after the `source` line, not in the same paste: zsh reads a whole pasted
    block before running any of it, so a new command pasted along with `source ~/.zshrc` is
    `command not found` although the install is fine. A new Terminal tab does the same job.
