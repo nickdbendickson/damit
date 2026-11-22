@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-22 (desk TR-60 is not handed off as NRCS TR-60)
+
+- **The desk's "TR-60 width" is now "Height-multiple width (2H piping, 3H overtopping; screening)", and the flood-model
+  hand-off refuses it.** It was always a screening opening from the dam height; the Runner's TR-60 is the NRCS
+  1,100·Br^1.35 peak, so a hand-off ran a different breach without saying so (Absaraka audit: at 110 ft and 5,000 ac-ft,
+  388,588 cfs against the desk's 91,317). The run button now stops with a message naming the difference; choose
+  Froehlich 2008 or MacDonald for the model run. A shared default of NRCS TR-60 starts new records on Froehlich (2008)
+  with a note, instead of on the desk's width. Desk results are unchanged.
+
 ## 2026-11-22 (0.1.3: NSI structures for dams outside North Dakota)
 
 - **A dam picked from the NID outside North Dakota now gets its structures from the USACE National Structure
