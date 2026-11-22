@@ -1,0 +1,94 @@
+name: Release
+
+# Builds a GitHub Release of the ten DamIT QGIS plugins and publishes the QGIS plugin repository
+# index (plugins.xml) to the gh-pages branch, so QGIS can install and update them from
+#   https://nickdbendickson.github.io/damit/plugins.xml
+# (Plugins > Manage and Install Plugins > Settings > Add; README "Get started").
+#
+# Starts on a tag v* (git tag v0.8.0 && git push origin v0.8.0) or by hand (Actions > Release >
+# Run workflow: the release is then a draft named after the commit, for a look at the assets
+# without publishing anything to QGIS).
+#
+# One-time setup on GitHub (the owner): after the first tag, Settings > Pages > Build and
+# deployment > Deploy from a branch > gh-pages / (root). Until then the zips are on the Release
+# page but the plugins.xml URL above answers 404.
+#
+# The zips are scripts/package_plugins.py's (tests left out), each plugin's metadata.txt version in
+# the name; plugins.xml is scripts/make_plugins_xml.py's, merged with the one already on gh-pages so
+# a plugin missing from a release keeps its last entry. LISFLOOD-FP is not bundled: the Runner
+# falls back to its built-in engine, and suite_install/ installs LISFLOOD-FP per OS.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write          # create the release, push gh-pages
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Packaging checks (metadata readable by QGIS, zips and plugins.xml round-trip)
+        run: python3 -m unittest -v tests.test_release_channel tests.test_metadata_suite
+      - name: Plugin zips + SHA256SUMS
+        run: |
+          python3 scripts/package_plugins.py dist
+          (cd dist && sha256sum *.zip > SHA256SUMS && cat SHA256SUMS)
+      - name: plugins.xml (merged with the one already on gh-pages, if any)
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          [ "${GITHUB_REF_TYPE}" = tag ] || TAG="manual-${GITHUB_SHA}"
+          if git fetch --no-tags --depth=1 origin gh-pages:gh-pages 2>/dev/null; then
+            git show gh-pages:plugins.xml > old-plugins.xml 2>/dev/null || true
+          fi
+          MERGE=""
+          [ -s old-plugins.xml ] && MERGE="--merge old-plugins.xml"
+          mkdir -p pages
+          python3 scripts/make_plugins_xml.py --tag "$TAG" --zips dist --out pages/plugins.xml $MERGE
+          # each plugin's icon next to the index (QGIS shows it in the installer)
+          for p in damit_*; do
+            [ -f "$p/metadata.txt" ] || continue
+            icon=$(sed -n 's/^icon=//p' "$p/metadata.txt" | head -n1 | tr -d '\r ')
+            [ -f "$p/${icon:-icon.svg}" ] && mkdir -p "pages/$p" && cp "$p/${icon:-icon.svg}" "pages/$p/"
+          done
+          touch pages/.nojekyll
+          cp pages/plugins.xml dist/plugins.xml
+      - name: GitHub Release (a draft when started by hand)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('manual-{0}', github.sha) }}
+          name: DamIT ${{ github.ref_name }}
+          draft: ${{ github.ref_type != 'tag' }}
+          generate_release_notes: true
+          body: |
+            The DamIT QGIS plugins. Install order: DamIT Core, then DamIT Catalog, then the rest
+            (every plugin needs DamIT Core). Easiest is to add the plugin repository
+            https://nickdbendickson.github.io/damit/plugins.xml in QGIS (Plugins > Manage and
+            Install Plugins > Settings > Add) so QGIS offers updates; or install each zip with
+            Install from ZIP. `SHA256SUMS` lists every zip. The one-step installer in
+            suite_install/ also sets up QGIS and the flood models.
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS
+            dist/plugins.xml
+      - name: Publish plugins.xml to gh-pages (the QGIS plugin repository)
+        if: github.ref_type == 'tag'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./pages
+          keep_files: true
+          enable_jekyll: false
+          commit_message: "plugins.xml for ${{ github.ref_name }}"
