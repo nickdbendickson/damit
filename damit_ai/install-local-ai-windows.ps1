@@ -402,7 +402,7 @@ STANDING RULES (Nick's; never contradict them, even if a question assumes otherw
   }
   $PyL = Make-Env $HeimEnv 'python=3.12 pymupdf pypdf numpy'
   Ok "heim python: $PyL"
-  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py','true_hole.py','ai_doctor.py')) {
+  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py','true_hole.py','ai_doctor.py','ai_ui.py')) {
     $src = Join-Path $Here "heim\tools\$t"
     if (Test-Path $src) { Copy-Item $src (Join-Path $LocalAI $t) -Force }
   }
@@ -512,6 +512,7 @@ if ($Prefix) {
     $el += "function heim-watch  { & '$PyL' '$LocalAI\heim_watch.py' @args }"
     $el += "function heim-runs   { & '$PyL' '$LocalAI\run_results.py' @args }"
     $el += "function ai-doctor   { & '$PyL' '$LocalAI\ai_doctor.py' @args }"
+    $el += "function ai          { & '$PyL' '$LocalAI\ai_ui.py' @args }"
     $ec += "set `"HEIM_NUM_CTX=$NumCtx`""; $ec += "set `"HEIM_WATCH_MODEL=$WatchModel`""
   }
   if ($DoVor) { $el += "`$env:VOR_HOME = '$RHome'"; $el += "function vor { & '$PyR' '$VorDir\vor.py' @args }"; $ec += "set `"VOR_HOME=$RHome`"" }
@@ -565,6 +566,7 @@ if ($writeBlock) {
     $lines += "function heim-watch  { & '$PyL' '$LocalAI\heim_watch.py' @args }"
     $lines += "function heim-runs   { & '$PyL' '$LocalAI\run_results.py' @args }"
     $lines += "function ai-doctor   { & '$PyL' '$LocalAI\ai_doctor.py' @args }"
+    $lines += "function ai          { & '$PyL' '$LocalAI\ai_ui.py' @args }"
   }
   if ($DoVor) {
     $lines += "`$env:VOR_HOME = '$RHome'"

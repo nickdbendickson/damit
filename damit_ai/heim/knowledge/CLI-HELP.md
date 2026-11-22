@@ -376,6 +376,21 @@ take a dam's runs out of the database
 
 ---
 
+## ai_ui.py
+
+Installed command: `ai`. One local page (127.0.0.1 only) for asking Heim, Vor and the run results.
+
+### `ai_ui.py`
+
+One local page for Heim and Vor (127.0.0.1 only).
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `--port` | PORT | `0` | port (default: any free one) |
+| `--no-browser` |  |  | print the address instead of opening it |
+
+---
+
 ## ai_doctor.py
 
 Installed command: `ai-doctor`. Both assistants' checks in one go, one summary line each.

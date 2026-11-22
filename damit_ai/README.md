@@ -94,6 +94,11 @@ plugin zip or CI job.
    half a minute) and builds the exact-word index, without re-embedding anything. `heim-doctor` says
    when it is needed.
 
+   **One page:** `ai` opens a page in your browser, served from this Mac only (127.0.0.1, with a
+   key in the address), with one ask box (run results, Heim or Vor's library; Vor's citations open the
+   PDF at the cited page), the run results (show, compare, depth at a place, the hydrograph as a
+   chart), adding a file or run folder, and `ai-doctor`. It runs the same commands as the terminal.
+
    **Short list:** `heim help` prints the commands most people use. `ai-doctor` runs Heim's and
    Vor's checks together and ends with one OK / WATCH / PROBLEM line for each. Ollama is started in
    the background when a command needs it and it is not running (`HEIM_NO_AUTOSTART=1` turns that
