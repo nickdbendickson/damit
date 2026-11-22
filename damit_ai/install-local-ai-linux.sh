@@ -495,6 +495,7 @@ ai_block() {
     [[ "$DO_HEIM" == 1 ]] && echo "alias ai-doctor='\"$LOCAL_AI/python\" \"$LOCAL_AI/ai_doctor.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias ai='\"$LOCAL_AI/python\" \"$LOCAL_AI/ai_ui.py\"'"
     [[ "$DO_HEIM" == 1 ]] && echo "alias ai-score='\"$LOCAL_AI/python\" \"$LOCAL_AI/ai_score.py\"'"
+    [[ "$DO_HEIM" == 1 ]] && echo "alias heim-index='\"$LOCAL_AI/python\" \"$LOCAL_AI/rag_index.py\"'"
     [[ "$DO_VOR" == 1 ]] && echo "export VOR_HOME=\"$RHOME\""
     [[ "$DO_VOR" == 1 ]] && echo "alias vor='\"$VOR_DIR/python\" \"$VOR_DIR/vor.py\"'"
     echo "# <<< dam local AI <<<"

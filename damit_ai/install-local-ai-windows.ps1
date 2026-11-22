@@ -514,6 +514,7 @@ if ($Prefix) {
     $el += "function ai-doctor   { & '$PyL' '$LocalAI\ai_doctor.py' @args }"
     $el += "function ai          { & '$PyL' '$LocalAI\ai_ui.py' @args }"
     $el += "function ai-score    { & '$PyL' '$LocalAI\ai_score.py' @args }"
+    $el += "function heim-index  { & '$PyL' '$LocalAI\rag_index.py' @args }"
     $ec += "set `"HEIM_NUM_CTX=$NumCtx`""; $ec += "set `"HEIM_WATCH_MODEL=$WatchModel`""
   }
   if ($DoVor) { $el += "`$env:VOR_HOME = '$RHome'"; $el += "function vor { & '$PyR' '$VorDir\vor.py' @args }"; $ec += "set `"VOR_HOME=$RHome`"" }
@@ -569,6 +570,7 @@ if ($writeBlock) {
     $lines += "function ai-doctor   { & '$PyL' '$LocalAI\ai_doctor.py' @args }"
     $lines += "function ai          { & '$PyL' '$LocalAI\ai_ui.py' @args }"
     $lines += "function ai-score    { & '$PyL' '$LocalAI\ai_score.py' @args }"
+    $lines += "function heim-index  { & '$PyL' '$LocalAI\rag_index.py' @args }"
   }
   if ($DoVor) {
     $lines += "`$env:VOR_HOME = '$RHome'"

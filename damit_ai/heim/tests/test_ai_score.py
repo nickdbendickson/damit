@@ -101,6 +101,9 @@ class Score(unittest.TestCase):
                             ("install-local-ai-windows.ps1", "function ai-score"),
                             (os.path.join("heim", "setup-local-heim.sh"), 'alias ai-score="')):
             self.assertIn(needle, open(os.path.join(root, rel), encoding="utf-8").read(), rel)
+        # `heim-index --compact` (the upgrade step) must be a command on Linux and Windows too, not only the Mac
+        self.assertIn("alias heim-index=", open(os.path.join(root, "install-local-ai-linux.sh"), encoding="utf-8").read())
+        self.assertIn("function heim-index", open(os.path.join(root, "install-local-ai-windows.ps1"), encoding="utf-8").read())
         mac_vor = open(os.path.join(root, "vor", "setup-vor.zsh"), encoding="utf-8").read()
         self.assertIn('cp "$HERE/eval_vor.py" "$TOOL_DIR/eval_vor.py"', mac_vor)
 
