@@ -333,6 +333,16 @@ the hydrograph(s) of a dam's runs: peak and time to peak
 | `dam` | DAM |  |  |
 | `--every` | EVERY |  | also print every Nth point |
 
+#### `run_results.py compare`
+
+a dam's runs side by side (engine against engine) and the places that differ most; no model needed
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `dam` | DAM |  |  |
+| `--runs` | RUNS |  | comma list of run ids to compare (heim runs list shows them) |
+| `--places` | PLACES | `15` | how many places to list (default 15) |
+
 #### `run_results.py ask`
 
 a question in words; Heim writes the query, the code runs it
@@ -363,6 +373,36 @@ take a dam's runs out of the database
 |---|---|---|---|
 | `dam` | [DAM] |  |  |
 | `--all` |  |  | empty the database |
+
+---
+
+## ai_doctor.py
+
+Installed command: `ai-doctor`. Both assistants' checks in one go, one summary line each.
+
+### `ai_doctor.py`
+
+Check Heim and Vor in one go.
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `--library` |  |  | indexes and folders only: no Ollama needed |
+
+---
+
+## what_changed.py 1.0
+
+Installed command: `what_changed.py`. Regenerate the knowledge pack's WHAT-CHANGED.md from git history.
+
+### `what_changed.py`
+
+Write the knowledge pack's WHAT-CHANGED.md from git history.
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `--repo` | REPO |  | a checkout to read (repeat for several); NAME=PATH names it, else the folder name **(required)** |
+| `--days` | DAYS | `45` | how far back (default 45) |
+| `--out` | OUT | `<damit_ai>/heim/knowledge/WHAT-CHANGED.md` | where to write (default: knowledge/WHAT-CHANGED.md) |
 
 ---
 
@@ -476,7 +516,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.3.2
+## vor.py 1.3.3
 
 Installed command: `vor`. The literature assistant.
 

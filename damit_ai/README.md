@@ -94,6 +94,12 @@ plugin zip or CI job.
    half a minute) and builds the exact-word index, without re-embedding anything. `heim-doctor` says
    when it is needed.
 
+   **Short list:** `heim help` prints the commands most people use. `ai-doctor` runs Heim's and
+   Vor's checks together and ends with one OK / WATCH / PROBLEM line for each. Ollama is started in
+   the background when a command needs it and it is not running (`HEIM_NO_AUTOSTART=1` turns that
+   off); `heim-start` still works. `heim runs compare 2801` puts a dam's runs side by side (engine
+   against engine): a run written over the same report file no longer replaces the earlier one.
+
    Run the first command after the `source` line, not in the same paste: zsh reads a whole pasted
    block before running any of it, so a new command pasted along with `source ~/.zshrc` is
    `command not found` although the install is fine. A new Terminal tab does the same job.

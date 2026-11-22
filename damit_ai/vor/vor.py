@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.3.2 — local research assistant for dam-safety, dam-design and
+# vor.py v1.3.3 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -47,6 +47,8 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.3.3: Ollama is started in the background when it is not running (ensure_ollama, the same
+#   function as Heim's), instead of failing with "cannot reach Ollama" until heim-start had run.
 # 1.3.2: `vor ocr`, `vor ingest` and `vor doctor` no longer send you round in a circle. `vor ocr`
 #   said "No scanned PDFs to OCR" when every scanned document was under its default share
 #   (30 % of the pages), and the other two answered that with "Run: vor ocr"; now all three
@@ -75,7 +77,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 
 
 def _home():
@@ -171,7 +173,7 @@ def say(msg):
 
 # --------------------------------------------------------------------------- Ollama
 
-def _post(path, payload, timeout=3600):
+def _post(path, payload, timeout=3600, _retry=True):
     req = urllib.request.Request(BASE + path, data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"})
     try:
@@ -181,8 +183,59 @@ def _post(path, payload, timeout=3600):
         body = e.read().decode("utf-8", "replace")[:400]
         raise RuntimeError("Ollama %s -> HTTP %d: %s" % (path, e.code, body)) from None
     except urllib.error.URLError as e:
+        if _retry and ensure_ollama(BASE, log=say):      # 1.3.3: start it instead of failing
+            return _post(path, payload, timeout, _retry=False)
         raise RuntimeError("cannot reach Ollama at %s (%s). Start it: heim-start (or open Ollama.app)"
                            % (BASE, e.reason)) from None
+
+
+_OLLAMA_CHECKED = []
+
+
+def ensure_ollama(base, log=print):
+    """Start Ollama in the background when it is not answering at `base` (a local address only), and wait
+    up to 30 s for it. Returns True when it answers. Before this, every assistant failed with "connection
+    refused" until `heim-start` had been run in a tab of its own. HEIM_NO_AUTOSTART=1 turns it off.
+    The same function is in rag_query.py, run_results.py and vor.py (a test keeps them identical)."""
+    import shutil, subprocess, time, urllib.parse  # nosec B404 - starts the local Ollama server only
+    if _OLLAMA_CHECKED:
+        return _OLLAMA_CHECKED[0]
+
+    def up():
+        try:
+            with urllib.request.urlopen(base.rstrip("/") + "/api/tags", timeout=3) as r:
+                return r.status == 200
+        except Exception:
+            return False
+    if up():
+        _OLLAMA_CHECKED.append(True)
+        return True
+    host = urllib.parse.urlparse(base).hostname or ""
+    if os.environ.get("HEIM_NO_AUTOSTART") == "1" or host not in ("127.0.0.1", "localhost", "::1"):
+        return False
+    home = os.path.expanduser("~")
+    exe = next((p for p in (os.path.join(home, "local-ai", "bin", "Ollama.app", "Contents", "Resources", "ollama"),
+                            shutil.which("ollama"), "/Applications/Ollama.app/Contents/Resources/ollama",
+                            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe"))
+                if p and os.path.isfile(p)), None)
+    if not exe:
+        log("Ollama is not running and no ollama program was found to start. Start it (heim-start or the Ollama app).")
+        return False
+    logf = os.path.join(home, "local-ai", "ollama-serve.log")
+    os.makedirs(os.path.dirname(logf), exist_ok=True)
+    env = dict(os.environ, OLLAMA_FLASH_ATTENTION=os.environ.get("OLLAMA_FLASH_ATTENTION", "1"),
+               OLLAMA_KV_CACHE_TYPE=os.environ.get("OLLAMA_KV_CACHE_TYPE", "q8_0"))
+    log("Ollama was not running: starting it in the background (log: %s) ..." % logf)
+    with open(logf, "ab") as out:
+        kw = {"creationflags": 0x00000008} if os.name == "nt" else {"start_new_session": True}   # detached
+        subprocess.Popen([exe, "serve"], stdout=out, stderr=out, stdin=subprocess.DEVNULL, env=env, **kw)  # nosec B603
+    for _ in range(60):
+        if up():
+            _OLLAMA_CHECKED.append(True)
+            return True
+        time.sleep(0.5)
+    log("Ollama did not answer within 30 s; see %s" % logf)
+    return False
 
 
 def _get(path, timeout=10):

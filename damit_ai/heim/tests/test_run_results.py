@@ -588,7 +588,7 @@ class InstallTest(unittest.TestCase):
 
     def test_mac(self):
         t = self.read("setup-local-heim.sh")
-        self.assertRegex(t, r"for f in run_digest heim_watch run_results true_hole; do")
+        self.assertRegex(t, r"for f in run_digest heim_watch run_results true_hole ai_doctor; do")
         self.assertIn('alias heim-runs="$PYRUN \\$HOME/local-ai/run_results.py"', t)
 
     def test_linux_windows(self):

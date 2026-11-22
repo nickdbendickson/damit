@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run_results.py 1.0.0 - dam-breach run results in a database Heim can answer from.
+"""run_results.py 1.1.0 - dam-breach run results in a database Heim can answer from.
 
     heim runs add FOLDER ...           read every run below FOLDER into ~/local-ai/runs.db
     heim runs list                     the runs that are in it
@@ -7,6 +7,8 @@
     heim runs at DAM PLACE             depth / velocity / arrival at a structure, road or address
     heim runs at DAM 46.98,-97.39      ... or at a point (reads the rasters; needs GDAL)
     heim runs hydrograph DAM           the breach hydrograph, its peak and when it peaks
+    heim runs compare DAM              the dam's runs side by side (engine against engine), and
+                                       the places whose depth or arrival differ most
     heim runs ask "question"           Heim writes the query, the code runs it, Heim phrases it
     heim runs sql "SELECT ..."         your own query (read-only)
     heim runs schema                   the tables and what each column means
@@ -37,6 +39,12 @@ What is read (nothing is written next to the run; the files are opened read-only
   the four result rasters    Depth (Max), Velocity (Max), Arrival Time, WSE (Max): their paths, for
                              `at` with a point
 
+1.1.0: every run is kept. The DamSafety Runner writes each run of a dam to the same
+_breach_model/run_report.json, so reading a dam again after an engine change used to replace the
+earlier run, and two engines could never be compared. Now a report that has changed since it was
+read is added beside the earlier reading, which stays (current = 0; its raster paths are dropped,
+because the files on disk now belong to the newer run). `compare` puts them side by side.
+
 Stdlib only. `at` with a point uses GDAL (osgeo) when this Python has it, else the QGIS conda
 environment's Python (ndqgis) when one is found. `ask` needs Ollama; nothing else does.
 """
@@ -55,8 +63,8 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "1.0.0"
-SCHEMA_VERSION = 1
+VERSION = "1.1.0"
+SCHEMA_VERSION = 2
 DB = os.path.expanduser(os.environ.get("HEIM_RUNS_DB", "~/local-ai/runs.db"))
 BASE = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 CHAT_MODEL = os.environ.get("HEIM_MODEL", "heim")
@@ -107,7 +115,7 @@ CREATE TABLE IF NOT EXISTS runs (
   latest_arrival_hr REAL, cell_m REAL, manning_n REAL, cut_off TEXT,
   hazard_class TEXT, tm11_class TEXT, flooded_structures INTEGER, hazard_folder TEXT,
   hazard_older_than_run INTEGER,
-  folder TEXT, dam_folder TEXT, source TEXT, ingested TEXT);
+  folder TEXT, dam_folder TEXT, source TEXT, ingested TEXT, current INTEGER DEFAULT 1);
 CREATE TABLE IF NOT EXISTS facts (run_id INTEGER, key TEXT, value_num REAL, value_text TEXT);
 CREATE TABLE IF NOT EXISTS hydrograph (run_id INTEGER, series TEXT, time_hr REAL, flow_cfs REAL);
 CREATE TABLE IF NOT EXISTS features (
@@ -140,7 +148,8 @@ runs: one row per model run.
   cell_m (model cell size), manning_n, cut_off (why the run stopped early, empty if it did not),
   hazard_class (ND hazard class from Hazard), tm11_class, flooded_structures (habitable structures
   Hazard counted as flooded), hazard_older_than_run (1 = the Hazard outputs are older than this run:
-  re-classify before trusting them), folder, dam_folder.
+  re-classify before trusting them), folder, dam_folder, current (1 = the run whose files are on
+  disk now; 0 = an earlier run of the same report file, kept for comparison).
 facts: every other number or text of a run's report. run_id, key (dotted path such as
   hydrograph.storage_exponent_m, settings.manning_n, summary.flooded_acres_ge_1ft,
   lisflood_runs.0.size_mi), value_num, value_text.
@@ -165,6 +174,8 @@ def connect(path=None, write=False):
             os.makedirs(d, exist_ok=True)
         db = sqlite3.connect(path)
         db.executescript(DDL)
+        if "current" not in [r[1] for r in db.execute("PRAGMA table_info(runs)")]:
+            db.execute("ALTER TABLE runs ADD COLUMN current INTEGER DEFAULT 1")     # schema 1 -> 2
         db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
         return db
     if not os.path.exists(path):
@@ -762,9 +773,22 @@ def ingest_report(db, report_path, log=_say):
                 "folder": run_dir, "dam_folder": dam_dir, "source": src,
                 "ingested": datetime.datetime.now().isoformat(timespec="seconds")})
     key = os.path.realpath(report_path)
-    old = db.execute("SELECT run_id FROM runs WHERE run_key=?", (key,)).fetchone()
+    old = db.execute("SELECT run_id, run_finished, final_model, peak_breach_cfs, flooded_acres, max_depth_ft "
+                     "FROM runs WHERE run_key=?", (key,)).fetchone()
     if old:
-        delete_runs(db, [old[0]])
+        same = (old[1], old[2], old[3], old[4], old[5]) == (row.get("run_finished"), row.get("final_model"),
+                                                            row.get("peak_breach_cfs"), row.get("flooded_acres"),
+                                                            row.get("max_depth_ft"))
+        if same:
+            delete_runs(db, [old[0]])           # the same run read again: replace it
+        else:
+            # (1.1.0) a new run written over the same report: keep the earlier one for `compare`.
+            # Its rasters are the new run's files now, so it loses them.
+            db.execute("UPDATE runs SET run_key=?, current=0 WHERE run_id=?",
+                       ("%s#%s" % (key, old[1] or old[0]), old[0]))
+            db.execute("DELETE FROM rasters WHERE run_id=?", (old[0],))
+            log("  kept the earlier run of %s (%s, finished %s) beside this one: heim runs compare"
+                % (row.get("dam_id") or "this dam", old[2] or "?", old[1] or "?"))
     cols = ["run_key"] + list(row.keys())
     cur = db.execute("INSERT INTO runs (%s) VALUES (%s)" % (", ".join(cols), ", ".join("?" * len(cols))),
                      [key] + list(row.values()))
@@ -930,12 +954,14 @@ def table(cols, rows, limit=MAX_ROWS):
 
 
 def cmd_list(db):
-    rows = db.execute("SELECT dam_id, dam_name, scenario, final_model, peak_breach_cfs, max_depth_ft, "
+    cur = "current" if "current" in [r[1] for r in db.execute("PRAGMA table_info(runs)")] else "1"
+    rows = db.execute("SELECT run_id, dam_id, dam_name, scenario, final_model, peak_breach_cfs, max_depth_ft, "
                       "flooded_acres, hazard_class, run_finished, "
-                      "(SELECT COUNT(*) FROM features f WHERE f.run_id=runs.run_id) "
-                      "FROM runs ORDER BY dam_id, run_finished").fetchall()
-    _say(table(["dam", "name", "scenario", "model", "peak_cfs", "max_depth_ft", "flooded_ac",
-                "hazard", "finished", "features"], rows))
+                      "(SELECT COUNT(*) FROM features f WHERE f.run_id=runs.run_id), "
+                      "CASE WHEN %s = 0 THEN 'earlier' ELSE '' END "
+                      "FROM runs ORDER BY dam_id, run_finished" % cur).fetchall()
+    _say(table(["id", "dam", "name", "scenario", "model", "peak_cfs", "max_depth_ft", "flooded_ac",
+                "hazard", "finished", "features", ""], rows))
 
 
 def describe_run(db, run_id):
@@ -988,6 +1014,93 @@ def cmd_show(db, dam):
     for r in runs:
         _say(describe_run(db, r[0]))
         _say("")
+
+
+COMPARE_ROWS = (("peak breach outflow", "peak_breach_cfs", "cfs"), ("time to peak", "time_to_peak_hr", "h"),
+                ("flooded area", "flooded_acres", "ac"), ("maximum depth", "max_depth_ft", "ft"),
+                ("velocity P99", "velocity_p99_fps", "ft/s"), ("latest arrival", "latest_arrival_hr", "h"),
+                ("flooded structures", "flooded_structures", ""), ("hazard class", "hazard_class", ""),
+                ("starting WSE", "starting_wse_ft", "ft"), ("Manning n", "manning_n", ""),
+                ("model cell", "cell_m", "m"), ("cut off", "cut_off", ""))
+
+
+def run_label(d):
+    """A short name for a run in a comparison: model, scenario, finish date."""
+    when = (d.get("run_finished") or "")[:16].replace("T", " ")
+    return " ".join(x for x in (d.get("final_model") or "?", d.get("scenario") or "", when) if x)
+
+
+def compare_runs(db, run_ids, places=15):
+    """Text comparing runs (oldest first): the run numbers side by side with the change from the first run, then
+    the places present in every run whose depth or arrival differ most. No model; the numbers are the database's."""
+    cols = [c[0] for c in db.execute("SELECT * FROM runs LIMIT 0").description]
+    runs = [dict(zip(cols, db.execute("SELECT * FROM runs WHERE run_id=?", (i,)).fetchone())) for i in run_ids]
+    runs.sort(key=lambda d: (d.get("run_finished") or "", d["run_id"]))
+    labels = ["[%d] %s" % (d["run_id"], run_label(d)) for d in runs]
+    out = ["%s%s: %d runs, the first is the baseline" % (runs[0]["dam_id"] or "?",
+                                                        " " + runs[0]["dam_name"] if runs[0].get("dam_name") else "",
+                                                        len(runs))]
+    out += ["  %s%s" % (lab, "" if d.get("current", 1) in (1, None) else "  (earlier run; its files were replaced)")
+            for lab, d in zip(labels, runs)]
+    rows = []
+    for name, col, unit in COMPARE_ROWS:
+        vals = [d.get(col) for d in runs]
+        if all(v in (None, "") for v in vals):
+            continue
+        cells = []
+        base = vals[0]
+        for j, v in enumerate(vals):
+            c = "-" if v in (None, "") else (_fmt(v, 3) if isinstance(v, float) else str(v))
+            if j and isinstance(v, (int, float)) and isinstance(base, (int, float)) and v is not None:
+                diff = v - base
+                c += " (same)" if diff == 0 else " (%s%s%s)" % ("+" if diff >= 0 else "", _fmt(float(diff), 3),
+                                    (", %+.0f%%" % (100.0 * diff / base)) if base else "")
+            cells.append(c)
+        rows.append([name + (" (%s)" % unit if unit else "")] + cells)
+    out += ["", table(["number"] + ["[%d]" % d["run_id"] for d in runs], rows)]
+    # places in every run: the largest differences in depth (then arrival) from the baseline
+    q = ("SELECT run_id, kind, COALESCE(NULLIF(feature_id, ''), name, address) AS place, name, address, "
+         "depth_ft, arrival_hr FROM features WHERE run_id IN (%s)" % ",".join("?" * len(runs)))
+    at = {}
+    for rid, kind, place, name, addr, depth, arr in db.execute(q, [d["run_id"] for d in runs]):
+        if place:
+            at.setdefault((kind, place), {})[rid] = (depth, arr, name or addr or "")
+    ids = [d["run_id"] for d in runs]
+    common = [(k, v) for k, v in at.items() if all(i in v for i in ids)]
+    if common:
+        def spread(v, i):
+            xs = [v[r][i] for r in ids if v[r][i] is not None]
+            return (max(xs) - min(xs)) if len(xs) >= 2 else 0.0
+        common.sort(key=lambda kv: (-spread(kv[1], 0), -spread(kv[1], 1), kv[0]))
+        prow = []
+        for (kind, place), v in common[:places]:
+            label = "%s %s%s" % (kind or "", place, (" (%s)" % v[ids[0]][2]) if v[ids[0]][2] and v[ids[0]][2] != place
+                                 else "")
+            prow.append([label.strip()[:50]] + ["%s / %s" % (_fmt(v[i][0], 2), _fmt(v[i][1], 2)) for i in ids])
+        out += ["", "Places in every run, largest depth difference first (depth ft / arrival h); %d in common, "
+                    "%d shown:" % (len(common), len(prow)),
+                table(["place"] + ["[%d]" % i for i in ids], prow)]
+    elif any(at.values()):
+        out += ["", "(no structure, road or receptor is in every run: re-classify the runs with the same layers "
+                    "to compare places)"]
+    return "\n".join(out)
+
+
+def cmd_compare(db, dam, run_ids=None, places=15):
+    runs = match_runs(db, dam)
+    if not runs:
+        sys.exit("no run of '%s' in %s (heim runs list)" % (dam, DB))
+    ids = [r[0] for r in runs]
+    if run_ids:
+        missing = [i for i in run_ids if i not in ids]
+        if missing:
+            sys.exit("run id(s) %s are not runs of %s (heim runs list shows the ids)" %
+                     (", ".join(map(str, missing)), dam))
+        ids = run_ids
+    if len(ids) < 2:
+        sys.exit("only one run of %s is in the database: run it again (another engine or scenario) and "
+                 "heim runs add the dam folder; the earlier run is kept" % dam)
+    _say(compare_runs(db, ids, places))
 
 
 def cmd_hydrograph(db, dam, every=None):
@@ -1226,7 +1339,9 @@ Write ONE SQLite SELECT that answers the question from the tables below. Rules:
 - A question about one place (a structure, address, road, facility) is answered from features
   (depth_ft, velocity_fps, arrival_hr). Peak flow / breach / flood totals come from runs.
   A number not in runs is in facts (key LIKE '%...%').
-- When a dam has several runs, return all of them unless the question picks one.
+- When a dam has several runs, return all of them unless the question picks one, and select
+  runs.final_model and runs.run_finished so the runs can be told apart. A run with current = 0 is an
+  earlier run of the same report, kept for comparison: say so when it is in the rows.
 - Add LIMIT 50.
 """
 
@@ -1248,7 +1363,60 @@ def ollama_chat(messages, fmt=None, timeout=900):
                 payload.pop("think")
                 continue
             raise
+        except urllib.error.URLError:
+            if attempt == 1 and ensure_ollama(BASE, log=_say):        # 1.1.0: start Ollama, then once more
+                continue
+            raise
     return ""
+
+
+_OLLAMA_CHECKED = []
+
+
+def ensure_ollama(base, log=print):
+    """Start Ollama in the background when it is not answering at `base` (a local address only), and wait
+    up to 30 s for it. Returns True when it answers. Before this, every assistant failed with "connection
+    refused" until `heim-start` had been run in a tab of its own. HEIM_NO_AUTOSTART=1 turns it off.
+    The same function is in rag_query.py, run_results.py and vor.py (a test keeps them identical)."""
+    import shutil, subprocess, time, urllib.parse  # nosec B404 - starts the local Ollama server only
+    if _OLLAMA_CHECKED:
+        return _OLLAMA_CHECKED[0]
+
+    def up():
+        try:
+            with urllib.request.urlopen(base.rstrip("/") + "/api/tags", timeout=3) as r:
+                return r.status == 200
+        except Exception:
+            return False
+    if up():
+        _OLLAMA_CHECKED.append(True)
+        return True
+    host = urllib.parse.urlparse(base).hostname or ""
+    if os.environ.get("HEIM_NO_AUTOSTART") == "1" or host not in ("127.0.0.1", "localhost", "::1"):
+        return False
+    home = os.path.expanduser("~")
+    exe = next((p for p in (os.path.join(home, "local-ai", "bin", "Ollama.app", "Contents", "Resources", "ollama"),
+                            shutil.which("ollama"), "/Applications/Ollama.app/Contents/Resources/ollama",
+                            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe"))
+                if p and os.path.isfile(p)), None)
+    if not exe:
+        log("Ollama is not running and no ollama program was found to start. Start it (heim-start or the Ollama app).")
+        return False
+    logf = os.path.join(home, "local-ai", "ollama-serve.log")
+    os.makedirs(os.path.dirname(logf), exist_ok=True)
+    env = dict(os.environ, OLLAMA_FLASH_ATTENTION=os.environ.get("OLLAMA_FLASH_ATTENTION", "1"),
+               OLLAMA_KV_CACHE_TYPE=os.environ.get("OLLAMA_KV_CACHE_TYPE", "q8_0"))
+    log("Ollama was not running: starting it in the background (log: %s) ..." % logf)
+    with open(logf, "ab") as out:
+        kw = {"creationflags": 0x00000008} if os.name == "nt" else {"start_new_session": True}   # detached
+        subprocess.Popen([exe, "serve"], stdout=out, stderr=out, stdin=subprocess.DEVNULL, env=env, **kw)  # nosec B603
+    for _ in range(60):
+        if up():
+            _OLLAMA_CHECKED.append(True)
+            return True
+        time.sleep(0.5)
+    log("Ollama did not answer within 30 s; see %s" % logf)
+    return False
 
 
 def sql_from_reply(text):
@@ -1389,6 +1557,11 @@ def main(argv=None):
     p = sub.add_parser("hydrograph", help="the hydrograph(s) of a dam's runs: peak and time to peak")
     p.add_argument("dam")
     p.add_argument("--every", type=int, default=None, help="also print every Nth point")
+    p = sub.add_parser("compare", help="a dam's runs side by side (engine against engine) and the places that "
+                                       "differ most; no model needed")
+    p.add_argument("dam")
+    p.add_argument("--runs", default=None, help="comma list of run ids to compare (heim runs list shows them)")
+    p.add_argument("--places", type=int, default=15, help="how many places to list (default 15)")
     p = sub.add_parser("ask", help="a question in words; Heim writes the query, the code runs it")
     p.add_argument("question", nargs="+")
     p = sub.add_parser("sql", help="your own SELECT (read-only)")
@@ -1445,6 +1618,9 @@ def main(argv=None):
             cmd_at(db, args.dam, " ".join(args.place), args.near_m)
         elif args.cmd == "hydrograph":
             cmd_hydrograph(db, args.dam, args.every)
+        elif args.cmd == "compare":
+            ids = [int(x) for x in re.findall(r"\d+", args.runs)] if args.runs else None
+            cmd_compare(db, args.dam, ids, args.places)
     finally:
         db.close()
     return 0
