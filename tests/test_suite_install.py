@@ -217,6 +217,66 @@ class TestScripts(unittest.TestCase):
                                      capture_output=True, text=True, timeout=300).stdout
                 self.assertIn("probe_ds", out)
 
+    @unittest.skipUnless(shutil.which("bash"), "no bash")
+    def test_one_desk_with_a_launcher_per_profile(self):
+        """DamIT Desk (Nick, 2026-11-22: the one desk) replaces DamIT Crest and the North Dakota Crest desk. Its block
+        installs damit_desk/, writes qgis-process-damit.sh and -damsafety.sh outside --sandbox too, and one launcher
+        per desk profile that names the profile and both qgis_process launchers but sets no QGIS_CUSTOM_CONFIG_PATH
+        itself (one desk process switches plugin sets per job). The old desks' launchers are removed."""
+        import tempfile
+        with open(os.path.join(SI, "install-all.sh"), encoding="utf-8") as fh:
+            sh = fh.read()
+        self.assertNotIn('"$HERE/nd_crest', sh)
+        self.assertNotIn('"$HERE/damit_crest', sh)
+        block = sh[sh.index('DESK_SRC="$HERE/damit_desk"'):sh.index('if [ -n "$SANDBOX" ]; then\n  say "Sandbox')]
+        funcs = self._func(sh, "qgis_process_profile") + "\n" + self._func(sh, "mk_qgis_process")
+        with tempfile.TemporaryDirectory() as t:
+            here, prefix = os.path.join(t, "pkg"), os.path.join(t, "dam suite")
+            os.makedirs(os.path.join(here, "damit_desk", "app", "desktop"))
+            os.makedirs(os.path.join(here, "damit_desk", "damit_catalog"))
+            open(os.path.join(here, "damit_desk", "app", "desktop", "run.py"), "w").close()
+            with open(os.path.join(here, "damit_desk", "damit_catalog", "handoff.py"), "w") as fh:
+                fh.write("# desk copy\n")
+            os.makedirs(prefix)
+            for old in ("open-damit-crest.sh", "open-nd-crest.sh"):
+                open(os.path.join(prefix, old), "w").close()
+            os.makedirs(os.path.join(prefix, "nd_crest"))
+            profiles = os.path.join(t, "profiles")
+            for p in ("damsafety", "damit"):
+                os.makedirs(os.path.join(profiles, p, "python", "plugins"))
+            env = dict(os.environ, HERE=here, PREFIX=prefix, DO_CREST="1", DO_DS="1", DO_DI="1", OS="Linux",
+                       STAMP="test", CONDA_BASE=os.path.join(t, "conda"), QP=os.path.join(t, "env"),
+                       DS_PROFILE="damsafety", DI_PROFILE="damit", DS_DIR=os.path.join(profiles, "damsafety"),
+                       DI_DIR=os.path.join(profiles, "damit"), ANUGA_PY="", LISFLOOD_EXE="")
+            script = ("say() { :; }; ok() { echo \"OK $*\"; }; warn() { echo \"WARN $*\"; }\n" + funcs + "\n" + block)
+            out = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=True).stdout
+            self.assertIn("OK DamIT Desk", out)
+            self.assertIn("nd_crest is the retired desk", out)
+            for old in ("open-damit-crest.sh", "open-nd-crest.sh"):
+                self.assertFalse(os.path.exists(os.path.join(prefix, old)))
+            self.assertTrue(os.path.isfile(os.path.join(prefix, "damit_desk", "app", "desktop", "run.py")))
+            for name in ("qgis-process-damit.sh", "qgis-process-damsafety.sh"):
+                with open(os.path.join(prefix, name)) as fh:
+                    self.assertIn("QGIS_CUSTOM_CONFIG_PATH=", fh.read())
+            for name, prof in (("open-damit-desk.sh", "us"), ("open-damit-desk-nd.sh", "nd")):
+                with open(os.path.join(prefix, name)) as fh:
+                    text = fh.read()
+                self.assertIn("export DAMIT_DESK_PROFILE=" + prof, text)
+                self.assertIn("DAMIT_ND_QGIS_PROCESS=", text)
+                self.assertIn("qgis-process-damsafety.sh", text)
+                self.assertIn("DAMSUITE_PREFIX=", text)
+                self.assertNotIn("QGIS_CUSTOM_CONFIG_PATH", text)
+                self.assertIn("damit_desk/app/desktop", text)
+        with open(os.path.join(SI, "install-all-windows.ps1"), encoding="utf-8") as fh:
+            ps = fh.read()
+        desk = ps[ps.index("$DeskSrc ="):ps.index("Remove-Item $SettingsPy")]
+        for want in ("open-damit-desk.cmd", "open-damit-desk-nd.cmd", "DAMIT_DESK_PROFILE=$deskP",
+                     "DAMIT_ND_QGIS_PROCESS=$Prefix\\qgis-process-damsafety.cmd", "qgis-process-$($s[1]).cmd"):
+            self.assertIn(want, desk)
+        self.assertNotIn("nd_crest\\crest-desktop", ps)
+        # PowerShell variables ignore case: a loop over $p would overwrite the platform $P used later
+        self.assertNotRegex(desk, r"foreach \(\$p in")
+
     @unittest.skipUnless(shutil.which("bash") and shutil.which("python3"), "no bash/python3")
     def test_pack_builder_launcher(self):
         """build-offline-pack.sh runs DamSafety_Data.pack_build from the profile's plugins folder,
@@ -291,7 +351,7 @@ class TestScripts(unittest.TestCase):
         self.assertLess(mk.index('set "OUT=%~f1"'), mk.index("pushd"))
         self.assertIn('if "%OUT:~-1%"=="\\" set "OUT=%OUT%."', mk)
         self.assertNotIn("cd /d", mk)
-        qp = ps[ps.index("function QgisProcessProfile"):ps.index("$CrestSrc =")]
+        qp = ps[ps.index("function QgisProcessProfile"):ps.index("$DeskSrc =")]
         self.assertIn("ReparsePoint", qp)
         self.assertIn("default.bak-", qp)
         self.assertIn('return "rem QGIS_CUSTOM_CONFIG_PATH not set', qp)

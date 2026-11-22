@@ -14,8 +14,9 @@
 #     official source with conda's clang on macOS (needs Apple's Command Line Tools)
 #   * the local AIs from damit_ai: Heim (code triage) and vor (literature),
 #     with Ollama, their conda env, the models and the reference library
-#   * the DamIT Crest desk (damit_crest) and the North Dakota Crest desk (nd_crest, from the
-#     DWR_Plugins dwr_crest/), both run on the ndqgis env; they open in the browser and can run side by side
+#   * DamIT Desk (damit_desk, from the damit-desk repository), the one desk with a United States and a
+#     North Dakota profile (it replaces DamIT Crest and the North Dakota Crest desk); it runs on the ndqgis
+#     env, opens in the browser, and has one launcher per profile
 #   * one launcher per profile, build-offline-pack.sh (the DamSafety offline pack from
 #     Terminal), and the Absaraka Dam (DWR-2801) run folder
 #
@@ -28,7 +29,7 @@
 #   bash install-all.sh                  # everything
 #   bash install-all.sh --offline        # refuse to download anything
 #   bash install-all.sh --check          # report what is installed
-#   options: --no-damsafety --no-damit --no-crest (both desks) --no-ai --no-heim --no-vor --skip-lisflood --rebuild-lisflood
+#   options: --no-damsafety --no-damit --no-crest (no desk) --no-ai --no-heim --no-vor --skip-lisflood --rebuild-lisflood
 #
 #   Somewhere other than your normal QGIS profiles and home folder (for a test install):
 #     --prefix DIR              the suite folder (launchers, LISFLOOD-FP, desks); default ~/dam-suite
@@ -643,7 +644,7 @@ mk_launcher() {  # mk_launcher <file> <profile>
     printf 'export QT_PLUGIN_PATH=%q QGIS_PREFIX_PATH=%q\n' "$QP/plugins" "$QP"
     printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
     printf 'export NDBREACH_ANUGA_MESHER=gmsh NDBREACH_ANUGA_PYTHON=%q NDBREACH_LISFLOOD=%q\n' "$ANUGA_PY" "$LISFLOOD_EXE"
-    # --sandbox: anything QGIS starts (a plugin's qgis_process, Crest) stays in the sandbox's profiles too
+    # --sandbox: anything QGIS starts (a plugin's qgis_process, DamIT Desk) stays in the sandbox's profiles too
     [ -z "$SANDBOX" ] || printf 'export QGIS_CUSTOM_CONFIG_PATH=%q\n' "$QGIS_PROFILES_PATH"
     printf 'exec %q --profile %q' "$QP/bin/qgis" "$2"
     [ ${#PROFILES_ARG[@]} -eq 0 ] || printf ' %q %q' "${PROFILES_ARG[@]}"
@@ -697,25 +698,12 @@ if [ "$DO_DI" = 1 ]; then
   # shellcheck disable=SC2086
   write_settings "$DI_DIR/$QINI" damit $DI_PLUGINS; mk_launcher "$PREFIX/open-damit-qgis.sh" "$DI_PROFILE"; fi
 
-# DamIT Crest desktop. It runs on the ndqgis env: that env already has pyproj (Crest's only
-# third-party import) and puts qgis_process on PATH, which Crest's Report step calls. The launcher
-# activates the env with conda.sh rather than `mamba run`, so dyld resolves pyproj's libraries on
-# macOS and Crest's own output (the URL it prints) is not captured. pywebview is not installed, so
-# the desk opens in the browser, which is Crest's documented fallback.
-#
-# The tree layout matters: damit_desktop/nid_rule.py loads DamIT Catalog's NID-ID rule from
-# <parents[3]>/damit_catalog/handoff.py and refuses to start without it, so Crest has to keep its
-# damit_crest/desktop/ nesting and get a damit_catalog/handoff.py beside it. That one file is
-# extracted from the Catalog plugin zip we just installed, so the rule always matches the plugin.
-# `|| true` inside the substitution: with no match the glob stays literal, `ls` exits 2,
-# and pipefail would make this assignment kill the whole install — silently, because the
-# stderr is discarded. The "no DamIT Catalog zip" warning below could never be reached.
-# qgis_process_profile <profile> <profile dir>: the line a Crest launcher needs so the desk's
+# qgis_process_profile <profile> <profile dir>: the line a qgis_process launcher needs so DamIT Desk's
 # Report step finds that profile's plugins. qgis_process (3.34) has no --profile option and always
 # loads the profile named "default" under QGIS_CUSTOM_CONFIG_PATH (or the usual QGIS3 folder), so
 # without this it saw neither "damsafety" nor "damit". The launcher points QGIS_CUSTOM_CONFIG_PATH
 # at $PREFIX/qgis-process/<profile>, whose profiles/default is a link to the real profile. Only
-# Crest's own qgis_process calls see it; QGIS opened with the launchers is unchanged.
+# the desk's own qgis_process calls see it; QGIS opened with the launchers is unchanged.
 qgis_process_profile() {
   local root="$PREFIX/qgis-process/$1"
   [ -d "$2" ] || return 0
@@ -725,70 +713,18 @@ qgis_process_profile() {
   if [ -e "$link" ] && [ ! -L "$link" ]; then mv "$link" "$link.bak-$(date +%Y%m%d%H%M%S)"; fi
   rm -f "$link"; ln -s "$2" "$link"
   if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$2" ]; then
-    warn "Could not link $link to $2: Crest's Report step will not see the $1 plugins."
+    warn "Could not link $link to $2: DamIT Desk's Report step will not see the $1 plugins."
     printf '# QGIS_CUSTOM_CONFIG_PATH not set: the link %q was not made\n' "$link"; return 0
   fi
   printf 'export QGIS_CUSTOM_CONFIG_PATH=%q\n' "$root"
 }
-CREST_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1 || true)"
-if [ "$DO_CREST" = 1 ] && [ -d "$HERE/damit_crest/desktop" ]; then
-  if [ -z "$CREST_ZIP" ]; then
-    warn "no DamIT Catalog zip: the Crest desk needs its NID-ID rule, so Crest was skipped"
-  else
-    say "DamIT Crest desk -> $PREFIX/damit_crest"
-    mkdir -p "$PREFIX/damit_crest" "$PREFIX/damit_catalog"
-    cp -R "$HERE/damit_crest/." "$PREFIX/damit_crest/"
-    if unzip -p "$CREST_ZIP" 'damit_catalog/handoff.py' > "$PREFIX/damit_catalog/handoff.py" 2>/dev/null \
-       && [ -s "$PREFIX/damit_catalog/handoff.py" ]; then
-      { echo '#!/bin/bash'
-        echo "# DamIT Crest desk (conda env ndqgis). Written by $STAMP."
-        printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
-        printf 'conda activate %q || exit 1\n' "$QP"
-        printf 'cd %q || exit 1\n' "$PREFIX/damit_crest/desktop"
-        printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
-        qgis_process_profile "$DI_PROFILE" "$DI_DIR"
-        echo 'exec python run.py "$@"'; } > "$PREFIX/open-damit-crest.sh"
-      chmod +x "$PREFIX/open-damit-crest.sh"
-      if [ "$OS" = Darwin ]; then cp "$PREFIX/open-damit-crest.sh" "$PREFIX/open-damit-crest.command"
-        chmod +x "$PREFIX/open-damit-crest.command"; fi
-      ok "Crest desk (open: $PREFIX/open-damit-crest.sh)"
-    else
-      rm -f "$PREFIX/damit_catalog/handoff.py"
-      warn "could not read damit_catalog/handoff.py from $(basename "$CREST_ZIP"): Crest was skipped"
-    fi
-  fi
-fi
 
-# North Dakota Crest desk (nickdbendickson/DWR_Plugins, dwr_crest/crest-desktop/). Same engine as DamIT Crest, with
-# the ND inventory (DWR dams + NID + other structures), ND VERTCON grid and the DamSafety hand-off
-# (nddam:preflight / nddam:runchain / ndbreach:rundam in profile "damsafety"). It is self-contained
-# (no Catalog rule) and only needs the standard library, so it runs on the ndqgis env like DamIT
-# Crest. The two desks use different ports (North Dakota Crest 47231, DamIT Crest 47241), so both can
-# be open at once; each prints its address when it starts.
-if [ "$DO_CREST" = 1 ] && [ -f "$HERE/nd_crest/crest-desktop/run.py" ]; then
-  say "North Dakota Crest desk -> $PREFIX/nd_crest"
-  rm -rf "$PREFIX/nd_crest"; mkdir -p "$PREFIX/nd_crest"
-  cp -R "$HERE/nd_crest/." "$PREFIX/nd_crest/"
-  { echo '#!/bin/bash'
-    echo "# North Dakota Crest desk (conda env ndqgis). Written by $STAMP."
-    printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
-    printf 'conda activate %q || exit 1\n' "$QP"
-    printf 'cd %q || exit 1\n' "$PREFIX/nd_crest/crest-desktop"
-    printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
-    qgis_process_profile "$DS_PROFILE" "$DS_DIR"
-    echo 'exec python run.py "$@"'; } > "$PREFIX/open-nd-crest.sh"
-  chmod +x "$PREFIX/open-nd-crest.sh"
-  if [ "$OS" = Darwin ]; then cp "$PREFIX/open-nd-crest.sh" "$PREFIX/open-nd-crest.command"
-    chmod +x "$PREFIX/open-nd-crest.command"; fi
-  ok "North Dakota Crest desk (open: $PREFIX/open-nd-crest.sh)"
-fi
-
-# --sandbox: qgis_process for one profile (qgis_process has no --profile; it loads the profile named
-# "default" under QGIS_CUSTOM_CONFIG_PATH, here the qgis-process/<profile> link folder), and env.sh
+# qgis_process for one profile (qgis_process has no --profile; it loads the profile named "default" under
+# QGIS_CUSTOM_CONFIG_PATH, here the qgis-process/<profile> link folder): DamIT Desk's launchers, and --sandbox's
 mk_qgis_process() {  # mk_qgis_process <file> <profile> <profile dir>
   local line; line="$(qgis_process_profile "$2" "$3")"
   { echo '#!/bin/bash'
-    echo "# qgis_process (conda env $(basename "$QP")) with the plugins of sandbox profile '$2'. Written by $STAMP."
+    echo "# qgis_process (conda env $(basename "$QP")) with the plugins of QGIS profile '$2'. Written by $STAMP."
     printf 'export PYTHONPATH=%q\n' "$QP/share/qgis/python:$QP/share/qgis/python/plugins"
     printf 'export QT_PLUGIN_PATH=%q QGIS_PREFIX_PATH=%q\n' "$QP/plugins" "$QP"
     printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
@@ -797,6 +733,53 @@ mk_qgis_process() {  # mk_qgis_process <file> <profile> <profile dir>
     printf 'exec %q "$@"\n' "$QP/bin/qgis_process"; } > "$1"
   chmod +x "$1"
 }
+# DamIT Desk (nickdbendickson/damit-desk; Nick, 2026-11-22: the one desk, with a United States and a North Dakota
+# profile; DamIT Crest and the North Dakota Crest desk retire into it). It runs on the ndqgis env (Python's standard
+# library and pyproj are all it needs) and opens in the browser. Each profile hands off to its own plugin set, in its
+# own QGIS profile: US -> the DamIT plugins through qgis-process-damit.sh, ND -> the DWR DamSafety plugins through
+# qgis-process-damsafety.sh. Both launchers are written here, outside --sandbox too, and the desk is told where they
+# are (DAMSUITE_PREFIX, DAMIT_ND_QGIS_PROCESS), so the desk process itself sets no QGIS_CUSTOM_CONFIG_PATH and one
+# desk can switch profiles in Settings. open-damit-desk.sh opens it in the US profile, open-damit-desk-nd.sh in ND.
+# damit_catalog/handoff.py (the NID-ID rule the US profile applies) is refreshed from the Catalog plugin zip we just
+# installed, so the rule always matches the plugin.
+DESK_SRC="$HERE/damit_desk"
+if [ "$DO_CREST" = 1 ] && [ -f "$DESK_SRC/app/desktop/run.py" ]; then
+  say "DamIT Desk -> $PREFIX/damit_desk"
+  rm -rf "$PREFIX/damit_desk"; mkdir -p "$PREFIX/damit_desk"
+  cp -R "$DESK_SRC/." "$PREFIX/damit_desk/"
+  CAT_ZIP="$(ls "$HERE"/plugins/damit/damit_catalog_*.zip 2>/dev/null | head -1 || true)"
+  if [ -n "$CAT_ZIP" ] && unzip -p "$CAT_ZIP" 'damit_catalog/handoff.py' > "$PREFIX/damit_desk/damit_catalog/handoff.py.new" 2>/dev/null \
+     && [ -s "$PREFIX/damit_desk/damit_catalog/handoff.py.new" ]; then
+    mv "$PREFIX/damit_desk/damit_catalog/handoff.py.new" "$PREFIX/damit_desk/damit_catalog/handoff.py"
+  else
+    rm -f "$PREFIX/damit_desk/damit_catalog/handoff.py.new"
+  fi
+  [ "$DO_DI" = 1 ] && mk_qgis_process "$PREFIX/qgis-process-damit.sh" "$DI_PROFILE" "$DI_DIR"
+  [ "$DO_DS" = 1 ] && mk_qgis_process "$PREFIX/qgis-process-damsafety.sh" "$DS_PROFILE" "$DS_DIR"
+  for DESK_P in us nd; do
+    DESK_F="$PREFIX/open-damit-desk$( [ "$DESK_P" = nd ] && echo -nd || true ).sh"
+    { echo '#!/bin/bash'
+      echo "# DamIT Desk, $( [ "$DESK_P" = nd ] && echo 'North Dakota' || echo 'United States') profile (conda env ndqgis). Written by $STAMP."
+      printf '. %q\n' "$CONDA_BASE/etc/profile.d/conda.sh"
+      printf 'conda activate %q || exit 1\n' "$QP"
+      printf 'cd %q || exit 1\n' "$PREFIX/damit_desk/app/desktop"
+      printf 'export PROJ_DATA=%q GDAL_DATA=%q\n' "$QP/share/proj" "$QP/share/gdal"
+      printf 'export DAMSUITE_PREFIX=%q DAMIT_ND_QGIS_PROCESS=%q\n' "$PREFIX" "$PREFIX/qgis-process-damsafety.sh"
+      echo "export DAMIT_DESK_PROFILE=$DESK_P"
+      echo 'exec python run.py "$@"'; } > "$DESK_F"
+    chmod +x "$DESK_F"
+    if [ "$OS" = Darwin ]; then cp "$DESK_F" "${DESK_F%.sh}.command"; chmod +x "${DESK_F%.sh}.command"; fi
+  done
+  # the two desks it replaces: their launchers go, so an old desk is not opened by mistake
+  rm -f "$PREFIX/open-damit-crest.sh" "$PREFIX/open-damit-crest.command" "$PREFIX/open-nd-crest.sh" "$PREFIX/open-nd-crest.command"
+  for OLD in damit_crest nd_crest; do
+    [ -d "$PREFIX/$OLD" ] && warn "$PREFIX/$OLD is the retired desk it replaces; delete it when you no longer need it"
+  done
+  ok "DamIT Desk (open: $PREFIX/open-damit-desk.sh, North Dakota: $PREFIX/open-damit-desk-nd.sh)"
+elif [ "$DO_CREST" = 1 ]; then
+  warn "no damit_desk/ in the package (make_package.sh --desk <damit-desk checkout>): no desk installed"
+fi
+
 if [ -n "$SANDBOX" ]; then
   say "Sandbox: qgis_process launchers and env.sh"
   [ "$DO_DS" = 1 ] && mk_qgis_process "$PREFIX/qgis-process-damsafety.sh" "$DS_PROFILE" "$DS_DIR" && ok "$PREFIX/qgis-process-damsafety.sh"
@@ -890,8 +873,8 @@ if [ $((DO_HEIM + DO_VOR)) -gt 0 ]; then [ -n "$AI_OK" ] && ok "local AIs instal
   [ -z "$MISSING_PLUGINS" ] || echo "  NOT INSTALLED:$MISSING_PLUGINS"
   [ "$DO_DS" = 1 ] && echo "  DamSafety -> profile $DS_PROFILE  (open: $PREFIX/open-damsafety-qgis.sh)"
   [ "$DO_DI" = 1 ] && echo "  DamIT     -> profile $DI_PROFILE  (open: $PREFIX/open-damit-qgis.sh)"
-  [ -f "$PREFIX/open-damit-crest.sh" ] && echo "  DamIT Crest desk              (open: $PREFIX/open-damit-crest.sh)"
-  [ -f "$PREFIX/open-nd-crest.sh" ] && echo "  North Dakota Crest desk       (open: $PREFIX/open-nd-crest.sh)"
+  [ -f "$PREFIX/open-damit-desk.sh" ] && echo "  DamIT Desk, United States     (open: $PREFIX/open-damit-desk.sh)"
+  [ -f "$PREFIX/open-damit-desk-nd.sh" ] && echo "  DamIT Desk, North Dakota      (open: $PREFIX/open-damit-desk-nd.sh)"
   [ -f "$PREFIX/build-offline-pack.sh" ] && echo "  DamSafety offline pack        (build: $PREFIX/build-offline-pack.sh)"
   if [ -n "$SANDBOX" ]; then
     echo "  SANDBOX: everything is in $SANDBOX (QGIS profiles in $PROFILES)"
