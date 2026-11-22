@@ -27,7 +27,7 @@ import {
   exportFloodGeoJson,
   exportFloodKml,
   exportNd911Csv,
-  fetchNd911,
+  fetchStructures,
   nd911AutoPatch,
   wantsNd911Lookup,
   ND911_ATTRIBUTION,
@@ -35,9 +35,11 @@ import {
   nd911State,
   removeNd911Seeds,
   seedId,
+  structureWords,
   type Nd911Row,
   type Nd911State,
 } from "@/lib/crest/nd911";
+import { NSI_ATTRIBUTION } from "@/lib/crest/nsi";
 import {
   DEM_ATTRIBUTION,
   DEM_ATTRIBUTION_SHORT,
@@ -1182,7 +1184,7 @@ function Nd911Panel({
     autoTried.current = true;
     setBusy(true);
     const id = dam.id;
-    fetchNd911(lookup)
+    fetchStructures(dam, lookup)
       .then((c) => { if (useDesk.getState().activeId === id) update({ nd911: c }); })
       .catch((e) => setError((e as Error).message))
       .finally(() => setBusy(false));
@@ -1220,7 +1222,7 @@ function Nd911Panel({
     setError(null);
     const id = dam.id;
     try {
-      const c = await fetchNd911(lookup);
+      const c = await fetchStructures(dam, lookup);
       if (useDesk.getState().activeId === id) update({ nd911: c });
     } catch (e) {
       setError((e as Error).message);
@@ -1229,6 +1231,8 @@ function Nd911Panel({
     }
   };
   const t = nd911.state === "ready" ? nd911.table : null;
+  const w = structureWords(dam);
+  const isNsi = w.short === "NSI";
   const seeds = new Map(dam.receptors.filter((r) => r.source === "nd911").map((r) => [r.id, r]));
   const addRows = (rows: Nd911Row[]) => update({ receptors: addNd911Seeds(dam.receptors, rows, result) });
   const remove = (ids?: string[]) => update({ receptors: removeNd911Seeds(dam.receptors, ids) });
@@ -1257,10 +1261,10 @@ function Nd911Panel({
         </p>
       ) : null}
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-lg">911 address points {t ? `inside the ${t.against}` : "near the strip"}</h3>
+        <h3 className="text-lg">{w.noun[0].toUpperCase() + w.noun.slice(1)} {t ? `inside the ${t.against}` : "near the strip"}</h3>
         {nd911.state !== "offline" ? (
           <button type="button" onClick={() => void lookUp()} disabled={busy} className={btn}>
-            {busy ? "Looking up…" : t ? "Look up again" : "Look up 911 address points"}
+            {busy ? "Looking up…" : t ? "Look up again" : `Look up ${w.noun}`}
           </button>
         ) : null}
       </div>
@@ -1277,8 +1281,8 @@ function Nd911Panel({
       {t ? (
         <>
           <p className="mt-1 text-sm" data-testid="nd911-count">
-            <span className="font-medium">{t.rows.length}</span> of {t.total} address points in the looked-up box are inside
-            the {t.against}. They do not change the desk screen unless you add them for review.
+            <span className="font-medium">{t.rows.length}</span> of {t.total} {isNsi ? "structures" : "address points"} in the
+            looked-up box are inside the {t.against}. They do not change the desk screen unless you add them for review.
           </p>
           {t.rows.length > 0 ? (
             <div className="mt-2 flex flex-wrap gap-2">
@@ -1286,7 +1290,7 @@ function Nd911Panel({
                 Add all {notAdded.length || ""} as structures for review
               </button>
               <button type="button" className={btn} disabled={seeds.size === 0} onClick={() => remove()}>
-                Remove 911 structures{seeds.size ? ` (${seeds.size})` : ""}
+                Remove {w.short} structures{seeds.size ? ` (${seeds.size})` : ""}
               </button>
             </div>
           ) : null}
@@ -1296,10 +1300,10 @@ function Nd911Panel({
                 <thead className="text-left text-xs tracking-wide text-muted uppercase">
                   <tr>
                     <th className="px-2 py-1">#</th>
-                    <th className="px-2 py-1">Address</th>
+                    <th className="px-2 py-1">{isNsi ? "Structure" : "Address"}</th>
                     <th className="px-2 py-1">Depth band</th>
                     <th className="px-2 py-1">km downstream</th>
-                    <th className="px-2 py-1">Place type</th>
+                    <th className="px-2 py-1">{isNsi ? "Occupancy" : "Place type"}</th>
                     <th className="px-2 py-1">For review</th>
                   </tr>
                 </thead>
@@ -1347,23 +1351,33 @@ function Nd911Panel({
             </div>
           ) : null}
           <p className="mt-2 text-xs text-muted">
-            Inside means within the {t.against}&apos;s depth bands; the band is the one the point falls in. An address point
-            marks an address, not a surveyed structure or floor height. Added points become home seeds on the channel
+            Inside means within the {t.against}&apos;s depth bands; the band is the one the point falls in.{" "}
+            {isNsi
+              ? "An NSI structure is a modelled record (USACE), not a survey: its occupancy, foundation height and day / night population are estimates to review."
+              : "An address point marks an address, not a surveyed structure or floor height."} Added points become home seeds on the channel
             bed (pad 0 ft, the desk&apos;s deepest case) at their distance downstream, listed under &quot;Needs an
             engineer&apos;s call&quot; until you classify them. Looked up{" "}
             {new Date(t.fetchedAt).toLocaleString()} and saved with this dam.
           </p>
-          <p className="mt-1 text-xs text-muted">
-            Fields kept: the published address, unit, community, ZIP, county, place type and placement, and the NG911 site
-            id. Not kept: {ND911_DROPPED_FIELDS.slice(0, 3).map((d) => d.field).join(", ")} (free text that can name people
-            or businesses) and duplicate or record-keeping fields. {ND911_ATTRIBUTION}
-          </p>
+          {isNsi ? (
+            <p className="mt-1 text-xs text-muted">
+              Fields kept: the NSI id, occupancy type and damage category, building type, stories, year built, foundation
+              height and type, and the day / night population estimates. The NSI holds no address, owner or occupant name.{" "}
+              {NSI_ATTRIBUTION}
+            </p>
+          ) : (
+            <p className="mt-1 text-xs text-muted">
+              Fields kept: the published address, unit, community, ZIP, county, place type and placement, and the NG911 site
+              id. Not kept: {ND911_DROPPED_FIELDS.slice(0, 3).map((d) => d.field).join(", ")} (free text that can name people
+              or businesses) and duplicate or record-keeping fields. {ND911_ATTRIBUTION}
+            </p>
+          )}
         </>
       ) : null}
       {!t && seeds.size > 0 ? (
         <div className="mt-2">
           <button type="button" className={btn} onClick={() => remove()}>
-            Remove 911 structures ({seeds.size})
+            Remove {w.short} structures ({seeds.size})
           </button>
         </div>
       ) : null}

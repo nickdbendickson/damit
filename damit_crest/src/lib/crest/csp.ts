@@ -25,6 +25,7 @@ export const DATA_HOSTS = [
   "https://hydro.nationalmap.gov",
   "https://services1.arcgis.com",
   "https://gis.blm.gov",
+  "https://nsi.sec.usace.army.mil",
 ] as const;
 
 /** Hosts that only appear in attribution links or credit text (an <a href>, which a CSP does not restrict). */

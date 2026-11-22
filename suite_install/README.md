@@ -11,8 +11,8 @@ and macOS (Apple Silicon or Intel, macOS 13+):
 | **ANUGA 4.1 + gmsh 4.15** (the Runners mesh with gmsh) | conda env `ndanuga` |
 | **LISFLOOD-FP 8.3** with the Runner patch (`inittm_depth` + sub-grid channels) | `~/dam-suite/bin` (Windows/Linux: shipped binary; macOS: built at install, with the Metal GPU back end when Apple's Metal compiler is installed: `lisflood/build/README.txt`) |
 | **Local AIs**: Heim (code triage) and Vor (literature), with Ollama, models and library | `~/local-ai`, `~/Vor` (damit_ai's own installers) |
-| **Crest desks**: DamIT Crest (damit) and North Dakota Crest (DWR_Plugins `dwr_crest/`), on the `ndqgis` env; they open in the browser | `~/dam-suite/damit_crest`, `~/dam-suite/nd_crest` |
-| A launcher per profile, one per Crest desk, `build-offline-pack.sh`, and the Absaraka Dam (DWR-2801) run folder | `~/dam-suite` |
+| **DamIT Desk** (the `damit-desk` repository): the one desk, with a United States and a North Dakota profile, on the `ndqgis` env; it opens in the browser. It replaces DamIT Crest and the North Dakota Crest desk (Nick, 2026-11-22) | `~/dam-suite/damit_desk` |
+| A launcher per QGIS profile, one per desk profile, `build-offline-pack.sh`, and the Absaraka Dam (DWR-2801) run folder | `~/dam-suite` |
 
 Everything installs for you only: **no sudo or admin, no pip, no system packages.** Your data
 folders, offline packs and other QGIS profiles are not touched.
@@ -99,7 +99,7 @@ deleting `DIR` removes the install completely (stop its Ollama first: `kill $(ca
 
 | What | Where |
 |---|---|
-| launchers, LISFLOOD-FP (`bin/`), logs, Crest desks, Absaraka run, `INSTALLED.txt` | `DIR/` |
+| launchers, LISFLOOD-FP (`bin/`), logs, DamIT Desk, Absaraka run, `INSTALLED.txt` | `DIR/` |
 | QGIS profiles `damsafety` and `damit` | `DIR/qgis_profile/profiles/<name>` (launchers set `QGIS_CUSTOM_CONFIG_PATH=DIR/qgis_profile`) |
 | `qgis_process` for one profile | `DIR/qgis-process-damsafety.sh`, `DIR/qgis-process-damit.sh` (`.cmd` on Windows) |
 | Miniforge, conda envs, conda package cache | `DIR/miniforge3`, `DIR/conda-pkgs` (or the conda `DAMSUITE_CONDA` / `DAMSUITE_MINIFORGE` names) |
@@ -147,17 +147,20 @@ Open QGIS with a launcher: `~/dam-suite/open-damsafety-qgis.sh` or `open-damit-q
 Mac, also the `.command` files). On Windows, use `open-damsafety-qgis.cmd` /
 `open-damit-qgis.cmd` or the Desktop shortcuts. Keep the two sets in their own profiles.
 
-The Crest desks: `~/dam-suite/open-damit-crest.sh` and `open-nd-crest.sh` (Windows: `.cmd`). They
-use different ports (North Dakota Crest http://127.0.0.1:47231, DamIT Crest http://127.0.0.1:47241; each prints
-its address when it starts, and takes a random port if its own is busy), so both can be open at the same time.
-The suite's `ndqgis` env has no pywebview, so each launcher opens its desk in your browser through a one-time
+DamIT Desk: `~/dam-suite/open-damit-desk.sh` opens it in the United States profile (the DamIT plugins) and
+`open-damit-desk-nd.sh` in the North Dakota profile (DWR dam values, the DWR structures list, the DWR DamSafety
+plugins); Windows: `.cmd`. It is one desk: *Settings > Dam inventory profile* switches between the two without a
+restart. It prints its address when it starts (http://127.0.0.1:47241, or a random port if that one is busy).
+The suite's `ndqgis` env has no pywebview, so the launcher opens the desk in your browser through a one-time
 launch link (used once, valid 2 minutes; printed in the terminal if no browser starts). The printed address itself
 has no API token: typed into a browser it shows the desk, but the buttons that call the local server are refused.
 After closing the tab, stop the desk (Ctrl+C) and run the launcher again.
-Their Report step calls `qgis_process`
-in the matching profile (North Dakota Crest: `damsafety`; DamIT Crest: `damit`): `qgis_process` has
-no profile option, so the launcher points `QGIS_CUSTOM_CONFIG_PATH` at
-`~/dam-suite/qgis-process/<profile>`, whose `profiles/default` is a link to the real profile.
+Its Report step calls `qgis_process` in the QGIS profile of the desk profile's plugins: `qgis_process` has no
+profile option, so the installer writes `~/dam-suite/qgis-process-damit.sh` and `qgis-process-damsafety.sh`
+(`.cmd` on Windows), each pointing `QGIS_CUSTOM_CONFIG_PATH` at `~/dam-suite/qgis-process/<profile>`, whose
+`profiles/default` is a link to the real profile, and the desk calls the one for its profile.
+An install from before 2026-11-22 had DamIT Crest (`damit_crest/`) and the North Dakota Crest desk (`nd_crest/`);
+the installer removes their launchers and leaves the folders for you to delete.
 
 The DamSafety offline pack from Terminal, without opening QGIS:
 `~/dam-suite/build-offline-pack.sh` (default folder `~/ND_Suite_Data`; give another folder as the
@@ -171,7 +174,7 @@ install-all.sh, install-all-windows.ps1/.cmd   installers
 download-all.sh, download-all-windows.ps1/.cmd builders of offline/
 locks/<platform>/*.lock, locks/extra.lock      pinned files (url sha256 md5)
 plugins/damsafety, plugins/damit               plugin zips (VERSIONS.md, SHA256SUMS)
-nd_crest/                                      North Dakota Crest desk (DWR_Plugins dwr_crest/crest-desktop/; COMMIT)
+damit_desk/                                    DamIT Desk (the damit-desk repository: app/desktop/, bin/, damit_catalog/; COMMIT)
 lisflood/                                      LISFLOOD-FP binaries (GPL-3, see lisflood/README.txt) + macOS build kit (lisflood/build/, also in the macOS offline set)
 damit_ai/                                      the local AIs and their installers
 absaraka/                                      the DWR-2801 run folder
@@ -180,5 +183,5 @@ offline/ (from an offline set or download-all) conda/<platform>/, miniforge/, li
 
 Maintainers: `tools/make_locks.py` re-solves the conda envs (py-rattler), and
 `tools/make_package.sh --dwr <DWR_Plugins checkout> --out <dir> --zip`
-builds the package. The North Dakota Crest desk comes from the DWR_Plugins checkout's `dwr_crest/` (Crest moved
-there from the `nickdbendickson/crest` repo on 2026-11-19); `--crest <dir>` uses another copy, `--crest none` leaves it out.
+builds the package. DamIT Desk comes from a `damit-desk` checkout next to this one (`../damit-desk`); `--desk <dir>`
+uses another copy, `--desk none` leaves it out. `--crest` is retired (ignored).
