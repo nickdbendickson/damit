@@ -40,7 +40,7 @@ import sys
 import time
 import traceback
 
-VERSION = "1.3.9"
+VERSION = "1.4.0"
 SCHEMA = "damit.run_digest"
 
 OK, WATCH, PROBLEM = "OK", "WATCH", "PROBLEM"
@@ -59,6 +59,7 @@ THRESHOLDS = {
     "edge_inflow_problem_pct": 2.0,     # water entering through an edge, % of injected
     "edge_wet_ft": 0.1,                 # an edge cell this deep counts as a wet edge
     "edge_outflow_watch_pct": 1.0,      # boundary outflow that is worth a flag in an early pass
+    "edge_blocked_outflow_pct": 0.1,    # an edge deeper than edge_tol_ft passing less than this is walled (1.4.0)
     "edge_tol_ft": 1.0,                 # the Runner's edge tolerance (parameters.edge_tol_ft)
     "outflow_extend_pct": 5.0,          # the Runner's outflow growth trigger (parameters.outflow_extend_pct)
     "progress_min": 0.99,               # a pass must reach this share of its planned sim time
@@ -84,7 +85,7 @@ KNOWN_FLAG_IDS = (
     "START_WSE", "TOE_INFLOW", "TOE_BAND", "TOE_BAND_WIDENED", "OUTLET_FLOW", "ENGINE_FALLBACK", "RUN_WARNINGS",
     "RECEPTOR_NODATA", "RECEPTOR_DRY_NEXT_TO_WET", "ROADS_UNSCORED", "HAZARD_REVIEW", "RAIL_TRAINS",
     "NO_RUN_FILES", "DAM_RECORD_MISSING", "TOE_UNCHECKED", "TOE_SOURCE_RUN_REPORT", "RECEPTORS_UNCHECKED",
-    "DAM_POINT_OFF_LINE", "TRUE_HOLE_HELPER_MISSING",
+    "DAM_POINT_OFF_LINE", "TRUE_HOLE_HELPER_MISSING", "EDGE_OUTFLOW_BLOCKED",
 )
 
 # Elevations from 300 ft up to this are taken to be in the NAVD88 range when no datum is stated (ND is ~800-3,500 ft;
@@ -263,6 +264,12 @@ def mass_balance(mass):
         res["outflow_pct"] = round(100.0 * out / inj, 2)
         res["edge_inflow_pct"] = round(100.0 * inn / inj, 2)
         res["domain_volume_ratio"] = round(res["max_domain_volume_m3"] / inj, 3)
+        # (1.4.0) how much the stored volume still grew over the last tenth of the pass, % of injected
+        t90 = t[0] + 0.9 * (t[-1] - t[0])
+        v90 = next((r[1] for r in rows if r[0] >= t90), rows[-1][1])
+        res["volume_tail_rise_pct"] = round(100.0 * (rows[-1][1] - v90) / inj, 2)
+    else:
+        res["volume_tail_rise_pct"] = None
     return res
 
 
@@ -556,6 +563,7 @@ def pass_record(run_dir, pdir, report_pass=None, bounds=None, now=None, progress
     rec["worst_interval_error_pct"] = _num(rp.get("worst_interval_error_pct"), mb and mb["worst_interval_error_pct"])
     rec["domain_volume_ratio"] = _num(rp.get("max_domain_volume_ratio"), mb and mb["domain_volume_ratio"])
     rec["edge_inflow_pct"] = mb["edge_inflow_pct"] if mb else None
+    rec["volume_tail_rise_pct"] = mb["volume_tail_rise_pct"] if mb else None
     # edges
     op = _num(rp.get("boundary_outflow_pct"))
     rec["outflow_pct"], rec["outflow_source"] = (op, "run_report") if op is not None else (
@@ -620,6 +628,24 @@ def check_edges(passes, fl, params=None, th=THRESHOLDS, in_progress=False):
         wet = sorted(k for k, v in ed.items() if (_num(v, 0.0) or 0.0) >= th["edge_wet_ft"])
         op = p["outflow_pct"]
         leaking = bool(p["over"] or p["over_outflow"]) or (op is not None and op >= th["edge_outflow_watch_pct"])
+        deep = [k for k in wet if (_num(ed.get(k), 0.0) or 0.0) >= tol]
+        if deep and not leaking and op is not None and op < th["edge_blocked_outflow_pct"]:
+            # (1.4.0) The Runner writes FREE edges, so water standing a foot or more deep at an edge has to flow out.
+            # Next to none leaving means the edge is walled: Boann sub-grid FV (Runner <= 3.42.0) read its east and
+            # south edge profiles from the padding when the grid was not a multiple of r, and Lake Delhi's lower valley
+            # ponded 17 ft too high behind them while three other causes were chased.
+            rise = p.get("volume_tail_rise_pct")
+            final = p["pass"] == last and not in_progress
+            fl.add("EDGE_OUTFLOW_BLOCKED", PROBLEM if final else WATCH, "pass %s" % p["pass"],
+                   "water stands at model edge(s) %s but almost none leaves (outflow %s%%)" % ("/".join(deep), _fmt(op, 2)),
+                   "edge depth %s ft at a FREE edge with outflow under %.2g%% of the injected volume%s: the edge may be "
+                   "walled (Boann sub-grid FV before Runner 3.42.1 on a grid that is not a multiple of r). Check the "
+                   ".mass Qout before roughness or conveyance" % (
+                       ", ".join("%s %.2f" % (k, ed[k]) for k in deep), th["edge_blocked_outflow_pct"],
+                       "; the stored volume still rose %s%% in the last tenth of the pass" % _fmt(rise, 1)
+                       if rise is not None and rise > 0 else ""),
+                   edges=deep, depth_ft={k: ed.get(k) for k in deep}, outflow_pct=op, volume_tail_rise_pct=rise)
+            continue
         if not (wet and leaking) and not (op is not None and op >= ext):
             continue
         desc = "model domain edge(s) %s wet (%s ft); boundary outflow %s%%" % (

@@ -404,10 +404,18 @@ say "Step 6/10 — Python tools (written to ~/local-ai)"
 if [[ $REWRITE_SCRIPTS -eq 1 ]]; then
   cat > "$LOCAL_AI/rag_index.py" << 'SCRIPT_EOF_RAG_INDEX'
 #!/usr/bin/env python3
-# rag_index.py v2.8 — multi-collection RAG indexer (stdlib only)
+# rag_index.py v2.9 — multi-collection RAG indexer (stdlib only)
 # Atomic rebuilds via a hidden per-collection stage; auto-migrates v1 DBs;
 # PDF backends: pdftotext -> pymupdf -> pypdf -> skip.
 #
+# v2.9: vectors are stored as float32 bytes, not JSON text, and an exact-word index
+#   (SQLite FTS5, table chunks_fts) sits beside them. A JSON vector is ~16 KB of text, so a
+#   124,000-passage index held about 2 GB of it, and every `heim` question parsed all of it
+#   again before searching (about 26 s here on random vectors). The bytes are 3 KB a passage and
+#   load in a fraction of a second. `heim-index --compact` converts an existing index in place
+#   (nothing is re-embedded) and builds the word index; any index run does the same. The word
+#   index lets rag_query find exact names (ndbreach.rundam, STABILITY_RETRY_PCT, a function
+#   name) that a meaning-only search ranks below prose about the same topic.
 # v2.8: the doctor compares each file with what was indexed, not with the clock. An index run
 #   now records every file's size, date and content hash (table file_stamps), and a file has
 #   "changed" when its content differs from that. Before, it had changed when its date was
@@ -437,6 +445,7 @@ if [[ $REWRITE_SCRIPTS -eq 1 ]]; then
 #   - Stage name is per collection, so two indexers cannot clobber each other.
 import os, sys, json, sqlite3, argparse, subprocess, urllib.request, urllib.error, time, re
 import hashlib, shutil
+from array import array
 
 DB = os.path.expanduser(os.environ.get("HEIM_DB", "~/local-ai/knowledge.db"))
 EMBED_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434") + "/api/embed"
@@ -450,6 +459,7 @@ MINIFIED_AVG_LINE = 300  # average chars per line above this = generated/minifie
 MINIFIABLE_EXT = (".js", ".mjs", ".cjs", ".json")
 BATCH = 16
 STAGE_PREFIX = "__stage__"
+FTS = "chunks_fts"
 SKIP_DIRS = {"__MACOSX", ".git", "node_modules", "__pycache__", ".venv",
              "testhazard", "_ocr_staging_tmp", "dist", "build", ".vite"}
 SKIP_PREFIX = ("._",)
@@ -563,6 +573,63 @@ def ensure_schema(db):
     db.execute("""CREATE TABLE IF NOT EXISTS file_stamps (collection TEXT NOT NULL, path TEXT NOT NULL,
         mtime REAL NOT NULL, size INTEGER NOT NULL, sha TEXT NOT NULL, PRIMARY KEY (collection, path))""")
     rename_legacy_collections(db)
+    ensure_fts(db)
+
+
+def pack_vec(v):
+    """A vector as float32 bytes (v2.9; JSON text before)."""
+    return array("f", v).tobytes()
+
+
+def ensure_fts(db):
+    """The exact-word index over chunks.txt, kept level by triggers. Returns False when this
+    SQLite has no FTS5 (search then falls back to meaning alone, as before v2.9).
+
+    `_` is part of a word, so STABILITY_RETRY_PCT and rag_index are one word each; a dotted
+    name such as ndbreach.rundam is searched as a two-word phrase. The triggers fire on a
+    change of txt only: renaming a stage to its collection, or converting vectors, leaves the
+    word index alone."""
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone():
+        return True
+    try:
+        db.execute("CREATE VIRTUAL TABLE %s USING fts5(txt, content='chunks', content_rowid='id', "
+                   "tokenize=\"unicode61 tokenchars '_'\")" % FTS)
+    except sqlite3.OperationalError:
+        return False
+    db.execute("CREATE TRIGGER IF NOT EXISTS chunks_fts_ai AFTER INSERT ON chunks BEGIN "
+               "INSERT INTO %s(rowid, txt) VALUES (new.id, new.txt); END" % FTS)
+    db.execute("CREATE TRIGGER IF NOT EXISTS chunks_fts_ad AFTER DELETE ON chunks BEGIN "
+               "INSERT INTO %s(%s, rowid, txt) VALUES ('delete', old.id, old.txt); END" % (FTS, FTS))
+    db.execute("CREATE TRIGGER IF NOT EXISTS chunks_fts_au AFTER UPDATE OF txt ON chunks BEGIN "
+               "INSERT INTO %s(%s, rowid, txt) VALUES ('delete', old.id, old.txt); "
+               "INSERT INTO %s(rowid, txt) VALUES (new.id, new.txt); END" % (FTS, FTS, FTS))
+    n = db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    if n:
+        print("  building the exact-word index over %d passages (once) ..." % n, flush=True)
+    db.execute("INSERT INTO %s(%s) VALUES ('rebuild')" % (FTS, FTS))
+    return True
+
+
+def compact_vectors(db, vacuum=False):
+    """Convert vectors stored as JSON text (rag_index <= 2.8) to float32 bytes, in place.
+    Nothing is re-embedded. Returns the number converted."""
+    n = 0
+    while True:
+        rows = db.execute("SELECT id, vec FROM chunks WHERE typeof(vec) = 'text' LIMIT 2000").fetchall()
+        if not rows:
+            break
+        if n == 0:
+            left = db.execute("SELECT COUNT(*) FROM chunks WHERE typeof(vec) = 'text'").fetchone()[0]
+            print("  converting %d stored vectors from text to bytes (once; nothing re-embedded) ..." % left,
+                  flush=True)
+        db.execute("BEGIN")
+        db.executemany("UPDATE chunks SET vec = ? WHERE id = ?", [(pack_vec(json.loads(v)), i) for i, v in rows])
+        db.execute("COMMIT")
+        n += len(rows)
+    if n and vacuum:
+        print("  giving the freed space back to the disk (VACUUM) ...", flush=True)
+        db.execute("VACUUM")
+    return n
 
 
 def rename_legacy_collections(db):
@@ -701,7 +768,7 @@ def index_collection(collection, roots, allow_empty=False):
         vecs = embed([t for _, _, t in pending])
         db.execute("BEGIN")
         db.executemany("INSERT INTO chunks (collection,path,idx,txt,vec) VALUES (?,?,?,?,?)",
-                       [(stage, p, i, t, json.dumps(v)) for (p, i, t), v in zip(pending, vecs)])
+                       [(stage, p, i, t, pack_vec(v)) for (p, i, t), v in zip(pending, vecs)])
         db.execute("COMMIT")
         nc += len(pending)
         pending.clear()
@@ -791,6 +858,7 @@ def index_collection(collection, roots, allow_empty=False):
             pass
         db.close()
         sys.exit("ERROR: swap failed (%s). Live collection untouched." % e)
+    compact_vectors(db)
     db.close()
     print("Indexed collection '%s': %d files, %d chunks in %.0fs" % (collection, nf, nc, time.time() - t0))
     if nnp and pdf_backend_names():
@@ -904,6 +972,27 @@ def _walk_indexable(roots):
                 yield rel, full, kind
 
 
+WHAT_CHANGED_DAYS = 21
+
+
+def what_changed_age(path, today=None):
+    """Days since the pack's WHAT-CHANGED.md was generated (its line "Generated YYYY-MM-DD ..."),
+    or None when there is no such file or line."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            head = f.read(2000)
+    except OSError:
+        return None
+    m = re.search(r"^Generated (\d{4}-\d{2}-\d{2})", head, re.M)
+    if not m:
+        return None
+    try:
+        made = time.mktime(time.strptime(m.group(1), "%Y-%m-%d"))
+    except ValueError:
+        return None
+    return int(((today or time.time()) - made) // 86400)
+
+
 def doctor_checks(ollama=True):
     """[(level, text)], level one of OK / WATCH / PROBLEM. Reads the index; never writes it
     (not even the schema upgrade a normal run does), so running it cannot hide what it finds."""
@@ -925,6 +1014,11 @@ def doctor_checks(ollama=True):
         paths = {}
         for c, p in db.execute("SELECT DISTINCT collection, path FROM chunks"):
             paths.setdefault(c, set()).add(p)
+        try:
+            text_vecs = db.execute("SELECT COUNT(*) FROM chunks WHERE typeof(vec) = 'text'").fetchone()[0]
+        except sqlite3.Error:
+            text_vecs = 0
+        has_fts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone())
         stamps = {}
         try:
             for c, p, m, sz, sha in db.execute("SELECT collection, path, mtime, size, sha FROM file_stamps"):
@@ -952,6 +1046,13 @@ def doctor_checks(ollama=True):
     elif legacy:
         add("WATCH", "old collection(s) %s are still in the index beside '%s' and are searched too: a stale "
                      "copy of the pack can out-rank the current one" % (", ".join(legacy), KNOWLEDGE))
+    if text_vecs:
+        add("WATCH", "%d passages keep their vectors as text, the pre-2.9 format: every question re-reads them, "
+                     "which takes seconds on a large index. One-time fix, nothing re-embedded: heim-index --compact"
+            % text_vecs)
+    if live and not has_fts:
+        add("WATCH", "no exact-word index: names such as ndbreach.rundam or STABILITY_RETRY_PCT are found by "
+                     "meaning only. Build it (nothing re-embedded): heim-index --compact")
     stages = [c for c in counts if c.startswith(STAGE_PREFIX)]
     if stages:
         add("WATCH", "an indexing run was interrupted and left %s (%d passages, not searched). Run that "
@@ -1034,6 +1135,13 @@ def doctor_checks(ollama=True):
             add("WATCH", "%s: %d file(s) are over the size limit (%d KB for text) and are never indexed, "
                          "however often it is re-run (first: %s). Split them if Heim should read them"
                 % (c, len(big), MAX_TEXT_BYTES // 1024, big[0]))
+    for r in (roots.get(KNOWLEDGE) or ([], None))[0]:
+        age = what_changed_age(os.path.join(r, "WHAT-CHANGED.md"))
+        if age is not None and age > WHAT_CHANGED_DAYS:
+            add("WATCH", "the knowledge pack's change list (WHAT-CHANGED.md) is %d days old: Heim does not know "
+                         "what changed in the suite since. Install a newer pack, or regenerate it: python3 "
+                         "damit_ai/heim/tools/what_changed.py --repo <damit checkout> --repo <DWR_Plugins checkout>, then heim-index "
+                         "-c %s '%s'" % (age, KNOWLEDGE, r))
     if ollama:
         base = EMBED_URL.rsplit("/api/", 1)[0]
         chat_model = os.environ.get("HEIM_MODEL", "heim")
@@ -1080,9 +1188,23 @@ def main():
                          "knowledge pack and is level with the folders it was built from")
     ap.add_argument("--library", action="store_true",
                     help="with --doctor: check the index and folders only (no Ollama needed)")
+    ap.add_argument("--compact", action="store_true",
+                    help="convert stored vectors to the compact format and build the exact-word index, "
+                         "in place (nothing is re-embedded; no Ollama needed)")
     args = ap.parse_args()
     if args.doctor:
         sys.exit(doctor(ollama=not args.library))
+    if args.compact:
+        if not os.path.exists(DB):
+            sys.exit("No index at %s yet: nothing to compact." % DB)
+        db = connect()
+        ensure_schema(db)
+        n = compact_vectors(db, vacuum=True)
+        fts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone())
+        db.close()
+        print("Compacted: %d vector(s) converted; exact-word index %s." % (n, "ready" if fts else
+              "NOT available (this Python's SQLite has no FTS5; search works by meaning alone)"))
+        return
     if args.list_collections:
         list_collections()
         return
@@ -1110,13 +1232,19 @@ SCRIPT_EOF_RAG_INDEX
 
   cat > "$LOCAL_AI/rag_query.py" << 'SCRIPT_EOF_RAG_QUERY'
 #!/usr/bin/env python3
-# rag_query.py v2.5 — query the RAG store, streaming output (stdlib only; numpy if present)
+# rag_query.py v2.6 — query the RAG store, streaming output (stdlib only; numpy if present)
 #
 #   rag_query.py "question"            one question, answered from the indexed documents
 #   rag_query.py -c standards "..."    from one collection
 #   rag_query.py --chat                a conversation: every question is looked up first
 #   rag_query.py runs ...              the run results database (run_results.py: heim runs)
 #
+# v2.6: search by meaning AND by exact words, fused by rank (as Vor does). A name such as
+#   ndbreach.rundam, STABILITY_RETRY_PCT or a function name is found by its word even where
+#   prose about the same topic is closer in meaning. Vectors stored as bytes (rag_index 2.9)
+#   load in a fraction of a second; text vectors from older indexes still load, slowly, until
+#   `heim-index --compact` converts them. With no word index (an older index, or a SQLite
+#   without FTS5) the search is by meaning alone, as before.
 # v2.5: dam-breach run results. `heim runs add FOLDER` reads runs into ~/local-ai/runs.db
 #   (run_results.py) and `heim runs ...` is passed to it. A question that names a dam in that
 #   database and asks for a result (depth, velocity, arrival, peak flow, a structure, ...) is
@@ -1141,7 +1269,8 @@ SCRIPT_EOF_RAG_INDEX
 #   - num_ctx sent per request, sized to the prompt, so Ollama never trims the
 #     front of the prompt (the instructions) without saying so.
 #   - qwen3 "thinking" is streamed separately and kept out of the answer.
-import os, sys, json, sqlite3, urllib.request, urllib.error, math, argparse, shlex
+import os, sys, re, json, sqlite3, urllib.request, urllib.error, math, argparse, shlex
+from array import array
 
 DB = os.path.expanduser(os.environ.get("HEIM_DB", "~/local-ai/knowledge.db"))
 BASE = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
@@ -1150,6 +1279,13 @@ QUERY_PREFIX = "search_query: "
 CHAT_MODEL = os.environ.get("HEIM_MODEL", "heim")
 NUM_CTX = int(os.environ.get("HEIM_NUM_CTX", "16384"))
 TOP_K = 10
+POOL = 60                 # candidates taken from each of the two searches before fusing
+RRF_K = 60                # reciprocal-rank fusion constant (as Vor)
+FTS = "chunks_fts"
+STOP = set("""a an and are as at be by can could did do does for from has have how if in into is it its
+of on or should than that the their there these this those to was were what when where which who why
+will with would about between during under over per using used use based any all also more most not
+you your heim does doesn tell show explain""".split())
 try:
     import numpy as np
 except ImportError:
@@ -1171,6 +1307,7 @@ class Store(object):
     def __init__(self, coll):
         self.coll = coll
         self.rows, self.M, self.stamp = [], None, None
+        self.pos, self.fts, self.text_vectors = {}, False, 0
         self.load()
 
     def _stamp(self):
@@ -1193,28 +1330,33 @@ class Store(object):
 
     def load(self):
         self.stamp = self._stamp()
-        self.rows, self.M = [], None
+        self.rows, self.M, self.pos, self.fts = [], None, {}, False
         if self.stamp is None:
             return
         db = sqlite3.connect(DB)
         try:
             if self.coll == "all":
-                rows = db.execute("SELECT collection,path,idx,txt,vec FROM chunks "
+                rows = db.execute("SELECT collection,path,idx,txt,vec,id FROM chunks "
                                   "WHERE collection NOT LIKE '\\_\\_%' ESCAPE '\\'").fetchall()
             else:
-                rows = db.execute("SELECT collection,path,idx,txt,vec FROM chunks WHERE collection=?",
+                rows = db.execute("SELECT collection,path,idx,txt,vec,id FROM chunks WHERE collection=?",
                                   (self.coll,)).fetchall()
+            self.fts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (FTS,)).fetchone())
         except sqlite3.OperationalError:      # a file that is not an index yet
             rows = []
         finally:
             db.close()
-        vecs = [json.loads(r[4]) for r in rows]
         self.rows = [r[:4] for r in rows]
-        if np is not None and vecs:
-            self.M = np.array(vecs, dtype=np.float32)
+        self.pos = dict((r[5], i) for i, r in enumerate(rows))
+        self.text_vectors = sum(1 for r in rows if not isinstance(r[4], bytes))
+        if np is not None and rows:
+            if not self.text_vectors:
+                self.M = np.frombuffer(b"".join(r[4] for r in rows), dtype=np.float32).reshape(len(rows), -1)
+            else:
+                self.M = np.array([unpack_vec(r[4]) for r in rows], dtype=np.float32)
             self.norms = np.linalg.norm(self.M, axis=1)
         else:
-            self.vecs = vecs
+            self.vecs = [unpack_vec(r[4]) for r in rows]
 
     def changed(self):
         return self._stamp() != self.stamp
@@ -1239,7 +1381,10 @@ class Store(object):
 
     def search(self, queries, top_k):
         """Best passages for any of the queries (a follow-up is searched on its own and
-        together with the question before it; each passage keeps its better score)."""
+        together with the question before it). Two lists are fused by rank: the passages
+        closest in meaning (each keeps its better score over the queries) and, when the index
+        has its word index, the passages that contain the question's exact words. The score
+        shown is the meaning score, so a passage found by its words alone shows a low one."""
         if not self.rows:
             return []
         qvs = post(BASE + "/api/embed", {"model": EMBED_MODEL,
@@ -1248,8 +1393,50 @@ class Store(object):
         for qv in qvs:
             sims = self._sims(qv)
             best = sims if best is None else [max(a, b) for a, b in zip(best, sims)]
-        order = sorted(range(len(best)), key=lambda i: -best[i])[:top_k]
+        by_meaning = sorted(range(len(best)), key=lambda i: -best[i])[:max(POOL, top_k)]
+        by_words = self.lexical(queries, max(POOL, top_k))
+        fused = {}
+        for lst in (by_meaning, by_words):
+            for rank, i in enumerate(lst):
+                fused[i] = fused.get(i, 0.0) + 1.0 / (RRF_K + rank)
+        order = sorted(fused, key=lambda i: (-fused[i], -best[i]))[:top_k]
         return [(float(best[i]),) + tuple(self.rows[i]) for i in order]
+
+    def lexical(self, queries, n):
+        """Row positions of the passages holding the queries' words, best first (BM25), or []
+        when the index has no word index."""
+        if not self.fts:
+            return []
+        words = []
+        for q in queries:
+            for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*(?:[.\-][A-Za-z0-9_]+)*|\d+(?:\.\d+)?", q):
+                if len(t) >= 3 and t.lower() not in STOP and t not in words:
+                    words.append(t)
+        if not words:
+            return []
+        expr = " OR ".join('"%s"' % w.replace('"', "") for w in words)
+        if self.coll == "all":
+            where, args = "c.collection NOT LIKE '\\_\\_%' ESCAPE '\\'", [expr, n]
+        else:
+            where, args = "c.collection = ?", [expr, self.coll, n]
+        db = sqlite3.connect(DB)
+        try:
+            got = db.execute("SELECT f.rowid FROM %s f JOIN chunks c ON c.id = f.rowid WHERE %s MATCH ? AND %s "
+                             "ORDER BY bm25(%s) LIMIT ?" % (FTS, FTS, where, FTS), args).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            db.close()
+        return [self.pos[r[0]] for r in got if r[0] in self.pos]
+
+
+def unpack_vec(v):
+    """A stored vector: float32 bytes (rag_index 2.9) or JSON text (before)."""
+    if isinstance(v, bytes):
+        a = array("f")
+        a.frombytes(v)
+        return a.tolist()
+    return json.loads(v)
 
 
 def retrieve(q, coll, top_k):
@@ -1259,7 +1446,14 @@ def retrieve(q, coll, top_k):
     if not store.rows:
         h = (" Collection '%s' empty — index it: rag_index.py -c %s <folder>" % (coll, coll)) if coll != "all" else ""
         sys.exit("Index is empty.%s" % h)
+    slow_note(store)
     return store.search([q], top_k)
+
+
+def slow_note(store):
+    if store.text_vectors:
+        print("(%d passages are stored in the old, slow format. One-time fix, nothing re-embedded: "
+              "heim-index --compact)" % store.text_vectors)
 
 
 def chat_payload(prompt, stream, think=True):
@@ -1387,6 +1581,7 @@ def add_dropped(paths):
 
 def chat(coll, top_k, ask=input):
     store = Store(coll)
+    slow_note(store)
     print("Heim chat (%s): every question is looked up in the indexed documents first.\n"
           "Blank line or Ctrl+D quits. Drag a file into this window to add it." % CHAT_MODEL)
     cols = store.collections()

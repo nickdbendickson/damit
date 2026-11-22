@@ -69,6 +69,18 @@ Every case here happened. None is hypothetical. Cases about the plugins' numeric
   is re-run with theta 0.7 and CFL 0.5, and later runs of the dam keep those settings
   (marker `lisflood/stable_settings.json`). theta 0.7 alone does not fix the fast-breach case.
 
+### A6b. The lower valley ponds flat, metres too high
+- **Seen:** downstream water levels far above the survey (Lake Delhi: +17 ft at the bridges) with a
+  flat water surface across the lower valley.
+- **Was:** no water leaving the model. Boann sub-grid FV (`gpu-subfv`, Runner 3.42.0 and earlier) read
+  its east and south open-edge profiles from padding when the grid was not a multiple of r, so those
+  edges had zero flow area. Fix: Runner 3.42.1 (DWR_Plugins PR #462, open on 2026-11-22). See
+  `BOANN-ENGINES.md`.
+- **Tell:** in the pass's `.mass` file Qout stays near zero while the volume keeps rising after the
+  front reaches an open edge; the run digest flags `EDGE_OUTFLOW_BLOCKED` (1.4.0).
+- **Fix:** a Runner with #462; until then use r=1 or 2, or a deck whose size is a multiple of r. Look at
+  outflow before blaming roughness, conveyance or the boundary condition.
+
 ### A7. A real height error reported as WATCH
 - **Seen:** a tall dam whose crest-minus-streambed is several feet off the inventory height
   gets `HEIGHT_MISMATCH` at WATCH.

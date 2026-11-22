@@ -511,7 +511,7 @@ class TestKeepAlive(Base):
         self.assertEqual(LW.chat_payload([], LW.settings())["keep_alive"], "10s")
 
     def test_versions_and_docs(self):
-        self.assertEqual((RD.VERSION, LW.VERSION), ("1.3.9", "1.3.9"))
+        self.assertEqual((RD.VERSION, LW.VERSION), ("1.4.0", "1.4.0"))
         t = slurp(os.path.join(HEIM, "knowledge", "WATCHER-DIGEST.md"))
         for needle in ("HEIM_WATCH_RECORD_GRACE_S", "HEIM_WATCH_MIN_FREE_MB", "HEIM_WATCH_KEEP_ALIVE", "receptors_skipped"):
             self.assertIn(needle, t, needle)

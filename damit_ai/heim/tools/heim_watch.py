@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""heim_watch.py 1.3.9 - Heim as a DamIT run watcher.
+"""heim_watch.py 1.4.0 - Heim as a DamIT run watcher.
 
 How it fits together (the point of this tool):
 
@@ -77,7 +77,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import run_digest as RD  # noqa: E402
 
-VERSION = "1.3.9"
+VERSION = "1.4.0"
 
 MODEL_ALIASES = {"small": "qwen3:4b", "phi": "phi4-mini", "qwen4b": "qwen3:4b", "default": "qwen3:4b"}
 DEFAULT_MODEL = "qwen3:4b"
