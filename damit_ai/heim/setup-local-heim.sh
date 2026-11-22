@@ -1719,6 +1719,7 @@ The commands you will use (the rest: heim --help, heim runs --help, vor --help):
   vor research "question"    a longer cited brief, saved in ~/Vor/reports
   ai-doctor                  is everything installed, indexed and reading what you think?
   ai                         all of the above on one page in your browser (this Mac only)
+  ai-score                   run both answer tests and keep a dated score history
 
 Ollama is started for you when it is not running (heim-start still works).
 More: heim add FILE, heim doctor, heim-digest / heim-watch (run watcher), damchain, heim-index.
@@ -4203,14 +4204,14 @@ SCRIPT_EOF_REPOAUDIT
   done
   ok "rag_index 2.9, rag_query 2.6, audit_plugin 1.3, suite_check 1.0, dam_chain 1.5.3, repo_audit 1.0 written and compiled"
   # v3.7/v3.8: the run watcher (deterministic digest + the small explainer) is copied, not generated
-  for f in run_digest heim_watch run_results true_hole ai_doctor ai_ui; do
+  for f in run_digest heim_watch run_results true_hole ai_doctor ai_ui ai_score; do
     if [[ -f "${0:A:h}/tools/$f.py" ]]; then
       cp "${0:A:h}/tools/$f.py" "$LOCAL_AI/$f.py" && "$HEIM_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
     else
       warn "tools/$f.py not found next to this script: the run watcher was not installed"
     fi
   done
-  ok "run_digest, heim_watch, run_results, true_hole (heim runs), ai_doctor, ai_ui copied and compiled"
+  ok "run_digest, heim_watch, run_results, true_hole (heim runs), ai_doctor, ai_ui, ai_score copied and compiled"
   # the code-triage eval, like install-local-ai-linux.sh: the scorer plus the question set it
   # reads from ../eval/questions.json. Without both, `python3 ~/local-ai/eval_heim.py` is missing.
   if [[ -f "${0:A:h}/tools/eval_heim.py" ]]; then
@@ -4313,6 +4314,7 @@ alias heim-watch="$PYRUN \$HOME/local-ai/heim_watch.py"
 alias heim-runs="$PYRUN \$HOME/local-ai/run_results.py"
 alias ai-doctor="$PYRUN \$HOME/local-ai/ai_doctor.py"
 alias ai="$PYRUN \$HOME/local-ai/ai_ui.py"
+alias ai-score="$PYRUN \$HOME/local-ai/ai_score.py"
 alias heim-std="$PYRUN \$HOME/local-ai/rag_query.py -c standards"
 alias heim-hazard="$PYRUN \$HOME/local-ai/rag_query.py -c nd_hazard"
 alias heim-reindex-all='heim-index -c nd_hazard "\$ND_REPO" && heim-index -c dwr_plugins "\$DWR_REPO" && heim-index -c crest "\$CREST_REPO" && heim-index -c standards "\$STD_PDFS"'

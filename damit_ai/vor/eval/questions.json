@@ -1,6 +1,6 @@
 {
- "about": "Answer-quality test for vor. Every expected answer and page was read from the PDF itself (pdftotext, 2026-11-10), except where a note says otherwise. Needs the ASDSO set (fetch_asdso.py) and HEC TD-39 (fetch_asdso.py --catalog design) in the library. 'doc' is a regex on the file name, 'pages' are PDF page numbers (the scorer allows +/-1), 'facts' are regexes that must all appear in the answer. A question with 'if_missing': 'not_covered' whose document is NOT in the library passes only when the tool says so and does not invent the numbers in 'forbid'. An empty 'pages' list accepts any page.",
- "version": "2026-11-10",
+ "about": "Answer-quality test for vor. Every expected answer and page was read from the PDF itself (pdftotext, 2026-11-10), except where a note says otherwise. Needs the ASDSO set (fetch_asdso.py), HEC TD-39 (fetch_asdso.py --catalog design) and USGS WSP 2339 (fetch_asdso.py --catalog hydrology; the wsp2339 questions, added 2026-11-22 and read with PyMuPDF, five of them from its tables) in the library. 'doc' is a regex on the file name, 'pages' are PDF page numbers (the scorer allows +/-1), 'facts' are regexes that must all appear in the answer. A question with 'if_missing': 'not_covered' whose document is NOT in the library passes only when the tool says so and does not invent the numbers in 'forbid'. An empty 'pages' list accepts any page.",
+ "version": "2026-11-22",
  "questions": [
   {
    "id": "fema333-high",
@@ -202,6 +202,113 @@
     "2,?000"
    ],
    "note": "Two tests in one. With REG_05.2026 in the library (fetch_asdso.py --catalog hazard), the answer must give the bands (under 500 Low, 500-2,000 Significant, over 2,000 High; from the Corrected Edition, Appendix A M8a; page not checked). Without it, the tool must say the library does not cover it and must not invent the numbers."
+  },
+  {
+   "id": "wsp2339-base-concrete",
+   "q": "In USGS WSP 2339, what base Manning's n range is given for a stable concrete channel?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    10
+   ],
+   "facts": [
+    "0?\\.012",
+    "0?\\.018"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. A table question: the answer sits in a table, so it tests vor tables. Table 1."
+  },
+  {
+   "id": "wsp2339-base-cobble",
+   "q": "According to the USGS guide for selecting Manning's roughness coefficients (WSP 2339), what is the base n value range for a cobble bed, and what median grain size defines cobble?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    10
+   ],
+   "facts": [
+    "0?\\.030",
+    "0?\\.050",
+    "64",
+    "256"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. A table question: the answer sits in a table, so it tests vor tables. Table 1."
+  },
+  {
+   "id": "wsp2339-sand-1mm",
+   "q": "In WSP 2339 Table 1, what base n value is listed for a sand channel with a median bed-material size of 1.0 mm?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    10
+   ],
+   "facts": [
+    "0?\\.026"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. A table question: the answer sits in a table, so it tests vor tables. Table 1, straight uniform channel column; upper-regime flow only."
+  },
+  {
+   "id": "wsp2339-channel-obstruction-appreciable",
+   "q": "In WSP 2339, what n adjustment applies to a channel with appreciable obstructions, and what share of the cross-section do they occupy?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    13
+   ],
+   "facts": [
+    "0?\\.020",
+    "0?\\.030",
+    "15",
+    "50"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. A table question: the answer sits in a table, so it tests vor tables. Table 2, effect of obstruction (n3)."
+  },
+  {
+   "id": "wsp2339-floodplain-veg-very-large",
+   "q": "In WSP 2339, what n adjustment does Table 3 give for a very large amount of vegetation on a flood plain?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    15
+   ],
+   "facts": [
+    "0?\\.050",
+    "0?\\.100"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. A table question: the answer sits in a table, so it tests vor tables. Table 3, amount of vegetation (n4)."
+  },
+  {
+   "id": "wsp2339-floodplain-meander",
+   "q": "In WSP 2339's flood-plain method, what value is used for the degree-of-meander factor m?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    15
+   ],
+   "facts": [
+    "1\\.0"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. A table question: the answer sits in a table, so it tests vor tables. Table 3 lists m = 1.0 (meander adjustment not applicable on flood plains)."
+  },
+  {
+   "id": "wsp2339-meander-ratios",
+   "q": "In WSP 2339, what sinuosity ratios define minor, appreciable and severe meandering?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    14
+   ],
+   "facts": [
+    "1\\.2",
+    "1\\.5"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. Prose on PDF p.14 (Meandering (m)): minor 1.0-1.2, appreciable 1.2-1.5, severe 1.5 and greater."
+  },
+  {
+   "id": "wsp2339-cowan-equation",
+   "q": "What equation does WSP 2339 use (after Cowan, 1956) to compute a channel's n value?",
+   "doc": "wsp-?2339|2339|selecting.?manning",
+   "pages": [
+    8
+   ],
+   "facts": [
+    "n_?b",
+    "n_?4",
+    "\\bm\\b"
+   ],
+   "note": "From USGS WSP 2339 (fetch_asdso.py --catalog hydrology, saved as usgs-wsp-2339.pdf); value and page read from the PDF with PyMuPDF 2026-11-22. Equation 3 on PDF p.8: n = (nb + n1 + n2 + n3 + n4) m."
   }
  ]
 }

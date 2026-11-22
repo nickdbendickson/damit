@@ -405,6 +405,25 @@ Check Heim and Vor in one go.
 
 ---
 
+## ai_score.py
+
+Installed command: `ai-score`. Run both answer tests and keep a dated score history.
+
+### `ai_score.py`
+
+Run Heim's and Vor's answer tests and keep the scores.
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `--heim` |  |  | Heim's test only |
+| `--vor` |  |  | Vor's test only |
+| `--model` | MODEL |  | Ollama model to test (default: each assistant's own) |
+| `--only` | ONLY |  | comma list of question ids |
+| `--history` |  |  | show the score history and stop |
+| `--add` | REPORT.json [REPORT.json ...] |  | add reports already written to the history |
+
+---
+
 ## what_changed.py 1.0
 
 Installed command: `what_changed.py`. Regenerate the knowledge pack's WHAT-CHANGED.md from git history.
@@ -495,7 +514,7 @@ Local audit report for a dam-suite repo.
 
 ---
 
-## eval_heim.py 1.1
+## eval_heim.py 1.2
 
 Installed command: `eval_heim.py`. Score a model on the code-triage questions.
 
@@ -531,7 +550,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.3.3
+## vor.py 1.4.0
 
 Installed command: `vor`. The literature assistant.
 
@@ -634,6 +653,12 @@ interactive; '!' prefix = deep research
 | `-k` | K | `8` |  |
 | `--doc` | KEY |  | only read this publication: the id from `vor list`, or part of its file name, title or report number (punctuation is ignored, so P-946 finds a file named P946.pdf). Comma-separated for several. Naming the publication in the question instead does not scope anything - 'FEMA' is just a search word and matches every FEMA document. |
 | `--per-doc` | N |  | passages allowed from any one publication (default 3; with --doc the cap is lifted unless you set it) |
+
+#### `vor.py tables`
+
+add the PDFs' tables as their own passages (documents indexed before 1.4.0)
+
+No arguments.
 
 #### `vor.py ocr`
 

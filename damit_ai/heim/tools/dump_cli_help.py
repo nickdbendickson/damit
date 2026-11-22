@@ -33,6 +33,7 @@ TOOLS = [
     (os.path.join(HERE, "run_results.py"), "heim runs  /  heim-runs", "dam-breach run results in a database: exact depth, velocity, arrival, peak flow"),
     (os.path.join(HERE, "ai_ui.py"), "ai", "one local page (127.0.0.1 only) for asking Heim, Vor and the run results"),
     (os.path.join(HERE, "ai_doctor.py"), "ai-doctor", "both assistants' checks in one go, one summary line each"),
+    (os.path.join(HERE, "ai_score.py"), "ai-score", "run both answer tests and keep a dated score history"),
     (os.path.join(HERE, "what_changed.py"), "what_changed.py", "regenerate the knowledge pack's WHAT-CHANGED.md from git history"),
     (os.path.join(HERE, "audit_plugin.py"), "heim-audit", "ask Heim to review one plugin's code"),
     (os.path.join(HERE, "suite_check.py"), "heim-test", "check the installed plugin sets and run their self-tests"),

@@ -156,10 +156,11 @@ python3 eval_vor.py --list                 # which test questions have their sou
 python3 eval_vor.py --model qwen3.6:27b    # score one model (default: the Vor persona)
 ```
 
-`eval/questions.json` has 16 questions whose answers were read off the PDF pages: FEMA 333 hazard
+`eval/questions.json` has 24 questions whose answers were read off the PDF pages: FEMA 333 hazard
 definitions, Froehlich 1995 and 2008 breach constants from HEC TD-39, EAP exercise frequencies (P-64),
 the inundation-study downstream limit (P-946), filter criteria (FEMA filter manual) and the Pierce,
-Thornton and Abt (2010) peak-outflow work. One question checks that the tool says "not covered"
+Thornton and Abt (2010) peak-outflow work, and eight from the USGS Manning's n guide (WSP 2339,
+`fetch_asdso.py --catalog hydrology`), five of them answered from its tables. One question checks that the tool says "not covered"
 instead of inventing numbers when ND REG_05.2026 is missing. A question passes only when every
 expected fact is in the answer **and** a quote the code checked comes from the right document and
 page (+/-1). Questions whose source is not indexed are skipped. Add your own questions in the same

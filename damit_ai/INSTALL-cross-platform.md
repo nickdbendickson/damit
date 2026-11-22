@@ -96,7 +96,8 @@ and it seeds the models from `offline/models` so nothing is pulled). Flags: `--n
 - **Heim code-triage eval** — `eval_heim.py` (+ `heim/eval/questions.json`, 10 questions) is
   installed next to the other Heim tools. Score a model against known answers:
   `python3 ~/local-ai/eval_heim.py` (or `--model qwen3:14b` to compare models). Mirrors
-  `vor/eval_vor.py`.
+  `vor/eval_vor.py`. `ai-score` runs both tests and keeps a dated score history in
+  `~/local-ai/reports/SCORE-HISTORY.md`.
 - **Periodic library refresh** — `vor/refresh-library.zsh` (macOS/Linux) and
   `vor/refresh-library.ps1` (Windows) download any new catalog/ASDSO files and re-index them.
   Each script's header has the launchd / cron / Task Scheduler line to run it weekly.

@@ -402,12 +402,12 @@ STANDING RULES (Nick's; never contradict them, even if a question assumes otherw
   }
   $PyL = Make-Env $HeimEnv 'python=3.12 pymupdf pypdf numpy'
   Ok "heim python: $PyL"
-  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py','true_hole.py','ai_doctor.py','ai_ui.py')) {
+  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py','true_hole.py','ai_doctor.py','ai_ui.py','ai_score.py')) {
     $src = Join-Path $Here "heim\tools\$t"
     if (Test-Path $src) { Copy-Item $src (Join-Path $LocalAI $t) -Force }
   }
   $evalL = Join-Path $Here 'heim\eval'
-  if (Test-Path $evalL) { Copy-Item $evalL (Join-Path $LocalAI 'eval') -Recurse -Force }   # code-triage eval set
+  if (Test-Path $evalL) { New-Item -ItemType Directory -Force (Join-Path $LocalAI 'eval') | Out-Null; Copy-Item (Join-Path $evalL '*') (Join-Path $LocalAI 'eval') -Recurse -Force }   # code-triage eval set
   # .cmd launchers so heim/damchain work from cmd.exe too
   "@echo off`r`n`"$PyL`" `"$LocalAI\rag_query.py`" %*" | Set-Content (Join-Path $LocalAI 'heim.cmd') -Encoding ASCII
   "@echo off`r`n`"$PyL`" `"$LocalAI\dam_chain.py`" %*" | Set-Content (Join-Path $LocalAI 'damchain.cmd') -Encoding ASCII
@@ -463,7 +463,7 @@ When source passages are supplied, use only them: every fact gets a citation to 
     if (Test-Path $src) { Copy-Item $src (Join-Path $VorDir $t) -Force }
   }
   $evalSrc = Join-Path $Here 'vor\eval'
-  if (Test-Path $evalSrc) { Copy-Item $evalSrc (Join-Path $VorDir 'eval') -Recurse -Force }
+  if (Test-Path $evalSrc) { New-Item -ItemType Directory -Force (Join-Path $VorDir 'eval') | Out-Null; Copy-Item (Join-Path $evalSrc '*') (Join-Path $VorDir 'eval') -Recurse -Force }
   "@echo off`r`n`"$PyR`" `"$VorDir\vor.py`" %*" | Set-Content (Join-Path $VorDir 'vor.cmd') -Encoding ASCII
   Ok "vor tools -> $VorDir; drop PDFs in $RHome\library"
 }
@@ -513,6 +513,7 @@ if ($Prefix) {
     $el += "function heim-runs   { & '$PyL' '$LocalAI\run_results.py' @args }"
     $el += "function ai-doctor   { & '$PyL' '$LocalAI\ai_doctor.py' @args }"
     $el += "function ai          { & '$PyL' '$LocalAI\ai_ui.py' @args }"
+    $el += "function ai-score    { & '$PyL' '$LocalAI\ai_score.py' @args }"
     $ec += "set `"HEIM_NUM_CTX=$NumCtx`""; $ec += "set `"HEIM_WATCH_MODEL=$WatchModel`""
   }
   if ($DoVor) { $el += "`$env:VOR_HOME = '$RHome'"; $el += "function vor { & '$PyR' '$VorDir\vor.py' @args }"; $ec += "set `"VOR_HOME=$RHome`"" }
@@ -567,6 +568,7 @@ if ($writeBlock) {
     $lines += "function heim-runs   { & '$PyL' '$LocalAI\run_results.py' @args }"
     $lines += "function ai-doctor   { & '$PyL' '$LocalAI\ai_doctor.py' @args }"
     $lines += "function ai          { & '$PyL' '$LocalAI\ai_ui.py' @args }"
+    $lines += "function ai-score    { & '$PyL' '$LocalAI\ai_score.py' @args }"
   }
   if ($DoVor) {
     $lines += "`$env:VOR_HOME = '$RHome'"
