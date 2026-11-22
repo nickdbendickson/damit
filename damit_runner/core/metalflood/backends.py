@@ -23,9 +23,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KERNEL_SOURCE = os.path.join(HERE, "kernels.metal")
 SHIM = os.path.join(HERE, "mf_shim.h")
 CPU_SOURCE = os.path.join(HERE, "cpu_kernels.cpp")
+FV_KERNEL_SOURCE = os.path.join(HERE, "kernels_fv.metal")
+FV_CPU_SOURCE = os.path.join(HERE, "cpu_kernels_fv.cpp")
+FV2_KERNEL_SOURCE = os.path.join(HERE, "kernels_fv2.metal")
+FV2_CPU_SOURCE = os.path.join(HERE, "cpu_kernels_fv2.cpp")
+DG2_KERNEL_SOURCE = os.path.join(HERE, "kernels_dg2.metal")
+DG2_CPU_SOURCE = os.path.join(HERE, "cpu_kernels_dg2.cpp")
+SGC_KERNEL_SOURCE = os.path.join(HERE, "kernels_sgc.metal")
+SGC_CPU_SOURCE = os.path.join(HERE, "cpu_kernels_sgc.cpp")
 
 S_WORDS = 32
 KERNELS = ("k_begin", "k_faces", "k_scale", "k_limit", "k_cont", "k_speed", "k_end")
+FV_KERNELS = ("k_begin_fv", "k_faces_fv", "k_cont_fv", "k_end_fv")
+FV2_KERNELS = ("k_stage_p_fv2", "k_begin_fv2", "k_save_fv2", "k_faces_fv2", "k_cont_fv2",
+               "k_stage_c_fv2", "k_end_fv2")
+DG2_KERNELS = ("k_stage_p_dg2", "k_begin_dg2", "k_save_dg2", "k_limit_dg2", "k_faces_dg2",
+               "k_cont_dg2", "k_stage_c_dg2", "k_end_dg2")
+SGC_KERNELS = ("k_begin_sgc", "k_faces_sgc", "k_scale_sgc", "k_limit_sgc", "k_cont_sgc",
+               "k_speed_sgc", "k_end_sgc")
 
 
 class BackendError(RuntimeError):
@@ -36,7 +51,7 @@ class Params(ctypes.Structure):
     """struct Params of kernels.metal, field for field."""
     _fields_ = [(n, ctypes.c_uint32) for n in (
         "nx", "ny", "r0", "c0", "wr", "wc", "free_mask", "n_src", "n_series",
-        "fric2d", "clip_end", "pad2")] + [(n, ctypes.c_float) for n in (
+        "fric2d", "clip_end", "inflow_lf_order")] + [(n, ctypes.c_float) for n in (
             "dx", "dt0", "alpha", "g", "dry", "maxhflow", "velmin", "arr_depth", "t0", "t_end",
             "theta", "pad4")]
 
@@ -54,9 +69,152 @@ def buffer_layout(ny, nx, n_src, n_series, n_values):
             ("vxf", f, ny * (nx + 1)), ("vyf", f, (ny + 1) * nx)]
 
 
-def _source_hash():
+def fv_buffer_layout(ny, nx, n_src, n_series, n_values):
+    """[(name, dtype, count)] in the order of kernels_fv.metal's buffer indices 0..23."""
+    cells = ny * nx
+    xf, yf = ny * (nx + 1), (ny + 1) * nx
+    f, u = np.float32, np.uint32
+    return [("z", f, cells), ("n2", f, cells), ("h", f, cells), ("hu", f, cells),
+            ("hv", f, cells), ("src", f, cells), ("hmax", f, cells), ("tmax", f, cells),
+            ("arr", f, cells), ("vmax", f, cells), ("ok", np.uint8, cells),
+            ("s_cell", u, n_src), ("s_series", u, n_src), ("ser_off", u, n_series + 1),
+            ("ser_t", f, n_values), ("ser_q", f, n_values), ("cursor", u, n_series),
+            ("st", u, S_WORDS), ("fxh", f, xf), ("fxhu", f, xf), ("fxhv", f, xf),
+            ("fyh", f, yf), ("fyhu", f, yf), ("fyhv", f, yf)]
+
+
+def fv2_buffer_layout(ny, nx, n_src, n_series, n_values):
+    """[(name, dtype, count)] in the order of kernels_fv2.metal's buffer indices 0..26: the FV1
+    layout (0..23) plus the previous-step state h0/hu0/hv0 for the RK2 blend. The minmod slopes are
+    not stored (Metal caps the buffer table at 31 slots); they are recomputed inline in the
+    kernels."""
+    cells = ny * nx
+    f = np.float32
+    base = fv_buffer_layout(ny, nx, n_src, n_series, n_values)
+    return base + [("h0", f, cells), ("hu0", f, cells), ("hv0", f, cells)]
+
+
+def dg2_buffer_layout(ny, nx, n_src, n_series, n_values):
+    """[(name, dtype, count)] in the order of kernels_dg2.metal's buffer indices 0..26. The three
+    conserved variables (Uh, Uhu, Uhv) and their previous-step RK2 copy (Uh0, Uhu0, Uhv0) are stored
+    packed, three modal coefficients per cell (3*cells floats): [3 i + 0] element average, [3 i + 1]
+    x-slope, [3 i + 2] y-slope. The bed z is piecewise constant (one float per cell). 27 buffers keep
+    DG2 inside Metal's 31-slot argument-table cap (slopes are modal unknowns, not separate buffers)."""
+    cells = ny * nx
+    xf, yf = ny * (nx + 1), (ny + 1) * nx
+    f, u = np.float32, np.uint32
+    return [("z", f, cells), ("n2", f, cells), ("Uh", f, 3 * cells), ("Uhu", f, 3 * cells),
+            ("Uhv", f, 3 * cells), ("src", f, cells), ("hmax", f, cells), ("tmax", f, cells),
+            ("arr", f, cells), ("vmax", f, cells), ("ok", np.uint8, cells),
+            ("s_cell", u, n_src), ("s_series", u, n_src), ("ser_off", u, n_series + 1),
+            ("ser_t", f, n_values), ("ser_q", f, n_values), ("cursor", u, n_series),
+            ("st", u, S_WORDS), ("fxh", f, xf), ("fxhu", f, xf), ("fxhv", f, xf),
+            ("fyh", f, yf), ("fyhu", f, yf), ("fyhv", f, yf),
+            ("Uh0", f, 3 * cells), ("Uhu0", f, 3 * cells), ("Uhv0", f, 3 * cells)]
+
+
+def sgc_buffer_layout(ny, nx, n_src, n_series, n_values):
+    """[(name, dtype, count)] in the order of kernels_sgc.metal's buffer indices 0..29. The ACC
+    buffers plus the channel/floodplain discharge split (qxc/qxf and their old qxco/qxfo, likewise
+    y) and the per-cell SGC geometry (width w, bankfull depth Dd so bed = z - Dd, channel n^2 nc2).
+    30 buffers + Params at index 30 = 31 slots, the Metal argument-table cap."""
+    cells = ny * nx
+    xf, yf = ny * (nx + 1), (ny + 1) * nx
+    f, u = np.float32, np.uint32
+    return [("z", f, cells), ("n2", f, cells), ("h", f, cells),
+            ("qxc", f, xf), ("qxf", f, xf), ("qyc", f, yf), ("qyf", f, yf),
+            ("src", f, cells), ("scl", f, cells), ("hmax", f, cells), ("tmax", f, cells),
+            ("arr", f, cells), ("vmax", f, cells), ("ok", np.uint8, cells),
+            ("s_cell", u, n_src), ("s_series", u, n_src), ("ser_off", u, n_series + 1),
+            ("ser_t", f, n_values), ("ser_q", f, n_values), ("cursor", u, n_series),
+            ("st", u, S_WORDS), ("qxco", f, xf), ("qxfo", f, xf), ("qyco", f, yf), ("qyfo", f, yf),
+            ("vxf", f, xf), ("vyf", f, yf), ("w", f, cells), ("Dd", f, cells), ("nc2", f, cells)]
+
+
+class Spec:
+    """What tells the generic Metal/CPU backend which kernels to run: one engine's kernel
+    source, its C++-build source and shim, the kernel names, the ctypes Params for that
+    source, and a plan(params) -> [(kernel_name, (w, h, d))] giving the dispatch order and
+    grid size of one step. core/metalterrain (BoannGrid) reuses this backend with its own
+    Spec; the default is this flood engine, so existing callers are unchanged."""
+
+    def __init__(self, name, kernel_source, shim, cpu_source, kernels, params_cls, plan):
+        self.name = name
+        self.kernel_source = kernel_source
+        self.shim = shim
+        self.cpu_source = cpu_source
+        self.kernels = tuple(kernels)
+        self.params_cls = params_cls
+        self.plan = plan
+
+
+def _flood_plan(p):
+    one = (1, 1, 1)
+    faces = (p.wc + 1, p.wr + 1, 1)
+    cells = (p.wc, p.wr, 1)
+    return [("k_begin", one), ("k_faces", faces), ("k_scale", cells), ("k_limit", faces),
+            ("k_cont", cells), ("k_speed", cells), ("k_end", one)]
+
+
+FLOOD_SPEC = Spec("mf", KERNEL_SOURCE, SHIM, CPU_SOURCE, KERNELS, Params, _flood_plan)
+
+
+def _fv_plan(p):
+    one = (1, 1, 1)
+    faces = (p.wc + 1, p.wr + 1, 1)
+    cells = (p.wc, p.wr, 1)
+    return [("k_begin_fv", one), ("k_faces_fv", faces), ("k_cont_fv", cells), ("k_end_fv", one)]
+
+
+FV_SPEC = Spec("fv", FV_KERNEL_SOURCE, SHIM, FV_CPU_SOURCE, FV_KERNELS, Params, _fv_plan)
+
+
+def _fv2_plan(p):
+    one = (1, 1, 1)
+    faces = (p.wc + 1, p.wr + 1, 1)
+    cells = (p.wc, p.wr, 1)
+    # one SSP-RK2 step: predictor sweep (stage 0), then corrector sweep (stage 1), then close.
+    # k_save_fv2 copies U^n once at stage 0; the slopes are recomputed inline in faces/cont.
+    return [("k_stage_p_fv2", one), ("k_begin_fv2", one), ("k_save_fv2", cells),
+            ("k_faces_fv2", faces), ("k_cont_fv2", cells),
+            ("k_stage_c_fv2", one), ("k_begin_fv2", one), ("k_save_fv2", cells),
+            ("k_faces_fv2", faces), ("k_cont_fv2", cells), ("k_end_fv2", one)]
+
+
+FV2_SPEC = Spec("fv2", FV2_KERNEL_SOURCE, SHIM, FV2_CPU_SOURCE, FV2_KERNELS, Params, _fv2_plan)
+
+
+def _dg2_plan(p):
+    one = (1, 1, 1)
+    faces = (p.wc + 1, p.wr + 1, 1)
+    cells = (p.wc, p.wr, 1)
+    # one SSP-RK2 step: predictor sweep (stage 0), then corrector sweep (stage 1), then close.
+    # k_save_dg2 copies U^n once at stage 0; k_limit_dg2 is a no-op when Params.limiter is 0.
+    return [("k_stage_p_dg2", one), ("k_begin_dg2", one), ("k_save_dg2", cells),
+            ("k_limit_dg2", cells), ("k_faces_dg2", faces), ("k_cont_dg2", cells),
+            ("k_stage_c_dg2", one), ("k_begin_dg2", one), ("k_save_dg2", cells),
+            ("k_limit_dg2", cells), ("k_faces_dg2", faces), ("k_cont_dg2", cells),
+            ("k_end_dg2", one)]
+
+
+DG2_SPEC = Spec("dg2", DG2_KERNEL_SOURCE, SHIM, DG2_CPU_SOURCE, DG2_KERNELS, Params, _dg2_plan)
+
+
+def _sgc_plan(p):
+    one = (1, 1, 1)
+    faces = (p.wc + 1, p.wr + 1, 1)
+    cells = (p.wc, p.wr, 1)
+    return [("k_begin_sgc", one), ("k_faces_sgc", faces), ("k_scale_sgc", cells),
+            ("k_limit_sgc", faces), ("k_cont_sgc", cells), ("k_speed_sgc", cells),
+            ("k_end_sgc", one)]
+
+
+SGC_SPEC = Spec("sgc", SGC_KERNEL_SOURCE, SHIM, SGC_CPU_SOURCE, SGC_KERNELS, Params, _sgc_plan)
+
+
+def _source_hash(spec):
     h = hashlib.sha256()
-    for p in (KERNEL_SOURCE, SHIM, CPU_SOURCE):
+    for p in (spec.kernel_source, spec.shim, spec.cpu_source):
         with open(p, "rb") as f:
             h.update(f.read())
     return h.hexdigest()[:16]
@@ -83,10 +241,10 @@ def find_compiler():
     return None
 
 
-def build_cpu_library(log=None):
+def build_cpu_library(spec=FLOOD_SPEC, log=None):
     """The CPU build of the kernels (compiled once per source version), its path."""
     ext = ".dylib" if sys.platform == "darwin" else (".dll" if os.name == "nt" else ".so")
-    out = os.path.join(_cache_dir(), "mf_cpu_{}{}".format(_source_hash(), ext))
+    out = os.path.join(_cache_dir(), "{}_cpu_{}{}".format(spec.name, _source_hash(spec), ext))
     if os.path.isfile(out):
         return out
     cxx = find_compiler()
@@ -94,8 +252,12 @@ def build_cpu_library(log=None):
         raise BackendError("no C++ compiler (c++, clang++ or g++) for the engine's CPU build")
     fd, tmp = tempfile.mkstemp(suffix=ext, dir=os.path.dirname(out))
     os.close(fd)
+    inc = []
+    for d in dict.fromkeys(os.path.dirname(p) for p in
+                           (spec.cpu_source, spec.shim, spec.kernel_source)):
+        inc += ["-I", d]
     cmd = [cxx, "-O3", "-std=c++14", "-fno-strict-aliasing", "-shared", "-fPIC",
-           "-I", HERE, "-x", "c++", CPU_SOURCE, "-o", tmp]
+           *inc, "-x", "c++", spec.cpu_source, "-o", tmp]
     if log:
         log("Building the engine's CPU kernels: " + " ".join(cmd))
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -110,14 +272,15 @@ def build_cpu_library(log=None):
 class CpuBackend:
     kind = "cpu"
 
-    def __init__(self, log=None):
-        self.lib = ctypes.CDLL(build_cpu_library(log))
-        self.lib.mf_run_batch.argtypes = [ctypes.c_void_p, ctypes.POINTER(Params),
+    def __init__(self, spec=FLOOD_SPEC, log=None):
+        self.spec = spec
+        self.lib = ctypes.CDLL(build_cpu_library(spec, log))
+        self.lib.mf_run_batch.argtypes = [ctypes.c_void_p, ctypes.POINTER(spec.params_cls),
                                           ctypes.c_int]
         self.lib.mf_run_batch.restype = ctypes.c_int
-        if self.lib.mf_params_size() != ctypes.sizeof(Params):
+        if self.lib.mf_params_size() != ctypes.sizeof(spec.params_cls):
             raise BackendError("the CPU kernels' Params is {} bytes, Python's {}".format(
-                self.lib.mf_params_size(), ctypes.sizeof(Params)))
+                self.lib.mf_params_size(), ctypes.sizeof(spec.params_cls)))
         self.device = "CPU (one core, C++ build of the Metal kernels)"
         self.arrays = {}
 
@@ -232,7 +395,8 @@ def metal_available():
 class MetalBackend:
     kind = "metal"
 
-    def __init__(self, log=None):
+    def __init__(self, spec=FLOOD_SPEC, log=None):
+        self.spec = spec
         if sys.platform != "darwin":
             raise BackendError("Metal needs macOS")
         try:
@@ -248,7 +412,7 @@ class MetalBackend:
                 raise BackendError("this Mac reports no Metal GPU")
             self.device = o.text(o(self.dev, "name"))
             self.queue = o(self.dev, "newCommandQueue")
-            with open(KERNEL_SOURCE, encoding="utf-8") as f:
+            with open(spec.kernel_source, encoding="utf-8") as f:
                 src = f.read()
             opts = o(o(o.cls("MTLCompileOptions"), "alloc"), "init")
             # IEEE math (no fast-math), so the GPU follows the CPU build closely
@@ -267,7 +431,7 @@ class MetalBackend:
                 raise BackendError("Metal did not compile the kernels: " + o.error_text(err.value))
             self.pso = {}
             self.tg = {}
-            for name in KERNELS:
+            for name in spec.kernels:
                 fn = o(self.library, "newFunctionWithName:", o.nsstring(name),
                        argtypes=[ctypes.c_void_p])
                 if not fn:
@@ -325,16 +489,13 @@ class MetalBackend:
               len(self.buffers), restype=None,
               argtypes=[ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong])
             one = _MTLSize(1, 1, 1)
-            faces = _MTLSize(params.wc + 1, params.wr + 1, 1)
-            cells = _MTLSize(params.wc, params.wr, 1)
-            plan = (("k_begin", one), ("k_faces", faces), ("k_scale", cells),
-                    ("k_limit", faces), ("k_cont", cells), ("k_speed", cells), ("k_end", one))
+            plan = [(name, _MTLSize(w, h, d)) for name, (w, h, d) in self.spec.plan(params)]
             set_pso = ("setComputePipelineState:", [ctypes.c_void_p])
             disp_args = [_MTLSize, _MTLSize]
             for _ in range(int(nsteps)):
                 for name, grid in plan:
                     o(enc, set_pso[0], self.pso[name], restype=None, argtypes=set_pso[1])
-                    tg = self.tg[name] if grid is not one else one
+                    tg = self.tg[name] if (grid.width * grid.height * grid.depth) > 1 else one
                     o(enc, "dispatchThreads:threadsPerThreadgroup:", grid, tg, restype=None,
                       argtypes=disp_args)
             o(enc, "endEncoding", restype=None)
@@ -359,20 +520,20 @@ class MetalBackend:
             setattr(self, obj, None)
 
 
-def make_backend(which="auto", log=None):
+def make_backend(which="auto", log=None, spec=FLOOD_SPEC):
     """'metal', 'cpu' or 'auto' (Metal when this Mac has it, else the CPU build). The
     DAMSAFETY_MF_BACKEND environment variable overrides 'auto'."""
     which = (which or "auto").lower()
     if which == "auto":
         which = os.environ.get("DAMSAFETY_MF_BACKEND", "auto").lower()
     if which == "metal":
-        return MetalBackend(log)
+        return MetalBackend(spec, log)
     if which == "cpu":
-        return CpuBackend(log)
+        return CpuBackend(spec, log)
     if sys.platform == "darwin":
         try:
-            return MetalBackend(log)
+            return MetalBackend(spec, log)
         except BackendError as e:
             if log:
                 log("Metal not used ({}); the CPU build runs instead.".format(e))
-    return CpuBackend(log)
+    return CpuBackend(spec, log)

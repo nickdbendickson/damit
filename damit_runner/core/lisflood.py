@@ -213,6 +213,15 @@ BUILTIN_WORDS = ("builtin", "built-in", "built in", "internal")
 # fallback, and its "executable" is its engine.py so the existence checks and the manifest work.
 GPU_EXE = os.path.join(HERE, "metalflood", "engine.py")
 GPU_WORDS = ("gpu", "metal", "gpu engine", "metalflood")
+# 0.8.0 (from DamSafety Runner 3.36.0-3.41.0): the GPU engine with LISFLOOD-FP's sub-grid channels
+# (core/metalflood/engine_sgc, Neal et al. 2012): a rectangular channel narrower than the cell and
+# below the DEM conveys and stores the flood the grid cannot resolve, from the same SGCwidth /
+# SGCbank / SGCbed rasters LISFLOOD-FP reads (or built from the DEM by core/sgc). ACC-family. On the
+# Lake Delhi 2010 survey it matched LISFLOOD-FP 8.3 SGC to ~0.1 ft and halved ACC's bias at the
+# bridges. Chosen only by name, never as a fallback.
+GPU_SGC_EXE = os.path.join(HERE, "metalflood", "engine_sgc.py")
+GPU_SGC_WORDS = ("gpu-sgc", "metal-sgc", "sgc", "boann-sgc", "gpu sgc", "subgrid channels",
+                 "sub-grid channels")
 
 
 def bundled_platform(system=None, machine=None):
@@ -268,9 +277,18 @@ def is_gpu(exe):
     return bool(exe) and os.path.abspath(str(exe)) == GPU_EXE
 
 
+def is_gpu_sgc(exe):
+    return bool(exe) and os.path.abspath(str(exe)) == GPU_SGC_EXE
+
+
+def is_gpu_any(exe):
+    """Any GPU engine: the ACC scheme or the ACC scheme with sub-grid channels."""
+    return is_gpu(exe) or is_gpu_sgc(exe)
+
+
 def is_inprocess(exe):
     """True for the engines that run inside this process (built-in, GPU), not as a program."""
-    return is_builtin(exe) or is_gpu(exe)
+    return is_builtin(exe) or is_gpu_any(exe)
 
 
 def gpu_backend_note():
@@ -296,6 +314,8 @@ def resolve_exe(exe):
     v = (str(exe).strip() if exe else "")
     if v.lower() in BUILTIN_WORDS:
         return BUILTIN_EXE
+    if v.lower() in GPU_SGC_WORDS:
+        return GPU_SGC_EXE
     if v.lower() in GPU_WORDS:
         return GPU_EXE
     return v
@@ -307,6 +327,9 @@ def describe_exe(exe):
         return "the built-in engine (local inertial, in numpy; NOT LISFLOOD-FP)"
     if is_gpu(exe):
         return "the GPU engine (LISFLOOD-FP 8.3's ACC scheme on the GPU; NOT LISFLOOD-FP)"
+    if is_gpu_sgc(exe):
+        return ("the GPU engine with sub-grid channels (ACC scheme with LISFLOOD-FP sub-grid "
+                "channels on the GPU; NOT LISFLOOD-FP)")
     if exe and os.path.abspath(str(exe)).startswith(BUNDLED_DIR + os.sep):
         return "LISFLOOD-FP bundled with the plugin ({})".format(exe)
     return "LISFLOOD-FP at {}".format(exe)
@@ -320,6 +343,8 @@ def engine_label(exe):
         return "built-in engine (local inertial, numpy; NOT LISFLOOD-FP)"
     if is_gpu(exe):
         return "GPU engine (LISFLOOD-FP ACC scheme on the GPU; NOT LISFLOOD-FP)"
+    if is_gpu_sgc(exe):
+        return "GPU engine, sub-grid channels (ACC + LISFLOOD-FP sub-grid channels; NOT LISFLOOD-FP)"
     return "LISFLOOD-FP"
 
 
@@ -327,6 +352,8 @@ def engine_name(exe):
     """A short noun for log lines and prose: "the built-in engine" or "LISFLOOD-FP"."""
     if is_gpu(exe):
         return "the GPU engine"
+    if is_gpu_sgc(exe):
+        return "the GPU engine (sub-grid channels)"
     return "the built-in engine" if is_builtin(exe) else "LISFLOOD-FP"
 
 
@@ -881,6 +908,11 @@ def _run_gpu(workdir, par, st, progress=None, cancel=None, log=None):
     from . import metalflood as mf
     t0 = time.time()
     lines = []
+    if is_gpu_sgc(st.exe):
+        runner, name, version, tag = (mf.run_par_sgc, mf.SGC_NAME, mf.SGC_VERSION,
+                                      "GPU engine (sub-grid channels)")
+    else:
+        runner, name, version, tag = mf.run_par, mf.NAME, mf.VERSION, "GPU engine"
 
     def say(msg):
         lines.append(msg)
@@ -889,17 +921,17 @@ def _run_gpu(workdir, par, st, progress=None, cancel=None, log=None):
 
     def prog(t, sim):
         if progress:
-            progress(min(100.0, 100.0 * t / sim), "GPU engine t = {:.2f} h".format(t / 3600.0))
+            progress(min(100.0, 100.0 * t / sim), "{} t = {:.2f} h".format(tag, t / 3600.0))
     backend = os.environ.get("DAMSAFETY_MF_BACKEND") or "auto"
     try:
-        mf.run_par(par, progress=prog, cancel=cancel, log=say, backend=backend)
+        runner(par, progress=prog, cancel=cancel, log=say, backend=backend)
     except mf.Cancelled:
         raise Cancelled("cancelled")
     except mf.EngineError as e:
-        raise ModelError("GPU engine: {}".format(e))
+        raise ModelError("{}: {}".format(tag, e))
     finally:
         with open(os.path.join(workdir, "lisflood.log"), "w", encoding="utf-8") as f:
-            f.write(mf.NAME + " " + mf.VERSION + "\n" + "\n".join(lines) + "\n")
+            f.write(name + " " + version + "\n" + "\n".join(lines) + "\n")
     return time.time() - t0
 
 
@@ -915,7 +947,7 @@ def _run(workdir, par, st, progress=None, cancel=None, log=None, name="run"):
     exe = st.exe
     if is_builtin(exe):
         return _run_builtin(workdir, par, st, progress, cancel, log)
-    if is_gpu(exe):
+    if is_gpu_any(exe):
         return _run_gpu(workdir, par, st, progress, cancel, log)
     if not exe or not os.path.isfile(exe):
         raise ModelError("LISFLOOD-FP executable not found: {}".format(exe))
@@ -1299,13 +1331,13 @@ def check_lisflood(exe, workdir, solver=SOLVER_ACC, sgc=False):
     # it is recorded wherever there was any water, which is far more cells.
     deep = int((env.depth.data >= 0.3 - ARRIVAL_TOL_M).sum())
     patched = raw_wet <= 1.03 * deep + 3
-    who = ("The built-in engine" if is_builtin(exe) else "The GPU engine" if is_gpu(exe)
+    who = ("The built-in engine" if is_builtin(exe) else "The GPU engine" if is_gpu_any(exe)
            else "LISFLOOD-FP")
     msg = ("{} ran: {} cells reached 0.3 m.".format(who, thr_wet))
     if is_builtin(exe):
         msg += (" This is the built-in numpy screening engine (local inertial), NOT LISFLOOD-FP; "
                 "its results are preliminary estimates.")
-    if is_gpu(exe):
+    if is_gpu_any(exe):
         msg += (" This is the GPU engine (LISFLOOD-FP 8.3's ACC scheme on {}), NOT LISFLOOD-FP "
                 "itself.".format(gpu_backend_note()))
     if not patched and not is_inprocess(exe):
