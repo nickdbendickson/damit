@@ -463,7 +463,7 @@ class AskTest(Base):
 
     def test_failed_query_is_retried_with_the_error(self):
         _a, text, calls = self.ask("depth at 4512 Main St, DWR-2801?", [
-            json.dumps({"sql": "SELECT depth FROM structures"}), self.SQL, "3.42 ft at 4512 Main St."])
+            json.dumps({"sql": "SELECT depth FROM structures WHERE dam_id LIKE '%2801%'"}), self.SQL, "3.42 ft at 4512 Main St."])
         self.assertIn("no such table", calls[1][0][-1]["content"])
         self.assertIn("4512 Main St, Absaraka", text)
 
@@ -473,7 +473,8 @@ class AskTest(Base):
         self.assertEqual(self.q("SELECT COUNT(*) FROM runs"), [(3,)])
 
     def test_no_rows(self):
-        empty = json.dumps({"sql": "SELECT * FROM features WHERE address LIKE '%Nowhere%'"})
+        empty = json.dumps({"sql": "SELECT * FROM features f JOIN runs r ON r.run_id=f.run_id "
+                                   "WHERE r.dam_id LIKE '%2801%' AND f.address LIKE '%Nowhere%'"})
         ans, text, _c = self.ask("depth at Nowhere for DWR-2801", [empty, empty])
         self.assertEqual(ans, "")
         self.assertIn("Nothing in the run results matches", text)
@@ -482,6 +483,52 @@ class AskTest(Base):
         ans, text, _c = self.ask("peak flow DWR-2801", [OSError("connection refused")])
         self.assertEqual(ans, "")
         self.assertIn("heim runs show", text)
+
+    def test_a_dam_with_no_runs_is_said_before_any_query(self):
+        # 2026-11-22 real-model run: the model counted 0 rows for a dam that was not in the database and
+        # wrote "No habitable structures flood more than 2 feet deep". It must not be asked at all.
+        ans, text, calls = self.ask("how many habitable structures flood more than 2 feet deep for 9999?", [])
+        self.assertEqual((ans, calls), ("", []))
+        self.assertIn("No runs for 9999", text)
+
+    def test_a_query_about_another_dam_is_sent_back(self):
+        # 2026-11-22: asked about 3034, the model wrote dam_id LIKE '%2801%' (the example in the rules)
+        wrong = json.dumps({"sql": "SELECT dam_id, scenario, peak_breach_cfs FROM runs WHERE dam_id LIKE '%9999%'"})
+        _a, text, calls = self.ask("peak breach flow for 2801?", [wrong, self.SQL, "3.42 ft at 4512 Main St."])
+        self.assertIn("does not filter on it", calls[1][0][-1]["content"])
+        self.assertIn("4512 Main St, Absaraka", text)
+
+    def test_a_query_about_another_dam_twice_is_refused(self):
+        wrong = json.dumps({"sql": "SELECT COUNT(*) FROM runs WHERE dam_id LIKE '%9999%'"})
+        ans, text, calls = self.ask("how many structures flood for 2801?", [wrong, wrong])
+        self.assertEqual(ans, "")
+        self.assertIn("is not about 2801", text)
+        self.assertEqual(len(calls), 2)                  # never phrased: nothing was run
+
+    def test_rules_carry_no_dam_number_to_copy(self):
+        self.assertNotIn("2801", self.R.SQL_RULES)
+        self.assertIn("depth_ft IS NOT NULL", self.R.SQL_RULES)
+
+    def test_an_empty_database_says_so(self):
+        empty = os.path.join(self.tmp, "empty.db")
+        self.R.connect(empty, write=True).close()
+        out, called = [], []
+        ans = self.R.ask("peak flow for 2801?", db_path=empty, out=out.append,
+                         chat=lambda *a, **k: called.append(1) or "")
+        self.assertEqual((ans, called), ("", []))
+        self.assertIn("the database has no runs", "\n".join(out))
+
+    def test_an_address_number_is_not_a_dam(self):
+        self.assertEqual(self.R.missing_dams("depth at 3021 County Road 26 for 2801", ["DWR-2801"]), [])
+        self.assertEqual(self.R.missing_dams("which dams peak over 5000 cfs?", ["DWR-2801"]), [])
+        self.assertEqual(self.R.missing_dams("depth for DWR-2801?", ["DWR-2645"]), ["2801"])
+
+    def test_the_models_reasoning_is_cut(self):
+        ans, text, _c = self.ask("depth at 4512 Main St, DWR-2801?", [
+            self.SQL, "Hmm, the user asks about the year 2100.\n</think>\n\nThe depth at 4512 Main St is 3.42 ft."])
+        self.assertEqual(ans, "The depth at 4512 Main St is 3.42 ft.")
+        self.assertNotIn("Hmm", text)
+        self.assertNotIn("CHECK:", text)          # 2100 was only in the reasoning
 
     def test_rounding_is_allowed(self):
         rows = [("DWR-2801", 28671.4, 0.944)]

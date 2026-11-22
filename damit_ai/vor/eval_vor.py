@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_vor.py v1.2 - score vor's answers against questions with known answers.
+# eval_vor.py v1.3 - score vor's answers against questions with known answers.
 #
 #   python3 eval_vor.py                         # the vor model, all questions
 #   python3 eval_vor.py --model qwen3.6:27b     # any Ollama model (run once per model)
@@ -106,8 +106,11 @@ def main():
                 h = ev.sources[f["source"] - 1]
                 if pat.search(os.path.basename(h.path)) and (not pages or h.page in pages):
                     grounded.append("PDF p.%d" % h.page)
-            ok = not facts_missing and bool(grounded)
+            flips = list(getattr(ev, "term_flags", []))
+            ok = not facts_missing and bool(grounded) and not flips
             why = []
+            if flips:                         # 1.3: the answer says the opposite of its own quote
+                why.append("quote says the opposite: " + flips[0])
             if facts_missing:
                 why.append("missing fact(s): " + ", ".join(facts_missing))
             if not grounded:

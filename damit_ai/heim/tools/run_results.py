@@ -45,6 +45,14 @@ earlier run, and two engines could never be compared. Now a report that has chan
 read is added beside the earlier reading, which stays (current = 0; its raster paths are dropped,
 because the files on disk now belong to the newer run). `compare` puts them side by side.
 
+1.1.1 (from the first real-model test, 2026-11-22): with no runs in the database, a count query
+still returns one row (0), and the model then wrote "No habitable structures flood more than 2 feet
+deep", a false answer. `ask` now says when the database holds no runs at all, or none for the dam the
+question names, before any query. The model's reasoning (text up to a `</think>`) is cut from what
+it writes, so only the answer is shown and checked. A query that does not filter on the dam the
+question names (the model copied '%2801%' from the rules for a question about 3034) is sent back
+once and then refused, and the rules say an empty depth means the water did not reach a feature.
+
 Stdlib only. `at` with a point uses GDAL (osgeo) when this Python has it, else the QGIS conda
 environment's Python (ndqgis) when one is found. `ask` needs Ollama; nothing else does.
 """
@@ -63,7 +71,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 SCHEMA_VERSION = 2
 DB = os.path.expanduser(os.environ.get("HEIM_RUNS_DB", "~/local-ai/runs.db"))
 BASE = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
@@ -1331,16 +1339,20 @@ def catalog(db_path=None):
 SQL_RULES = """\
 Write ONE SQLite SELECT that answers the question from the tables below. Rules:
 - Return JSON only: {"sql": "SELECT ..."}.
-- Match dams with dam_id LIKE '%2801%' (the user may give only the number) and names, roads and
-  addresses with LIKE '%...%' (case does not matter in LIKE). Never compare text with = unless it
-  is an id you can see in the catalog.
+- Match dams with dam_id LIKE '%NNNN%', where NNNN is the dam number the QUESTION gives (the user may
+  give only the number; never a number from these rules or the catalog that the question does not
+  name). Match names, roads and addresses with LIKE '%...%' (case does not matter in LIKE). Never
+  compare text with = unless it is an id you can see in the catalog.
+- depth_ft, velocity_fps and arrival_hr are empty (NULL) for a feature the water did not reach. For
+  flooded features use depth_ft > 0; for "deepest" or "fastest" add depth_ft IS NOT NULL (or the
+  velocity / arrival column) so the empty ones do not fill the rows.
 - Always select dam_id and scenario (from runs) so the answer can say which run it is, and the
   column names with their units.
 - A question about one place (a structure, address, road, facility) is answered from features
   (depth_ft, velocity_fps, arrival_hr). Peak flow / breach / flood totals come from runs.
   A number not in runs is in facts (key LIKE '%...%').
 - When a dam has several runs, return all of them unless the question picks one, and select
-  runs.final_model and runs.run_finished so the runs can be told apart. A run with current = 0 is an
+  runs.final_model, runs.tool, runs.cell_m and runs.run_finished so the runs can be told apart. A run with current = 0 is an
   earlier run of the same report, kept for comparison: say so when it is in the rows.
 - Add LIMIT 50.
 """
@@ -1419,8 +1431,74 @@ def ensure_ollama(base, log=print):
     return False
 
 
+_THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+def strip_think(text):
+    """The model's answer without its reasoning: a <think>...</think> block, or everything up to a
+    lone </think> (some models emit the closing tag only, even with think off)."""
+    t = _THINK.sub("", text or "")
+    if re.search(r"</think>", t, re.I):
+        t = re.split(r"</think>", t, flags=re.I)[-1]
+    return t.strip()
+
+
+def dam_ids_in(db_path=None):
+    """(number of runs, [dam_id, ...]) in the database; (0, []) when it cannot be read."""
+    db = connect(db_path)
+    if db is None:
+        return 0, []
+    try:
+        n = db.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+        ids = [r[0] for r in db.execute("SELECT DISTINCT dam_id FROM runs") if r[0]]
+        return n, ids
+    except sqlite3.Error:
+        return 0, []
+    finally:
+        db.close()
+
+
+_ADDRESS_AFTER = re.compile(r"\s+(?:[A-Z][A-Za-z]*|road|rd|st|street|ave|avenue|hwy|highway|county|lane|ln|"
+                            r"drive|dr|blvd|court|ct|way|trail|ft|feet|foot|cfs|m|acres?|hours?|hr|mi|miles?)\b")
+
+
+def missing_dams(question, dam_ids):
+    """Dam numbers the question names (3 to 6 digits, or DWR-1234) that no run in the database is for.
+    A number followed by a street or a unit ('3021 County Road', '500 cfs') is not a dam. When any
+    number the question names is a dam in the database, the rest are taken for addresses and nothing
+    is reported. A number that is part of a dam id counts as found ('2801' finds 'DWR-2801')."""
+    q = question or ""
+    named = []
+    for m in re.finditer(r"(?<![\d.])(\d{3,6})(?![\d.%])", q):
+        if not _ADDRESS_AFTER.match(q, m.end()):
+            named.append(m.group(1))
+    have = " ".join(str(d) for d in dam_ids)
+    found = [n for n in named if re.search(r"(?<!\d)%s(?!\d)" % n, have)]
+    if found:
+        return []
+    return sorted(set(named))
+
+
+def dams_in_question(question, dam_ids):
+    """The dam numbers the question names that ARE in the database ('3034' for DWR-3034)."""
+    q = question or ""
+    have = " ".join(str(d) for d in dam_ids)
+    out = []
+    for m in re.finditer(r"(?<![\d.])(\d{3,6})(?![\d.%])", q):
+        n = m.group(1)
+        if not _ADDRESS_AFTER.match(q, m.end()) and re.search(r"(?<!\d)%s(?!\d)" % n, have) and n not in out:
+            out.append(n)
+    return out
+
+
+def sql_misses_dams(sql, wanted):
+    """The dams the question names that the query never mentions. The 2026-11-22 real-model run asked
+    about 3034 and got `dam_id LIKE '%2801%'`, the example in the rules, and a count of 0."""
+    return [n for n in wanted if not re.search(r"(?<!\d)%s(?!\d)" % n, sql or "")]
+
+
 def sql_from_reply(text):
-    t = (text or "").strip()
+    t = strip_think(text)
     try:
         d = json.loads(t)
         if isinstance(d, dict) and d.get("sql"):
@@ -1475,6 +1553,17 @@ def ask(question, db_path=None, out=_say, chat=None):
         out("No run results yet. Read some in first:  heim runs add ~/DamSafety/Dams")
         return ""
     probe.close()
+    nruns, ids = dam_ids_in(db_path)
+    if not nruns:
+        out("No run results yet: the database has no runs. Read some in first:  heim runs add FOLDER\n"
+            "(the folder that holds the dams' _breach_model/run_report.json files)")
+        return ""
+    gone = missing_dams(question, ids)
+    if gone:
+        out("No runs for %s in the run results, so there is nothing to answer from. `heim runs list` shows "
+            "the %d dam(s) that are in; `heim runs add FOLDER` reads more." % (", ".join(gone), len(ids)))
+        return ""
+    wanted = dams_in_question(question, ids)
     sys_msg = SQL_RULES + "\n" + SCHEMA_DOC + "\nWhat is in the database now:\n" + catalog(db_path)
     msgs = [{"role": "system", "content": sys_msg}, {"role": "user", "content": question}]
     cols = rows = sql = None
@@ -1488,6 +1577,16 @@ def ask(question, db_path=None, out=_say, chat=None):
                 % e)
             return ""
         sql = sql_from_reply(reply)
+        off = sql_misses_dams(sql, wanted)
+        if off:
+            if attempt == 2:
+                out("Query: %s\nThat query is not about %s, the dam the question names, so it was not run. "
+                    "Without the model:  heim runs show %s" % (sql, ", ".join(off), off[0]))
+                return ""
+            msgs += [{"role": "assistant", "content": reply},
+                     {"role": "user", "content": "The question is about dam %s, but that query does not filter "
+                                                 "on it. Use dam_id LIKE '%%%s%%'. JSON only." % (off[0], off[0])}]
+            continue
         try:
             cols, rows, total = run_sql(sql, db_path)
         except ValueError as e:
@@ -1523,6 +1622,7 @@ def ask(question, db_path=None, out=_say, chat=None):
     except Exception as e:
         out("(the rows above are the answer; the model could not phrase it: %s)" % e)
         return ""
+    ans = strip_think(ans)
     if not ans:
         out("(the rows above are the answer; the model returned nothing)")
         return ""

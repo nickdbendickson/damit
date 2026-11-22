@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_heim.py v1.2 - score Heim's code-triage answers against questions with known answers.
+# eval_heim.py v1.3 - score Heim's code-triage answers against questions with known answers.
 # The Heim counterpart of vor/eval_vor.py.
 #
 #   python3 eval_heim.py                        # the 'heim' persona, all questions
@@ -18,7 +18,10 @@
 # With --no-context nothing is retrieved and the question goes to the persona as it is (the `heim-chat --bare` path), so
 # step 1 is skipped: this is what the 11 Nov 2026 test asked when the 8B model reversed the sunny-day rule and invented
 # tool names. v1.1 adds --no-context and forbid_unless_negated. v1.2 adds the run time and minutes to the .json
-# report, which `ai-score` (ai_score.py) reads for its score history.
+# report, which `ai-score` (ai_score.py) reads for its score history. v1.3: a question whose source IS in the
+# collection but was not among the passages retrieved is a FAIL ("retrieval missed"), not a SKIP: the 2026-11-22
+# real-model run reported lisflood-openmp-threads as "source not indexed" while KNOWN-BEHAVIOURS.md was indexed,
+# which hid a search miss and flattered the score. SKIP is kept for a source that is not in the collection at all.
 # Questions whose source is not indexed are skipped (reported as SKIP), so the score reflects
 # only what Heim could actually have grounded. The eval uses the same retrieval + prompt as
 # `heim` (rag_query.py), so it measures the real pipeline. Nothing is sent off the machine.
@@ -81,7 +84,8 @@ def main():
     qfile = a.questions
     if not qfile:
         qfile = next((q for q in QCANDS if os.path.exists(q)), QCANDS[0])
-    spec = json.load(open(qfile, encoding="utf-8"))
+    with open(qfile, encoding="utf-8") as f:
+        spec = json.load(f)
     coll = a.collection or spec.get("collection", "heim_knowledge")
     qs = spec["questions"]
     if a.only:
@@ -105,6 +109,20 @@ def main():
             print("%-28s %-9s %s" % (q["id"], tag, where))
         return
 
+    def in_collection(q):
+        """True when some indexed path in the collection matches q['doc'] (whether or not it was retrieved)."""
+        try:
+            import sqlite3
+            db = sqlite3.connect(rq.DB)
+            try:
+                paths = [r[0] for r in db.execute("SELECT DISTINCT path FROM chunks WHERE collection=?", (coll,))]
+            finally:
+                db.close()
+        except Exception:
+            return False
+        pat = re.compile(q["doc"], re.I)
+        return any(pat.search(str(p)) for p in paths)
+
     model = rq.CHAT_MODEL
     if a.no_context:
         coll = "(none: --no-context)"
@@ -122,6 +140,11 @@ def main():
                 print("  SKIP %-24s (%s)" % (q["id"], e)); nskip += 1
                 rows.append({"id": q["id"], "result": "skip", "why": str(e)}); continue
             if not g:
+                if in_collection(q):
+                    print("  FAIL %-24s (retrieval missed: %s is indexed but not among the %d passages read)"
+                          % (q["id"], q["doc"], len(hits))); nfail += 1
+                    rows.append({"id": q["id"], "result": "fail", "why": "retrieval missed",
+                                 "grounded_in": [os.path.basename(str(h[2])) for h in hits]}); continue
                 print("  SKIP %-24s (source not indexed: %s)" % (q["id"], q["doc"])); nskip += 1
                 rows.append({"id": q["id"], "result": "skip", "why": "source not indexed"}); continue
             ctx = "\n\n".join("--- [%s] %s (chunk %d) ---\n%s" % (c, p, i, t) for _, c, p, i, t in hits)
