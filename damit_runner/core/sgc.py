@@ -18,10 +18,13 @@ the model DEM alone, so it needs no download:
    report says so.
 2. Channel cells: every cell draining at least `min_area_km2`.
 3. Bankfull width and depth from drainage area by regional hydraulic geometry,
-   W = a A^b and D = c A^f (A in km2, W and D in m). Default: Bieger et al. (2015), the
+   W = a A^b and D = c A^f (A in km2, W and D in m). DamIT default: Bieger et al. (2015), the
    conterminous-US equations (W = 2.70 A^0.352, D = 0.30 A^0.213; "Development and evaluation
    of bankfull hydraulic geometry relationships for the physiographic regions of the United
-   States", JAWRA 51(4)). Replace a, b, c, f with a regional curve where one exists.
+   States", JAWRA 51(4)), BIEGER_2015_US. Selectable: the North Dakota curve fitted to 79 USGS
+   gauges, W = 1.946 A^0.304, D = 0.221 A^0.256 (ND_USGS_2026; DWR_Plugins
+   tools/validation/nd_hydraulic_geometry/), DamSafety's default since its 3.53.0; ND channels
+   are about half as wide. Replace a, b, c, f with a regional curve where one exists.
 4. Bank = the DEM (the cell's ground, or the water surface of hydro-flattened LiDAR); bed = DEM
    - D. The width is capped at the cell size (a river wider than the cell is in the DEM already;
    only its missing bed is added).
@@ -45,7 +48,15 @@ from .terrain import priority_flood
 
 # Bieger, Rathjens, Allen & Arnold (2015), conterminous US: W = a A^b, D = c A^f (m, A km2)
 BIEGER_2015_US = (2.70, 0.352, 0.30, 0.213)
-DEFAULT_MIN_AREA_KM2 = 2.0      # about 0.8 sq mi: W ~ 3.4 m, D ~ 0.35 m
+# North Dakota, fitted 2026-11-23 to 79 USGS gauges (tools/validation/nd_hydraulic_geometry/; the
+# same curve as metalterrain.prism.ND_USGS_2026). The default since 3.53.0 (Nick, 2026-11-23).
+ND_USGS_2026 = (1.946, 0.304, 0.221, 0.256)
+# DamIT: the default stays the national curve (Bieger 2015), because DamIT is used in every
+# state; DamSafety 3.53.0 made ND_USGS_2026 its default. sgc_curve / curve= selects ND_USGS_2026
+# (or any regional a, b, c, f) for a study where it applies. SGC_CURVES names the built-in choices.
+DEFAULT_CURVE = BIEGER_2015_US
+SGC_CURVES = {"bieger_2015_us": BIEGER_2015_US, "nd_usgs_2026": ND_USGS_2026}
+DEFAULT_MIN_AREA_KM2 = 2.0      # about 0.8 sq mi: W ~ 3.4 m, D ~ 0.35 m (Bieger; ND curve: W ~ 2.4 m, D ~ 0.26 m)
 DEFAULT_CHANNEL_N = 0.035       # LISFLOOD-FP's own SGCn default (a clean natural channel)
 START_MODES = ("auto", "empty", "full")
 MIN_DEPTH_M = 0.05              # a channel shallower than this adds nothing (and LISFLOOD-FP
@@ -149,28 +160,25 @@ def flow_accumulation(dem, extra_cells=None):
     return np.asarray(acc_l).reshape(z.shape)
 
 
-def hydraulic_geometry(area_km2, curve=BIEGER_2015_US):
+def hydraulic_geometry(area_km2, curve=DEFAULT_CURVE):
     a, b, c, f = curve
     A = np.maximum(np.asarray(area_km2, dtype=float), 0.0)
     return a * A ** b, c * A ** f
 
 
-def build(dem, inflow_rc=None, upstream_km2=None, min_area_km2=DEFAULT_MIN_AREA_KM2,
-          curve=BIEGER_2015_US, channel_n=DEFAULT_CHANNEL_N, start="auto", flat_water=None):
-    """Channels of `dem` (a grid.Grid in metres). `inflow_rc` = (row, col) of the breach inflow
-    and `upstream_km2` the drainage area at the dam (added there); `flat_water` = a boolean
-    mask of hydro-flattened water (computed with terrain.flat_water when None and start is
-    "auto")."""
+def _curve_ok(start, min_area_km2, curve):
     if start not in START_MODES:
         raise SGCError("channel start must be one of {}, got '{}'".format(START_MODES, start))
     if not min_area_km2 or min_area_km2 <= 0:
         raise SGCError("the smallest channel drainage area must be positive")
     if len(curve) != 4 or min(curve) <= 0:
         raise SGCError("the hydraulic-geometry curve needs four positive numbers (a, b, c, f)")
-    extra = []
-    if inflow_rc is not None and upstream_km2:
-        extra.append((int(inflow_rc[0]), int(inflow_rc[1]), float(upstream_km2)))
-    area = flow_accumulation(dem, extra)
+
+
+def _pack(dem, area, min_area_km2, curve, channel_n, start, flat_water, inflow_rc,
+          upstream_km2, extra_info=None):
+    """Width / depth / start depth from a drainage-area grid already in km2. `extra_info` is
+    merged into the report dict; build() passes none, so its keys stay what they were."""
     z = np.asarray(dem.data, dtype=float)
     valid = np.isfinite(z) & (z != dem.nodata)
     chan = valid & (area >= float(min_area_km2))
@@ -211,10 +219,80 @@ def build(dem, inflow_rc=None, upstream_km2=None, min_area_km2=DEFAULT_MIN_AREA_
         "upstream_km2": float(upstream_km2) if upstream_km2 else None,
         "area_at_inflow_km2": round(at_dam, 3) if at_dam is not None else None,
     }
+    if extra_info:
+        info.update(extra_info)
     ch = Channels(dem, width, depth, area, start_depth, channel_n, info)
     info["capacity_m3"] = round(ch.capacity_m3(), 1)
     info["start_volume_m3"] = round(ch.start_volume_m3(), 1)
     return ch
+
+
+def build(dem, inflow_rc=None, upstream_km2=None, min_area_km2=DEFAULT_MIN_AREA_KM2,
+          curve=DEFAULT_CURVE, channel_n=DEFAULT_CHANNEL_N, start="auto", flat_water=None):
+    """Channels of `dem` (a grid.Grid in metres). `inflow_rc` = (row, col) of the breach inflow
+    and `upstream_km2` the drainage area at the dam (added there); `flat_water` = a boolean
+    mask of hydro-flattened water (computed with terrain.flat_water when None and start is
+    "auto"). Drainage is raw-DEM D8 (priority-flood). For a BoannGrid-conditioned network
+    (D4, culvert reconnection, freeze mask) use from_boanngrid — that is opt-in, so this
+    path's published SGC numbers do not move."""
+    _curve_ok(start, min_area_km2, curve)
+    extra = []
+    if inflow_rc is not None and upstream_km2:
+        extra.append((int(inflow_rc[0]), int(inflow_rc[1]), float(upstream_km2)))
+    area = flow_accumulation(dem, extra)
+    return _pack(dem, area, min_area_km2, curve, channel_n, start, flat_water,
+                 inflow_rc, upstream_km2)
+
+
+def from_boanngrid(dem, inflow_rc=None, upstream_km2=None, min_area_km2=DEFAULT_MIN_AREA_KM2,
+                   curve=DEFAULT_CURVE, channel_n=DEFAULT_CHANNEL_N, start="auto",
+                   flat_water=None, freeze_mask=None, backend="cpu", delta_log=None,
+                   min_accum_cells=20):
+    """SGC rasters from the BoannGrid conditioned network, not from raw-DEM D8 alone.
+
+    Crossings are reconnected (burn.reconnect_crossings) unless a frozen embankment cell lies
+    on the carve path, which is refused and counted. Drainage area is then D4 accumulation on
+    that conditioned surface — D4 because that is the connectivity of the ACC flood engine;
+    D8 stays available on flow.flow_accum(conn=8) for diagnostics only. Bank and bed are the
+    conditioned DEM (the notch) minus the Bieger depth, so the channel honors the culvert
+    instead of sitting on the road crest.
+
+    Opt-in. build() is unchanged, so a study that has not asked for conditioning keeps the
+    SGC result already compared to Lake Delhi. Pass `delta_log` to record the carve and any
+    freeze-refusal. Writing the conditioned DEM itself goes through
+    delta_log.export_conditioned_dem, which refuses while those refusals are unresolved.
+    """
+    _curve_ok(start, min_area_km2, curve)
+    from .metalterrain import burn as _burn
+    from .metalterrain import delta_log as _dl
+    from .metalterrain import flow as _flow
+
+    z0 = np.asarray(dem.data, dtype=np.float64)
+    valid = np.isfinite(z0) & (z0 != dem.nodata)
+    z = np.where(valid, z0, np.nan)
+    cond, records = _burn.reconnect_crossings(
+        z, min_accum_cells=min_accum_cells, cell_m=float(dem.dx), backend=backend,
+        freeze_mask=freeze_mask)
+    refused = _burn.freeze_refusals(records)
+    if delta_log is not None:
+        _dl.log_reconnect(delta_log, records, cell_m=float(dem.dx))
+    _direction, accum_cells, finfo = _flow.flow_accum(cond, conn=4, backend=backend)
+    cell_km2 = dem.dx * dem.dx / 1e6
+    area = np.where(np.isfinite(accum_cells), accum_cells * cell_km2, 0.0)
+    if inflow_rc is not None and upstream_km2:
+        r, c = int(inflow_rc[0]), int(inflow_rc[1])
+        if 0 <= r < dem.ny and 0 <= c < dem.nx and valid[r, c]:
+            area[r, c] += float(upstream_km2)
+    cond_grid = dem.like(np.where(valid, cond, dem.nodata))
+    return _pack(cond_grid, area, min_area_km2, curve, channel_n, start, flat_water,
+                 inflow_rc, upstream_km2, extra_info={
+                     "source": "boanngrid-d4",
+                     "conn": 4,
+                     "freeze_refusals": len(refused),
+                     "crossings_carved": int(sum(1 for r in records if "refused" not in r)),
+                     "crossings_limited": len(_burn.limit_refusals(records)),
+                     "flow_converged": bool(finfo.get("converged")),
+                 })
 
 
 def describe(info):
