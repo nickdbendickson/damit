@@ -748,7 +748,7 @@ Download public ASDSO-listed dam-safety references into the vor library.
 
 ---
 
-## eval_vor.py 1.5
+## eval_vor.py 1.6
 
 Installed command: `eval_vor.py`. Score a model on the literature questions.
 

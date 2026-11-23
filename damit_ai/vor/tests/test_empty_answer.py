@@ -208,7 +208,7 @@ class CutAnswerTest(Base):
         self.assertIs(second["think"], False)
         self.assertGreater(second["options"]["num_predict"], first["options"]["num_predict"])
         self.assertIn("Write the answer itself now", second["messages"][-1]["content"])
-        self.assertEqual(ev.answer_from, "model, second attempt")
+        self.assertEqual(ev.answer_from, "model, after cut-off")
         self.assertIn("cut off", ev.answer_note)
         self.assertIn("length limit (3000 tokens) partway through the answer, most of them spent reasoning",
                       ev.answer_note)
@@ -231,6 +231,30 @@ class CutAnswerTest(Base):
         body = dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
         self.assertEqual(body, self.CUT["content"])
         self.assertIn("its end is missing", ev.answer_note)
+        self.assertIn("second attempt wrote no answer", ev.answer_note)
+        self.assertNotIn("twice", ev.answer_note)
+
+    def test_little_reasoning_is_not_called_most_of_the_tokens(self):
+        Ollama.script = [dict(thinking="ok", content="Failure causes economic loss " * 20 + "[F",
+                              done_reason="length", eval_count=3000),
+                         dict(content="Economic loss, no lives [F1].")]
+        ev = self.evidence()
+        dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        self.assertNotIn("most of them spent reasoning", ev.answer_note)
+        self.assertIn("with reasoning off", " ".join(self.said))
+
+    def test_no_reasoning_and_no_more_room_is_not_asked_again(self):
+        Ollama.script = [dict(content="Failure causes economic loss [F", done_reason="length", eval_count=3000)]
+        ev = self.evidence()
+        old = dr.NUM_CTX
+        dr.NUM_CTX = 3500                              # the retry could not be given more room
+        try:
+            body = dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        finally:
+            dr.NUM_CTX = old
+        self.assertEqual(len(Ollama.seen), 1, "the same request again would be cut the same way")
+        self.assertEqual(body, "Failure causes economic loss [F")
+        self.assertIn("no more room to ask again", ev.answer_note)
 
     def test_a_finished_answer_is_not_asked_for_again(self):
         Ollama.script = [dict(thinking="short plan", content="Economic loss, no lives [F1].", done_reason="stop")]

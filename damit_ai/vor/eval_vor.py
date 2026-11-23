@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_vor.py v1.5 - score vor's answers against questions with known answers.
+# eval_vor.py v1.6 - score vor's answers against questions with known answers.
 #
 #   python3 eval_vor.py                         # the vor model, all questions
 #   python3 eval_vor.py --model qwen3.6:27b     # any Ollama model (run once per model)
@@ -144,6 +144,9 @@ def main():
         % (passed, len(scored), len(results) - len(scored), total_s / 60, model))
     second = [r for r in results if r.get("answer_from") == "model, second attempt"]
     listed = [r for r in results if r.get("answer_from") == "findings"]
+    # 1.6: vor 1.4.10 asks again when an answer is cut off at its length limit; counted on its own, as it is
+    # not "wrote no answer at first"
+    cutoff = [r for r in results if r.get("answer_from") == "model, after cut-off"]
     by_model = sum(1 for r in scored if r["status"] == "pass" and r.get("answer_from", "model") != "findings")
     wrote = ""
     if second or listed:
@@ -151,6 +154,11 @@ def main():
                  "%d were answered by listing the checked findings as they stand. Passes with an answer "
                  "the model wrote: %d / %d." % (len(second) + len(listed), len(second), len(listed),
                                                by_model, len(scored)))
+    if cutoff:
+        wrote = (wrote + " " if wrote else "") + (
+            "The model's answer was cut off at its length limit on %d question(s); a second attempt finished it."
+            % len(cutoff))
+    if wrote:
         say(wrote)
 
     os.makedirs(dr.REPORTS, exist_ok=True)
@@ -158,6 +166,7 @@ def main():
     with open(stem + ".json", "w", encoding="utf-8") as f:
         json.dump(dict(model=model, when=datetime.now().isoformat(timespec="seconds"), passed=passed,
                        passed_model_written=by_model, second_attempt=len(second), findings_listed=len(listed),
+                       cut_off=len(cutoff),
                        scored=len(scored), minutes=round(total_s / 60, 1), results=results), f, indent=1)
     L = ["# vor answer test: %s" % model, "",
          "%s. **%d / %d passed**, %d skipped, %.1f min." % (datetime.now().strftime("%Y-%m-%d %H:%M"), passed,

@@ -136,6 +136,146 @@ class CaptionTest(Base):
         self.assertEqual(self.vor.layout_table_chunks(ws, w), [])
 
 
+class Synthetic:
+    """A page of words set in 10 pt type, 5 pt to a character, for layouts the WSP pages do not have."""
+
+    def __init__(self, width=612.0):
+        self.width, self.words, self.block = width, [], 0
+
+    def put(self, x, y, text, skew=0.0):
+        self.block += 1
+        for k, t in enumerate(text.split()):
+            dy = x * skew
+            self.words.append((x, y + dy, x + 5.0 * len(t), y + dy + 10.0, t, self.block, 0, k))
+            x += 5.0 * len(t) + 2.5
+        return self
+
+    def row(self, y, cells, skew=0.0):
+        for x, t in cells:
+            self.put(x, y, t, skew)
+        return self
+
+    def prose(self, x, y, n, width=220):
+        words = ("the flow over the plain was measured at each of the sections and the values were then "
+                 "compared with those found in other studies of similar streams across the region").split()
+        k = 0
+        for i in range(n):
+            line, w = [], 0
+            while w < width:
+                line.append(words[k % len(words)])
+                w += 5.0 * len(line[-1]) + 2.5
+                k += 1
+            self.put(x, y + 12 * i, " ".join(line))
+        return self
+
+    def tables(self):
+        return [c.split("\n") for c in self.vor.layout_table_chunks(self.words, self.width)]
+
+
+ROWS = [("Sand", "0.2", "0.012"), ("Gravel", "2-64", "0.028"), ("Cobble", "64-256", "0.030"),
+        ("Boulder", ">256", "0.040")]
+
+
+class LayoutCasesTest(Base):
+    """The cases the independent review of 1.4.10 built, each of which lost rows or columns before the fix."""
+
+    def page(self, width=612.0):
+        p = Synthetic(width)
+        p.vor = self.vor
+        return p
+
+    def test_a_long_lower_case_first_cell_with_values_beside_it_is_a_row(self):
+        p = self.page().put(72, 72, "Table 5. Roughness coefficients for natural channels")
+        p.row(88, [(72, "Type of channel"), (380, "Minimum"), (450, "Normal"), (520, "Maximum")])
+        data = [("Clean, straight", "0.025"), ("Same, more stones", "0.030"),
+                ("Sluggish reaches, weedy, deep pools and backwater", "0.050"), ("Very weedy reaches", "0.075")]
+        for i, (a, v) in enumerate(data):
+            p.row(100 + 12 * i, [(72, a), (380, v), (450, v), (520, v)])
+        rows = [r for t in p.tables() for r in t]
+        self.assertIn("Sluggish reaches, weedy, deep pools and backwater | 0.050 | 0.050 | 0.050", rows)
+        self.assertIn("Very weedy reaches | 0.075 | 0.075 | 0.075", rows)
+
+    def test_a_full_width_table_under_a_short_caption_on_a_two_column_page_keeps_every_column(self):
+        p = self.page().prose(54, 40, 6).prose(320, 40, 6)
+        p.put(54, 120, "Table 2. Measured discharges")
+        p.row(136, [(54, "Station"), (160, "Date"), (250, "Depth"), (360, "Velocity"), (480, "Discharge")])
+        for i in range(4):
+            p.row(148 + 12 * i, [(54, "Site %d" % (i + 1)), (160, "198%d" % i), (250, "2.%d" % i),
+                                 (360, "3.%d" % i), (480, "1,2%d0" % i)])
+        p.prose(54, 220, 6).prose(320, 220, 6)
+        t = p.tables()
+        self.assertEqual(len(t), 1)
+        self.assertIn("Station | Date | Depth | Velocity | Discharge", t[0])
+        self.assertIn("Site 1 | 1980 | 2.0 | 3.0 | 1,200", t[0])
+
+    def test_a_left_column_table_beside_running_text_keeps_only_its_column(self):
+        p = self.page().prose(54, 40, 4).prose(320, 40, 4)
+        p.put(54, 100, "Table 2. Measured depths")
+        p.prose(320, 100, 8)
+        p.row(116, [(54, "Station"), (160, "Date"), (250, "Depth")])
+        for i in range(4):
+            p.row(128 + 12 * i, [(54, "Site %d" % (i + 1)), (160, "198%d" % i), (250, "2.%d" % i)])
+        t = p.tables()
+        self.assertEqual(len(t), 1)
+        self.assertIn("Site 1 | 1980 | 2.0", t[0])
+        self.assertNotIn("the flow", "\n".join(t[0]))
+
+    def test_a_caption_that_wraps_keeps_its_table(self):
+        p = self.page().put(72, 72, "Table 1. Base values of the roughness coefficient for channels and flood")
+        p.put(72, 84, "plains of various kinds of bed material in the streams that were studied")
+        p.row(100, [(72, "Material"), (250, "Size (mm)"), (400, "n value")])
+        for i, (a, b, c) in enumerate(ROWS):
+            p.row(112 + 12 * i, [(72, a), (250, b), (400, c)])
+        t = p.tables()
+        self.assertEqual(len(t), 1)
+        self.assertIn("in the streams that were studied", t[0][0])
+        self.assertIn("Cobble | 64-256 | 0.030", t[0])
+
+    def test_two_tables_side_by_side_each_keep_their_own(self):
+        p = self.page().put(54, 72, "Table 1. Values of n").put(320, 72, "Table 2. Gage data")
+        p.row(88, [(54, "Site"), (140, "Year"), (220, "n"), (320, "Gage"), (400, "Q"), (480, "Stage")])
+        for i in range(3):
+            p.row(100 + 12 * i, [(54, "Creek %s" % "ABC"[i]), (140, "198%d" % i), (220, "0.03%d" % i),
+                                 (320, "0%d" % (i + 1)), (400, "1%d0" % i), (480, "3.%d" % i)])
+        t = p.tables()
+        self.assertEqual([x[0] for x in t], ["Table (rows as printed): Table 1. Values of n",
+                                             "Table (rows as printed): Table 2. Gage data"])
+        self.assertIn("Creek A | 1980 | 0.030", t[0])
+        self.assertIn("01 | 100 | 3.0", t[1])
+
+    def test_a_table_on_a_page_a_degree_and_a_half_off_level(self):
+        p = self.page()
+        sk = 0.026                                   # 1.5 degrees
+        p.put(72, 72, "Table 1. Base values of Manning's n", skew=sk)
+        for i, (a, b, c) in enumerate(ROWS):
+            p.row(90 + 11 * i, [(72, a), (250, b), (420, c)], skew=sk)
+        rows = [r for t in p.tables() for r in t]
+        self.assertIn("Cobble | 64-256 | 0.030", rows)
+
+    def test_a_bare_all_capitals_caption(self):
+        p = self.page().put(72, 72, "TABLE 2")
+        p.row(88, [(72, "Material"), (250, "Size (mm)"), (400, "n value")])
+        for i, (a, b, c) in enumerate(ROWS):
+            p.row(100 + 12 * i, [(72, a), (250, b), (400, c)])
+        self.assertIn("Cobble | 64-256 | 0.030", [r for t in p.tables() for r in t])
+
+    def test_the_word_table_at_a_line_start_is_not_a_caption(self):
+        for text in ("table was lower than in the year before", "TABLE OF CONTENTS", "Table of contents"):
+            self.assertIsNone(self.vor._CAPTION.match(text), text)
+        for text in ("Table 1. Base", "TABLE 3: Values", "Table A-1. Gages", "Table IV. Sites", "TABLE 2"):
+            self.assertIsNotNone(self.vor._CAPTION.match(text), text)
+
+    def test_every_piece_of_a_long_table_repeats_its_column_headings(self):
+        p = self.page().put(72, 40, "Table 9. Gage heights")
+        p.row(56, [(72, "Gage"), (250, "Year"), (400, "Height (ft)")])
+        for i in range(70):
+            p.row(68 + 10 * i, [(72, "Gage on the river at mile %d" % i), (250, "19%02d" % i), (400, "%d.5" % i)])
+        t = p.tables()
+        self.assertGreater(len(t), 1)
+        for piece in t:
+            self.assertEqual(piece[1], "Gage | Year | Height (ft)")
+
+
 class _Page:
     def __init__(self, n):
         self.n = n
@@ -197,8 +337,8 @@ class WiringTest(Base):
         db = vor.connect()
         try:
             cur = db.cursor()
-            cur.execute("INSERT INTO docs(sha1,path,title,backend) VALUES('x',?,?,'pymupdf+tables')",
-                        (pdf, "Guide for Selecting Manning's Roughness Coefficients"))
+            cur.execute("INSERT INTO docs(sha1,path,title,backend) VALUES(?,?,?,'pymupdf+tables')",
+                        (vor.sha1_of(pdf), pdf, "Guide for Selecting Manning's Roughness Coefficients"))
             did = cur.lastrowid
             cur.execute("INSERT INTO docs(sha1,path,title,backend) VALUES('y',?,?,'pymupdf+tables')",
                         (os.path.join(self.home, "other.pdf"), "Other"))
@@ -225,12 +365,13 @@ class WiringTest(Base):
         db = vor.connect()
         try:
             cur = db.cursor()
-            cur.execute("INSERT INTO docs(sha1,path,title,backend) VALUES('cli',?,'WSP','pymupdf+tables')", (pdf,))
+            cur.execute("INSERT INTO docs(sha1,path,title,backend,number) VALUES('',?,'WSP','pymupdf+tables',"
+                        "'WSP 2339')", (pdf,))
             did = cur.lastrowid
             db.commit()
         finally:
             db.close()
-        vor.cmd_tables(argparse.Namespace(check=False, redo=False, again=False, doc="wsp-cli"))
+        vor.cmd_tables(argparse.Namespace(check=False, redo=False, again=False, doc="2339"))
         db = vor.connect()
         try:
             n = db.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=? AND idx>=?", (did, vor.TABLE_IDX)).fetchone()[0]
@@ -241,6 +382,66 @@ class WiringTest(Base):
             src = f.read()
         self.assertIn('s.add_argument("--again"', src)
         self.assertIn('s.add_argument("--doc", metavar="KEY", help="read the tables', src)
+
+
+class IndexSafetyTest(WiringTest):
+    def test_a_changed_file_keeps_its_table_passages(self):
+        vor = self.vor
+        pdf = os.path.join(self.home, "changed.pdf")
+        with open(pdf, "wb") as f:
+            f.write(b"a different edition")
+        db = vor.connect()
+        try:
+            cur = db.cursor()
+            cur.execute("INSERT INTO docs(sha1,path,title,backend) VALUES('old-sha',?,'Changed','pymupdf+tables')",
+                        (pdf,))
+            did = cur.lastrowid
+            cur.execute("INSERT INTO chunks(doc_id,page,label,idx,txt,vec) VALUES(?,3,'',?,'Table: kept',?)",
+                        (did, vor.TABLE_IDX, b""))
+            db.commit()
+            vor._add_tables(db, only=[did])
+            self.assertEqual(db.execute("SELECT txt FROM chunks WHERE doc_id=?", (did,)).fetchall(), [("Table: kept",)])
+        finally:
+            db.close()
+
+    def test_plain_vor_tables_rereads_tables_read_before_1_4_10_and_doctor_says_so(self):
+        vor = self.vor
+        pdf = os.path.join(self.home, "old-tables.pdf")
+        with open(pdf, "wb") as f:
+            f.write(b"old tables")
+        db = vor.connect()
+        try:
+            cur = db.cursor()
+            cur.execute("INSERT INTO docs(sha1,path,title,backend) VALUES(?,?,'Old','pymupdf+tables')",
+                        (vor.sha1_of(pdf), pdf))
+            did = cur.lastrowid
+            db.commit()
+            vor._add_tables(db)
+            self.assertEqual(db.execute("SELECT backend FROM docs WHERE id=?", (did,)).fetchone()[0],
+                             vor.TABLES_BACKEND)
+            self.assertGreater(db.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=? AND idx>=?",
+                                          (did, vor.TABLE_IDX)).fetchone()[0], 0)
+        finally:
+            db.close()
+        with open(SRC, encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("had their tables read before Vor 1.4.10", src)
+
+    def test_a_report_number_finds_its_document(self):
+        vor = self.vor
+        db = vor.connect()
+        try:
+            cur = db.cursor()
+            cur.execute("INSERT INTO docs(sha1,path,title,number) VALUES('n1','/lib/usgs-wsp-2339.pdf','Guide',"
+                        "'WSP 2339')")
+            did = cur.lastrowid
+            db.commit()
+            ids, labels = vor.find_docs(db, "2339")
+            self.assertIn(did, ids)
+            ids, _ = vor.find_docs(db, str(did))
+            self.assertEqual(ids, [did], "an id still names that document only")
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":
