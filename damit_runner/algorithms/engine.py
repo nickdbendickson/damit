@@ -130,10 +130,9 @@ def _setting(key, default=""):
 
 
 def _suite_setting(key, default=""):
-    """The suite setting DamSafety Setup writes, read through the one suite store: a project
-    override, the computer setting (QgsSettings 'ndsuite/<key>') or the environment variable.
-    Empty when unset or QGIS is unavailable. Setup writes lisflood_exe / anuga_python here, not
-    to the Runner provider's own ProcessingConfig key, so find_lisflood must consult it."""
+    """The DamIT suite value (compat.suite_config.get): the DamIT setting for this key, else
+    the environment (DAMIT_RUN_LISFLOOD_EXE, then NDBREACH_LISFLOOD, and the ANUGA pair).
+    Empty when unset. Not the Runner's own ProcessingConfig key, so find_lisflood consults it."""
     try:
         from ..compat.suite_config import get as _suite_get
         v = _suite_get(key)
