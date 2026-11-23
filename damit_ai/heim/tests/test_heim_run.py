@@ -172,12 +172,54 @@ class HeimRunTest(Case):
 
     def test_a_number_nothing_accounts_for_stops_it(self):
         for req, f in (("run 2801 at 5 m and 4031 at 10 m", fields(ids=["2801", "4031"], cell_m=5)),
-                       ("run 2801 with the 2 m DEM", fields(ids=["2801"])),
                        ("run 2801 for 48", fields(ids=["2801"]))):
             self.calls = []
             code, said = self.go(req, f)
             self.assertEqual(self.calls, [], req)
             self.assertIn("did not use", said, req)
+        code, said = self.go("run 2801 with the 2 m DEM", fields(ids=["2801"]))
+        self.assertEqual(self.calls, [])
+        self.assertIn("cannot set 'DEM'", said)
+
+    def test_only_known_words_third_review(self):
+        # third review 2026-11-23: every word must be an id, a setting, a run word or a small word
+        con = sqlite3.connect(self.dams)
+        con.executemany("INSERT INTO dams (dam_id) VALUES (?)",
+                        [(x,) for x in ("5", "3", "2", "2026", "a1", "A1", "ACC-7")])
+        con.commit()
+        con.close()
+        for req, f, why in (
+                ("run 2801, the 30 m high dam", fields(ids=["2801"], cell_m=30), "not in your words as a cell size"),
+                ("run 2801 with a 5 m breach", fields(ids=["2801"], cell_m=5), "not in your words as a cell size"),
+                ("run 2801 at 5 m with a 5 m breach", fields(ids=["2801"], cell_m=5), "did not use"),
+                ("Can you run 2801 at 5 m? Thanks again", fields(ids=["2801"], cell_m=5, redo=True), "does not know"),
+                ("since we're running 2801 anyway, do it at 5 m", fields(ids=["2801"], cell_m=5, redo=True),
+                 "does not know"),
+                ("redo 4031 and run 2801", fields(ids=["4031", "2801"], redo=True), "more than one run"),
+                ("run 2801 at 5 m and 4031", fields(ids=["2801", "4031"], cell_m=5), "a dam comes after a setting"),
+                ("run 2801 with FV2, and 4031", fields(ids=["2801", "4031"], solver="fv2"), "a dam comes after"),
+                ("run 2801 at 5 m, don\u00b4t overwrite it", fields(ids=["2801"], cell_m=5, redo=True), "does not know"),
+                ("run a1 at 5 m", fields(ids=["A1"], cell_m=5), None),
+                ("run 2801 on a 5 grid", fields(ids=["2801", "5"]), "not in your words as a dam id"),
+                ("run dam 2801 at 5 m using 3 processes", fields(ids=["2801", "3"], cell_m=5), "Not run"),
+                ("run 2801 at 5 m, 2 at a time", fields(ids=["2801", "2"], cell_m=5), "Not run"),
+                ("run 2801 at 5 m, write it to 2026 folder", fields(ids=["2801", "2026"], cell_m=5), "Not run"),
+                ("run 2801 at 5 m (FV2 crashed last time)", fields(ids=["2801"], cell_m=5, solver="fv2"),
+                 "does not know"),
+                ("run ACC-7 at 5 m", fields(ids=["ACC-7"], cell_m=5, solver="acc"), "ACC is not in your words")):
+            self.calls = []
+            code, said = self.go(req, f)
+            if why is None:                          # runs, as the words spell it
+                self.assertEqual(self.calls[-1][self.calls[-1].index("--ids") + 1], "a1", said)
+                continue
+            self.assertEqual(self.calls, [], req)
+            self.assertIn(why, said, req)
+
+    def test_a_placeholder_is_not_a_request(self):
+        for u in (["none"], "none", ["N/A"], [""]):
+            self.calls = []
+            code, said = self.go("run 2801 at 5 m", fields(ids=["2801"], cell_m=5, unsupported=u))
+            self.assertEqual(code, 0, said)
 
     def test_what_it_cannot_set_is_refused_even_if_the_model_drops_it(self):
         for req in ("run 2801 with ANUGA", "run 2801 at max pool", "run all dams", "run 2801 with the PMF"):

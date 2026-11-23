@@ -94,9 +94,17 @@ heim run --show "run 2801 at 10 m"
 
 - Heim only fills fixed fields: dam ids, cell size (metres), solver, Manning's n, redo.
   The code builds the `damchain run` command itself, never the model.
+- The sentence must read as one run word, the dams, then settings for all of them:
+  "rerun 2801 and 4031 at 5 m with FV2, n 0.04". Every word must be a dam id, a setting, a run
+  word (run, rerun, redo, again, overwrite, from scratch, one more time) or a small word (the,
+  a, and, with, using, at, on, for, dam, cell, solver, Manning, please ...).
 - Refused, not guessed:
+  - any other word ("the 30 m high dam", "thanks", "2 at a time", "FV2 crashed last time");
+  - two runs ("redo 4031 and run 2801") or a dam after a setting ("run 2801 at 5 m and 4031"):
+    every dam gets the same settings, so run them one at a time;
   - an id that is not a word of its own in your sentence, or not in the dams layer (any case:
-    `nd00123` runs as the layer's `ND00123`);
+    `nd00123` runs as the layer's `ND00123`; when the layer has both `a1` and `A1`, the
+    spelling you wrote is the one run);
   - a cell size not written as one ("at 5 m", "5 m cells", "cell 5"), out of 0.5-200 m, or in
     feet, cm or another unit; a Manning's n not written next to "n" or "Manning", or out of 0.01-0.25;
   - a number nothing accounts for ("with the 2 m DEM", a second cell size for another dam);

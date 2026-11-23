@@ -7,8 +7,12 @@
 #
 # The local model only FILLS IN FIXED FIELDS (dam ids, cell size, solver, Manning's n, redo). It never
 # writes the command. This code builds the command and refuses, rather than guesses, when:
+#   - your words hold anything besides a run word, dam ids, the settings above and a few small words
+#     ("the", "and", "with", "at", "dam" ...): "the 30 m high dam", "thanks", "2 at a time" stop it;
 #   - a dam id is not in your words as a word of its own, or not in the dams layer;
-#   - a cell size is not in your words next to m / "at" / "cell", is out of range, or is in feet, cm...;
+#   - two runs, or a dam after a setting ("run 2801 at 5 m and 4031"): one set of settings for all;
+#   - a cell size is not in your words after "at" / "cell" or before "cells", is out of range, or is
+#     in feet, cm...;
 #   - Manning's n is not in your words next to "n" / "Manning", or is out of range;
 #   - your words hold a number that no field accounts for ("the 2 m DEM", a second cell size);
 #   - the solver word is not in your words, or your words name two;
@@ -131,17 +135,39 @@ _CANNOT = re.compile(r"\b(anuga|lisflood|hec-?ras|gpus?|cpus?|cores?|processors?
                      r"(?:failure|formation)\s+time)\b", re.I)
 
 
+_CELL_AFTER = re.compile(r"\s*(?:cells?|grid|resolution|res)\b", re.I)
+# The only words a request may hold besides dam ids, numbers (with their units) and solver names.
+# Anything else ("high", "thanks", "crashed", "folder", "processes") is refused, not guessed at.
+_FILLER = {
+    "please", "can", "could", "would", "you", "heim", "now", "the", "a", "an", "dam", "dams", "id", "ids",
+    "no", "number", "and", "with", "using", "use", "at", "on", "for", "of", "to", "in", "by", "is", "it",
+    "them", "both", "these", "this", "me", "cell", "cells", "size", "grid", "resolution", "res", "solver",
+    "manning", "manning's", "mannings", "n", "roughness", "m", "metre", "metres", "meter", "meters",
+    "set", "damit", "dwr", "damsafety", "model", "models", "breach", "runs", "go", "ahead"}
+_VERB = re.compile(r"\b(?:run|re-?run|re\s+run|re-?do|redo|rerunning|redoing|running)\b", re.I)
+_REDO_PHRASES = re.compile(r"\b(?:again|one\s+more\s+time|overwrite|replace|from\s+scratch|re-?do(?:ing)?|"
+                           r"re[-\s]?run(?:ning)?)\b", re.I)
+_PLACEHOLDERS = {"none", "nothing", "n/a", "na", "null", "-", "no", "empty", ""}
+
+
+def _unit_len(after):
+    u = _METRE.match(after) or _OTHER_UNIT.match(after)
+    return u.end() if u else 0
+
+
 def read_numbers(text):
     """Each number written on its own in the text, with what it is next to:
-    {"value", "text", "role": "cell" | "n" | "plain", "unit": "m" | other unit | ""}."""
+    {"value", "text", "role": "cell" | "n" | "plain" | "other" | "comma", "unit", "span"}.
+    A cell size is a number after 'at' / 'cell' / 'grid' / 'resolution', or one followed by
+    'cell(s)' / 'grid' ('5 m cells'). Any other number with a unit ('a 30 m high dam') is 'other'."""
     out = []
     for m in _NUM.finditer(text):
         after = text[m.end():]
-        span = (m.start(), m.end())
+        span = (m.start(), m.end() + _unit_len(after))
         if after[:1].isalpha() and not (_METRE.match(after) or _OTHER_UNIT.match(after)):
             # glued to letters ('2801a', '6x'): counted, so a field must account for it (an id can)
             out.append({"value": float(m.group(1)), "text": m.group(1), "role": "other", "unit": "",
-                        "span": span})
+                        "span": (m.start(), m.end())})
             continue
         before = text[max(0, m.start() - 30):m.start()]
         unit = ""
@@ -151,10 +177,14 @@ def read_numbers(text):
             u = _OTHER_UNIT.match(after)
             if u and (u.group(1) or _CELL_BEFORE.search(before)):   # a quote is feet only for a cell size
                 unit = (u.group(1) or u.group(2)).lower()
+            elif u:
+                span = (m.start(), m.end())
         if _N_BEFORE.search(before):
             role = "n"
-        elif unit or _CELL_BEFORE.search(before):
+        elif _CELL_BEFORE.search(before) or _CELL_AFTER.match(after[_unit_len(after):]):
             role = "cell"
+        elif unit:
+            role = "other"                 # a length or a time, but not said to be the cell size
         else:
             role = "plain"
         if role in ("cell", "n") and (re.match(r",\d", after) or re.search(r"\d,$", before)):
@@ -167,13 +197,23 @@ def _same(a, b):
     return abs(float(a) - float(b)) < 1e-9
 
 
+def _id_re(i):
+    return r"(?<![\w.\-])%s(?![\w\-]|\.\d)" % re.escape(i)
+
+
+def _solver_re(x):
+    return r"(?<![\w\-])%s(?![\w\-])" % re.sub(r"(?<=[a-z])(?=\d)", "-?", x)    # FV-2 is FV2; ACC-7 is an id
+
+
 def check_fields(request, data):
     """Code's check of the model's fields against the request. Returns (fields, refusals, notes).
-    Every value must stand in the words in its own place: a dam id as a word of its own (a number
-    followed by m or ft is a cell size, one after n is Manning's n), a cell size next to m / 'at' /
-    'cell', n next to 'n' / 'Manning'. A number in the words that no field accounts for, or a thing
-    heim run cannot set, stops the run: it is refused, not guessed."""
+    The request must read as: a run word, the dam ids, then the settings for all of them ("rerun
+    2801 and 4031 at 5 m with FV2, n 0.04"). Every word must be a dam id the model gave, a number
+    a field uses (a cell size after 'at' / 'cell' or before 'cells'; n after 'n' / 'Manning'), a
+    solver name, a run / redo word, or one of a short list of small words. Anything else stops the
+    run: it is refused, not guessed."""
     bad, notes = [], []
+    blank = {"ids": [], "cell_m": None, "solver": "", "manning": None, "redo": False}
     words = unicodedata.normalize("NFKC", request)          # full-width ５ｍ is 5m
     for what, rx, why in (
             ("not", _NEGATION, "heim run does not read %r: say only what to run (finished dams are skipped "
@@ -184,25 +224,50 @@ def check_fields(request, data):
         hit = rx.search(re.sub(r"\bone\s+more\s+time\b", "", words, flags=re.I) if what == "words" else words)
         if hit:
             bad.append(why % hit.group(0).strip())
+    raw = data.get("unsupported") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    asked = [str(u).strip() for u in raw if str(u).strip().lower().strip(".") not in _PLACEHOLDERS]
+    for m in _CANNOT.finditer(words):
+        if not any(m.group(0).lower() in a.lower() for a in asked):
+            asked.append(m.group(0))
+    for u in asked:
+        bad.append("heim run cannot set %r; type the damchain command yourself (damchain run --help)" % u)
     if bad:
-        return {"ids": [], "cell_m": None, "solver": "", "manning": None, "redo": False}, bad, notes
+        return blank, bad, notes
     nums = read_numbers(words)
     used = set()
-    ids = []
-    for raw in data.get("ids") or []:
-        i = unicodedata.normalize("NFKC", str(raw)).strip()
+    taken = []                                    # spans of the words the fields account for
+    ids, id_pos = [], []
+    raw_ids = data.get("ids") or []
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    for r in raw_ids:
+        i = unicodedata.normalize("NFKC", str(r)).strip()
         if not i:
             continue
         hit = None
         if re.fullmatch(r"\d+(?:\.\d+)?", i):
-            hit = next((k for k, n in enumerate(nums) if n["role"] == "plain" and n["text"] == i), None)
-            if hit is not None:
-                used.add(hit)
+            for k, n in enumerate(nums):
+                if n["role"] == "plain" and n["text"] == i:
+                    hit = k
+                    used.add(k)
+                    taken.append(n["span"])
+                    id_pos.append(n["span"][0])
         else:
-            for m in re.finditer(r"(?<![\w.\-])%s(?![\w\-]|\.\d)" % re.escape(i), words, re.I):
-                hit = -1                   # the digits inside a written id are the id's, not a number
-                used.update(k for k, n in enumerate(nums)
-                            if m.start() <= n["span"][0] and n["span"][1] <= m.end())
+            spelled = set()
+            for m in re.finditer(_id_re(i), words, re.I):
+                hit = -1
+                spelled.add(m.group(0))
+                taken.append(m.span())
+                id_pos.append(m.start())
+                used.update(k for k, n in enumerate(nums) if m.start() <= n["span"][0] and n["span"][1] <= m.end())
+            if len(spelled) == 1:
+                i = spelled.pop()                  # the words' spelling, not the model's ('a1' is not 'A1')
+            elif len(spelled) > 1:
+                bad.append("your words write %s in more than one way (%s); write it once, as in the layer"
+                           % (i, ", ".join(sorted(spelled))))
+                continue
         if hit is None:
             bad.append("dam id %r is not in your words as a dam id" % i)
             continue
@@ -211,7 +276,7 @@ def check_fields(request, data):
     if not ids and not bad:
         bad.append("no dam id: name the dams (e.g. \"run 2801 and 4031\"); a question about runs ends "
                    "with ? (heim run times for ANUGA?)")
-    f = {"ids": ids, "cell_m": None, "solver": "", "manning": None, "redo": False}
+    f = dict(blank, ids=ids)
 
     def number(key, what):
         v = data.get(key)
@@ -222,6 +287,7 @@ def check_fields(request, data):
         except (TypeError, ValueError):
             bad.append("%s is not a number" % what)
             return None
+    set_pos = []
     cell = number("cell_m", "the cell size")
     if cell is not None:
         at = [k for k, n in enumerate(nums) if n["role"] == "cell" and _same(n["value"], cell)]
@@ -246,34 +312,70 @@ def check_fields(request, data):
         else:
             f["manning"] = n
             used.update(at)
+    for k in used:
+        if nums[k]["role"] in ("cell", "n"):
+            taken.append(nums[k]["span"])
+            set_pos.append(nums[k]["span"][0])
     left = [nums[k]["text"] + (" " + nums[k]["unit"] if nums[k]["unit"] else "")
             for k in range(len(nums)) if k not in used]
     if left and not bad:
         bad.append("your words have %s, which heim run did not use; it will not guess what %s for "
                    "(type the damchain command yourself)" % (", ".join(left), "it is" if len(left) == 1 else "they are"))
+    # solvers: looked for outside the dam ids, so a dam called ACC-7 does not name ACC
+    rest = list(words)
+    for a, b in taken:
+        rest[a:b] = " " * (b - a)
+    rest = "".join(rest)
+    named = []
+    for x in SOLVERS:
+        for m in re.finditer(_solver_re(x), rest, re.I):
+            named.append(x)
+            set_pos.append(m.start())
+            rest = rest[:m.start()] + " " * (m.end() - m.start()) + rest[m.end():]
+    named = sorted(set(named))
     solver = str(data.get("solver") or "").strip().lower()
-    if solver:
-        pat = re.sub(r"(?<=[a-z])(?=\d)", "-?", solver)        # FV-2 is FV2
-        named = [x for x in SOLVERS if re.search(r"\b%s\b" % re.sub(r"(?<=[a-z])(?=\d)", "-?", x), words, re.I)]
+    if len(named) > 1:
+        bad.append("your words name more than one solver (%s); name one" % ", ".join(x.upper() for x in named))
+    elif solver:
         if solver not in SOLVERS:
             bad.append("solver %r is not one of %s" % (solver, ", ".join(SOLVERS)))
-        elif not re.search(r"\b%s\b" % pat, words, re.I):
+        elif solver not in named:
             bad.append("solver %s is not in your words (write it as ACC, FV2 or MWDG2)" % solver.upper())
-        elif len(named) > 1:
-            bad.append("your words name more than one solver (%s); name one" % ", ".join(x.upper() for x in named))
         else:
             f["solver"] = solver
+    elif named and not bad:
+        bad.append("your words name %s but the reading has no solver; write it again plainly" % named[0].upper())
+    # one run word, the dams, then the settings for all of them
+    verbs = _VERB.findall(rest)
+    if len(verbs) > 1:
+        bad.append("your words have more than one run (%s); heim run makes one run with one set of "
+                   "settings for every dam: run them one at a time" % ", ".join(verbs))
+    if len(ids) > 1 and set_pos and id_pos and max(id_pos) > min(set_pos):
+        bad.append("a dam comes after a setting; heim run gives every dam the same settings, so write the "
+                   "dams first (\"run 2801 and 4031 at 5 m\"), or run them one at a time")
+    redo_hits = [m for m in _REDO_PHRASES.finditer(rest)]
+    for m in redo_hits:
+        rest = rest[:m.start()] + " " * (m.end() - m.start()) + rest[m.end():]
+    rest = _VERB.sub(" ", rest)
+    unknown = []
+    for tok in re.findall(r"[^\W\d_]+(?:['’][^\W\d_]+)*|[^\w\s]", rest):
+        t = tok.lower().replace("’", "'")
+        if t in _FILLER or t in ",.;:!=&+":
+            continue
+        if t not in unknown:
+            unknown.append(t)
+    if unknown and not bad:
+        bad.append("heim run does not know %s; it reads only dam ids, a cell size in m, a solver (ACC, FV2, "
+                   "MWDG2), Manning's n and rerun. Type the damchain command for anything else"
+                   % ", ".join(repr(u) for u in unknown[:5]))
     if data.get("redo") is True:
-        if REDO_WORDS.search(words):
+        if redo_hits:
             f["redo"] = True
         else:
             notes.append("left out redo: your words did not ask to run finished dams again")
-    asked = [str(u).strip() for u in data.get("unsupported") or [] if str(u).strip()]
-    for m in _CANNOT.finditer(words):
-        if not any(m.group(0).lower() in a.lower() for a in asked):
-            asked.append(m.group(0))
-    for u in asked:
-        bad.append("heim run cannot set %r; type the damchain command yourself (damchain run --help)" % u)
+    elif redo_hits and not bad:
+        bad.append("your words ask to run again (%r) but the reading has no redo; write it again plainly"
+                   % redo_hits[0].group(0))
     return f, bad, notes
 
 
@@ -345,8 +447,14 @@ def check_paths(set_name, p, ids, layer_ids):
     if not bad:
         col, have = layer_ids(p["dams"], p.get("id_field", ""))
         if have is None:
-            bad.append("cannot read the dam ids in %s here (a .gpkg or .csv can be read; or give "
-                       "--id-field); type the damchain command yourself for this layer" % p["dams"])
+            src, _, rest = p["dams"].partition("|")
+            if src.lower().endswith(".gpkg") and not rest.lower().startswith("layername="):
+                hint = "name its layer: --dams '%s|layername=LAYER'" % src
+            elif src.lower().endswith((".gpkg", ".csv")):
+                hint = "give its dam id field with --id-field"
+            else:
+                hint = "heim run reads a .gpkg or .csv; type the damchain command yourself for this layer"
+            bad.append("cannot read the dam ids in %s here: %s" % (p["dams"], hint))
         else:
             # the layer's own spelling is what the Runner matches; 'nd00123' in the words is ND00123
             low = {}

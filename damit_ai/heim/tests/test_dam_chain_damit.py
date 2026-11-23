@@ -201,7 +201,9 @@ class DamitRunTest(unittest.TestCase):
             a = Args(lisflood=exe, lisflood_given=False, env="ndqgis", qgis_process="", dry_run=False)
             DC.QP._pick_anuga, pick = (lambda self: None), DC.QP._pick_anuga
             try:
-                self.assertNotIn("NDBREACH_LISFLOOD", self._qp(a, "damit").env)
+                env = self._qp(a, "damit").env
+                self.assertNotIn("NDBREACH_LISFLOOD", env)
+                self.assertEqual(env["DAMIT_LISFLOOD"], exe)          # the Runner's last-resort hint
                 a.lisflood_given = True
                 self.assertEqual(self._qp(a, "damit").env["NDBREACH_LISFLOOD"], exe)
                 a.lisflood_given = False
@@ -237,6 +239,13 @@ class DamitRunTest(unittest.TestCase):
         code, out, _ = self.go(FakeQP([(True, {"COUNTS": "1 run, 0 failed, 0 skipped, 0 with no breach"}, "")]))
         self.assertEqual(code, 1)
         self.assertIn("found only 1 of the 2 --ids", out)
+        summ = os.path.join(self.tmp, "Batch_Breach_Runs.csv")       # 2801 on two rows, 4031 on none
+        with open(summ, "w") as fh:
+            fh.write("Dam,Status\n2801,done\n2801,skipped\n")
+        code, out, _ = self.go(FakeQP([(True, {"COUNTS": "1 run, 0 failed, 1 skipped, 0 with no breach",
+                                               "SUMMARY": summ}, "")]))
+        self.assertEqual(code, 1)
+        self.assertIn("found only 1 of the 2 --ids", out)
 
     def test_param_is_checked_too(self):
         code, out, fake = self.go(param=["SOLVR=2"])
@@ -257,6 +266,9 @@ class DamitRunTest(unittest.TestCase):
         self.assertEqual(DC.enum_value("SOLVER", "mwdg2", solver), ("3", None))
         self.assertEqual(DC.enum_value("SOLVER", "fv2", solver), ("2", None))
         self.assertEqual(DC.enum_value("SOLVER", "local inertial", solver), ("1", None))
+        tiers = {"0": "LISFLOOD-FP only", "1": "LISFLOOD-FP, then ANUGA where it is needed",
+                 "2": "LISFLOOD-FP then HEC-RAS 2D (every dam)"}
+        self.assertEqual(DC.enum_value("TIER", "HEC-RAS 2D", tiers), ("2", None))
 
     def test_a_layer_it_cannot_place_is_left_to_the_runner(self):
         multi = os.path.join(self.tmp, "multi.gpkg")

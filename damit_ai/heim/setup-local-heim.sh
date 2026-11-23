@@ -2841,7 +2841,12 @@ class QP:
             self._pick_anuga()
         lis = os.path.expanduser(args.lisflood or "")
         if set_name == "damit" and not getattr(args, "lisflood_given", True):
-            lis = ""        # the DamIT Runner's own engine setting decides (it finds ~/dam-suite/bin itself)
+            # The DamIT Runner's own engine setting decides. The suite's binary (also the older
+            # ~/nd-dam-suite/bin one) only goes in DAMIT_LISFLOOD, the Runner's lowest-priority
+            # hint (data_conventions.lisflood_candidates), so a setting chosen in QGIS still wins.
+            if lis and os.path.isfile(lis):
+                self.env.setdefault("DAMIT_LISFLOOD", lis)
+            lis = ""
         if lis and os.path.isfile(lis):
             # Also read by tools that get no EXE parameter (DamSafety Screening's self-test before 0.18.5).
             self.env["NDBREACH_LISFLOOD"] = lis
@@ -3490,7 +3495,7 @@ def enum_value(name, value, options):
     # ('fv2' -> 'FV2 (finite volume)'); text that fits more than one option is refused, never guessed
     # A value with a digit (fv2, dg2) is a code: only the start of an option counts, so 'dg2' is not
     # read as the 'MWDG2 (... DG2 ...)' option the Runner offers instead of DG2.
-    anywhere = [] if re.search(r"\d", low) else [k for k, t in opts.items()
+    anywhere = [] if re.search(r"\d", low) and not re.search(r"\s", low) else [k for k, t in opts.items()
                                                   if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(low),
                                                                t.lower())]
     for hits in ([k for k, t in opts.items() if re.match(r"%s(?![a-z0-9])" % re.escape(low), t.lower())],
@@ -3707,6 +3712,12 @@ def run_damit(args):
         ok, err = False, err or "the Runner reported no counts; see the log"
     done = sum(int(x) for x in re.findall(r"(\d+)\s+(?:run|failed|skipped|with no breach|flagged)\b", counts))
     want = len(set(ids))
+    try:                              # distinct ids in the Runner's summary, when it wrote one
+        with open(res.get("SUMMARY") or "", newline="", encoding="utf-8-sig") as fh:
+            seen = {(r.get("Dam") or "").strip() for r in csv.DictReader(fh)}
+        done = len(set(ids) & seen) if seen else done
+    except (OSError, ValueError):
+        pass
     if ok and ids and done < want:
         # ONLY_IDS that match no dam are skipped by the Runner without a word ("0 run, 0 failed ...")
         where = p.get("F_ID") or "(its own choice)"
