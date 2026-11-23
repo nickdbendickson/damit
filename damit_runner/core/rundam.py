@@ -87,7 +87,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

@@ -440,13 +440,14 @@
    "note": "ported from DWR 6816c7f"
   },
   "damit_runner/core/report_docx.py": {
-   "diff": "44b1f0dc6f065032202e057c13e48c2e6f51a1476c2c663a3ef7646f7e4f87e1",
+   "diff": "f4dbf09c520b6fcfeac80be36c17a298db0b6c78cd0a3427173e3155e1c2ad41",
    "from": "DamSafety_Runner/core/report_docx.py",
-   "note": "ported from DWR 6816c7f"
+   "note": "B3: the Word report names the depth thresholds it used. Default acres unchanged. Earlier difference ported from DWR 6816c7f."
   },
   "damit_runner/core/report_metrics.py": {
-   "diff": "44e4b9e61c5defbafde3ef3411336429bb690b1a9d5f2c7e90a60edc5e5057a1",
-   "from": "DamSafety_Runner/core/report_metrics.py"
+   "diff": "4926fc3afee1185706a3aae26543ff445045eab8a272d219fc278489cac532c4",
+   "from": "DamSafety_Runner/core/report_metrics.py",
+   "note": "B3: acres and P95/P99 still use Catalog report_figures, which ship 0.1/1/2 ft and a 0.1 ft wet cell. The summary records that list. Not a class input."
   },
   "damit_runner/core/reservoir_carve.py": {
    "diff": "78dce0da20638c8068f3a3800421f18fe0c9e08e9e59955fe71b7f0d2a1cbdbe",

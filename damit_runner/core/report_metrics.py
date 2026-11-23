@@ -65,6 +65,38 @@ def area_key(t_ft):
     return "flooded_acres_ge_{}ft".format(("{:g}".format(t_ft)).replace(".", "_"))
 
 
+def active_report_figures(thresholds_ft=None):
+    """(depth thresholds in ft, wet-cell depth in ft, velocity percentiles).
+
+    From DamIT Catalog ``report_figures`` when that block loads. Otherwise the module
+    defaults, which are the same numbers. ``thresholds_ft`` replaces the depth list
+    (a test, or a caller that already chose). Reporting only: nothing here is a class input.
+    """
+    thresholds, wet, pct = DEPTH_THRESHOLDS_FT, WET_MIN_DEPTH_FT, (95, 99)
+    if thresholds_ft is None:
+        try:
+            from .catalog_bridge import load_catalog
+            rf = load_catalog().report_figures()
+        except Exception:  # noqa: BLE001 - a missing catalog keeps the defaults
+            rf = None
+        if rf and rf.get("depth_thresholds_ft"):
+            thresholds = tuple(float(x) for x in rf["depth_thresholds_ft"])
+            wet = float(rf["wet_min_depth_ft"])
+            pct = tuple(int(x) for x in rf["velocity_percentiles"])
+    else:
+        thresholds = tuple(float(x) for x in thresholds_ft)
+    return thresholds, wet, pct
+
+
+def stamp_report_figures(summary, thresholds, wet, pct):
+    """Record the thresholds that produced the acres and the percentiles. Not a class input."""
+    summary["depth_thresholds_ft"] = [float(t) for t in thresholds]
+    summary["velocity_wet_min_depth_ft"] = float(wet)
+    summary["velocity_percentiles"] = [int(x) for x in pct]
+    summary["report_figures_feed_class"] = False
+    return summary
+
+
 def _r(v, n=2):
     return None if v is None or not np.isfinite(v) else round(float(v), n)
 
@@ -138,20 +170,23 @@ def receptor_velocities(rec, grid, fin, arrival_m):
 
 
 def flood_metrics(fin, grid, cell_ac, arrival_m=None, receptors=None, mask=None,
-                  mask_source=None, crs=None):
+                  mask_source=None, crs=None, thresholds_ft=None):
     """The new summary fields from SI arrays `fin` ('depth', 'velocity') on `grid`.
-    `mask`: bool array (True = existing water body) or None. Returns a flat dict."""
+    `mask`: bool array (True = existing water body) or None. Returns a flat dict.
+    Depth thresholds and the wet-cell depth come from the Catalog (default 0.1 / 1 / 2 ft
+    and 0.1 ft). They are stamped on the summary and are not a class input."""
     d = np.asarray(fin["depth"], dtype=float)
     v = np.asarray(fin.get("velocity")) if fin.get("velocity") is not None \
         else np.full(d.shape, np.nan)
+    thresholds, wet, pct = active_report_figures(thresholds_ft)
     s = {}
-    a = depth_areas(d, cell_ac)
+    a = depth_areas(d, cell_ac, thresholds_ft=thresholds)
     a.pop("flooded_acres")
     s.update(a)
-    pct, n = velocity_percentiles(d, v)
-    s["velocity_p95_fps"] = pct[95]
-    s["velocity_p99_fps"] = pct[99]
-    s["velocity_wet_min_depth_ft"] = WET_MIN_DEPTH_FT
+    got, _n = velocity_percentiles(d, v, wet_ft=wet, q=pct)
+    s["velocity_p95_fps"] = got.get(95)
+    s["velocity_p99_fps"] = got.get(99)
+    stamp_report_figures(s, thresholds, wet, pct)
     vmax, dmax, xy = max_velocity_cell(grid, d, v)
     s["max_velocity_depth_ft"] = dmax
     s["max_velocity_xy"] = xy
@@ -165,7 +200,7 @@ def flood_metrics(fin, grid, cell_ac, arrival_m=None, receptors=None, mask=None,
         s["water_mask_source"] = mask_source or "mask"
         s["water_mask_acres"] = round(float(mask.sum()) * cell_ac, 1)
         s["water_mask_flooded_acres"] = round(float((mask & np.isfinite(d)).sum()) * cell_ac, 1)
-        am = depth_areas(d, cell_ac, keep)
+        am = depth_areas(d, cell_ac, keep, thresholds_ft=thresholds)
         s["flooded_acres_masked"] = am.pop("flooded_acres")
         if arrival_m is not None:
             with np.errstate(invalid="ignore"):
@@ -173,9 +208,9 @@ def flood_metrics(fin, grid, cell_ac, arrival_m=None, receptors=None, mask=None,
                     float((keep & np.isfinite(d) & (d >= arrival_m)).sum()) * cell_ac, 1)
         for k, val in am.items():
             s[k + "_masked"] = val
-        pm, _ = velocity_percentiles(d, v, keep)
-        s["velocity_p95_fps_masked"] = pm[95]
-        s["velocity_p99_fps_masked"] = pm[99]
+        pm, _ = velocity_percentiles(d, v, keep, wet_ft=wet, q=pct)
+        s["velocity_p95_fps_masked"] = pm.get(95)
+        s["velocity_p99_fps_masked"] = pm.get(99)
         vm, dm, xym = max_velocity_cell(grid, d, v, keep)
         s["max_velocity_fps_masked"] = vm
         s["max_velocity_depth_ft_masked"] = dm
@@ -443,6 +478,9 @@ def report_lines(s):
         return "-" if v is None else ("{:,}".format(v) + unit)
     lines = ["| Flooded area at or above 0.1 / 1 / 2 ft | {} / {} / {} ac |".format(
         f(s.get(area_key(0.1))), f(s.get(area_key(1.0))), f(s.get(area_key(2.0))))]
+    if s.get("depth_thresholds_ft"):
+        lines.append("| Depth thresholds (reporting only; not a class input) | {} ft |".format(
+            ", ".join("{:g}".format(float(t)) for t in s["depth_thresholds_ft"])))
     lines.append("| Velocity P95 / P99 (cells at least {:g} ft deep) | {} / {} ft/s |".format(
         s.get("velocity_wet_min_depth_ft", WET_MIN_DEPTH_FT), f(s.get("velocity_p95_fps")),
         f(s.get("velocity_p99_fps"))))
@@ -495,9 +533,12 @@ _METRIC_PREFIXES = ("flooded_acres_ge_", "velocity_p9", "velocity_wet_", "veloci
                     "max_velocity_depth", "max_velocity_xy", "water_mask_")
 
 
+_METRIC_EXACT = ("depth_thresholds_ft", "velocity_percentiles", "report_figures_feed_class")
+
+
 def is_metric_key(k):
     """A summary key this module writes (so a recomputed summary drops the old value)."""
-    return k.startswith(_METRIC_PREFIXES) or k.endswith("_masked")
+    return k in _METRIC_EXACT or k.startswith(_METRIC_PREFIXES) or k.endswith("_masked")
 
 
 def pass_stats(grid, depth_m, vel_ms, wet_floor_m=0.003):
@@ -509,13 +550,15 @@ def pass_stats(grid, depth_m, vel_ms, wet_floor_m=0.003):
         d = np.where(np.isfinite(d) & (d >= wet_floor_m), d, np.nan)
     v = np.asarray(vel_ms, dtype=float) if vel_ms is not None else np.full(d.shape, np.nan)
     cell_ac = grid.dx ** 2 / ACRE_M2
-    a = depth_areas(d, cell_ac)
+    thresholds, wet, pct = active_report_figures()
+    a = depth_areas(d, cell_ac, thresholds_ft=thresholds)
     out = {"flooded_acres_any": a.pop("flooded_acres")}
     out.update(a)
-    pct, _ = velocity_percentiles(d, v)
-    out["velocity_p95_fps"] = pct[95]
-    out["velocity_p99_fps"] = pct[99]
+    got, _ = velocity_percentiles(d, v, wet_ft=wet, q=pct)
+    out["velocity_p95_fps"] = got.get(95)
+    out["velocity_p99_fps"] = got.get(99)
     _vm, dm, xy = max_velocity_cell(grid, d, v)
     out["max_velocity_depth_ft"] = dm
     out["max_velocity_xy"] = xy
+    stamp_report_figures(out, thresholds, wet, pct)
     return out

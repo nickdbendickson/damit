@@ -134,6 +134,26 @@ class Catalog(object):
     def generic_label(self, ordinal):
         return self.labels["ordinals"].get(str(int(ordinal)), str(ordinal))
 
+    def report_figures(self):
+        """Depth thresholds for run reports, from hazard.json, or None if that block is absent.
+
+        Reporting only. ``feeds_class`` is always false: classification does not read this.
+        """
+        raw = (self.hazard or {}).get("report_figures") or {}
+        depths = raw.get("depth_thresholds_ft")
+        if not depths:
+            return None
+        try:
+            out = {"depth_thresholds_ft": [float(x) for x in depths],
+                   "wet_min_depth_ft": float(raw["wet_min_depth_ft"]),
+                   "velocity_percentiles": [int(x) for x in raw["velocity_percentiles"]],
+                   "feeds_class": False}
+        except (KeyError, TypeError, ValueError):
+            return None
+        if raw.get("note"):
+            out["note"] = raw["note"]
+        return out
+
     # ---- resolution -----------------------------------------------------
     def resolve_preset(self, preset_id, scenario_ids=None, extra_overrides=None):
         """The run configuration for a preset: scenarios, merged method params and strengths,
@@ -184,7 +204,8 @@ class Catalog(object):
                 "methods": methods, "modifiers": modifiers, "label_map": label_map,
                 "labels": list(pr.get("labels") or []),
                 "conditional_scenarios": copy.deepcopy(pr.get("conditional_scenarios") or []),
-                "notes": pr.get("notes", ""), "flags": flags, "catalog": self.identity()}
+                "notes": pr.get("notes", ""), "flags": flags, "catalog": self.identity(),
+                "report_figures": self.report_figures()}
 
     def resolve_custom(self, method_ids, scenario_ids=None, modifier_ids=None, cutoff_ids=None,
                        param_overrides=None):
@@ -208,7 +229,8 @@ class Catalog(object):
                 "domain_cutoffs": self._cutoffs(cutoff_ids or [], brand=False),
                 "methods": methods, "modifiers": self._modifiers(modifier_ids or [], {}, brand=False),
                 "label_map": label_map, "labels": [label_map[k] for k in sorted(label_map)],
-                "conditional_scenarios": [], "notes": "", "flags": flags, "catalog": self.identity()}
+                "conditional_scenarios": [], "notes": "", "flags": flags, "catalog": self.identity(),
+                "report_figures": self.report_figures()}
 
     def citations(self, config):
         """Source citations for every ID in a resolved config (for the run report, custom mode too)."""

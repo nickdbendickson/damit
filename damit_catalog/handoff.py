@@ -145,6 +145,15 @@ def build(config, dam, inputs=None, screening=None, gaps=None, created_by=None, 
         "disclaimer": "Suggested classification only; the engineer of record and the regulating agency "
                       "make the determination.",
     }
+    rf = config.get("report_figures")
+    if rf:
+        # The same figures the run report uses. Not an input to the class.
+        pkg["report_figures"] = {
+            "depth_thresholds_ft": list(rf.get("depth_thresholds_ft") or []),
+            "wet_min_depth_ft": rf.get("wet_min_depth_ft"),
+            "velocity_percentiles": list(rf.get("velocity_percentiles") or []),
+            "feeds_class": False,
+        }
     return pkg
 
 

@@ -2429,6 +2429,9 @@ class _Report(object):
         add("Flooded area at or above 0.1 ft", s.get("flooded_acres_ge_0_1ft"), "ac")
         add("Flooded area at or above 1 ft", s.get("flooded_acres_ge_1ft"), "ac")
         add("Flooded area at or above 2 ft", s.get("flooded_acres_ge_2ft"), "ac")
+        if s.get("depth_thresholds_ft"):
+            add("Depth thresholds for those areas (reporting only, not a class input)",
+                ", ".join("{:g}".format(float(t)) for t in s["depth_thresholds_ft"]), "ft")
         add("Velocity P95 / P99 over wet cells",
             None if s.get("velocity_p99_fps") is None else "{} / {}".format(
                 fmt_val(s.get("velocity_p95_fps")), fmt_val(s.get("velocity_p99_fps"))), "ft/s")
@@ -2754,6 +2757,9 @@ class _Report(object):
                 ("Flooded area at or above 0.1 ft (ac)", s.get("flooded_acres_ge_0_1ft")),
                 ("Flooded area at or above 1 ft (ac)", s.get("flooded_acres_ge_1ft")),
                 ("Flooded area at or above 2 ft (ac)", s.get("flooded_acres_ge_2ft")),
+                ("Depth thresholds, reporting only, not a class input (ft)",
+                 ", ".join("{:g}".format(float(t)) for t in s["depth_thresholds_ft"])
+                 if s.get("depth_thresholds_ft") else None),
                 ("Velocity P95 over wet cells (ft/s)", s.get("velocity_p95_fps")),
                 ("Velocity P99 over wet cells (ft/s)", s.get("velocity_p99_fps")),
                 ("Depth at the maximum-velocity cell (ft)", s.get("max_velocity_depth_ft")),

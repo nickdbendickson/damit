@@ -565,5 +565,12 @@
    "notes": "FEMA 333 tiers per TVA's impoundment disclosures."
   }
  },
- "presets_note": "Per-preset refinements DamIT Hazard needs that presets.json does not carry: notes, R5 basis wording and California's 'S1 or S2' choice. Keys are preset IDs or aliases. Preset status (NRCS unverified, NY draft), the USBR M1 'marks lives, returns no class' reading and New York's R2 floor presumption and R8 lowering-from-High variant are in presets.json, where DamIT Screener reads them as well."
+ "presets_note": "Per-preset refinements DamIT Hazard needs that presets.json does not carry: notes, R5 basis wording and California's 'S1 or S2' choice. Keys are preset IDs or aliases. Preset status (NRCS unverified, NY draft), the USBR M1 'marks lives, returns no class' reading and New York's R2 floor presumption and R8 lowering-from-High variant are in presets.json, where DamIT Screener reads them as well.",
+ "report_figures": {
+  "note": "Reporting only. Not an input to damit:classify. These are the depth thresholds and the wet-cell depth the run report already used for acres and for P95 and P99 velocity.",
+  "depth_thresholds_ft": [0.1, 1.0, 2.0],
+  "wet_min_depth_ft": 0.1,
+  "velocity_percentiles": [95, 99],
+  "feeds_class": false
+ }
 }
