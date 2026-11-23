@@ -90,7 +90,7 @@
     {"id": "heim-slows-lisflood",
      "q": "Why does the run watcher not ask Heim to explain while LISFLOOD is running, and how is that set?",
      "doc": "WATCHER-DIGEST",
-     "facts": ["HEIM_WATCH_EXPLAIN", "idle", "slower|share the cores|CPU"]},
+     "facts": ["HEIM_WATCH_EXPLAIN|--explain", "idle", "slower|share the cores|CPU"]},
     {
       "id": "dem-overrides-work-crs",
       "q": "I set WORK_CRS to EPSG:5070 but the run log says Model CRS is a UTM zone. Why?",

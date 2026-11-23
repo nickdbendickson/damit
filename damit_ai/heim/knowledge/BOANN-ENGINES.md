@@ -75,9 +75,9 @@ LISFLOOD-FP on the CPU. Metal kernels are limited to 31 buffers, which shapes th
   were not a multiple of r. Lake Delhi (1982×2314 cells) was walled at r=3, 4 and 8: lower valley
   +17 ft at the high-water marks, outflow 0.1 % of inflow. The fix is Runner 3.42.1 (DWR_Plugins PR
   #462, merged 2026-11-22): at r=4 the survey mean miss went from +16.99 ft to +0.84 ft. **Check
-  first:** is the deck's row or column count a multiple of r (the padding), and is the Runner older
-  than 3.42.1? Upgrade, or pick an r that divides both, then re-run. **Tell:** the run's `.mass` Qout stays near
-  zero while the stored volume keeps rising. Check outflow before roughness, conveyance or the
+  first:** the outflow in the run's `.mass` file (Qout): near zero while the stored volume keeps rising
+  means the open edges are walled. Then: is the deck's row or column count a multiple of r (the padding),
+  and is the Runner older than 3.42.1? Upgrade, or pick an r that divides both, then re-run. Check outflow before roughness, conveyance or the
   boundary condition (three wrong diagnoses were written before anyone looked).
 - An r-sweep on the unfixed code misleads: r=1 and r=2 can drain while r=3+ is walled, which looks
   like a resolution effect.
