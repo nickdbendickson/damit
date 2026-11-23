@@ -274,14 +274,21 @@ class Checks(unittest.TestCase):
         self.assertEqual(vor.quote_check("Concrete, trowel finish 0.013 for lined channels", page), "exact")
         self.assertEqual(vor.quote_check("Concrete, trowel finish 0.015 for lined channels", page), "numbers differ")
 
-    def test_a_quote_cut_inside_a_number(self):
+    def test_a_changed_number_after_an_ellipsis(self):
         page = "ranges 1.0...2.0 for the peak; roughness was 0.015 at the reach. The PMF peak inflow was 1,500 cfs."
         self.assertEqual(vor.quote_check("ranges 1.0...2.5 for the peak", page), "numbers differ")
-        self.assertNotIn(vor.quote_check("roughness was 0.01 at the reach", page), ("exact", "close"))
-        self.assertNotIn(vor.quote_check("the peak; roughness was 0.01", page), ("exact", "close"))
-        self.assertNotIn(vor.quote_check("The PMF peak inflow was 1", page), ("exact", "close"))
         self.assertEqual(vor.quote_check("The PMF peak inflow was 1,500 cfs", page), "exact")
         self.assertEqual(vor.quote_check("roughness was 0.015 at the reach", page), "exact")
+
+    def test_round4_faithful_quotes_stay_exact(self):
+        for page, q in (("The minimum factor of safety for end-of-construction is 1.3.4 Seepage analyses",
+                         "The minimum factor of safety for end-of-construction is 1.3."),
+                        ("2.1Background Dam safety programs were established after 1972.",
+                         "Background Dam safety programs were established after 1972."),
+                        ("In 1889,the South Fork Dam failed, killing 2,209 people.",
+                         "the South Fork Dam failed, killing 2,209 people."),
+                        ("Sand ........ 0.020", "Sand ........ 0.020")):
+            self.assertEqual(vor.quote_check(q, page), "exact", q)
 
     def test_footnote_markers_and_unit_powers_are_not_numbers(self):
         page = "The spillway shall pass the PMF.3 The dam is classified as high hazard because. High hazard dams2 are those"

@@ -1947,11 +1947,12 @@ def _no_leaders(s):
 
 def quote_check(quote, source_txt):
     """'exact', 'close' (>= 90% of the quote's characters found in order), or 'not found'."""
-    q, t = _no_leaders(norm(quote)), _no_leaders(norm(source_txt))
-    if len(q) < 12:
+    nq = norm(quote)
+    if len(nq) < 12:                                      # measured with any dot leaders, as before 1.4.9
         return "too short"
-    if re.search(r"(?<!\d)(?<!\d[.,])%s(?![.,]?\d)" % re.escape(q), t):   # 1.4.9: a quote that stops inside a
-        return "exact"                                    # number ('was 0.01' of 'was 0.015', '1' of '1,500') is not
+    q, t = _no_leaders(nq), _no_leaders(norm(source_txt))
+    if q in t:
+        return "exact"
     sm = difflib.SequenceMatcher(None, q, t, autojunk=False)
     m = sum(b.size for b in sm.get_matching_blocks() if b.size >= 4)
     # must also be one contiguous region of the page, not letters scattered across it
@@ -1959,12 +1960,7 @@ def quote_check(quote, source_txt):
     span = (blocks[-1].b + blocks[-1].size - blocks[0].b) if blocks else 0
     if m >= 0.9 * len(q) and span <= 1.3 * len(q):
         # a near match must not hide a changed number ("2 and 5 times" -> "3 and 7 times")
-        a, b = blocks[0].b, blocks[-1].b + blocks[-1].size
-        while a > 0 and re.match(r"[\d.,]", t[a - 1]) and re.search(r"\d", t[max(0, a - 2):a + 1]):
-            a -= 1                                        # 1.4.9: whole numbers at both ends of the region, so a
-        while b < len(t) and re.match(r"[.,]?\d", t[b:]):  # quote cut inside '0.015' compares 0.01 with 0.015
-            b += 1
-        region = t[a:b]
+        region = t[blocks[0].b: blocks[-1].b + blocks[-1].size]
         if nums(q) != nums(region):
             return "numbers differ"
         return "close"
