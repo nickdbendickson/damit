@@ -246,6 +246,12 @@ class PlainlyRound2(unittest.TestCase):
         self.assertEqual(self.named("What does Bulletin 17B say about skew?"), {})
         self.assertEqual(self.named("What did Bulletin 17 say?"), {3: ["Bulletin 17"]})
 
+    def test_a_year_in_another_file_name_is_not_the_report_number(self):
+        self.db.execute("INSERT INTO docs (id, title, path, number, org) VALUES (9, 'Federal Guidelines for "
+                        "Inundation Mapping', '/lib/FEMA_P-946_July_2013.pdf', '', 'FEMA')")
+        self.assertEqual(self.named("What does FEMA P-2013 say about seismic retrofit?"), {})
+        self.assertEqual(self.named("FEMA-2013 guidance on EAPs?"), {})
+
     def test_a_report_number_that_looks_like_a_year(self):
         self.assertEqual(list(self.named("What does FEMA P-2006 say about retrofit?")), [4])
         self.assertEqual(list(self.named("What does WSP 2006 say?")), [6])
@@ -268,12 +274,22 @@ class Checks(unittest.TestCase):
         self.assertEqual(vor.quote_check("Concrete, trowel finish 0.013 for lined channels", page), "exact")
         self.assertEqual(vor.quote_check("Concrete, trowel finish 0.015 for lined channels", page), "numbers differ")
 
-    def test_numbers_after_letters_and_inside_a_longer_number(self):
-        page = "ranges 1.0...2.0 for the Q100 peak and D_15 filters; roughness was 0.015 at the reach"
-        self.assertEqual(vor.quote_check("ranges 1.0...2.5 for the Q100 peak", page), "numbers differ")
-        self.assertEqual(vor.quote_check("ranges 1.0...2.0 for the Q500 peak", page), "numbers differ")
-        self.assertNotEqual(vor.quote_check("roughness was 0.01 at the reach", page), "exact")
-        self.assertEqual(vor.numbers_outside("the Q500 peak", "the Q100 peak", page), ["500"])
+    def test_a_quote_cut_inside_a_number(self):
+        page = "ranges 1.0...2.0 for the peak; roughness was 0.015 at the reach. The PMF peak inflow was 1,500 cfs."
+        self.assertEqual(vor.quote_check("ranges 1.0...2.5 for the peak", page), "numbers differ")
+        self.assertNotIn(vor.quote_check("roughness was 0.01 at the reach", page), ("exact", "close"))
+        self.assertNotIn(vor.quote_check("the peak; roughness was 0.01", page), ("exact", "close"))
+        self.assertNotIn(vor.quote_check("The PMF peak inflow was 1", page), ("exact", "close"))
+        self.assertEqual(vor.quote_check("The PMF peak inflow was 1,500 cfs", page), "exact")
+        self.assertEqual(vor.quote_check("roughness was 0.015 at the reach", page), "exact")
+
+    def test_footnote_markers_and_unit_powers_are_not_numbers(self):
+        page = "The spillway shall pass the PMF.3 The dam is classified as high hazard because. High hazard dams2 are those"
+        self.assertEqual(vor.quote_check("The spillway shall pass the PMF. The dam is classified as high hazard", page),
+                         "close")
+        self.assertEqual(vor.numbers_outside("The peak inflow is 1,200 ft\u00b3/s.", "1,200 cfs", "1,200 cfs"), [])
+        self.assertEqual(vor.numbers_outside("The drainage area is 50 mi\u00b2.", "50 square miles", "x"), [])
+        self.assertEqual(vor.numbers_outside("See Table 5-1 on p.35.", "Table 5-1", "Page 35"), [])
 
     def test_a_changed_number_without_a_leading_zero_is_caught(self):
         self.assertEqual(vor.quote_check("Sand .3 .018", self.PAGE), "numbers differ")

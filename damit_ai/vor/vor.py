@@ -896,6 +896,8 @@ def _plainly_named(text, pfx, num, raw, sfx=""):
         return True
     if len(digits) < 3 or not re.search(r"(?<![A-Za-z0-9])%s(?![A-Za-z])" % re.escape(pfx), raw, re.I):
         return False
+    if re.fullmatch(r"(?:19|20)\d\d", num):
+        return False                                  # P-2013 is not the 2013 in FEMA_P-946_July_2013.pdf
     for m in re.finditer(r"(?<![A-Za-z0-9.])%s%s" % (numpat, end), raw, re.I):
         other = _SERIES.search(raw[:m.start()])
         if not other or other.group(1).lower() == pfx.lower():
@@ -1948,8 +1950,8 @@ def quote_check(quote, source_txt):
     q, t = _no_leaders(norm(quote)), _no_leaders(norm(source_txt))
     if len(q) < 12:
         return "too short"
-    if re.search(r"(?<!\d)%s(?!\d)" % re.escape(q), t):     # 1.4.9: 'was 0.01' is not exact inside 'was 0.015'
-        return "exact"
+    if re.search(r"(?<!\d)(?<!\d[.,])%s(?![.,]?\d)" % re.escape(q), t):   # 1.4.9: a quote that stops inside a
+        return "exact"                                    # number ('was 0.01' of 'was 0.015', '1' of '1,500') is not
     sm = difflib.SequenceMatcher(None, q, t, autojunk=False)
     m = sum(b.size for b in sm.get_matching_blocks() if b.size >= 4)
     # must also be one contiguous region of the page, not letters scattered across it
@@ -1957,19 +1959,26 @@ def quote_check(quote, source_txt):
     span = (blocks[-1].b + blocks[-1].size - blocks[0].b) if blocks else 0
     if m >= 0.9 * len(q) and span <= 1.3 * len(q):
         # a near match must not hide a changed number ("2 and 5 times" -> "3 and 7 times")
-        region = t[blocks[0].b: blocks[-1].b + blocks[-1].size]
+        a, b = blocks[0].b, blocks[-1].b + blocks[-1].size
+        while a > 0 and re.match(r"[\d.,]", t[a - 1]) and re.search(r"\d", t[max(0, a - 2):a + 1]):
+            a -= 1                                        # 1.4.9: whole numbers at both ends of the region, so a
+        while b < len(t) and re.match(r"[.,]?\d", t[b:]):  # quote cut inside '0.015' compares 0.01 with 0.015
+            b += 1
+        region = t[a:b]
         if nums(q) != nums(region):
             return "numbers differ"
         return "close"
     return "not found"
 
 
-NUM = re.compile(r"(?<!\d)(?<!\d[.,])\.?\d+(?:[.,]\d+)*")     # 1.4.9: Q100, D_15, HMR51 read too
+NUM = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*|(?<!\S)\.\d+")     # 1.4.9: and '.018' after a space
 
 
 def nums(s):
     """The numbers in s, '.018' (a table's way of writing it) read as 0.018. 1.4.9: before, a number with no
-    leading zero was not seen at all, so 'Sand .3 .018' passed as a close quote of a row reading '.3 .017'."""
+    leading zero was not seen at all, so 'Sand .3 .018' passed as a close quote of a row reading '.3 .017'.
+    A number glued to a letter or a period is still not read: footnote markers ('dams2', 'PMF.3'), unit powers
+    ('ft³/s' is 'ft3/s' after NFKC) and 'p.35' would otherwise reject faithful quotes and claims."""
     return ["0" + n if n.startswith(".") else n for n in NUM.findall(s)]
 
 
