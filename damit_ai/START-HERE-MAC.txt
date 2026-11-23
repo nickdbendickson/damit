@@ -8,8 +8,12 @@ Two assistants that run on this Mac only (nothing is sent anywhere):
 1. Install (about 15-60 minutes, most of it downloading about 8-46 GB of models, depending on
    how much memory this Mac has)
    Double-click  Install-Mac.command  in this folder.
-   - The first time, macOS may say it is from an unidentified developer: right-click the
-     file, choose Open, then Open again.
+   - The first time, macOS says it "can't verify" the file is free of malware (the file is
+     not signed with an Apple developer certificate). Click Done, then open System
+     Settings > Privacy & Security, scroll to the bottom, click Open Anyway next to
+     "Install-Mac.command was blocked", enter your password, and double-click it again.
+     Or, with no popup: in Terminal type  zsh  and a space, drag Install-Mac.command into
+     the window, and press Return.
    - If it stops, read the last lines, fix that, and double-click it again. It carries on
      where it stopped.
 

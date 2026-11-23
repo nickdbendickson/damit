@@ -10,7 +10,7 @@ installer that sets up **both**:
 
 | Platform | Installer | Run it with |
 |----------|-----------|-------------|
-| macOS | `heim/setup-local-heim.sh` (+ `vor/setup-vor.zsh`) | double-click `Install-Mac.command`, or `zsh …` |
+| macOS | `heim/setup-local-heim.sh` (+ `vor/setup-vor.zsh`) | double-click `Install-Mac.command` (unsigned: the first time, System Settings > Privacy & Security > Open Anyway), or `zsh Install-Mac.command` |
 | Linux / openSUSE | `install-local-ai-linux.sh` | `./install-local-ai-linux.sh` |
 | Windows 10/11 | `install-local-ai-windows.ps1` | double-click `Install-Windows.cmd`, or `powershell -ExecutionPolicy Bypass -File .\install-local-ai-windows.ps1` |
 
