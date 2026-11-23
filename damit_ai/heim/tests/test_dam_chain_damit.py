@@ -192,6 +192,25 @@ class DamitRunTest(unittest.TestCase):
         _, _, fake = self.go(lisflood=os.path.join(self.tmp, "no-such-lisflood"), lisflood_given=False)
         self.assertNotIn("LISFLOOD_EXE", self.runs(fake)[0][2])     # the Runner's own setting
 
+    def test_an_untyped_lisflood_is_not_put_in_the_environment(self):
+        exe = os.path.join(self.tmp, "lisflood")
+        open(exe, "w").close()
+        keep = DC.conda_exe, DC.env_prefix, DC.find_qgis_process
+        DC.conda_exe, DC.env_prefix, DC.find_qgis_process = (lambda: "conda"), (lambda c, e: "/x"), (lambda p, q: "qp")
+        try:
+            a = Args(lisflood=exe, lisflood_given=False, env="ndqgis", qgis_process="", dry_run=False)
+            DC.QP._pick_anuga, pick = (lambda self: None), DC.QP._pick_anuga
+            try:
+                self.assertNotIn("NDBREACH_LISFLOOD", self._qp(a, "damit").env)
+                a.lisflood_given = True
+                self.assertEqual(self._qp(a, "damit").env["NDBREACH_LISFLOOD"], exe)
+                a.lisflood_given = False
+                self.assertEqual(self._qp(a, "dwr").env["NDBREACH_LISFLOOD"], exe)    # nd/dwr unchanged
+            finally:
+                DC.QP._pick_anuga = pick
+        finally:
+            DC.conda_exe, DC.env_prefix, DC.find_qgis_process = keep
+
     def test_the_id_field_is_the_runners_and_is_passed_on(self):
         # review 2026-11-23: NIDID before DAM_ID, as the Runner picks (data_conventions FIELD_SYNONYMS)
         p = os.path.join(self.tmp, "two.csv")
@@ -215,6 +234,9 @@ class DamitRunTest(unittest.TestCase):
         self.assertIn("none of --ids 2801,4031 was found by the Runner", out)
         code, out, _ = self.go(FakeQP([(True, {"COUNTS": "0 run, 0 failed, 2 skipped, 0 with no breach"}, "")]))
         self.assertEqual(code, 0, out)
+        code, out, _ = self.go(FakeQP([(True, {"COUNTS": "1 run, 0 failed, 0 skipped, 0 with no breach"}, "")]))
+        self.assertEqual(code, 1)
+        self.assertIn("found only 1 of the 2 --ids", out)
 
     def test_param_is_checked_too(self):
         code, out, fake = self.go(param=["SOLVR=2"])
@@ -229,6 +251,32 @@ class DamitRunTest(unittest.TestCase):
         self.assertEqual(DC.enum_value("SCENARIO", "sunny", real), ("0", None))
         self.assertEqual(DC.enum_value("SCENARIO", "per dam", real), ("2", None))
         self.assertIsNone(DC.enum_value("SCENARIO", "flood", real)[0])
+        solver = HELP["parameters"]["SOLVER"]["available_options"].copy()
+        solver["3"] = "MWDG2 (adaptive multiwavelet DG2, slope limiter)"
+        self.assertIsNone(DC.enum_value("SOLVER", "dg2", solver)[0])          # DG2 is not offered
+        self.assertEqual(DC.enum_value("SOLVER", "mwdg2", solver), ("3", None))
+        self.assertEqual(DC.enum_value("SOLVER", "fv2", solver), ("2", None))
+        self.assertEqual(DC.enum_value("SOLVER", "local inertial", solver), ("1", None))
+
+    def test_a_layer_it_cannot_place_is_left_to_the_runner(self):
+        multi = os.path.join(self.tmp, "multi.gpkg")
+        con = sqlite3.connect(multi)
+        con.execute("CREATE TABLE gpkg_contents (table_name TEXT, data_type TEXT)")
+        con.executemany("INSERT INTO gpkg_contents VALUES (?, 'features')", [("zeta_dams",), ("alpha_dams",)])
+        con.execute("CREATE TABLE zeta_dams (fid INTEGER PRIMARY KEY, DAM_ID TEXT)")
+        con.execute("CREATE TABLE alpha_dams (fid INTEGER PRIMARY KEY, NIDID TEXT)")
+        con.execute("INSERT INTO alpha_dams (NIDID) VALUES ('ND00123')")
+        con.commit()
+        con.close()
+        self.assertEqual(DC.layer_ids(multi + "|layername=ALPHA_DAMS"), ("NIDID", {"ND00123"}))
+        self.assertEqual(DC.layer_ids(multi + "|layerid=1"), (None, None))
+        self.assertEqual(DC.layer_ids(multi), (None, None))
+        _, _, fake = self.go(dams=multi + "|layerid=1", ids="ND00123")
+        self.assertNotIn("F_ID", self.runs(fake)[0][2])
+
+    def test_a_named_id_field_is_taken_as_named(self):
+        self.assertEqual(DC._id_field(["NIDID", "NID_ID"], "NID_ID"), "NID_ID")
+        self.assertEqual(DC._id_field(["NIDID", "NID_ID"], "nid_id"), "NID_ID")
 
     def test_ids_from_a_csv_layer_and_another_field(self):
         csvp = os.path.join(self.tmp, "dams.csv")

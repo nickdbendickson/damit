@@ -2840,6 +2840,8 @@ class QP:
         if not self.dry:
             self._pick_anuga()
         lis = os.path.expanduser(args.lisflood or "")
+        if set_name == "damit" and not getattr(args, "lisflood_given", True):
+            lis = ""        # the DamIT Runner's own engine setting decides (it finds ~/dam-suite/bin itself)
         if lis and os.path.isfile(lis):
             # Also read by tools that get no EXE parameter (DamSafety Screening's self-test before 0.18.5).
             self.env["NDBREACH_LISFLOOD"] = lis
@@ -3138,9 +3140,10 @@ def cmd_plugins(args):
     if args.selftest and args.set == "damit":
         # DamIT has no self-test tools; damit_run:check runs LISFLOOD-FP on a tiny channel and imports ANUGA.
         logs = os.path.join(os.path.expanduser(args.log_dir), "selftest_%s_%s" % (args.set, _stamp()))
-        lis = os.path.expanduser(args.lisflood)
+        # checks the engine the DamIT Runner is set to use, unless --lisflood names another
+        lis = os.path.expanduser(args.lisflood or "") if getattr(args, "lisflood_given", True) else ""
         p = {}
-        if os.path.isfile(lis):
+        if os.path.isfile(lis) or lis.strip().lower() in DAMIT_ENGINE_WORDS:
             p["LISFLOOD_EXE"] = lis
         if qp.anuga_py:
             p["ANUGA_PYTHON"] = qp.anuga_py
@@ -3485,9 +3488,13 @@ def enum_value(name, value, options):
         return exact[0], None
     # the start of an option's text ('sunny' -> 'Sunny day: ...'), then a whole word anywhere in it
     # ('fv2' -> 'FV2 (finite volume)'); text that fits more than one option is refused, never guessed
+    # A value with a digit (fv2, dg2) is a code: only the start of an option counts, so 'dg2' is not
+    # read as the 'MWDG2 (... DG2 ...)' option the Runner offers instead of DG2.
+    anywhere = [] if re.search(r"\d", low) else [k for k, t in opts.items()
+                                                  if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(low),
+                                                               t.lower())]
     for hits in ([k for k, t in opts.items() if re.match(r"%s(?![a-z0-9])" % re.escape(low), t.lower())],
-                 [k for k, t in opts.items()
-                  if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(low), t.lower())]):
+                 anywhere):
         if len(hits) == 1:
             return hits[0], None
         if len(hits) > 1:
@@ -3531,7 +3538,9 @@ def layer_ids(path, field=""):
     'file.gpkg|layername=x') or a CSV. Returns (field, set of ids), or (None, None) when the
     format cannot be read here (the Runner still reads it)."""
     src, _, rest = path.partition("|")
-    layer = rest.split("=", 1)[1] if rest.lower().startswith("layername=") else ""
+    key, _, layer = rest.partition("=")
+    if rest and key.strip().lower() != "layername":
+        return None, None              # e.g. |layerid=1: OGR's order is not read here; the Runner reads it
     src = os.path.expanduser(src)
     ext = os.path.splitext(src)[1].lower()
     try:
@@ -3541,7 +3550,10 @@ def layer_ids(path, field=""):
             try:
                 tables = [r[0] for r in con.execute(
                     "SELECT table_name FROM gpkg_contents WHERE data_type = 'features'")]
-                table = layer if layer in tables else (tables[0] if tables else "")
+                if layer:
+                    table = next((t for t in tables if t.lower() == layer.strip().lower()), "")
+                else:
+                    table = tables[0] if len(tables) == 1 else ""      # several layers: name one
                 if not table:
                     return None, None
                 cols = [r[1] for r in con.execute('PRAGMA table_info("%s")' % table.replace('"', '""'))]
@@ -3581,6 +3593,9 @@ def _id_field(cols, field):
     for c in cols:
         norm.setdefault(_norm_field(c), c)
     if field:
+        for c in cols:
+            if c.lower() == str(field).lower():
+                return c
         return norm.get(_norm_field(field))
     for s in ID_FIELD_SYNONYMS:
         if _norm_field(s) in norm:
@@ -3691,11 +3706,14 @@ def run_damit(args):
     if ok and not counts:
         ok, err = False, err or "the Runner reported no counts; see the log"
     done = sum(int(x) for x in re.findall(r"(\d+)\s+(?:run|failed|skipped|with no breach|flagged)\b", counts))
-    if ok and ids and done == 0:
-        # ONLY_IDS that match no dam: the Runner skips every feature and says "0 run, 0 failed ..."
-        ok, err = False, "none of --ids %s was found by the Runner in field %s" % (
-            ",".join(ids), p.get("F_ID") or "(its own choice)")
-        counts = ""
+    want = len(set(ids))
+    if ok and ids and done < want:
+        # ONLY_IDS that match no dam are skipped by the Runner without a word ("0 run, 0 failed ...")
+        where = p.get("F_ID") or "(its own choice)"
+        ok, err = False, ("none of --ids %s was found by the Runner in field %s" % (",".join(ids), where)
+                          if done == 0 else "the Runner found only %d of the %d --ids (%s) in field %s; see %s"
+                          % (done, want, ",".join(ids), where, "the summary"))
+        err, counts = "%s (%s)" % (err, counts), ""
     print("%s  %s" % ("OK" if ok else "FAILED", counts or err))
     print("log: %s" % log)
     if res.get("SUMMARY"):

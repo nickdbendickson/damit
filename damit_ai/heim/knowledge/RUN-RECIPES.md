@@ -61,7 +61,8 @@ damchain run --set damit --dams LAYER --ids 2801,4031 --out D --dem DEM --cell 5
   (the one install-all makes) and turns the DamIT plugins on for `qgis_process`.
 - `plugins --set damit --selftest` checks the tools are there and runs `damit_run:check`
   (LISFLOOD-FP on a tiny channel, ANUGA import). DamIT has no self-test tools of its own.
-  It says FAIL when any line of the check says PROBLEM (for example, no LISFLOOD-FP found).
+  It says FAIL when any line of the check says PROBLEM (for example, no LISFLOOD-FP found). It
+  checks the engine the DamIT Runner is set to use, unless `--lisflood` names another.
 - The flood engine: `--lisflood PATH` (before `run`) names a LISFLOOD-FP binary; `--lisflood builtin`,
   `gpu` or `gpu-sgc` picks the DamIT Runner's own engines. Without `--lisflood`, damchain passes no
   engine and the Runner uses its own setting (an engine chosen in QGIS stays chosen). A `--lisflood`
@@ -78,8 +79,10 @@ damchain run --set damit --dams LAYER --ids 2801,4031 --out D --dem DEM --cell 5
   that fits two options is refused. `--check-only` runs only these checks.
 - Second run: dams that finished are skipped (`SKIP_DONE`); `--redo` runs them again.
   `--workers N` runs dams side by side, but with `--ids` the Runner runs one at a time.
+- A GeoPackage with several layers needs `|layername=NAME`; with `|layerid=N` or no name, the
+  ids are left for the Runner to match (no F_ID is passed).
 - Exit code: 1 when any dam failed (the Runner's "N failed" count), or when `--ids` was given
-  and the Runner found none of them, even though `qgis_process` itself exits 0. Logs: `D/_chain_logs/damit_batch_<time>.log`.
+  and the Runner found fewer of them than asked, even though `qgis_process` itself exits 0. Logs: `D/_chain_logs/damit_batch_<time>.log`.
 
 ## 2b. Drafting a run in plain English (`heim run`, heim_run 1.0.0)
 
@@ -97,16 +100,21 @@ heim run --show "run 2801 at 10 m"
   - a cell size not written as one ("at 5 m", "5 m cells", "cell 5"), out of 0.5-200 m, or in
     feet, cm or another unit; a Manning's n not written next to "n" or "Manning", or out of 0.01-0.25;
   - a number nothing accounts for ("with the 2 m DEM", a second cell size for another dam);
-  - a solver you did not name, or one your words say "not" to;
+  - a solver you did not name, or two solvers named (FV-2 counts as FV2);
+  - any "not", "except", "instead of", "skip", "don't" ...: it does not work out what is ruled
+    out ("run 2801 but not 4031" is refused; write "run 2801"); a range (2801-2805, 5-10 m); a
+    comma decimal (5,5 m); a number in letters (five metres);
   - anything it cannot set (ANUGA, an engine, a pool, a scenario, PMF, a DEM, all dams, ...),
     whether or not the model noticed it. It says what, and to type the damchain command for it.
-  Redo is left out, with a note, unless your words ask for it; "do not overwrite" is not asking.
+  Redo is left out, with a note, unless your words ask for it (rerun, re-run, redo, again,
+  overwrite, from scratch, one more time).
 - It shows the command and what differs from the defaults, runs nothing until you type
   `y`, then runs `--check-only` first. Your sentence, the model's reply and the command go
   to `D/_chain_logs/heim_run_<time>.txt`. Every reading, refused, stopped, shown or run, is
   also kept in `~/local-ai/reports/heim_run_drafts.log`.
 - `--set`, `--dams`, `--out`, `--dem`, `--id-field`, `--dem-units` are remembered per set
-  (paths in full) in `~/local-ai/heim_run.json` after a run you confirmed. A dam id such as
+  (paths in full) in `~/local-ai/heim_run.json` after a run you confirmed with `y` (not after
+  `--show` or a stop). A dam id such as
   `DWR-2801` does not switch the set; the word `dwr` or `damit` on its own does. `heim run "...?"` (ending in
   `?`) is still a question for Heim.
 

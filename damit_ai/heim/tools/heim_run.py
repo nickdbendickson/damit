@@ -11,11 +11,13 @@
 #   - a cell size is not in your words next to m / "at" / "cell", is out of range, or is in feet, cm...;
 #   - Manning's n is not in your words next to "n" / "Manning", or is out of range;
 #   - your words hold a number that no field accounts for ("the 2 m DEM", a second cell size);
-#   - the solver word is not in your words, or your words say "not" that solver;
+#   - the solver word is not in your words, or your words name two;
+#   - your words say "not", "except", "instead of" ... (it does not work out what is ruled out), give
+#     a range (2801-2805, 5-10 m), a comma decimal (5,5 m) or a number in letters (five metres);
 #   - you asked for something these fields cannot hold (ANUGA, a pool, a scenario, a DEM, all dams...),
 #     whether or not the model listed it (it says what, and how to type it yourself);
-#   - redo (run again over finished dams) is set but your own words did not ask for it ("do not
-#     overwrite" is not asking): redo is then left out, with a note.
+#   - redo (run again over finished dams) is set but your own words did not ask for it: redo is then
+#     left out, with a note.
 # It then shows the exact damchain command and what differs from the defaults, runs nothing until you
 # type y, runs damchain's checks (--check-only) first, and writes your sentence, the model's reply and
 # the command to <out>/_chain_logs/heim_run_<time>.txt. Every reading, refused, stopped or run, also
@@ -33,6 +35,7 @@ import re
 import shlex
 import subprocess
 import sys
+import unicodedata
 
 VERSION = "1.0.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,7 +46,8 @@ SET_WORDS = {"damit": r"(?<![\w-])damit(?![\w-])", "dwr": r"(?<![\w-])(?:dwr|dam
 SOLVERS = ("acc", "fv2", "mwdg2")
 CELL_RANGE = (0.5, 200.0)          # metres
 MANNING_RANGE = (0.01, 0.25)
-REDO_WORDS = re.compile(r"\b(?:redo|re-?run|rerun|again|overwrite|replace|from scratch)\b", re.I)
+REDO_WORDS = re.compile(r"\b(?:re-?do(?:ing)?|re[-\s]?run(?:ning)?|again|one\s+more\s+time|overwrite|replace|"
+                        r"from\s+scratch)\b", re.I)
 DEFAULTS = {"damit": {"cell_m": 10.0, "solver": "ACC", "manning": 0.05},
             "dwr": {"cell_m": None, "solver": None, "manning": None}}     # None: the Runner's own setting
 
@@ -102,17 +106,29 @@ def model_fields(request, chat=None):
 # A number standing on its own: not inside an id (ND00123, DWR-50), not part of a longer decimal.
 _NUM = re.compile(r"(?<![\w.\-])(\d+(?:\.\d+)?|\.\d+)(?![\d]|\.\d)")
 _METRE = re.compile(r"\s*-?\s*(?:m|metres?|meters?)(?![a-z])", re.I)
-_OTHER_UNIT = re.compile(r"\s*-?\s*(ft|feet|foot|cm|mm|km|yd|yards?|inch(?:es)?|mi|miles?|us\s*ft)(?![a-z])|"
+_OTHER_UNIT = re.compile(r"\s*-?\s*(ft|feet|foot|cm|mm|km|yd|yards?|inch(?:es)?|mi|miles?|us\s*ft|"
+                         r"(?:us\s+)?survey\s+f\w*|[ap]\.?m\b\.?|o'?clock|h|hrs?|hours?|min\w*|s|secs?|"
+                         r"seconds?|days?|%|percent|cores?|cpus?)(?![a-z])|"
                          r"\s*(['’′″\"])", re.I)
 _CELL_BEFORE = re.compile(r"(?:\bat|\bcells?(?:\s+size)?|\bgrid(?:\s+size)?|\bresolution|\bres)\s*(?:of|=|:|to|is)?\s*$",
                           re.I)
 _N_BEFORE = re.compile(r"(?:\bn|\bmanning'?s?(?:\s+n)?|\broughness)\s*(?:of|=|:|to|is)?\s*$", re.I)
-_NEG = r"\b(?:not|no|never|don'?t|do\s+not|without|avoid|skip)\b\W+(?:\w+\W+){0,3}?"
+# Any "not", "except", "instead of" ... : heim run does not work out what is ruled out; it refuses.
+# ('no.' or 'no' before a number is a dam number, not a no.)
+_NEGATION = re.compile(r"\b(?:not|never|no(?!\.?\s*\d)|none|nor|cannot|without|avoid|skip\w*|except\w*|exclud\w*|"
+                       r"instead|rather\s+than|other\s+than|dont|doesnt|didnt|shouldnt|wont|cant|mustnt)\b|"
+                       r"\b\w+n['’]t\b", re.I)
+_RANGE = re.compile(r"(?<![\w.\-])\d*\.?\d+\s*(?:-|–|—|\.\.\.?)\s*\.?\d")
+_NUMBER_WORDS = re.compile(r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+                           r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|"
+                           r"forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|half|quarter|dozen|"
+                           r"first|second|third)\b", re.I)
 # Things a sentence may ask for that heim run cannot set. Refused even when the model leaves them out.
-_CANNOT = re.compile(r"\b(anuga|lisflood|hec-?ras|gpu|sgc|boann|builtin|built-in|scenario|pmf|sunny|"
-                     r"froehlich|macdonald|von\s+thun|pool|inflow|hours?|duration|classif\w*|hazard|"
-                     r"workers?|threads?|dem|lidar|terrain|vrt|every\s+dam|all\s+(?:the\s+)?dams|tier|mesh)\b",
-                     re.I)
+_CANNOT = re.compile(r"\b(anuga|lisflood|hec-?ras|gpus?|cpus?|cores?|processors?|nodes?|jobs?|sgc|boann|builtin|"
+                     r"built-in|scenario|pmf|sunny|froehlich|macdonald|von\s+thun|pool|inflow|hours?|duration|"
+                     r"classif\w*|hazard|workers?|threads?|dem|lidar|terrain|vrt|every\s+dam|"
+                     r"all\s+(?:the\s+)?dams|tier|mesh|width|depth|height|side\s*slopes?|breach\s+\w+\s+time|"
+                     r"(?:failure|formation)\s+time)\b", re.I)
 
 
 def read_numbers(text):
@@ -121,8 +137,12 @@ def read_numbers(text):
     out = []
     for m in _NUM.finditer(text):
         after = text[m.end():]
+        span = (m.start(), m.end())
         if after[:1].isalpha() and not (_METRE.match(after) or _OTHER_UNIT.match(after)):
-            continue                                    # '2801a': part of a word, not a number
+            # glued to letters ('2801a', '6x'): counted, so a field must account for it (an id can)
+            out.append({"value": float(m.group(1)), "text": m.group(1), "role": "other", "unit": "",
+                        "span": span})
+            continue
         before = text[max(0, m.start() - 30):m.start()]
         unit = ""
         if _METRE.match(after):
@@ -137,16 +157,14 @@ def read_numbers(text):
             role = "cell"
         else:
             role = "plain"
-        out.append({"value": float(m.group(1)), "text": m.group(1), "role": role, "unit": unit})
+        if role in ("cell", "n") and (re.match(r",\d", after) or re.search(r"\d,$", before)):
+            role = "comma"                 # '5,5 m': a comma decimal or a list; not guessed which
+        out.append({"value": float(m.group(1)), "text": m.group(1), "role": role, "unit": unit, "span": span})
     return out
 
 
 def _same(a, b):
     return abs(float(a) - float(b)) < 1e-9
-
-
-def _negated(word_re, text):
-    return bool(re.search(_NEG + r"(?:%s)" % word_re, text, re.I))
 
 
 def check_fields(request, data):
@@ -156,24 +174,38 @@ def check_fields(request, data):
     'cell', n next to 'n' / 'Manning'. A number in the words that no field accounts for, or a thing
     heim run cannot set, stops the run: it is refused, not guessed."""
     bad, notes = [], []
-    words = request
+    words = unicodedata.normalize("NFKC", request)          # full-width ５ｍ is 5m
+    for what, rx, why in (
+            ("not", _NEGATION, "heim run does not read %r: say only what to run (finished dams are skipped "
+                               "unless you say rerun; a solver or cell size is the Runner's own unless you name one)"),
+            ("range", _RANGE, "your words give a range (%r); heim run takes single values: list each dam, "
+                              "or type the damchain command yourself"),
+            ("words", _NUMBER_WORDS, "write numbers as digits (%r)")):
+        hit = rx.search(re.sub(r"\bone\s+more\s+time\b", "", words, flags=re.I) if what == "words" else words)
+        if hit:
+            bad.append(why % hit.group(0).strip())
+    if bad:
+        return {"ids": [], "cell_m": None, "solver": "", "manning": None, "redo": False}, bad, notes
     nums = read_numbers(words)
     used = set()
     ids = []
     for raw in data.get("ids") or []:
-        i = str(raw).strip()
+        i = unicodedata.normalize("NFKC", str(raw)).strip()
         if not i:
             continue
         hit = None
         if re.fullmatch(r"\d+(?:\.\d+)?", i):
             hit = next((k for k, n in enumerate(nums) if n["role"] == "plain" and n["text"] == i), None)
-        elif re.search(r"(?<![\w.\-])%s(?![\w\-]|\.\d)" % re.escape(i), words, re.I):
-            hit = -1
+            if hit is not None:
+                used.add(hit)
+        else:
+            for m in re.finditer(r"(?<![\w.\-])%s(?![\w\-]|\.\d)" % re.escape(i), words, re.I):
+                hit = -1                   # the digits inside a written id are the id's, not a number
+                used.update(k for k, n in enumerate(nums)
+                            if m.start() <= n["span"][0] and n["span"][1] <= m.end())
         if hit is None:
             bad.append("dam id %r is not in your words as a dam id" % i)
             continue
-        if hit >= 0:
-            used.add(hit)
         if i not in ids:
             ids.append(i)
     if not ids and not bad:
@@ -221,16 +253,18 @@ def check_fields(request, data):
                    "(type the damchain command yourself)" % (", ".join(left), "it is" if len(left) == 1 else "they are"))
     solver = str(data.get("solver") or "").strip().lower()
     if solver:
+        pat = re.sub(r"(?<=[a-z])(?=\d)", "-?", solver)        # FV-2 is FV2
+        named = [x for x in SOLVERS if re.search(r"\b%s\b" % re.sub(r"(?<=[a-z])(?=\d)", "-?", x), words, re.I)]
         if solver not in SOLVERS:
             bad.append("solver %r is not one of %s" % (solver, ", ".join(SOLVERS)))
-        elif not re.search(r"\b%s\b" % solver, words, re.I):
-            bad.append("solver %s is not in your words" % solver.upper())
-        elif _negated(solver, words):
-            bad.append("your words say not %s; name the solver to use, or none" % solver.upper())
+        elif not re.search(r"\b%s\b" % pat, words, re.I):
+            bad.append("solver %s is not in your words (write it as ACC, FV2 or MWDG2)" % solver.upper())
+        elif len(named) > 1:
+            bad.append("your words name more than one solver (%s); name one" % ", ".join(x.upper() for x in named))
         else:
             f["solver"] = solver
     if data.get("redo") is True:
-        if REDO_WORDS.search(words) and not _negated(REDO_WORDS.pattern, words):
+        if REDO_WORDS.search(words):
             f["redo"] = True
         else:
             notes.append("left out redo: your words did not ask to run finished dams again")
@@ -275,7 +309,7 @@ def pick_set(args, request, saved):
     last = saved.get("_last_set")
     if last in SETS:
         return last, None
-    return None, "which plugin set? give --set damit or --set dwr (it is remembered after that)"
+    return None, "which plugin set? give --set damit or --set dwr (it is remembered after a run you confirm)"
 
 
 def paths_for(args, set_name, saved):
@@ -296,7 +330,8 @@ def check_paths(set_name, p, ids, layer_ids):
     bad = []
     for k, what in (("dams", "dams layer (--dams)"), ("out", "output folder (--out)"), ("dem", "DEM (--dem)")):
         if not p.get(k):
-            bad.append("no %s yet for --set %s: give it once and it is remembered" % (what, set_name))
+            bad.append("no %s yet for --set %s: give it with a run you confirm with y, and it is "
+                       "remembered (--show and a stop do not remember it)" % (what, set_name))
     if bad:
         return bad
     dams = os.path.expanduser(p["dams"].partition("|")[0])

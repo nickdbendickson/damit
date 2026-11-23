@@ -186,17 +186,58 @@ class HeimRunTest(Case):
             self.assertEqual(self.calls, [], req)
             self.assertIn("heim run cannot set", said, req)
 
-    def test_not_means_not(self):
-        code, said = self.go("run 2801 but do not overwrite finished dams", fields(ids=["2801"], redo=True))
-        self.assertIn("left out redo", said)
-        self.assertNotIn("--redo", self.calls[1])
-        self.calls = []
-        code, said = self.go("run 2801, never rerun", fields(ids=["2801"], redo="false"))
-        self.assertNotIn("--redo", self.calls[1])
-        self.calls = []
-        code, said = self.go("run 2801, not FV2", fields(ids=["2801"], solver="fv2"))
-        self.assertEqual(self.calls, [])
-        self.assertIn("your words say not FV2", said)
+    def test_not_except_instead_are_refused_not_worked_out(self):
+        # second review 2026-11-23: "but not 4031", curly don’t, shouldn't, "redo: no", "instead of FV2"
+        for req, f in (("run 2801 but not 4031", fields(ids=["2801", "4031"])),
+                       ("run 2801, skip 4031", fields(ids=["2801", "4031"])),
+                       ("run 2801 but don\u2019t overwrite finished dams", fields(ids=["2801"], redo=True)),
+                       ("run 2801; it shouldn't overwrite finished dams", fields(ids=["2801"], redo=True)),
+                       ("run 2801, redo: no", fields(ids=["2801"], redo=True)),
+                       ("run 2801 with ACC instead of FV2", fields(ids=["2801"], solver="fv2")),
+                       ("run 2801, don't use FV2", fields(ids=["2801"], solver="fv2")),
+                       ("run 2801 but do not overwrite finished dams", fields(ids=["2801"]))):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(self.calls, [], req)
+            self.assertIn("heim run does not read", said, req)
+        code, said = self.go("rerun dam no. 2801 again", fields(ids=["2801"], redo=True))
+        self.assertEqual(code, 0, said)                                     # 'no.' before a number is a number
+        self.assertIn("--redo", self.calls[-1])
+
+    def test_ranges_comma_decimals_and_words_are_refused(self):
+        con = sqlite3.connect(self.dams)
+        con.executemany("INSERT INTO dams (dam_id) VALUES (?)", [(x,) for x in ("2802", "2803", "2805")])
+        con.commit()
+        con.close()
+        for req, f, why in (("run 2801-2805", fields(ids=["2801"]), "range"),
+                            ("run 2801..2805", fields(ids=["2801"]), "range"),
+                            ("run 2801 at 5-10 m", fields(ids=["2801"], cell_m=5), "range"),
+                            ("run 2801 at 5,5 m", fields(ids=["2801"], cell_m=5), "not in your words as a cell size"),
+                            ("run 2801 at five metres", fields(ids=["2801"]), "digits"),
+                            ("run 2801 for 6h", fields(ids=["2801"]), "did not use"),
+                            ("run 2801 at \uff15\uff4d", fields(ids=["2801"]), "did not use"),
+                            ("run 2801 with a 12 m breach width", fields(ids=["2801"], cell_m=12), "cannot set"),
+                            ("run 2801 at 5 pm", fields(ids=["2801"], cell_m=5), "takes metres"),
+                            ("run 2801 at 5 US survey feet", fields(ids=["2801"], cell_m=5), "takes metres"),
+                            ("run 2801 with 4 cores", fields(ids=["2801", "4"]), "cannot set"),
+                            ("run 2801 with ACC, then FV2", fields(ids=["2801"], solver="fv2"), "more than one solver")):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(self.calls, [], req)
+            self.assertIn(why, said, req)
+
+    def test_reasonable_sentences_still_run(self):
+        for req, f in (("run 2801 and 4031 at 5 m with FV-2", fields(ids=["2801", "4031"], cell_m=5, solver="fv2")),
+                       ("redo dam 2801 at a 5 m cell", fields(ids=["2801"], cell_m=5, redo=True)),
+                       ("run 2801 at 5 metres, Manning's n = 0.035", fields(ids=["2801"], cell_m=5, manning=0.035)),
+                       ("please re-run 2801 one more time", fields(ids=["2801"], redo=True)),
+                       ("run DWR-3034 and 2801,4031 at 10m using mwdg2",
+                        fields(ids=["DWR-3034", "2801", "4031"], cell_m=10, solver="mwdg2")),
+                       ("run dam 2801.", fields(ids=["2801"]))):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(code, 0, req + "\n" + said)
+            self.assertEqual(len(self.calls), 2, req)
 
     def test_an_id_takes_the_layers_spelling(self):
         code, said = self.go("run dwr-3034", fields(ids=["dwr-3034"]))
