@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-# rag_index.py v2.9 — multi-collection RAG indexer (stdlib only)
+# rag_index.py v2.9.1 — multi-collection RAG indexer (stdlib only)
 # Atomic rebuilds via a hidden per-collection stage; auto-migrates v1 DBs;
 # PDF backends: pdftotext -> pymupdf -> pypdf -> skip.
 #
+# v2.9.1: messages name the installed commands (heim-index, not rag_index.py), and the doctor's
+#   "Ollama is not reachable" line says how to start it on this computer.
 # v2.9: vectors are stored as float32 bytes, not JSON text, and an exact-word index
 #   (SQLite FTS5, table chunks_fts) sits beside them. A JSON vector is ~16 KB of text, so a
 #   124,000-passage index held about 2 GB of it, and every `heim` question parsed all of it
@@ -68,6 +70,19 @@ _detected = [False]
 _pdftotext = [False]
 _pm = [None]
 _pp = [None]
+
+
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
 
 
 def _detect():
@@ -511,7 +526,7 @@ def add_files(paths):
         p = os.path.abspath(os.path.expanduser(p))
         name = os.path.basename(p)
         if os.path.isdir(p):
-            print("  folder, not added: %s\n    index a folder where it is: rag_index.py -c <name> %s" % (p, p))
+            print("  folder, not added: %s\n    index a folder where it is: heim-index -c <name> %s" % (p, p))
             continue
         if not os.path.isfile(p):
             print("  not found: %s" % p)
@@ -749,7 +764,7 @@ def doctor_checks(ollama=True):
                 else:
                     add("PROBLEM", "model %s is missing from Ollama: re-run the installer" % m_)
         except Exception as e:
-            add("PROBLEM", "Ollama is not reachable at %s (%s). Start it: heim-start" % (base, e))
+            add("PROBLEM", "Ollama is not reachable at %s (%s). To start it, %s" % (base, e, start_hint()))
     return out
 
 
@@ -769,7 +784,7 @@ def doctor(ollama=True):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Index folders (text+PDFs) into a named collection.")
+    ap = argparse.ArgumentParser(prog="heim-index", description="Index folders (text+PDFs) into a named collection.")
     ap.add_argument("-c", "--collection", default=None)
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--list-collections", action="store_true")
@@ -804,8 +819,8 @@ def main():
         list_collections()
         return
     if not args.paths:
-        sys.exit("usage: rag_index.py [-c NAME] <folder> ...\n  rag_index.py --add <file> ...\n"
-                 "  rag_index.py --list-collections")
+        sys.exit("usage: heim-index [-c NAME] <folder> ...\n  heim-add <file> ...\n"
+                 "  heim-index --list-collections")
     if args.add:
         if args.collection not in (None, ADDED):
             sys.exit("ERROR: --add always uses the collection '%s'; to index a folder into "

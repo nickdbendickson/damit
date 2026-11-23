@@ -1798,7 +1798,7 @@ def machine_flags(d):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Deterministic digest of one DamIT Runner run (no LLM).")
+    ap = argparse.ArgumentParser(prog="heim-digest", description="Deterministic digest of one DamIT Runner run (no LLM).")
     ap.add_argument("run_dir")
     ap.add_argument("--phase", default="run_end", choices=("pass_end", "stall", "before_hazard", "after_hazard", "run_end"))
     ap.add_argument("--pass", dest="upto", type=int, default=None, help="digest only passes up to N (a run in progress)")
