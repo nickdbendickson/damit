@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.8 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.9 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,15 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.9 (2026-11-23): the model is told which passages come from the publication the question names. On the
+#   2026-11-23 real-model test Vor read the right pages (WSP 2339 Table 1 p.10, Pierce et al. p.35) but each
+#   passage was labelled only "Arcement (1989) Guide for Selecting..." or "FEMA (2010) Predicting Peak...", so
+#   the model decided they were not "WSP 2339" or "Pierce, Thornton and Abt" and returned no finding in 4 s
+#   (7 of 11 failures). Each passage of a named publication now says so, with the question's own words, and
+#   a report number the title leaves out is shown beside it. Table values are quoted as whole rows.
+#   Only a plain naming is labelled (not 'P-94' in 'P-946', a year, 'p 10', or words that fit two documents);
+#   with --doc too. The quote check reads a row's dot leaders as a space and sees numbers written '.018';
+#   a finding's source is read from 'S1' before any other number.
 # 1.4.8 (2026-11-23): `vor ocr` tries once more when ocrmypdf fails on a PDF (often JPEG 2000 images
 #   it cannot decode: "JPXDecode ... could not be decoded", exit 4, as on FEMA P-946 and HMR 55A). PyMuPDF
 #   draws each scanned page as a plain image, ocrmypdf reads those, and the copy is the original with
@@ -125,7 +134,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.8"
+VERSION = "1.4.9"
 
 
 def _home():
@@ -592,8 +601,8 @@ def find_docs(db, key):
     return ids, labels
 
 
-_NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bulletin|Circular)[\s_-]*"
-                    r"(\d+(?:[.-]\d+)*)", re.I)
+_SERIES_WORDS = r"FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bulletin|Circular"
+_NAMED = re.compile(r"\b(%s)[\s_-]*(\d+(?:[.-]\d+)*)" % _SERIES_WORDS, re.I)
 
 
 _PAGE_NO = r"(?:[A-Z]-\d+|\d+(?:[-–]\d+)?|[ivxlc]+)\b"
@@ -815,19 +824,23 @@ def strip_naming(question, spans=None):
     return q if len(left) >= 2 else question
 
 
-def named_docs(db, question, spans=False):
+def named_docs(db, question, spans=False, by_doc=False):
     """Documents the question names by report number ('FEMA 333', 'P-946', 'TD-39', 'WSP 2339') or by author
     and year ('Pierce, Thornton and Abt (2010)'), as (ids, labels), or (ids, labels, matched texts) with
     spans=True. The 2026-11-22 real-model test asked four FEMA 333 questions and FEMA 333 was never among
     the passages read: other FEMA manuals repeat its definitions and outranked it. A number match needs the
     prefix and number together ('p946' in 'FEMA P946.pdf'), or, for a number of 3+ digits, the number on its
-    own as a whole number plus the prefix anywhere ('FEMA ... 333_04.pdf')."""
+    own as a whole number plus the prefix anywhere ('FEMA ... 333_04.pdf').
+    1.4.9: by_doc=True returns {id: [the question's words that named it]}, only where those words name that one
+    document plainly (see _plainly_named); the model is then told the passage is from the named publication."""
     q = _plain(question)
-    want = [(m.group(0), m.group(1), m.group(2)) for m in _NAMED.finditer(q)]
+    want = [(m.group(0), m.group(1), m.group(2), (re.match(r"[A-Za-z](?![A-Za-z])", q[m.end():]) or [""])[0])
+            for m in _NAMED.finditer(q)]                      # 1.4.9: the edition letter of '17C' too
     ids, labels, used = [], [], []
+    strong = {}                                     # the question's words -> documents they name plainly
     if want or _citations(q):
         rows = db.execute("SELECT id, title, path, number, org FROM docs").fetchall() if want else []
-        for text, pfx, num in want:
+        for text, pfx, num, sfx in want:
             tight = squash(pfx + num)
             for r in rows:
                 raw = " ".join(x or "" for x in (os.path.basename(r[2] or ""), r[1], r[3], r[4]))
@@ -837,17 +850,59 @@ def named_docs(db, question, spans=False):
                     ok = bool(re.search(r"(?<![\d.])%s(?![\d])" % re.escape(num), raw)) and squash(pfx) in sq
                 if ok:
                     used.append(text)
+                    if _plainly_named(text, pfx, num, raw, sfx):
+                        strong.setdefault(text + sfx, set()).add(r[0])
                     if r[0] not in ids:
                         ids.append(r[0])
                         labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
         for did, label, text in _author_year_docs(db, q):
             used.append(text)
+            strong.setdefault(text, set()).add(did)
             if did not in ids:
                 ids.append(did)
                 labels.append(label)
+    if by_doc:
+        words = {}
+        for text, docs in strong.items():
+            if len(docs) == 1:                      # words that fit two documents name neither of them plainly
+                words.setdefault(next(iter(docs)), []).append(text)
+        return {d: words[d] for d in ids[:6] if d in words}
     if spans:
         return ids[:6], labels[:6], used
     return ids[:6], labels[:6]
+
+
+_SERIES = re.compile(r"(?<![A-Za-z0-9])(%s)[\s_.-]*$" % _SERIES_WORDS, re.I)   # a series prefix just before
+
+
+def _plainly_named(text, pfx, num, raw, sfx=""):
+    """1.4.9: does 'FEMA P-946' / 'WSP 2339' in the question name this document plainly, and not by a loose match
+    (named_docs' own test only reorders the reading)? Two independent reviews of 1.4.9 found loose matches that
+    would have been labelled as the named publication: 'P-94' in 'P-946', 'HDS-5' in 'HDS-51', 'Bulletin 17'
+    in 'Bulletin 17C' (and 17C in the 1976 'Bulletin 17'), 'p 10' (a page) in 'P-1025', 'FEMA 2013' (a year) in
+    two FEMA documents, 'ER 1110-2-1806' in 'EM_1110-2-1806.pdf' ('er' in 'Engineering').
+    The number, with the question's edition letter if it has one (sfx, '17C'), must stand on its own in the file
+    name, title or number, after the prefix as a word of its own, and not after another series' prefix."""
+    digits = re.sub(r"\D", "", num)
+    spaced = re.search(r"\s", text) is not None
+    if re.fullmatch(r"(?:19|20)\d\d", num) and pfx.upper() in ("FEMA", "HEC") and spaced:
+        return False                                  # 'FEMA 2013': a year, not FEMA P-2013
+    if len(pfx) == 1 and spaced and (pfx.islower() or len(digits) <= 2):
+        return False                                  # 'p 10', 'P 35': a page
+    numpat = r"[._\s-]?".join(re.escape(g) for g in re.split(r"[.-]", num))
+    numpat += (r"[\s_-]?%s" % re.escape(sfx)) if sfx else ""
+    end = r"(?![0-9A-Za-z])"
+    if re.search(r"(?<![A-Za-z0-9])%s[\s_.-]*%s%s" % (re.escape(pfx), numpat, end), raw, re.I):
+        return True
+    if len(digits) < 3 or not re.search(r"(?<![A-Za-z0-9])%s(?![A-Za-z])" % re.escape(pfx), raw, re.I):
+        return False
+    if re.fullmatch(r"(?:19|20)\d\d", num):
+        return False                                  # P-2013 is not the 2013 in FEMA_P-946_July_2013.pdf
+    for m in re.finditer(r"(?<![A-Za-z0-9.])%s%s" % (numpat, end), raw, re.I):
+        other = _SERIES.search(raw[:m.start()])
+        if not other or other.group(1).lower() == pfx.lower():
+            return True                               # 'FEMA ... 333_04.pdf', not 'EM_1110-2-1806' for ER
+    return False
 
 
 def merge_hits(first, rest, k):
@@ -1812,6 +1867,20 @@ class Hit:
         t = self.title if len(self.title) <= 70 else self.title[:67] + "..."
         return "%s%s%s" % (who + " " if who else "", "(%s) " % self.year if self.year else "", t)
 
+    def model_label(self, named=None):
+        """1.4.9: the label the MODEL reads: short() plus a report number the title leaves out ('(WSP 2339)'),
+        and, when the question named this publication, the question's own words for it. The model had
+        refused passages of 'Arcement (1989) Guide for Selecting...' for a question about 'WSP 2339'."""
+        lab = self.short()
+        num = (self.number or "").strip()
+        if num and squash(num) not in squash(lab):
+            lab += " (%s)" % num
+        lab += ", " + self.pg
+        said = (named or {}).get(self.doc_id)
+        if said:
+            lab += " (from %s, the publication the question names)" % " / ".join("'%s'" % w.strip() for w in said)
+        return lab
+
     def link(self):
         u = "file://" + urllib.request.pathname2url(self.path)
         return u + ("#page=%d" % self.page if self.path.lower().endswith(".pdf") else "")
@@ -1867,11 +1936,21 @@ def norm(s):
     return re.sub(r"\s+", " ", s).strip(" .,;:")
 
 
+_LEADERS = re.compile(r"\.{3,}(?=\d)|(?: ?(?:_|\.(?!\d)) ?){3,}")   # 'finish.........0.013', 'Sand ....... .025'
+
+
+def _no_leaders(s):
+    """1.4.9: a table row's dot leaders ('Concrete ....... _ 0.012-0.018') as one space, in the quote and the page
+    alike, so a row quoted without them ('Concrete 0.012-0.018') still checks. Numbers keep their single points."""
+    return re.sub(r"\s+", " ", _LEADERS.sub(" ", s)).strip(" .,;:")
+
+
 def quote_check(quote, source_txt):
     """'exact', 'close' (>= 90% of the quote's characters found in order), or 'not found'."""
-    q, t = norm(quote), norm(source_txt)
-    if len(q) < 12:
+    nq = norm(quote)
+    if len(nq) < 12:                                      # measured with any dot leaders, as before 1.4.9
         return "too short"
+    q, t = _no_leaders(nq), _no_leaders(norm(source_txt))
     if q in t:
         return "exact"
     sm = difflib.SequenceMatcher(None, q, t, autojunk=False)
@@ -1882,19 +1961,27 @@ def quote_check(quote, source_txt):
     if m >= 0.9 * len(q) and span <= 1.3 * len(q):
         # a near match must not hide a changed number ("2 and 5 times" -> "3 and 7 times")
         region = t[blocks[0].b: blocks[-1].b + blocks[-1].size]
-        if NUM.findall(q) != NUM.findall(region):
+        if nums(q) != nums(region):
             return "numbers differ"
         return "close"
     return "not found"
 
 
-NUM = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*")
+NUM = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*|(?<!\S)\.\d+")     # 1.4.9: and '.018' after a space
+
+
+def nums(s):
+    """The numbers in s, '.018' (a table's way of writing it) read as 0.018. 1.4.9: before, a number with no
+    leading zero was not seen at all, so 'Sand .3 .018' passed as a close quote of a row reading '.3 .017'.
+    A number glued to a letter or a period is still not read: footnote markers ('dams2', 'PMF.3'), unit powers
+    ('ft³/s' is 'ft3/s' after NFKC) and 'p.35' would otherwise reject faithful quotes and claims."""
+    return ["0" + n if n.startswith(".") else n for n in NUM.findall(s)]
 
 
 def numbers_outside(claim, quote, source_txt):
     """Numbers in the paraphrase that appear in neither the quote nor the page — likely invented."""
-    allowed = set(NUM.findall(norm(quote))) | set(NUM.findall(norm(source_txt)))
-    bad = [n for n in NUM.findall(norm(claim)) if n not in allowed and n.replace(",", "") not in allowed]
+    allowed = set(nums(norm(quote))) | set(nums(norm(source_txt)))
+    bad = [n for n in nums(norm(claim)) if n not in allowed and n.replace(",", "") not in allowed]
     return bad
 
 
@@ -1911,7 +1998,10 @@ Rules:
   (FEMA, USBR, USACE, NRCS, FERC, state rules) versus a research paper or a case study.
 - If passages disagree, report both sides; do not pick one silently.
 - If the passages do not answer something, say so plainly. "The library does not cover this" is a
-  good answer. Never guess."""
+  good answer. Never guess.
+- One publication goes by several names: its report number (WSP 2339, FEMA 333, TD-39), its authors
+  and its agency. A passage label that says "the publication the question names" is from the document
+  the question asks about, even when the label shows other authors, an agency or a long title."""
 
 PLAN_SCHEMA = {"type": "object", "properties": {
     "subquestions": {"type": "array", "items": {"type": "string"}},
@@ -1958,6 +2048,7 @@ class Evidence:
         self.cut_cids = set()
         self.calls = []          # 1.4.2: one dict per extract() model call (passages, tokens, seconds, ...)
         self.not_asked = 0       # 1.4.2: extract() calls where no passage fitted, so the model was not asked
+        self.named = {}          # 1.4.9: document id -> the question's words that named it (model_label)
 
     def add_source(self, h):
         if h.cid not in self.by_cid:
@@ -1983,8 +2074,9 @@ def est_tokens(text):
 EXTRACT_ASK = ("List every finding in these passages that helps answer the sub-question. For each: the source "
                "label (like S3), an exact quote copied from that passage (one or two sentences, under 300 "
                "characters), a one-sentence plain claim that says no more than the quote, and its kind. "
-               "Skip passages that are not relevant. In not_covered, list parts of the sub-question that "
-               "none of the passages answer.")
+               "Skip passages that are not relevant. A value in a table is quoted as its whole row: the row's "
+               "name and its numbers, as they appear in the passage. In not_covered, list parts of the "
+               "sub-question that none of the passages answer.")
 
 
 def _note_call(ev, blocks, msg, reply, out, retry=False):
@@ -2013,7 +2105,7 @@ def extract(ev, sub, hits):
     blocks, used = [], 0
     for h in hits:
         txt = h.txt or ""
-        head = "[S%d] %s, %s\n" % (len(ev.sources) + 1, h.short(), h.pg)     # label fixed below
+        head = "[S%d] %s\n" % (len(ev.sources) + 1, h.model_label(ev.named))     # label fixed below
         left = room - used - est_tokens(head)
         if left < 150:
             continue                       # no room for this one; a shorter one further down may fit
@@ -2030,7 +2122,7 @@ def extract(ev, sub, hits):
                 ev.cut_cids.add(h.cid)
                 ev.cut.append("%s, %s: %d of %d characters" % (h.short(), h.pg, keep, len(txt)))
             txt = txt[:keep] + "\n[passage cut here: %d of %d characters shown]" % (keep, len(txt))
-        b = "[S%d] %s, %s\n%s" % (s, h.short(), h.pg, txt)
+        b = "[S%d] %s\n%s" % (s, h.model_label(ev.named), txt)
         blocks.append((s, b))
         used += est_tokens(b)
     if not blocks:
@@ -2080,8 +2172,9 @@ def extract(ev, sub, hits):
     for f in out.get("findings") or []:
         if not isinstance(f, dict):
             continue
-        m = re.search(r"\d+", str(f.get("source", "")))
-        s = int(m.group(0)) if m else -1
+        src = str(f.get("source", ""))
+        m = re.search(r"\bS\s*(\d+)", src, re.I) or re.search(r"(\d+)", src)   # 1.4.9: 'S1' before the
+        s = int(m.group(1)) if m else -1                                     # '2339' of 'WSP 2339 (S1)'
         quote, claim = str(f.get("quote", "")).strip().strip('"'), str(f.get("claim", "")).strip()
         if s not in allowed:
             ev.rejected.append({"sub": sub, "why": "cites S%s, which was not in its passages" % s,
@@ -2107,8 +2200,8 @@ def synthesize(question, ev, mode, out):
     lines = []
     for f in ev.findings:
         h = ev.sources[f["source"] - 1]
-        lines.append('[F%d] (%s; %s; %s) %s\n     quote: "%s"' % (
-            f["F"], h.short(), h.pg, f["kind"], f["claim"], f["quote"]))
+        lines.append('[F%d] (%s; %s) %s\n     quote: "%s"' % (
+            f["F"], h.model_label(ev.named), f["kind"], f["claim"], f["quote"]))
     gaps = "\n".join("- %s" % g for _, g in ev.not_covered) or "- (none reported)"
     if mode == "ask":
         shape = ("Write a direct answer of one to four short paragraphs. Put the finding labels you rely on "
@@ -2280,6 +2373,9 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
         named, named_labels, named_spans = named_docs(db, question, spans=True)
         if named:
             say("The question names: " + "; ".join(named_labels) + " (their passages are read first)")
+    # 1.4.9: the passages of a publication the question names plainly say so (Hit.model_label); with --doc too,
+    # for the documents kept (the 2026-11-23 failures read "Pierce, Thornton and Abt" on a "FEMA (2010)" label)
+    ev.named = {d: w for d, w in named_docs(db, question, by_doc=True).items() if not keep or d in keep}
     log = []
     for i, s in enumerate(subs, 1):
         q = s + ((" " + " ".join(terms)) if (i == 1 and terms) else "")

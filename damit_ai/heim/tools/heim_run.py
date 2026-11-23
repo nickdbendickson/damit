@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# heim_run.py v1.1.0 — `heim run "plain English"`: Heim drafts a damchain run, you check it, you type y.
+# heim_run.py v1.2.0 — `heim run "plain English"`: Heim drafts a damchain run, you check it, you type y.
 #
 #   heim run "run 2801 and 4031 at 5 m with FV2"
 #   heim run --set damit --dams ~/Dams/dams.gpkg --out ~/Dams/runs --dem ~/DEM/nd.vrt "run 2801 at 10 m"
@@ -36,6 +36,11 @@
 #   longer waits on the model first); a refusal ends with a damchain command to type yourself, with
 #   your paths filled in; Ollama not running or a missing model is one plain line saying what to do.
 #
+# 1.2.0: with --set dwr, DamSafety Screening is left out (--no-screen) unless --screen-work FOLDER is given
+#   (remembered; --no-screen forgets it). The first real run (2026-11-23, DWR-2645) stopped at damchain's checks with "Choose the
+#   Screening work folder (or untick Screening)": Screening needs its statewide work folder and the offline
+#   pack, and the batch-44 kit always ran the DamSafety chain with --no-screen.
+#
 # Rules agreed 2026-11-23 (a plain-text reading must never reach a run unchecked): see above.
 import argparse
 import datetime
@@ -48,7 +53,7 @@ import subprocess
 import sys
 import unicodedata
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAVED = os.path.expanduser(os.environ.get("HEIM_RUN_SETTINGS", "~/local-ai/heim_run.json"))
 SETS = ("damit", "dwr")
@@ -478,15 +483,17 @@ def pick_set(args, request, saved):
 def paths_for(args, set_name, saved):
     """dams / out / dem / id_field / dem_units: the flags, else the last ones used for this set."""
     have = dict(saved.get(set_name) or {})
-    for k in ("dams", "out", "dem", "id_field", "dem_units"):
+    for k in ("dams", "out", "dem", "id_field", "dem_units", "screen_work"):
         v = getattr(args, k, "") or ""
-        if v and k in ("dams", "out", "dem"):
+        if v and k in ("dams", "out", "dem", "screen_work"):
             # full paths, so a path remembered from one folder means the same file from any other
             path, bar, rest = v.partition("|")
             v = os.path.abspath(os.path.expanduser(path)) + bar + rest
         if v:
             have[k] = v
-    return have
+    if set_name != "dwr" or getattr(args, "no_screen", False):
+        have.pop("screen_work", None)               # --no-screen wins (as in damchain) and forgets the folder;
+    return have                                     # only the DamSafety chain has a Screening step
 
 
 def check_paths(set_name, p, ids, layer_ids, words=""):
@@ -502,6 +509,9 @@ def check_paths(set_name, p, ids, layer_ids, words=""):
         bad.append("the dams layer is not there: %s" % dams)
     if not os.path.exists(os.path.expanduser(p["dem"])):
         bad.append("the DEM is not there: %s" % os.path.expanduser(p["dem"]))
+    if set_name == "dwr" and p.get("screen_work") and not os.path.isdir(os.path.expanduser(p["screen_work"])):
+        bad.append("the Screening work folder is not there: %s (give another with --screen-work, or "
+                   "--no-screen to leave Screening out and forget it)" % os.path.expanduser(p["screen_work"]))
     parent = os.path.dirname(os.path.abspath(os.path.expanduser(p["out"])))
     if not os.path.isdir(parent):
         bad.append("the folder above the output folder does not exist: %s" % parent)
@@ -543,10 +553,19 @@ def check_paths(set_name, p, ids, layer_ids, words=""):
     return bad
 
 
+def screen_args(set_name, p):
+    """1.2.0: DamSafety Screening needs its statewide work folder; without one (or one that is not there) it is
+    left out."""
+    if set_name != "dwr":
+        return []
+    w = p.get("screen_work")
+    return ["--screen-work", w] if w and os.path.isdir(os.path.expanduser(w)) else ["--no-screen"]
+
+
 def build_argv(set_name, p, f):
     """The damchain argv (after `damchain`). Built here, never by the model."""
     a = ["run", "--set", set_name, "--dams", p["dams"], "--out", p["out"], "--dem", p["dem"],
-         "--ids", ",".join(f["ids"])]
+         "--ids", ",".join(f["ids"])] + screen_args(set_name, p)
     if p.get("id_field"):
         a += ["--id-field", p["id_field"]]
     if p.get("dem_units"):
@@ -614,6 +633,7 @@ def typed_command(set_name, p):
     """The damchain command to type yourself after a refusal: your paths, the rest to fill in."""
     a = ["damchain", "run", "--set", set_name, "--dams", p.get("dams") or "DAMS.gpkg",
          "--out", p.get("out") or "OUT_FOLDER", "--dem", p.get("dem") or "DEM.tif", "--ids", "DAM_ID"]
+    a += screen_args(set_name, p)
     if p.get("id_field"):
         a += ["--id-field", p["id_field"]]
     if p.get("dem_units"):
@@ -642,6 +662,10 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
     ap.add_argument("--id-field", default="", help="dam id field of the layer (remembered per set)")
     ap.add_argument("--dem-units", choices=("detect", "feet", "us-feet", "meters"), default="",
                     help="the DEM's elevation units (remembered per set)")
+    ap.add_argument("--screen-work", default="",
+                    help="--set dwr: DamSafety Screening's work folder (remembered); without it Screening is left out")
+    ap.add_argument("--no-screen", action="store_true",
+                    help="--set dwr: leave Screening out and forget a remembered --screen-work")
     ap.add_argument("--show", action="store_true", help="show the command only; never run")
     ap.add_argument("--version", action="version", version="heim run " + VERSION)
     args = ap.parse_args(argv)
@@ -655,6 +679,8 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
         out("Not run: " + why)
         return 2
     p = paths_for(args, set_name, saved)
+    if set_name != "dwr" and (args.screen_work or args.no_screen):
+        out("  note: --screen-work and --no-screen are for --set dwr only (the DamIT chain has no Screening step); ignored")
     dc = _dam_chain()
     # 1.1.0: the paths first. No dams layer, output folder or DEM is not something the model can help with.
     bad = check_paths(set_name, p, [], dc.layer_ids)
@@ -688,6 +714,9 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
     out("Settings: " + ("; ".join(ch) if ch else "none asked for (the Runner's own settings)"))
     out("Dams: %s   from %s" % (", ".join(f["ids"]), p["dams"]))
     out("Output: %s   DEM: %s" % (p["out"], p["dem"]))
+    if set_name == "dwr":
+        out("Screening: " + ("work folder %s" % p["screen_work"] if p.get("screen_work") else
+                             "left out (it needs its statewide work folder: add --screen-work FOLDER to include it)"))
     if args.show:
         out("(--show: nothing was run)")
         _draft(request, reply, "shown (--show): " + shown)

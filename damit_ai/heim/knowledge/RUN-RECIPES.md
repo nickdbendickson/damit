@@ -84,7 +84,7 @@ damchain run --set damit --dams LAYER --ids 2801,4031 --out D --dem DEM --cell 5
 - Exit code: 1 when any dam failed (the Runner's "N failed" count), or when `--ids` was given
   and the Runner found fewer of them than asked, even though `qgis_process` itself exits 0. Logs: `D/_chain_logs/damit_batch_<time>.log`.
 
-## 2b. Drafting a run in plain English (`heim run`, heim_run 1.1.0)
+## 2b. Drafting a run in plain English (`heim run`, heim_run 1.2.0)
 
 ```
 heim run --set damit --dams LAYER --out D --dem DEM "run 2801 and 4031 at 5 m with FV2"
@@ -130,6 +130,11 @@ heim run --show "run 2801 at 10 m"
 - 1.1.0: the dams layer, output folder and DEM are checked before the model is asked, and every
   refusal ends with "To type it yourself": the `damchain run` line with your paths filled in and
   `DAM_ID` to replace. When Ollama is not running or a model is missing, it says so in one line.
+- 1.2.0: with `--set dwr`, DamSafety Screening is left out (`--no-screen` in the command) unless
+  `--screen-work FOLDER` is given; that folder is remembered, and `--no-screen` forgets it. The
+  first real run (2026-11-23) stopped at damchain's checks with "Choose the Screening work folder
+  (or untick Screening)": Screening needs its statewide work folder and the offline pack. The
+  output shows a `Screening:` line. Both flags are ignored, with a note, for `--set damit`.
 - `heim run add FOLDER` is answered "Did you mean: heim runs add FOLDER" (heim runs reads
   finished runs); `heim runs "run 2801 ..."` is answered with the `heim run` line.
 - After a damchain run (damit set), each dam's status and result folder are listed, then
@@ -138,7 +143,7 @@ heim run --show "run 2801 at 10 m"
   `y`, then runs `--check-only` first. Your sentence, the model's reply and the command go
   to `D/_chain_logs/heim_run_<time>.txt`. Every reading, refused, stopped, shown or run, is
   also kept in `~/local-ai/reports/heim_run_drafts.log`.
-- `--set`, `--dams`, `--out`, `--dem`, `--id-field`, `--dem-units` are remembered per set
+- `--set`, `--dams`, `--out`, `--dem`, `--id-field`, `--dem-units`, `--screen-work` are remembered per set
   (paths in full) in `~/local-ai/heim_run.json` after a run you confirmed with `y` (not after
   `--show` or a stop). A dam id such as
   `DWR-2801` does not switch the set; the word `dwr` or `damit` on its own does. `heim run "...?"` (ending in
