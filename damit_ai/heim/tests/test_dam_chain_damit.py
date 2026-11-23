@@ -203,7 +203,15 @@ class DamitRunTest(unittest.TestCase):
             try:
                 env = self._qp(a, "damit").env
                 self.assertNotIn("NDBREACH_LISFLOOD", env)
-                self.assertEqual(env["DAMIT_LISFLOOD"], exe)          # the Runner's last-resort hint
+                self.assertEqual(env["DAMIT_LISFLOOD"], exe)          # nothing ahead of it in the Runner's search
+                suite = os.path.join(self.tmp, "suite")
+                os.makedirs(os.path.join(suite, "bin"))
+                open(os.path.join(suite, "bin", "lisflood"), "w").close()
+                os.environ["DAMSUITE_PREFIX"] = suite
+                try:
+                    self.assertNotIn("DAMIT_LISFLOOD", self._qp(a, "damit").env)   # the Runner finds that one
+                finally:
+                    os.environ.pop("DAMSUITE_PREFIX")
                 a.lisflood_given = True
                 self.assertEqual(self._qp(a, "damit").env["NDBREACH_LISFLOOD"], exe)
                 a.lisflood_given = False

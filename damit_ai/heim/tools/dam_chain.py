@@ -163,10 +163,16 @@ class QP:
             self._pick_anuga()
         lis = os.path.expanduser(args.lisflood or "")
         if set_name == "damit" and not getattr(args, "lisflood_given", True):
-            # The DamIT Runner's own engine setting decides. The suite's binary (also the older
-            # ~/nd-dam-suite/bin one) only goes in DAMIT_LISFLOOD, the Runner's lowest-priority
-            # hint (data_conventions.lisflood_candidates), so a setting chosen in QGIS still wins.
-            if lis and os.path.isfile(lis):
+            # The DamIT Runner's own engine setting decides. The suite's binary goes only in
+            # DAMIT_LISFLOOD, which the Runner reads after its saved settings, when it searches for a
+            # build (data_conventions.lisflood_candidates), so a setting chosen in QGIS still wins.
+            # Only for the older ~/nd-dam-suite build, and only when the Runner's own search (its
+            # DAMSUITE_PREFIX or ~/dam-suite bin, then PATH) would find nothing ahead of it.
+            sp = self.env.get("DAMSUITE_PREFIX", "").strip()
+            ahead = [os.path.join(r, "bin", x) for r in (sp, os.path.expanduser("~/dam-suite")) if r
+                     for x in ("lisflood", "lisflood.exe")]
+            if lis and os.path.isfile(lis) and not any(os.path.isfile(x) for x in ahead) \
+                    and not shutil.which("lisflood", path=self.env.get("PATH")):
                 self.env.setdefault("DAMIT_LISFLOOD", lis)
             lis = ""
         if lis and os.path.isfile(lis):

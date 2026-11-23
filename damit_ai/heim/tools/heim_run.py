@@ -17,7 +17,8 @@
 #   - your words hold a number that no field accounts for ("the 2 m DEM", a second cell size);
 #   - the solver word is not in your words, or your words name two;
 #   - your words say "not", "except", "instead of" ... (it does not work out what is ruled out), give
-#     a range (2801-2805, 5-10 m), a comma decimal (5,5 m) or a number in letters (five metres);
+#     a range (2801-2805, 2801 to 2805, 5-10 m), a comma in a number (5,5 m, 2,801) or a
+#     number in letters (five metres);
 #   - you asked for something these fields cannot hold (ANUGA, a pool, a scenario, a DEM, all dams...),
 #     whether or not the model listed it (it says what, and how to type it yourself);
 #   - redo (run again over finished dams) is set but your own words did not ask for it: redo is then
@@ -118,11 +119,13 @@ _CELL_BEFORE = re.compile(r"(?:\bat|\bcells?(?:\s+size)?|\bgrid(?:\s+size)?|\bre
                           re.I)
 _N_BEFORE = re.compile(r"(?:\bn|\bmanning'?s?(?:\s+n)?|\broughness)\s*(?:of|=|:|to|is)?\s*$", re.I)
 # Any "not", "except", "instead of" ... : heim run does not work out what is ruled out; it refuses.
-# ('no.' or 'no' before a number is a dam number, not a no.)
-_NEGATION = re.compile(r"\b(?:not|never|no(?!\.?\s*\d)|none|nor|cannot|without|avoid|skip\w*|except\w*|exclud\w*|"
+# ('no.' before a number is a dam number; a bare 'no' is a no: "run 2801, no 4031" is refused)
+_NEGATION = re.compile(r"\b(?:not|never|no(?!\.\s*\d)|none|nor|cannot|without|avoid|skip\w*|except\w*|exclud\w*|"
                        r"instead|rather\s+than|other\s+than|dont|doesnt|didnt|shouldnt|wont|cant|mustnt)\b|"
                        r"\b\w+n['’]t\b", re.I)
-_RANGE = re.compile(r"(?<![\w.\-])\d*\.?\d+\s*(?:-|–|—|\.\.\.?)\s*\.?\d")
+_RANGE = re.compile(r"(?<![\w.\-])\d*\.?\d+\s*(?:-|–|—|\.\.\.?)\s*\.?\d|"
+                    r"(?<![\w.\-])[\w\-]*\d[\w\-]*\s+(?:to|thru|through|till|until)\s+[\w\-]*\d", re.I)
+_THOUSANDS = re.compile(r"(?<![\w.,])\d{1,3}(?:,\d{3})+(?![\w,]|\.\d)")
 _NUMBER_WORDS = re.compile(r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
                            r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|"
                            r"forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|half|quarter|dozen|"
@@ -135,7 +138,9 @@ _CANNOT = re.compile(r"\b(anuga|lisflood|hec-?ras|gpus?|cpus?|cores?|processors?
                      r"(?:failure|formation)\s+time)\b", re.I)
 
 
-_CELL_AFTER = re.compile(r"\s*(?:cells?|grid|resolution|res)\b", re.I)
+# 'cells' / 'grid' after a number makes it the cell size ('5 m cells'), unless the word has a number of its
+# own ('run 2801 grid 5 m': 2801 is the dam)
+_CELL_AFTER = re.compile(r"\s*(?:cells?|grid|resolution|res)\b(?!(?:\s+size)?\s*(?:of|=|:|to|is|at)?\s*\.?\d)", re.I)
 # The only words a request may hold besides dam ids, numbers (with their units) and solver names.
 # Anything else ("high", "thanks", "crashed", "folder", "processes") is refused, not guessed at.
 _FILLER = {
@@ -161,6 +166,7 @@ def read_numbers(text):
     A cell size is a number after 'at' / 'cell' / 'grid' / 'resolution', or one followed by
     'cell(s)' / 'grid' ('5 m cells'). Any other number with a unit ('a 30 m high dam') is 'other'."""
     out = []
+    groups = [g.span() for g in _THOUSANDS.finditer(text)]
     for m in _NUM.finditer(text):
         after = text[m.end():]
         span = (m.start(), m.end() + _unit_len(after))
@@ -189,6 +195,8 @@ def read_numbers(text):
             role = "plain"
         if role in ("cell", "n") and (re.match(r",\d", after) or re.search(r"\d,$", before)):
             role = "comma"                 # '5,5 m': a comma decimal or a list; not guessed which
+        elif any(a <= m.start() and m.end() <= b for a, b in groups):
+            role = "comma"                 # '2,801': one number with a thousands comma, or two dams?
         out.append({"value": float(m.group(1)), "text": m.group(1), "role": role, "unit": unit, "span": span})
     return out
 
@@ -215,6 +223,7 @@ def check_fields(request, data):
     bad, notes = [], []
     blank = {"ids": [], "cell_m": None, "solver": "", "manning": None, "redo": False}
     words = unicodedata.normalize("NFKC", request)          # full-width ５ｍ is 5m
+    words = re.sub(r"\b(fv|mwdg)\s(2)\b", r"\1-\2", words, flags=re.I)   # 'FV 2' is FV2 (same length)
     for what, rx, why in (
             ("not", _NEGATION, "heim run does not read %r: say only what to run (finished dams are skipped "
                                "unless you say rerun; a solver or cell size is the Runner's own unless you name one)"),
@@ -246,10 +255,14 @@ def check_fields(request, data):
         i = unicodedata.normalize("NFKC", str(r)).strip()
         if not i:
             continue
+        if i.lower() in _FILLER or _VERB.fullmatch(i) or i.lower() in SOLVERS:
+            bad.append("dam id %r is also a word heim run reads in a request; type the damchain command "
+                       "yourself for this dam" % i)
+            continue
         hit = None
         if re.fullmatch(r"\d+(?:\.\d+)?", i):
             for k, n in enumerate(nums):
-                if n["role"] == "plain" and n["text"] == i:
+                if n["role"] == "plain" and n["text"] == i and re.compile(_id_re(i)).match(words, n["span"][0]):
                     hit = k
                     used.add(k)
                     taken.append(n["span"])
@@ -347,18 +360,22 @@ def check_fields(request, data):
         bad.append("your words name %s but the reading has no solver; write it again plainly" % named[0].upper())
     # one run word, the dams, then the settings for all of them
     verbs = _VERB.findall(rest)
-    if len(verbs) > 1:
+    redo_hits = [m for m in _REDO_PHRASES.finditer(rest)]
+    run_pos = [m.start() for m in _VERB.finditer(rest)] + [m.start() for m in redo_hits]
+    if len(ids) > 1 and id_pos and any(min(id_pos) < q < max(id_pos) for q in run_pos):
+        bad.append("a run or redo word comes between the dams; heim run gives every dam the same run, so "
+                   "write it once (\"rerun 2801 and 4031\"), or run them one at a time")
+    elif len(verbs) > 1 and len(ids) > 1:
         bad.append("your words have more than one run (%s); heim run makes one run with one set of "
                    "settings for every dam: run them one at a time" % ", ".join(verbs))
     if len(ids) > 1 and set_pos and id_pos and max(id_pos) > min(set_pos):
         bad.append("a dam comes after a setting; heim run gives every dam the same settings, so write the "
                    "dams first (\"run 2801 and 4031 at 5 m\"), or run them one at a time")
-    redo_hits = [m for m in _REDO_PHRASES.finditer(rest)]
     for m in redo_hits:
         rest = rest[:m.start()] + " " * (m.end() - m.start()) + rest[m.end():]
     rest = _VERB.sub(" ", rest)
     unknown = []
-    for tok in re.findall(r"[^\W\d_]+(?:['’][^\W\d_]+)*|[^\w\s]", rest):
+    for tok in re.findall(r"[^\W\d_]+(?:['’][^\W\d_]+)*|[\d_]+|[^\w\s]", rest):
         t = tok.lower().replace("’", "'")
         if t in _FILLER or t in ",.;:!=&+":
             continue

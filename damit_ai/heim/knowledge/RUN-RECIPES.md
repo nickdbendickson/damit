@@ -100,7 +100,8 @@ heim run --show "run 2801 at 10 m"
   a, and, with, using, at, on, for, dam, cell, solver, Manning, please ...).
 - Refused, not guessed:
   - any other word ("the 30 m high dam", "thanks", "2 at a time", "FV2 crashed last time");
-  - two runs ("redo 4031 and run 2801") or a dam after a setting ("run 2801 at 5 m and 4031"):
+  - a run or redo word between the dams ("run 2801 and overwrite 4031") or a dam after a
+    setting ("run 2801 at 5 m and 4031"):
     every dam gets the same settings, so run them one at a time;
   - an id that is not a word of its own in your sentence, or not in the dams layer (any case:
     `nd00123` runs as the layer's `ND00123`; when the layer has both `a1` and `A1`, the
@@ -110,8 +111,10 @@ heim run --show "run 2801 at 10 m"
   - a number nothing accounts for ("with the 2 m DEM", a second cell size for another dam);
   - a solver you did not name, or two solvers named (FV-2 counts as FV2);
   - any "not", "except", "instead of", "skip", "don't" ...: it does not work out what is ruled
-    out ("run 2801 but not 4031" is refused; write "run 2801"); a range (2801-2805, 5-10 m); a
-    comma decimal (5,5 m); a number in letters (five metres);
+    out ("run 2801 but not 4031" or "run 2801, no 4031" is refused; write "run 2801"; "dam no.
+    2801" with the dot is fine); a range (2801-2805, 2801 to 2805, 5-10 m); a comma in a number
+    (5,5 m, 2,801); a number in letters (five metres);
+  - a dam whose id is also a word heim run reads ("N", "A", "run"): type damchain for it;
   - anything it cannot set (ANUGA, an engine, a pool, a scenario, PMF, a DEM, all dams, ...),
     whether or not the model noticed it. It says what, and to type the damchain command for it.
   Redo is left out, with a note, unless your words ask for it (rerun, re-run, redo, again,
