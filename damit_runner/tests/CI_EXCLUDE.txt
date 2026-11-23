@@ -1,0 +1,4 @@
+# Modules that must not run in CI. One entry per line:
+#   test_module  # why it cannot run in this job
+# A stem with no reason, or a stem that is not a test_*.py file, fails the job.
+# Leave only comments here until a module truly cannot run in the workflow.
