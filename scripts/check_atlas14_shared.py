@@ -82,6 +82,35 @@ def _uncommitted(repo, rels):
     return [ln[3:] for ln in out.splitlines() if ln.strip()]
 
 
+def contains(repo, commit):
+    """True when `commit` is HEAD or an ancestor of HEAD in `repo`, False when it is not (an older checkout, or a
+    branch cut before it), None when git cannot tell (no git, not a checkout, the commit is not in this clone)."""
+    if not commit:
+        return None
+    try:
+        r = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", commit, "HEAD"], capture_output=True,
+                           text=True)
+    except OSError:
+        return None
+    return {0: True, 1: False}.get(r.returncode)
+
+
+def stale_hint(dwr, record=RECORD):
+    """A note for a failed check when the DWR_Plugins checkout does not contain the recorded synced_to commit: its
+    copies may simply predate the last sync (the difference is then in the checkout, not in DamIT). None otherwise.
+    The check still fails: the note only says where to look."""
+    try:
+        pin = load_record(record).get("synced_to", "")
+    except (OSError, ValueError):
+        return None
+    if contains(dwr, pin) is not False:
+        return None
+    return ("note: this DWR_Plugins checkout ({}) does not contain the recorded commit {} (SHARED_ATLAS14.json "
+            "synced_to): it is older, or a branch cut before it, so its copies may predate the last sync. Check "
+            "against {} or DWR_Plugins main before changing anything.".format(_commit(dwr)[:12] or "?", pin[:12],
+                                                                              pin[:12]))
+
+
 def short_diff(a, b, a_name, b_name, limit=DIFF_LINES):
     """A unified diff of two byte strings, cut to ``limit`` lines, with a note for invisible differences."""
     lines = list(difflib.unified_diff(a.decode("utf-8", "replace").splitlines(True),
@@ -169,6 +198,9 @@ def main(argv=None, root=ROOT, record=RECORD):
     for p in problems:
         print(p)
     if problems:
+        hint = stale_hint(a.dwr, record)
+        if hint:
+            print(hint)
         if a.update:
             print("SHARED_ATLAS14.json not written: every pair must be identical first.", file=sys.stderr)
         return 1

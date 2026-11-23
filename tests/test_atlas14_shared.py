@@ -197,6 +197,25 @@ class UpdateRoundTrip(_Fixture):
         self.assertIn("not committed in DWR_Plugins: DamSafety_PMP/noaa14/storm.py", err)
         self.assertEqual(AS.load_record(self.record)["synced_to"], self.head)
 
+    def test_a_checkout_older_than_the_pin_says_so_and_still_fails(self):
+        self.main("--dwr", self.dwr, "--update")                     # pinned at the first commit
+        for rel in ("damit_pmp/storm.py", "DamSafety_PMP/noaa14/storm.py"):
+            _tree(self.me if rel.startswith("damit") else self.dwr, {rel: "# storm\nVALUE = 7\n"})
+        _git(self.dwr, "commit", "-q", "-am", "storm fix")
+        self.assertEqual(self.main("--dwr", self.dwr, "--update")[0], 0)  # pinned at the second
+        _git(self.dwr, "checkout", "-q", "HEAD~1")                     # an older DWR checkout
+        code, out, _ = self.main("--dwr", self.dwr)
+        self.assertEqual(code, 1)
+        self.assertIn("DIFFERS damit_pmp/storm.py", out)
+        self.assertIn("does not contain the recorded commit", out)
+
+    def test_a_checkout_at_or_after_the_pin_gets_no_note(self):
+        self.main("--dwr", self.dwr, "--update")
+        _tree(self.me, {"damit_pmp/storm.py": "# storm\nVALUE = 8\n"})   # a DamIT-only edit
+        code, out, _ = self.main("--dwr", self.dwr)
+        self.assertEqual(code, 1)
+        self.assertNotIn("does not contain the recorded commit", out)
+
 
 class Record(unittest.TestCase):
     """The committed damit_pmp/SHARED_ATLAS14.json."""
