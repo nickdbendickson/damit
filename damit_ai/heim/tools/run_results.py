@@ -64,6 +64,7 @@ import json
 import math
 import os
 import re
+import shlex
 import sqlite3
 import struct
 import subprocess  # nosec B404 - only to re-run this file under the QGIS Python for GDAL
@@ -1431,6 +1432,48 @@ def ensure_ollama(base, log=print):
     return False
 
 
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    return "open the Ollama app, or run  ollama serve  in another window"
+
+
+def ollama_problem(e, base=None):
+    """One plain line for a failed call to Ollama, or None when `e` is not one (then the traceback is a
+    real bug and is shown). The same function is in rag_query.py and run_results.py (a test keeps them
+    identical)."""
+    import socket
+    base = base or BASE
+    if type(e).__name__ == "OllamaError":
+        return "Ollama stopped with an error: %s" % " ".join(str(e).split())[:300]
+    if isinstance(e, urllib.error.HTTPError):
+        try:
+            body = e.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 - the body is only for the message
+            body = ""
+        try:
+            body = json.loads(body).get("error") or body
+        except (ValueError, AttributeError):
+            pass
+        m = re.search(r"model\s+['\"]?([^'\"\s]+)['\"]?\s+not\s+found", body, re.I)
+        if e.code == 404 or m:
+            name = m.group(1) if m else "the model this asks for"
+            if name.split(":")[0] in ("heim", "vor"):
+                fix = "the installer makes it: run the installer again (it keeps what is there)"
+            else:
+                fix = "fetch it with:  ollama pull %s" % name if m else "run the installer again"
+            return "Ollama has no model %s; %s. (ollama list shows what it has.)" % (name, fix)
+        return "Ollama answered with an error (HTTP %s): %s" % (e.code, " ".join(str(body).split())[:300])
+    if isinstance(e, (socket.timeout, TimeoutError)) or (
+            isinstance(e, urllib.error.URLError) and isinstance(e.reason, (socket.timeout, TimeoutError))):
+        return ("Ollama took too long to answer at %s. The model may still be loading or too big for this "
+                "computer: try again, or re-run the installer with --small (Windows: -Small)." % base)
+    if isinstance(e, urllib.error.URLError) or (isinstance(e, ConnectionError) and not isinstance(e, BrokenPipeError)):
+        return "Ollama is not answering at %s. To start it, %s; then try again." % (base, start_hint())
+    return None
+
+
 _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
 
 
@@ -1572,9 +1615,9 @@ def ask(question, db_path=None, out=_say, chat=None):
         try:
             reply = chat(msgs, fmt="json")
         except Exception as e:                       # Ollama not running, model missing
-            out("could not reach the model (%s). Is Ollama running? heim-start\n"
+            out("could not reach the model: %s\n"
                 "Without the model:  heim runs show DAM,  heim runs at DAM PLACE,  heim runs sql \"SELECT ...\""
-                % e)
+                % (ollama_problem(e) or e))
             return ""
         sql = sql_from_reply(reply)
         off = sql_misses_dams(sql, wanted)
@@ -1670,6 +1713,19 @@ def main(argv=None):
     p = sub.add_parser("forget", help="take a dam's runs out of the database")
     p.add_argument("dam", nargs="?")
     p.add_argument("--all", action="store_true", help="empty the database")
+    words = list(sys.argv[1:] if argv is None else argv)
+    first = None
+    for k, w in enumerate(words):
+        if w.startswith("-") or (k and words[k - 1] == "--db"):
+            continue
+        first = w
+        break
+    if first is not None and first not in sub.choices:
+        # `heim runs "run 2801 at 5 m"`: a model run is `heim run`, without the s
+        _say("heim runs does not know %r. Its commands: %s.%s" % (
+            first, ", ".join(sub.choices), "\nTo draft a new model run (heim run, no s):  heim run %s"
+            % shlex.quote(" ".join(words[words.index(first):])) if re.match(r"(?i)\s*re-?run\b|\s*run\b", first) else ""))
+        return 2
     args = ap.parse_args(argv)
     if args.db:
         DB = os.path.abspath(os.path.expanduser(args.db))

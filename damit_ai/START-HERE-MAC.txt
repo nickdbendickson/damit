@@ -1,0 +1,33 @@
+Heim and Vor on a Mac: start here
+=================================
+Two assistants that run on this Mac only (nothing is sent anywhere):
+  Vor   answers from your library of dam-safety publications and quotes the page.
+  Heim  answers about the dam-suite tools, their settings and known behaviours, and reads
+        finished breach runs so you can ask for exact numbers.
+
+1. Install (about 15-60 minutes, most of it downloading 8-22 GB of models)
+   Double-click  Install-Mac.command  in this folder.
+   - The first time, macOS may say it is from an unidentified developer: right-click the
+     file, choose Open, then Open again.
+   - If it stops, read the last lines, fix that, and double-click it again. It carries on
+     where it stopped.
+
+2. Open a NEW Terminal window (Finder > Applications > Utilities > Terminal).
+
+3. Try it:
+     vor "what breach width does Froehlich 2008 give?"
+     heim "what does REFINE_NEAR do?"
+     ai            both on one page in your web browser
+     heim help     the short list of commands
+
+4. If something is not right:
+     ai-doctor     checks everything and ends with one OK / WATCH / PROBLEM line for each
+                   assistant; each PROBLEM line says what to run.
+
+Vor's library starts empty unless this folder came with an offline pack. Add PDFs with
+  vor add FILE ...        (drag the files into the Terminal window to type their paths)
+
+Both are assistants, not engineers: check every answer against the cited page or the code
+before relying on it in a dam-safety decision.
+
+More: INSTALL-cross-platform.md (all options, offline installs).

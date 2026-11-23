@@ -1,7 +1,9 @@
 # damit_ai: local AI (Ollama) for the dam suite
 
-Two local assistants that run on your Mac through [Ollama](https://ollama.com). Nothing is sent
-off the machine. They are kept apart: separate Ollama models, separate databases, separate commands.
+Two local assistants that run on your computer (macOS, Linux or Windows) through
+[Ollama](https://ollama.com). Nothing is sent off the machine. **New to them? Open the
+`START-HERE-<platform>.txt` for your computer:** one page with the install, the first commands to
+try, and what to do when something is not right. They are kept apart: separate Ollama models, separate databases, separate commands.
 
 > **Renamed 2026-11-13.** The code-triage AI was `pierre` (and `lumo` before that) and is now
 > **Heim**; the literature AI was `damresearch` and is now **Vor**. Re-running either installer
@@ -21,8 +23,9 @@ off the machine. They are kept apart: separate Ollama models, separate databases
 > every Vor statement checked against the cited page of the source, before anything is
 > changed or relied on in a dam-safety decision.
 
-These are Mac tools (zsh, Ollama.app, conda). They are not QGIS plugins and are not part of any
-plugin zip or CI job.
+They are command-line tools (Ollama, Python, and conda or a venv). The steps below are the Mac
+ones (zsh); Linux and Windows have one installer each (next note). They are not QGIS plugins and
+are not part of any plugin zip.
 
 > **Linux and Windows:** one installer per platform sets up **both** assistants —
 > [`install-local-ai-linux.sh`](install-local-ai-linux.sh) (openSUSE/Linux) and

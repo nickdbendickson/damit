@@ -84,7 +84,7 @@ damchain run --set damit --dams LAYER --ids 2801,4031 --out D --dem DEM --cell 5
 - Exit code: 1 when any dam failed (the Runner's "N failed" count), or when `--ids` was given
   and the Runner found fewer of them than asked, even though `qgis_process` itself exits 0. Logs: `D/_chain_logs/damit_batch_<time>.log`.
 
-## 2b. Drafting a run in plain English (`heim run`, heim_run 1.0.0)
+## 2b. Drafting a run in plain English (`heim run`, heim_run 1.1.0)
 
 ```
 heim run --set damit --dams LAYER --out D --dem DEM "run 2801 and 4031 at 5 m with FV2"
@@ -127,6 +127,13 @@ heim run --show "run 2801 at 10 m"
     whether or not the model noticed it. It says what, and to type the damchain command for it.
   Redo is left out, with a note, unless your words ask for it (rerun, re-run, redo, again,
   overwrite, from scratch, one more time).
+- 1.1.0: the dams layer, output folder and DEM are checked before the model is asked, and every
+  refusal ends with "To type it yourself": the `damchain run` line with your paths filled in and
+  `DAM_ID` to replace. When Ollama is not running or a model is missing, it says so in one line.
+- `heim run add FOLDER` is answered "Did you mean: heim runs add FOLDER" (heim runs reads
+  finished runs); `heim runs "run 2801 ..."` is answered with the `heim run` line.
+- After a damchain run (damit set), each dam's status and result folder are listed, then
+  `heim runs add <out>`, the line that reads the results into Heim.
 - It shows the command and what differs from the defaults, runs nothing until you type
   `y`, then runs `--check-only` first. Your sentence, the model's reply and the command go
   to `D/_chain_logs/heim_run_<time>.txt`. Every reading, refused, stopped, shown or run, is

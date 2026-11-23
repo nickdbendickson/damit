@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ai_ui.py 1.0.0 - one local page for both assistants (the `ai` command).
+"""ai_ui.py 1.1.0 - one local page for both assistants (the `ai` command).
 
     ai                 open the page in your browser (http://127.0.0.1:<port>/, this computer only)
     ai --port 8765     a fixed port
@@ -10,9 +10,12 @@ nothing on the network can reach it. It runs the same commands you would type (`
 `vor ask`, `heim runs ...`, `ai-doctor`) and shows their output as it is written, so it never
 answers differently from the terminal. On the page:
 
-  Ask      one box. A question that names a dam you have read in and asks for a result goes to
-           the run results; "Library" sends it to Vor; anything else goes to Heim. The page says
-           which one answered. Vor's citations open the PDF at the cited page.
+  Ask      one box. "Pick for me": a question that names a dam you have read in and asks for a
+           result goes to the run results; a question about this software (a file, a setting, a
+           plugin, an error, an id like REFINE_NEAR) goes to Heim; anything else goes to Vor, the
+           publications (Heim when Vor is not installed). 1.1.0: anything else went to Heim, so a
+           question about a standard was answered from the code's notes. The page says which one
+           answered. Vor's citations open the PDF at the cited page.
   Runs     the run list, a dam's numbers, compare (engine against engine), depth at a place, and
            the breach hydrograph drawn as a chart.
   Add      a file or folder by its path: a run folder goes to the run results, a PDF to Vor's
@@ -38,7 +41,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOME = os.path.expanduser("~")
 RUN_SECONDS = 3600
@@ -75,6 +78,21 @@ def runs_module():
     return mod
 
 
+# A question about this software (Heim's side), not about the literature: file names, identifiers,
+# and the suite's own words. Breach / hydraulics words are not here: the publications hold those.
+CODE_WORDS = re.compile(
+    r"\.(?:py|json|tif|tiff|gpkg|par|csv|log|qgz|ps1|sh|zsh|txt|md)\b|"            # a file name
+    r"\b[A-Za-z]+_[A-Za-z0-9_]+\b|"                                                  # REFINE_NEAR, run_dam
+    r"\b[a-z]+[A-Z][A-Za-z]+\b|"                                                     # camelCase
+    r"\b[a-z_]+:[a-z_]+\b|"                                                          # damit_run:batch
+    r"\b(?i:module|script|plugins?|qgis|algorithm|damchain|damit|damsafety|runner|screener|crest|finder|"
+    r"heim|vor|boann\w*|watcher|flags?|switch|traceback|exception|crash\w*|bugs?|installer|ollama|conda|"
+    r"gpu|metal|cli|command|terminal|python)\b")
+# Words left out on purpose, because the publications use them too: class (hazard class), function,
+# code (building code), parameters (breach parameters), profile (water surface profile), log
+# (log-Pearson), error (standard error), setting, screening, installation, test, version.
+
+
 def route(question, target="auto"):
     """(who, argv) for a question. target: auto | heim | vor | runs."""
     py = sys.executable
@@ -93,8 +111,12 @@ def route(question, target="auto"):
             spec.loader.exec_module(rq)
             if any(w in low for w in rq.RUN_WORDS) and rr.dams_named_in(question, runs_db()):
                 return "Run results", [py, tool("run_results.py"), "ask", question]
-        except Exception:  # noqa: BLE001 - no run database or an older install: ask Heim
+        except Exception:  # noqa: BLE001 - no run database or an older install: go on
             pass
+        # 1.1.0: about this software -> Heim; anything else -> the publications (Vor), when installed
+        vc = vor_command()
+        if vc and not CODE_WORDS.search(question):
+            return "Vor", vc + ["ask", question]
     return "Heim", [py, tool("rag_query.py"), question]
 
 
@@ -354,8 +376,8 @@ pre:empty{display:none}svg{width:100%;height:280px}svg text{fill:var(--muted);fo
 <nav><button data-t="ask" class="on">Ask</button><button data-t="runs">Runs</button><button data-t="add">Add</button><button data-t="health">Health</button></nav></header>
 <main>
 <section id="ask" class="on"><div class="card">
-<textarea id="q" placeholder="e.g. what does REFINE_NEAR do?  ·  how deep is the water at County Road 26 for 2801?  ·  what breach width does Froehlich 2008 give?"></textarea>
-<div class="row"><select id="target"><option value="auto">Pick for me (run results, else Heim)</option><option value="heim">Heim: the suite's code, tools and known behaviours</option><option value="vor">Library (Vor): publications, every quote checked</option><option value="runs">Run results: exact numbers from runs you read in</option></select><button class="go" id="askgo">Ask</button></div>
+<textarea id="q" placeholder="Ask in plain words, e.g.  what breach width does Froehlich 2008 give?  ·  how deep is the water at County Road 26 for 2801?  ·  what does REFINE_NEAR do?"></textarea>
+<div class="row"><select id="target"><option value="auto">Pick for me</option><option value="vor">Publications (Vor): standards and papers, every quote checked</option><option value="heim">This software (Heim): tools, settings, errors, code</option><option value="runs">My run results: exact numbers from runs I read in</option></select><button class="go" id="askgo">Ask</button></div>
 </div><div class="who" id="who"></div><pre id="answer"></pre></section>
 <section id="runs"><div class="card">
 <div class="row"><input id="dam" placeholder="dam: DWR-2801, 2801 or part of the name"><input id="place" placeholder="place (for 'at'): an address, road, structure id or lat,lon"></div>
@@ -363,7 +385,7 @@ pre:empty{display:none}svg{width:100%;height:280px}svg text{fill:var(--muted);fo
 </div><svg id="chart" style="display:none"></svg><pre id="runsout"></pre></section>
 <section id="add"><div class="card">
 <input id="path" placeholder="a file or folder path (drag it into Terminal to copy its path, then paste here)">
-<div class="row"><select id="to"><option value="heim">Heim (a run folder goes to the run results)</option><option value="vor">Vor's library (PDFs)</option></select><button class="go" id="addgo">Add</button></div>
+<div class="row"><select id="to"><option value="heim">Heim: a run folder (read into the run results) or a document about the software</option><option value="vor">Publications library (Vor): a PDF</option></select><button class="go" id="addgo">Add</button></div>
 </div><pre id="addout"></pre></section>
 <section id="health"><div class="card"><button class="go" id="docgo">Run ai-doctor</button></div><pre id="docout"></pre></section>
 </main>

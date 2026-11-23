@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.4 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.5 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,10 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.5 (2026-11-23): `vor` on its own (or `vor help`) prints the short command list, and `vor WORDS` is
+#   `vor ask WORDS` (a first word that is not a command is a question). A new install with nothing in the
+#   library and no index is a WATCH in `vor doctor`, not a PROBLEM: nothing is missing yet. A PROBLEM is
+#   still a library that has files but no index, or a second, fuller library elsewhere.
 # 1.4.4 (2026-11-22): the Pierce question named its paper as 'Pierce, Thornton and Abt (2010)' and the equation
 #   page (p.35) was never read. Searched inside that paper it ranked 8th, behind the cover (on p.1 and again on
 #   p.2), two contents pages and pages that merely cite 'Pierce (2008)'. Now a question that names authors and a
@@ -112,7 +116,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.4"
+VERSION = "1.4.5"
 
 
 def _home():
@@ -188,6 +192,13 @@ except ImportError:
     np = None
 
 
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    return "open the Ollama app, or run  ollama serve  in another window"
+
+
 def die(msg, code=1):
     print("vor: " + msg, file=sys.stderr)
     sys.exit(code)
@@ -221,8 +232,8 @@ def _post(path, payload, timeout=3600, _retry=True):
     except urllib.error.URLError as e:
         if _retry and ensure_ollama(BASE, log=say):      # 1.3.3: start it instead of failing
             return _post(path, payload, timeout, _retry=False)
-        raise RuntimeError("cannot reach Ollama at %s (%s). Start it: heim-start (or open Ollama.app)"
-                           % (BASE, e.reason)) from None
+        raise RuntimeError("cannot reach Ollama at %s (%s). To start it, %s."
+                           % (BASE, e.reason, start_hint())) from None
 
 
 _OLLAMA_CHECKED = []
@@ -2812,8 +2823,11 @@ def library_checks():
     on_disk = list(walk([LIBRARY])) if os.path.isdir(LIBRARY) else []
     if not os.path.exists(DB_PATH):
         nd = nc = 0
-        add("PROBLEM", "no index at %s%s" % (DB_PATH, (": %d document file(s) are waiting in the library. "
-            "Run: vor ingest" % len(on_disk)) if on_disk else ". Put PDFs in %s and run: vor ingest" % LIBRARY))
+        # 1.4.5: a new install (no files, no index, no other library anywhere) is not a fault yet
+        fresh = not on_disk and not other_libraries()
+        add("WATCH" if fresh else "PROBLEM", "no index at %s%s" % (DB_PATH, (": %d document file(s) are waiting in "
+            "the library. Run: vor ingest" % len(on_disk)) if on_disk else (
+            ". The library is empty: put PDFs in %s and run: vor ingest  (or: vor add FILE ...)" % LIBRARY)))
         rows, used = [], None
     else:
         counts = _index_counts(DB_PATH)
@@ -2954,7 +2968,7 @@ def cmd_doctor(a):
                     say("  chat model replied with NOTHING to a one-word request: %s" % empty_reply_reason())
                     ok = False
         except Exception as e:
-            say("  Ollama: NOT reachable (%s). Start it with heim-start in its own tab." % e)
+            say("  Ollama: NOT reachable (%s). To start it, %s." % (e, start_hint()))
             ok = False
     # 1.3.0: the library itself. These need no model, and each PROBLEM is a state in which Vor
     # runs without an error and answers from nothing.
@@ -2984,7 +2998,26 @@ def add_scope_args(s):
                         "lifted unless you set it)")
 
 
+SHORT_HELP = """\
+Vor answers from your library of dam-safety publications, and checks every quote against its page.
+
+  vor "question"            (the same as vor ask) a short answer, every quote cited
+  vor research "question"   a longer brief, saved in the reports folder
+  vor chat                  a conversation; start a line with ! for a deep-research brief
+  vor add FILE ...          copy publications into the library and index them (drag files in)
+  vor ingest                index what is in the library folder
+  vor list                  what is in the library
+  vor doctor                is everything installed, indexed and level with its files?
+
+All commands and options: vor --help
+"""
+
+
 def main():
+    argv = sys.argv[1:]
+    if not argv or argv == ["help"]:
+        print(SHORT_HELP)      # 1.4.5: not argparse's "the following arguments are required: cmd"
+        return
     ap = argparse.ArgumentParser(prog="vor",
                                  description="Local research assistant for dam-safety literature. " + BANNER)
     ap.add_argument("--version", action="version", version=VERSION)
@@ -3049,7 +3082,9 @@ def main():
     s.add_argument("--library", dest="library_only", action="store_true",
                    help="check the library and index only (no Ollama needed)")
     s.set_defaults(fn=cmd_doctor)
-    a = ap.parse_args()
+    if not argv[0].startswith("-") and argv[0] not in sub.choices:
+        argv = ["ask"] + argv  # 1.4.5: `vor what breach width ...` is a question
+    a = ap.parse_args(argv)
     try:
         a.fn(a)
     except RuntimeError as e:

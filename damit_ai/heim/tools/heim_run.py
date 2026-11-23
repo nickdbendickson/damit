@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# heim_run.py v1.0.0 — `heim run "plain English"`: Heim drafts a damchain run, you check it, you type y.
+# heim_run.py v1.1.0 — `heim run "plain English"`: Heim drafts a damchain run, you check it, you type y.
 #
 #   heim run "run 2801 and 4031 at 5 m with FV2"
 #   heim run --set damit --dams ~/Dams/dams.gpkg --out ~/Dams/runs --dem ~/DEM/nd.vrt "run 2801 at 10 m"
@@ -32,6 +32,10 @@
 # the main way to run; this is a drafting aid. Paths (dams layer, output folder, DEM) come from the
 # flags, or from the last ones you used for that set (~/local-ai/heim_run.json).
 #
+# 1.1.0: the dams layer, output folder and DEM are checked BEFORE the model is asked (a missing path no
+#   longer waits on the model first); a refusal ends with a damchain command to type yourself, with
+#   your paths filled in; Ollama not running or a missing model is one plain line saying what to do.
+#
 # Rules agreed 2026-11-23 (a plain-text reading must never reach a run unchecked): see above.
 import argparse
 import datetime
@@ -44,7 +48,7 @@ import subprocess
 import sys
 import unicodedata
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAVED = os.path.expanduser(os.environ.get("HEIM_RUN_SETTINGS", "~/local-ai/heim_run.json"))
 SETS = ("damit", "dwr")
@@ -603,6 +607,25 @@ def _draft(request, reply, outcome):
         pass
 
 
+def typed_command(set_name, p):
+    """The damchain command to type yourself after a refusal: your paths, the rest to fill in."""
+    a = ["damchain", "run", "--set", set_name, "--dams", p.get("dams") or "DAMS.gpkg",
+         "--out", p.get("out") or "OUT_FOLDER", "--dem", p.get("dem") or "DEM.tif", "--ids", "DAM_ID"]
+    if p.get("id_field"):
+        a += ["--id-field", p["id_field"]]
+    if p.get("dem_units"):
+        a += ["--dem-units", p["dem_units"]]
+    return _quote(a)
+
+
+def _refuse(out, set_name, p, bad):
+    out("Not run:")
+    for b in bad:
+        out("  - " + b)
+    out("To type it yourself (put in your dam id; add any of  --cell 5  --solver fv2  --manning 0.04  --redo):")
+    out("  " + typed_command(set_name, p))
+
+
 def main(argv=None, chat=None, ask=input, runner=None, out=_say):
     ap = argparse.ArgumentParser(prog="heim run", description=(
         "Heim drafts a damchain run from plain English. It only fills in dam ids, cell size, solver, "
@@ -630,10 +653,19 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
         return 2
     p = paths_for(args, set_name, saved)
     dc = _dam_chain()
+    # 1.1.0: the paths first. No dams layer, output folder or DEM is not something the model can help with.
+    bad = check_paths(set_name, p, [], dc.layer_ids)
+    if bad:
+        _refuse(out, set_name, p, bad)
+        _draft(request, "", "refused before reading: " + " | ".join(bad))
+        return 2
     try:
         data, reply = model_fields(request, chat=chat)
     except Exception as e:            # noqa: BLE001 - no model, bad JSON: say so and stop
-        out("Not run: Heim could not read the request (%s). Type the damchain command yourself." % e)
+        why = _plain(e)
+        out("Not run: Heim could not read the request. %s" % why)
+        out("To type it yourself (put in your dam id; add any of  --cell 5  --solver fv2  --manning 0.04  --redo):")
+        out("  " + typed_command(set_name, p))
         _draft(request, "", "not read: %s" % e)
         return 2
     f, bad, notes = check_fields(request, data)
@@ -642,9 +674,7 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
     for n in notes:
         out("  note: " + n)
     if bad:
-        out("Not run:")
-        for b in bad:
-            out("  - " + b)
+        _refuse(out, set_name, p, bad)
         _draft(request, reply, "refused: " + " | ".join(bad))
         return 2
     cmd = build_argv(set_name, p, f)
@@ -688,6 +718,15 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
     _log(logp, ["run exit: %s" % rc])
     out("heim run log: " + logp)
     return rc
+
+
+def _plain(e):
+    """One line for why the model could not be asked (Ollama down, a missing model), else the error."""
+    try:
+        msg = _rr().ollama_problem(e)
+    except Exception:  # noqa: BLE001 - an older run_results.py: the error as it is
+        msg = None
+    return msg or ("(%s)" % e)
 
 
 def _dam_chain():

@@ -406,10 +406,12 @@ say "Step 6/10 — Python tools (written to ~/local-ai)"
 if [[ $REWRITE_SCRIPTS -eq 1 ]]; then
   cat > "$LOCAL_AI/rag_index.py" << 'SCRIPT_EOF_RAG_INDEX'
 #!/usr/bin/env python3
-# rag_index.py v2.9 — multi-collection RAG indexer (stdlib only)
+# rag_index.py v2.9.1 — multi-collection RAG indexer (stdlib only)
 # Atomic rebuilds via a hidden per-collection stage; auto-migrates v1 DBs;
 # PDF backends: pdftotext -> pymupdf -> pypdf -> skip.
 #
+# v2.9.1: messages name the installed commands (heim-index, not rag_index.py), and the doctor's
+#   "Ollama is not reachable" line says how to start it on this computer.
 # v2.9: vectors are stored as float32 bytes, not JSON text, and an exact-word index
 #   (SQLite FTS5, table chunks_fts) sits beside them. A JSON vector is ~16 KB of text, so a
 #   124,000-passage index held about 2 GB of it, and every `heim` question parsed all of it
@@ -475,6 +477,13 @@ _detected = [False]
 _pdftotext = [False]
 _pm = [None]
 _pp = [None]
+
+
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    return "open the Ollama app, or run  ollama serve  in another window"
 
 
 def _detect():
@@ -918,7 +927,7 @@ def add_files(paths):
         p = os.path.abspath(os.path.expanduser(p))
         name = os.path.basename(p)
         if os.path.isdir(p):
-            print("  folder, not added: %s\n    index a folder where it is: rag_index.py -c <name> %s" % (p, p))
+            print("  folder, not added: %s\n    index a folder where it is: heim-index -c <name> %s" % (p, p))
             continue
         if not os.path.isfile(p):
             print("  not found: %s" % p)
@@ -1156,7 +1165,7 @@ def doctor_checks(ollama=True):
                 else:
                     add("PROBLEM", "model %s is missing from Ollama: re-run the installer" % m_)
         except Exception as e:
-            add("PROBLEM", "Ollama is not reachable at %s (%s). Start it: heim-start" % (base, e))
+            add("PROBLEM", "Ollama is not reachable at %s (%s). To start it, %s" % (base, e, start_hint()))
     return out
 
 
@@ -1176,7 +1185,7 @@ def doctor(ollama=True):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Index folders (text+PDFs) into a named collection.")
+    ap = argparse.ArgumentParser(prog="heim-index", description="Index folders (text+PDFs) into a named collection.")
     ap.add_argument("-c", "--collection", default=None)
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--list-collections", action="store_true")
@@ -1211,8 +1220,8 @@ def main():
         list_collections()
         return
     if not args.paths:
-        sys.exit("usage: rag_index.py [-c NAME] <folder> ...\n  rag_index.py --add <file> ...\n"
-                 "  rag_index.py --list-collections")
+        sys.exit("usage: heim-index [-c NAME] <folder> ...\n  heim-add <file> ...\n"
+                 "  heim-index --list-collections")
     if args.add:
         if args.collection not in (None, ADDED):
             sys.exit("ERROR: --add always uses the collection '%s'; to index a folder into "
@@ -1234,13 +1243,18 @@ SCRIPT_EOF_RAG_INDEX
 
   cat > "$LOCAL_AI/rag_query.py" << 'SCRIPT_EOF_RAG_QUERY'
 #!/usr/bin/env python3
-# rag_query.py v2.8 — query the RAG store, streaming output (stdlib only; numpy if present)
+# rag_query.py v2.9 — query the RAG store, streaming output (stdlib only; numpy if present)
 #
 #   rag_query.py "question"            one question, answered from the indexed documents
 #   rag_query.py -c standards "..."    from one collection
 #   rag_query.py --chat                a conversation: every question is looked up first
 #   rag_query.py runs ...              the run results database (run_results.py: heim runs)
 #
+# v2.9: `heim` on its own (or `heim help`) prints the short command list instead of "no question
+#   given". When Ollama is not running, a model is missing or Ollama sends an error, the answer is one
+#   plain line that says what to do (ollama_problem), not a Python traceback; HEIM_DEBUG=1 shows the
+#   traceback. `heim run add FOLDER` / `heim run show 2801` (run_results words after `run`) say
+#   "did you mean heim runs ...". The usage lines name the installed commands (heim, heim-index).
 # v2.8: `heim run "..."` drafts a damchain run (heim_run.py beside this file): it shows the
 #   command and runs nothing until you type y. "run ...?" (ending in ?) is still a question.
 # v2.7: at most PER_FILE (3) of the passages handed to the model come from one file, while other
@@ -1366,6 +1380,48 @@ def ensure_ollama(base, log=print):
         time.sleep(0.5)
     log("Ollama did not answer within 30 s; see %s" % logf)
     return False
+
+
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    return "open the Ollama app, or run  ollama serve  in another window"
+
+
+def ollama_problem(e, base=None):
+    """One plain line for a failed call to Ollama, or None when `e` is not one (then the traceback is a
+    real bug and is shown). The same function is in rag_query.py and run_results.py (a test keeps them
+    identical)."""
+    import socket
+    base = base or BASE
+    if type(e).__name__ == "OllamaError":
+        return "Ollama stopped with an error: %s" % " ".join(str(e).split())[:300]
+    if isinstance(e, urllib.error.HTTPError):
+        try:
+            body = e.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 - the body is only for the message
+            body = ""
+        try:
+            body = json.loads(body).get("error") or body
+        except (ValueError, AttributeError):
+            pass
+        m = re.search(r"model\s+['\"]?([^'\"\s]+)['\"]?\s+not\s+found", body, re.I)
+        if e.code == 404 or m:
+            name = m.group(1) if m else "the model this asks for"
+            if name.split(":")[0] in ("heim", "vor"):
+                fix = "the installer makes it: run the installer again (it keeps what is there)"
+            else:
+                fix = "fetch it with:  ollama pull %s" % name if m else "run the installer again"
+            return "Ollama has no model %s; %s. (ollama list shows what it has.)" % (name, fix)
+        return "Ollama answered with an error (HTTP %s): %s" % (e.code, " ".join(str(body).split())[:300])
+    if isinstance(e, (socket.timeout, TimeoutError)) or (
+            isinstance(e, urllib.error.URLError) and isinstance(e.reason, (socket.timeout, TimeoutError))):
+        return ("Ollama took too long to answer at %s. The model may still be loading or too big for this "
+                "computer: try again, or re-run the installer with --small (Windows: -Small)." % base)
+    if isinstance(e, urllib.error.URLError) or (isinstance(e, ConnectionError) and not isinstance(e, BrokenPipeError)):
+        return "Ollama is not answering at %s. To start it, %s; then try again." % (base, start_hint())
+    return None
 
 
 class Store(object):
@@ -1533,10 +1589,11 @@ def unpack_vec(v):
 
 def retrieve(q, coll, top_k):
     if not os.path.exists(DB):
-        sys.exit("No index at %s — run rag_index.py first." % DB)
+        sys.exit("No index at %s. Index the knowledge pack: heim-index -c heim_knowledge <folder> "
+                 "(the installer does this; ai-doctor checks it)." % DB)
     store = Store(coll)
     if not store.rows:
-        h = (" Collection '%s' empty — index it: rag_index.py -c %s <folder>" % (coll, coll)) if coll != "all" else ""
+        h = (" Collection '%s' empty — index it: heim-index -c %s <folder>" % (coll, coll)) if coll != "all" else ""
         sys.exit("Index is empty.%s" % h)
     slow_note(store)
     return store.search([q], top_k)
@@ -1555,6 +1612,10 @@ def chat_payload(prompt, stream, think=True):
     if think:
         p["think"] = True
     return p
+
+
+class OllamaError(RuntimeError):
+    """An error Ollama sent inside an answer (an out-of-memory, a model that failed to load)."""
 
 
 def stream_answer(prompt, think=True):
@@ -1581,7 +1642,7 @@ def stream_answer(prompt, think=True):
             except json.JSONDecodeError:
                 continue
             if ch.get("error"):
-                raise RuntimeError(ch["error"])
+                raise OllamaError(ch["error"])
             msg = ch.get("message") or {}
             if msg.get("thinking") and not thinking_shown:
                 sys.stdout.write("(thinking…)\n")
@@ -1623,7 +1684,7 @@ def answer(prompt):
         print("\n[interrupted]")
         return None
     except Exception as e:
-        print("[stream failed (%s) — non-streaming fallback]" % e)
+        print("[the streamed answer failed (%s); trying once without streaming]" % (ollama_problem(e) or e))
         out = post(BASE + "/api/chat", chat_payload(prompt, False, think=False))
         ans = (out.get("message") or {}).get("content") or ""
         print(ans)
@@ -1722,7 +1783,7 @@ def chat(coll, top_k, ask=input):
         try:
             hits = store.search([q] + ([earlier[0] + "\n" + q] if earlier else []), top_k)
         except Exception as e:
-            print("could not look that up: %s\n(is Ollama running? heim-start)" % e)
+            print("could not look that up: %s" % (ollama_problem(e) or e))
             continue
         if hits:
             print("Looked up %d passages:" % len(hits))
@@ -1734,7 +1795,13 @@ def chat(coll, top_k, ask=input):
             prompt = q if not earlier else ("Earlier question: %s\nEarlier answer: %s\n\nQuestion: %s"
                                             % (earlier[0], earlier[1][:1200], q))
         print("-" * 70)
-        ans = answer(prompt)
+        try:
+            ans = answer(prompt)
+        except Exception as e:  # noqa: BLE001 - Ollama down mid-chat: say so, keep the chat
+            if ollama_problem(e) is None:
+                raise
+            print(ollama_problem(e))
+            continue
         if ans is None:
             continue
         if ans.strip():
@@ -1755,7 +1822,7 @@ The commands you will use (the rest: heim --help, heim runs --help, vor --help):
   ai                         all of the above on one page in your browser (this computer only)
   ai-score                   run both answer tests and keep a dated score history
 
-Ollama is started for you when it is not running (heim-start still works).
+Ollama is started for you when it is not running.
 More: heim add FILE, heim doctor, heim-digest / heim-watch (run watcher), damchain, heim-index.
 """
 
@@ -1818,6 +1885,10 @@ def command_word(argv):
     if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "run", "help"):
         return None
     word, rest = argv[0], argv[1:]
+    if word == "run" and rest and rest[0].split()[:1] and rest[0].split()[0].lower() in RUNS_WORDS:
+        # v2.9: `heim run add FOLDER` is `heim runs add FOLDER` with a letter missing
+        sys.exit("Did you mean:  heim runs %s\n(heim runs reads finished runs and answers from them; heim run "
+                 "\"...\" drafts a new model run)" % " ".join(shlex.quote(r) for r in rest))
     if word == "run":
         # v2.8: `heim run "..."` drafts a damchain run; "run times for ANUGA?" stays a question
         if not rest or rest[0].startswith("-") or not " ".join(rest).rstrip().endswith("?"):
@@ -1843,7 +1914,29 @@ def command_word(argv):
     return None
 
 
+# words of `heim runs` (run_results.py) that never start a run request: `heim run add ...` gets "did you
+# mean". ("at" is left out: "run at 5 m ..." is a run request, and heim run refuses it with its reason.)
+RUNS_WORDS = ("add", "list", "show", "hydrograph", "compare", "ask", "sql", "schema", "forget")
+
+
 def main():
+    """v2.9: an Ollama that is not running, a missing model or an error from Ollama is one plain line,
+    not a traceback (HEIM_DEBUG=1 shows the traceback)."""
+    try:
+        _main()
+    except KeyboardInterrupt:
+        print("\n[interrupted]")
+        sys.exit(130)
+    except Exception as e:  # noqa: BLE001 - only Ollama failures are turned into a line
+        msg = ollama_problem(e)
+        if msg is None or os.environ.get("HEIM_DEBUG") == "1":
+            raise
+        sys.stdout.flush()
+        print("heim: " + msg, file=sys.stderr)
+        sys.exit(1)
+
+
+def _main():
     word = command_word(sys.argv[1:])
     if word and word[0] in ("index", "runs", "heimrun"):
         tool = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -1859,7 +1952,7 @@ def main():
         os.execv(sys.executable, [sys.executable, tool] + word[1])
     if word:
         sys.argv[1:] = word[1]
-    ap = argparse.ArgumentParser(description="Ask Heim a question, answered from the indexed documents.",
+    ap = argparse.ArgumentParser(prog="heim", description="Ask Heim a question, answered from the indexed documents.",
                                  epilog="Also: heim doctor (is Heim reading what you think it is), "
                                         "heim add FILE ... (index a file), heim chat (a conversation), "
                                         "heim runs ... (dam-breach run results: heim runs --help), "
@@ -1878,7 +1971,8 @@ def main():
         return
     q = " ".join(args.question).strip()
     if not q:
-        sys.exit("no question given")
+        print(HELP)            # v2.9: `heim` on its own: the short list, not "no question given"
+        return
     dams = run_question(q)
     if dams:
         answer_from_runs(q, dams)
@@ -2677,7 +2771,7 @@ SCRIPT_EOF_SUITE
 
   cat > "$LOCAL_AI/dam_chain.py" << 'SCRIPT_EOF_CHAIN'
 #!/usr/bin/env python3
-# dam_chain.py v1.6.0 — run the dam-plugin sets headless from Terminal (conda), stdlib only.
+# dam_chain.py v1.6.1 — run the dam-plugin sets headless from Terminal (conda), stdlib only.
 #
 #   dam_chain.py setup                       one-time: batch profiles that point at your QGIS
 #                                            profiles "nd", "damsafety" and "damit", plugins enabled
@@ -2726,6 +2820,8 @@ SCRIPT_EOF_SUITE
 # profile, so ND, DamSafety and DamIT never load together (they share Processing ids).
 # v1.6.0 (2026-11-23): the DamIT set (--set damit, profile "damit"), the QGIS profiles folder
 # of Linux and Windows as well as macOS, and option names checked before a run.
+# v1.6.1: a wrong path is said before conda or QGIS is looked for; after a run, each dam's result
+# folder and the `heim runs add` line that reads them into Heim.
 # --dry-run prints the commands without running them. Logs: <dams folder>/_chain_logs/.
 import os, sys, re, csv, json, time, shutil, argparse, subprocess, threading, urllib.request, urllib.error
 from datetime import datetime
@@ -3447,6 +3543,8 @@ def run_dwr(args):
     print("log: %s" % log)
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
+    if ok and not args.check_only:
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _q(p["OUT_FOLDER"]))
     if not ok and getattr(args, "triage", False):
         triage_failure("DamSafety chain", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
@@ -3660,6 +3758,12 @@ def run_damit(args):
     under --out. Classification is not part of it: DamIT Hazard has no batch classifier yet."""
     ids = read_ids(args)
     bad = damit_preflight(args, ids)
+    if bad:
+        # v1.6.1: a wrong path is said before anything looks for conda or QGIS
+        print("preflight: %d error(s)" % len(bad))
+        for b in bad:
+            print("  ERROR  " + b)
+        sys.exit(1)
     qp = QP(args, "damit")
     # --param goes through the same name check as --runner-param here: the DamIT Runner is the one tool
     runner_kv = dict(parse_kv(args.param), **runner_settings(args))
@@ -3718,9 +3822,11 @@ def run_damit(args):
         ok, err = False, err or "the Runner reported no counts; see the log"
     done = sum(int(x) for x in re.findall(r"(\d+)\s+(?:run|failed|skipped|with no breach|flagged)\b", counts))
     want = len(set(ids))
+    rows = []
     try:                              # distinct ids in the Runner's summary, when it wrote one
         with open(res.get("SUMMARY") or "", newline="", encoding="utf-8-sig") as fh:
-            seen = {(r.get("Dam") or "").strip() for r in csv.DictReader(fh)}
+            rows = list(csv.DictReader(fh))
+        seen = {(r.get("Dam") or "").strip() for r in rows}
         done = len(set(ids) & seen) if seen else done
     except (OSError, ValueError):
         pass
@@ -3735,9 +3841,25 @@ def run_damit(args):
     print("log: %s" % log)
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
+    print_results(rows, ids, out)
     if not ok and getattr(args, "triage", False):
         triage_failure("DamIT batch", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
+
+
+def print_results(rows, ids, out, most=20):
+    """v1.6.1: where each dam's results are, and the one line that reads them into Heim."""
+    want = set(ids)
+    mine = [r for r in rows if not want or (r.get("Dam") or "").strip() in want]
+    if mine:
+        print("results:")
+        for r in mine[:most]:
+            print("  %-14s %-10s %s" % ((r.get("Dam") or "").strip(), (r.get("Status") or "").strip(),
+                                        (r.get("Folder") or "").strip()))
+        if len(mine) > most:
+            print("  ... and %d more (see the summary)" % (len(mine) - most))
+    if any((r.get("Status") or "").strip() == "done" for r in mine) or (not rows and os.path.isdir(out)):
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _q(out))
 
 
 def default_lisflood():
@@ -3849,7 +3971,7 @@ def main():
         vor_passthrough(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "audit":
         audit_passthrough(sys.argv[2:])
-    ap = argparse.ArgumentParser(description="Run the ND, DamSafety and DamIT dam plugins headless. "
+    ap = argparse.ArgumentParser(prog="damchain", description="Run the ND, DamSafety and DamIT dam plugins headless. "
                                              "`vor ...` runs the literature assistant (`research` is an alias); "
                                              "`audit ...` the local repo audit (audit --help).")
     ap.add_argument("--env", default="ndqgis", help="conda env with QGIS (default ndqgis)")
@@ -4783,9 +4905,14 @@ if [[ $PASS -eq $TOTAL ]]; then
   printf '\033[1;32mALL %s CHECKS PASSED — fully operational.\033[0m\n' "$TOTAL"
   cat << 'NEXT'
 
-NEXT:
-  source ~/.zshrc                       # then fix ND_REPO etc. in ~/.zshrc if needed
-  heim-start                            # in its own terminal tab
+TRY IT NOW (open a new Terminal window first):
+  heim "what does REFINE_NEAR do?"      the suite's tools and known behaviours, cited
+  ai                                    Heim and Vor on one page in your browser
+  heim help                             the short list of commands
+  ai-doctor                             check everything again any time
+  Vor (the publications) is installed by its own script:  zsh vor/setup-vor.zsh --ocr
+
+FOR DEVELOPERS (set ND_REPO etc. in ~/.zshrc first):
   heim-audit -p "$ND_REPO" --static-only                 # exact checks, seconds
   heim-audit -p "$ND_REPO" --changed origin/main         # model review of what you changed
   heim-test nd --repo "$ND_REPO" --triage                # plugin tests in ndqgis + failure notes

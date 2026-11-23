@@ -24,6 +24,11 @@
 #   ./install-local-ai-linux.sh --no-models       # no model pulls and no personas or index (they need the models): the
 #                                                 # server, envs, tools and commands only. Re-run without it for the models.
 #
+# Everything it prints also goes to ~/local-ai/install.log. If it stops, run the same command again:
+# it carries on (models already downloaded are not downloaded again). Before the models are pulled it
+# checks the free disk space against their size and stops with the numbers when there is not enough.
+# At the end it runs ai-doctor and prints the first commands to try.
+#
 # Run it from the package's damit_ai/ folder (it copies heim/ and vor/ from beside itself; a copy of
 # this script on its own installs no tools and indexes nothing, and says so).
 # If `ollama pull` fails (a proxy that breaks the registry redirect), the model's official GGUF is fetched from
@@ -115,6 +120,20 @@ if [[ -n "$OLLAMA_PORT" ]]; then
   OLLAMA_HOST_URL="http://127.0.0.1:$OLLAMA_PORT"
   export OLLAMA_HOST="127.0.0.1:$OLLAMA_PORT" OLLAMA_URL="$OLLAMA_HOST_URL"   # the ollama CLI and the Heim/Vor tools
 fi
+# Everything printed from here on also goes to the install log, and a stop says how to carry on.
+mkdir -p "$LOCAL_AI"
+INSTALL_LOG="$LOCAL_AI/install.log"
+printf '\n=== %s  install-local-ai-linux.sh %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${ARGS[*]+"${ARGS[*]}"}" >> "$INSTALL_LOG"
+exec > >(tee -a "$INSTALL_LOG") 2>&1
+on_exit() {
+  local rc=$?
+  if (( rc != 0 )); then
+    printf '\n  The install stopped (exit %s). What it did so far is kept: fix what it says above, then run the\n' "$rc"
+    printf '  same command again and it carries on from there (models already downloaded are not downloaded again).\n'
+    printf '  Everything it printed is in %s\n' "$INSTALL_LOG"
+  fi
+}
+trap on_exit EXIT
 if [[ "$DO_HEIM" == 1 && ! -d "$HERE/heim/tools" ]]; then
   warn "no heim/tools beside this script ($HERE): run it from the package's damit_ai/ folder, or Heim gets no tools and no index"
 fi
@@ -326,6 +345,33 @@ pull(){ "$OLLAMA" list 2>/dev/null | grep -q "^$1" || { ok "pulling $1 (first ti
 # --no-models: nothing is pulled, and the personas (heim, vor) and the index, which need the models, wait
 [[ "$NO_MODELS" == 0 ]] || warn "--no-models: no model is pulled; the heim/vor personas and the knowledge index are made when you run this again without it"
 
+# Free disk space before the downloads (12-22 GB): a full disk half way through a pull is the worst
+# place to find out. The sizes are the 4-bit files in the table above; qwen3-embedding is ~0.64 GB.
+model_bytes(){ local spec; spec="$(HEIM_GGUF_SPEC='' hf_gguf_spec "$1" 2>/dev/null)" && { echo "${spec##* }"; return; }
+  case "$1" in qwen3-embedding:*) echo 639000000 ;; *) echo 0 ;; esac; }
+gb(){ awk -v b="$1" 'BEGIN{printf "%.1f", b/1073741824}'; }
+if [[ "$NO_MODELS" == 0 ]]; then
+  WANT_MODELS=()
+  [[ "$DO_HEIM" == 1 ]] && WANT_MODELS+=("$CHAT_MODEL" "nomic-embed-text")
+  if [[ "$DO_HEIM" == 1 && -n "$WATCH_MODEL" ]]; then
+    case "$WATCH_MODEL" in phi) WANT_MODELS+=("phi4-mini") ;; small) WANT_MODELS+=("qwen3:4b") ;; *) WANT_MODELS+=("$WATCH_MODEL") ;; esac
+  fi
+  [[ "$DO_VOR" == 1 ]] && WANT_MODELS+=("$CHAT_MODEL" "qwen3-embedding:0.6b")
+  HAVE_LIST="$("$OLLAMA" list 2>/dev/null || true)"
+  NEED=0; NEED_NAMES=""
+  for m in $(printf '%s\n' ${WANT_MODELS[@]+"${WANT_MODELS[@]}"} | awk 'NF && !seen[$0]++'); do
+    grep -q "^$m" <<< "$HAVE_LIST" && continue
+    NEED=$(( NEED + $(model_bytes "$m") )); NEED_NAMES="$NEED_NAMES $m"
+  done
+  if (( NEED > 0 )); then
+    FREE=$(df -Pk "$MODELS_DIR" 2>/dev/null | awk 'NR==2{print $4*1024}' || true)
+    if [[ -n "$FREE" ]] && (( FREE < NEED + NEED / 10 + 1073741824 )); then
+      die "not enough free disk space for the models:$NEED_NAMES need about $(gb "$NEED") GB in $MODELS_DIR and $(gb "$FREE") GB is free. Free some space$([[ "$CHAT_MODEL" == qwen3:8b ]] || echo " (or add --small for a smaller chat model)"), then run this again."
+    fi
+    ok "models to download:$NEED_NAMES (about $(gb "$NEED") GB; $(gb "${FREE:-0}") GB free). Their progress shows below; Ctrl+C is safe, a re-run carries on."
+  fi
+fi
+
 # ===========================================================================
 if [[ "$DO_HEIM" == 1 ]]; then
   say "Heim — code triage"
@@ -389,7 +435,8 @@ if [[ "$DO_VOR" == 1 ]]; then
   say "vor — literature"
   EMBED="qwen3-embedding:0.6b"
   if [[ "$NO_MODELS" == 0 ]]; then
-  "$OLLAMA" pull "$EMBED" >/dev/null 2>&1 || { warn "qwen3-embedding pull failed; using nomic-embed-text"; EMBED="nomic-embed-text"; }
+  "$OLLAMA" list 2>/dev/null | grep -q "^$EMBED" || { ok "pulling $EMBED (Vor's search model, about 0.6 GB)"; "$OLLAMA" pull "$EMBED"; } \
+    || { warn "qwen3-embedding pull failed; using nomic-embed-text"; EMBED="nomic-embed-text"; }
   pull "$CHAT_MODEL"; pull "$EMBED"
   fi
   cat > "$VOR_DIR/Modelfile" <<EOF
@@ -442,6 +489,36 @@ if [[ "$INDEX_KN" == 1 && "$NO_MODELS" == 0 && "$DO_HEIM" == 1 && -d "$HERE/heim
   if [[ -d "$EDOCS" ]]; then
     "$PYL" "$HEIM_TOOLS/rag_index.py" -c engine_docs "$EDOCS" || warn "engine-docs index failed"
     ok "indexed engine docs from $EDOCS"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Vor's library: a new install has nothing to answer from. The offline pack's library (download-all)
+# is copied in and indexed; without one, the line to fetch the starter library is printed below.
+LIB_EMPTY=0
+# (no `find | grep -q` here: under pipefail a find cut off by grep's early exit reads as "nothing found")
+if [[ "$DO_VOR" == 1 && -z "$(find "$RHOME/library" -type f \( -iname '*.pdf' -o -iname '*.md' -o -iname '*.txt' \) -print -quit 2>/dev/null || true)" ]]; then
+  LIB_EMPTY=1
+  if [[ -n "$(find "$OFFLINE/Vor/library" -type f -iname '*.pdf' -print -quit 2>/dev/null || true)" ]]; then
+    say "Vor's library: the offline pack's publications"
+    if cp -Rn "$OFFLINE/Vor/library/." "$RHOME/library/"; then ok "copied into $RHOME/library"
+    else warn "some library files were not copied (see above)"; fi
+    LIB_EMPTY=0
+    if [[ "$NO_MODELS" == 0 && "$INDEX_KN" == 1 ]]; then
+      ok "indexing them (a while for a full library; Ctrl+C is safe, then run: vor ingest)"
+      VOR_HOME="$RHOME" "$VOR_DIR/python" "$VOR_DIR/vor.py" ingest || warn "the library index stopped; run: vor ingest"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+if [[ "$NO_MODELS" == 0 ]]; then
+  say "Check (ai-doctor)"
+  if [[ "$DO_HEIM" == 1 ]]; then
+    VOR_HOME="$RHOME" VOR_TOOL="$VOR_DIR/vor.py" "$LOCAL_AI/python" "$LOCAL_AI/ai_doctor.py" \
+      || warn "ai-doctor found a PROBLEM above: its line says what to run"
+  else
+    VOR_HOME="$RHOME" "$VOR_DIR/python" "$VOR_DIR/vor.py" doctor || warn "vor doctor found a PROBLEM above: its line says what to run"
   fi
 fi
 
@@ -531,17 +608,30 @@ fi
 say "Done"
 if [[ -n "$SANDBOX" ]]; then cat <<EOF
   Sandbox $SANDBOX: in each shell run  . $RC  (its Ollama: $OLLAMA_HOST_URL; start it again with dam-ollama-serve).
-  To remove it: kill \$(cat $LOCAL_AI/ollama-serve.pid), then delete $SANDBOX. Then:
+  To remove it: kill \$(cat $LOCAL_AI/ollama-serve.pid), then delete $SANDBOX.
+  Try it now (after  . $RC ):
 EOF
 else cat <<EOF
-  Open a new shell (or: source $RC), then:
+  Try it now. Open a new terminal window first (or run: source $RC), then:
 EOF
 fi
-[[ "$DO_HEIM" == 1 ]] && echo "    heim \"where is the breach width computed\"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits"
-[[ "$DO_VOR" == 1 ]] && echo "    vor ingest    # after dropping PDFs in $RHOME/library (or run vor/fetch_asdso.py --catalog)"
+[[ "$DO_VOR" == 1 ]] && echo "    vor \"what breach width does Froehlich 2008 give?\"     answered from your library, quotes checked"
+[[ "$DO_HEIM" == 1 ]] && echo "    heim \"what does REFINE_NEAR do?\"                      the suite's tools and known behaviours"
+[[ "$DO_HEIM" == 1 ]] && echo "    ai                                                     both on one page in your browser"
+[[ "$DO_HEIM" == 1 ]] && echo "    heim help                                              the short list of commands"
+if [[ "$DO_VOR" == 1 && "$LIB_EMPTY" == 1 ]]; then cat <<EOF
+  Vor's library is empty, so vor has nothing to quote yet. Add your own PDFs:  vor add FILE ...
+  or fetch the starter library of public dam-safety publications (a few hundred MB), then index it:
+    "$VOR_DIR/python" "$VOR_DIR/fetch_asdso.py" --catalog
+    vor ingest
+EOF
+fi
+echo "  Check it again any time:  ai-doctor     Everything this printed:  $INSTALL_LOG"
+[[ "$DO_HEIM" == 1 ]] && echo "  For developers: set ND_REPO / DWR_REPO / CREST_REPO to your clones, then  heim \"where is the breach width computed\""
 cat <<EOF
   openSUSE GUI-QGIS note (only if you also run the plugins here): a conda QGIS may need system
   GL/X libraries. If the xcb platform plugin fails, install them with:
     sudo zypper install -y Mesa-libGL1 libxcb-cursor0 libxkbcommon-x11-0
   The local AIs themselves need none of that.
 EOF
+exit 0

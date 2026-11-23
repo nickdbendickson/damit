@@ -9,7 +9,7 @@ shell block can change it on a given machine. `~` stands for the user's home fol
 
 ---
 
-## dam_chain.py 1.6.0
+## dam_chain.py 1.6.1
 
 Installed command: `damchain`. Run the plugin chains headless; also `damchain vor ...` and `damchain audit ...`.
 
@@ -124,7 +124,7 @@ open the Crest desk wired to one plugin set
 
 ---
 
-## rag_index.py 2.9
+## rag_index.py 2.9.1
 
 Installed command: `heim-index  (and heim-add = --add)`. Build Heim's document index.
 
@@ -145,7 +145,7 @@ Index folders (text+PDFs) into a named collection.
 
 ---
 
-## rag_query.py 2.8
+## rag_query.py 2.9
 
 Installed command: `heim  /  heim-query  /  heim-chat (with --chat)`. Ask Heim a question, or hold a conversation, answered from the index.
 
@@ -381,7 +381,7 @@ take a dam's runs out of the database
 
 ---
 
-## heim_run.py 1.0.0
+## heim_run.py 1.1.0
 
 Installed command: `heim run`. Draft a damchain run from plain English: checked, shown, run only when you type y.
 
@@ -577,7 +577,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.4.4
+## vor.py 1.4.5
 
 Installed command: `vor`. The literature assistant.
 
