@@ -272,6 +272,92 @@ class OcrRunTest(Base):
         self.assertEqual(self.docs(), {os.path.join("_ocr", "good.ocr.pdf"): "", "locked.pdf": "2"})
         self.assertFalse(os.path.exists(os.path.join(self.lib, "_ocr", "locked.ocr.pdf")))
 
+    def _fake_redraw(self):
+        """PyMuPDF's two steps on the text stand-in: the scanned pages alone, then spliced back."""
+        def redraw(src, dst):
+            with open(src, encoding="utf-8") as f:
+                pages = f.read().split("\f")
+            drawn = [i for i, pg in enumerate(pages) if pg.strip() == "SCAN"]
+            if drawn:
+                with open(dst, "w", encoding="utf-8") as f:
+                    f.write("\f".join("SCAN" for _ in drawn))
+            return drawn
+
+        def merge(src, ocrd, drawn, dst):
+            with open(src, encoding="utf-8") as f:
+                pages = f.read().split("\f")
+            with open(ocrd, encoding="utf-8") as f:
+                got = f.read().split("\f")
+            for k, i in enumerate(drawn):
+                pages[i] = got[k]
+            with open(dst, "w", encoding="utf-8") as f:
+                f.write("\f".join(pages))
+        self.vor.redraw_scanned_pages, self.vor.merge_ocr_pages = redraw, merge
+
+    def test_a_pdf_ocrmypdf_cannot_decode_is_done_from_its_redrawn_pages(self):
+        """FEMA P-946 / HMR 55A: ocrmypdf exit 4 on JPEG 2000 images. The scanned pages, drawn
+        as plain images, are OCRed and put back; the text pages are kept as they were."""
+        self.write("p946-jpx.pdf", pdf(TEXT * 3 + "the inundation mapping guideline. ", "SCAN", TEXT * 2, "SCAN"))
+        self.ingest()
+        self._fake_redraw()
+        os.environ["FAKE_OCR_FAIL_ON"] = "jpx"
+        self.ocr()
+        self.assertEqual(self.docs(), {os.path.join("_ocr", "p946-jpx.ocr.pdf"): ""})
+        with open(os.path.join(self.lib, "_ocr", "p946-jpx.ocr.pdf"), encoding="utf-8") as f:
+            pages = f.read().split("\f")
+        self.assertEqual(len(pages), 4)
+        self.assertIn("inundation mapping guideline", pages[0])          # its own text layer, kept
+        self.assertIn("page 1 of redraw-1.pdf", pages[1])                 # OCRed from the redraw
+        self.assertIn("page 2 of redraw-1.pdf", pages[3])
+        self.assertTrue(any("redrawing its 2 scanned page(s)" in m for m in SAID), SAID)
+        self.assertEqual([f for f in os.listdir(self.lib) if f.startswith("_ocr_tmp")], [])
+
+    def test_when_the_redrawn_pages_fail_too_the_original_stays(self):
+        self.write("broken-jpx.pdf", pdf(TEXT * 3 + "the broken one. ", "SCAN"))
+        self.ingest()
+        self._fake_redraw()
+        os.environ["FAKE_OCR_FAIL_ON"] = "redraw"                        # and the original fails below
+        real = self.vor.subprocess.run
+
+        def run(cmd, *a, **k):
+            if "broken-jpx.pdf" in cmd[-2]:
+                return argparse.Namespace(returncode=4)
+            return real(cmd, *a, **k)
+        self.vor.subprocess.run = run
+        try:
+            self.ocr()
+        finally:
+            self.vor.subprocess.run = real
+        self.assertEqual(self.docs(), {"broken-jpx.pdf": "2"})
+        self.assertTrue(any("failed on the redrawn pages too" in m for m in SAID), SAID)
+        self.assertTrue(any(m.strip() == "left as is" for m in SAID), SAID)
+
+    def test_without_pymupdf_it_says_so_and_leaves_the_pdf(self):
+        self.write("nolib-jpx.pdf", pdf(TEXT * 3 + "no reader here. ", "SCAN"))
+        self.ingest()
+
+        def no_pymupdf(*a):
+            raise ImportError("No module named 'pymupdf'")
+        self.vor.redraw_scanned_pages = no_pymupdf
+        os.environ["FAKE_OCR_FAIL_ON"] = "jpx"
+        self.ocr()
+        self.assertEqual(self.docs(), {"nolib-jpx.pdf": "2"})
+        self.assertTrue(any("needs PyMuPDF" in m for m in SAID), SAID)
+
+    def test_a_pdf_that_already_has_text_is_not_redrawn(self):
+        self.write("done.pdf", pdf(TEXT * 3, "SCAN"))
+        self.ingest()
+        tried = []
+        self.vor.redraw_scanned_pages = lambda *a: tried.append(a) or []
+        real = self.vor.subprocess.run
+        self.vor.subprocess.run = lambda cmd, *a, **k: argparse.Namespace(returncode=6)
+        try:
+            self.ocr()
+        finally:
+            self.vor.subprocess.run = real
+        self.assertEqual(tried, [])
+        self.assertTrue(any("text layer already" in m for m in SAID), SAID)
+
     def test_stopping_part_way_loses_nothing_and_the_next_run_finishes(self):
         self.write("one.pdf", pdf(TEXT * 3 + "document one. ", "SCAN"))
         self.write("two.pdf", pdf(TEXT * 3 + "document two. ", "SCAN"))

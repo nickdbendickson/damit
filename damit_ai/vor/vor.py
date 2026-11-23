@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.7 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.8 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,10 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.8 (2026-11-23): `vor ocr` tries once more when ocrmypdf fails on a PDF (often JPEG 2000 images
+#   it cannot decode: "JPXDecode ... could not be decoded", exit 4, as on FEMA P-946 and HMR 55A). PyMuPDF
+#   draws each scanned page as a plain image, ocrmypdf reads those, and the copy is the original with
+#   those pages put back in place; pages that had a text layer are kept as they were.
 # 1.4.7 (2026-11-23): the same, when the original is not in the library at all (only its OCR copy came
 #   across to ~/Vor): an entry whose file is gone and whose OCR copy is indexed is dropped by `vor ingest`.
 # 1.4.6 (2026-11-23): a scanned original that an older version indexed under ~/DamResearch (before the
@@ -121,7 +125,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.7"
+VERSION = "1.4.8"
 
 
 def _home():
@@ -2702,6 +2706,103 @@ def ocr_exe():
     return shutil.which("ocrmypdf")
 
 
+REDRAW_DPI = 300
+
+
+def _pymupdf():
+    try:
+        import pymupdf as pm
+    except ImportError:
+        import fitz as pm          # an older PyMuPDF; ImportError when there is none
+    return pm
+
+
+def redraw_scanned_pages(src, dst):
+    """1.4.8: a PDF of the pages of src that have no text layer, each drawn as a plain greyscale
+    image (REDRAW_DPI). ocrmypdf stops on some JPEG 2000 images ("JPXDecode ... could not be
+    decoded", exit 4: FEMA P-946, HMR 55A); MuPDF usually draws them. Returns the 0-based
+    page numbers that were drawn, in order ([] when there were none)."""
+    pm = _pymupdf()
+    try:
+        pm.TOOLS.mupdf_display_errors(False)
+    except Exception:  # noqa: BLE001 - an older PyMuPDF; only the console noise differs
+        pass
+    doc, out, drawn = pm.open(src), pm.open(), []
+    try:
+        for i, page in enumerate(doc):
+            if len(clean(page.get_text("text") or "")) >= MIN_PAGE_CHARS:
+                continue
+            new = out.new_page(width=page.rect.width, height=page.rect.height)
+            try:
+                pix = page.get_pixmap(dpi=REDRAW_DPI, colorspace=pm.csGRAY)
+                new.insert_image(new.rect, pixmap=pix)
+            except Exception:  # noqa: BLE001 - a page MuPDF cannot draw stays blank: OCR finds nothing
+                pass
+            drawn.append(i)
+        if drawn:
+            out.save(dst, garbage=3, deflate=True)
+        return drawn
+    finally:
+        out.close()
+        doc.close()
+
+
+def merge_ocr_pages(src, ocrd, drawn, dst):
+    """src with its pages `drawn` replaced, in order, by the pages of ocrd (the redrawn pages
+    after OCR); every other page, with its own text layer, is taken from src as it is."""
+    pm = _pymupdf()
+    doc, got, out = pm.open(src), pm.open(ocrd), pm.open()
+    try:
+        if len(got) != len(drawn):
+            raise RuntimeError("OCR gave %d page(s) for %d drawn" % (len(got), len(drawn)))
+        at = {p: k for k, p in enumerate(drawn)}
+        for i in range(len(doc)):
+            if i in at:
+                out.insert_pdf(got, from_page=at[i], to_page=at[i])
+            else:
+                out.insert_pdf(doc, from_page=i, to_page=i)
+        try:
+            out.set_metadata(dict(doc.metadata or {}))
+            out.set_page_labels(doc.get_page_labels())    # printed page numbers, as cited
+        except Exception:  # noqa: BLE001 - an older PyMuPDF: page numbers are cited by position
+            pass
+        out.save(dst, garbage=3, deflate=True)
+    finally:
+        out.close()
+        got.close()
+        doc.close()
+
+
+def ocr_by_redraw(exe, src, dst, tmpdir, n):
+    """ocrmypdf failed on src: OCR its scanned pages drawn as images, then put them back in
+    place. True when dst was written."""
+    redrawn = os.path.join(tmpdir, "redraw-%d.pdf" % n)
+    ocrd = os.path.join(tmpdir, "redraw-%d.ocr.pdf" % n)
+    try:
+        drawn = redraw_scanned_pages(src, redrawn)
+        if not drawn:
+            return False
+        say("  redrawing its %d scanned page(s) as images and trying again" % len(drawn))
+        r = subprocess.run([exe, "--skip-text", "--output-type", "pdf", "-q", redrawn, ocrd])
+        if r.returncode != 0 or not os.path.exists(ocrd):
+            say("  ocrmypdf failed on the redrawn pages too (exit %d)" % r.returncode)
+            return False
+        merge_ocr_pages(src, ocrd, drawn, dst)
+        return os.path.exists(dst)
+    except ImportError:
+        say("  (redrawing the pages needs PyMuPDF, which this Python does not have)")
+        return False
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:  # noqa: BLE001 - any reader or writer failure: the original stays as it was
+        say("  the pages could not be redrawn (%s)" % " ".join(str(e).split())[:200])
+        return False
+    finally:
+        for f in (redrawn, ocrd):
+            if os.path.exists(f):
+                os.remove(f)
+
+
 def cmd_ocr(a):
     db = connect()
     rows = db.execute("SELECT id, path, pages, notext FROM docs WHERE notext!='' AND notext IS NOT NULL").fetchall()
@@ -2759,11 +2860,24 @@ def cmd_ocr(a):
             stopped = True
             break
         if r.returncode not in (0, 6) or not os.path.exists(tmp):     # 6 = already has text
-            say("  %s; left as is" % ("ocrmypdf found a text layer already and wrote nothing" if r.returncode == 6
-                                     else "ocrmypdf failed (exit %d)" % r.returncode))
             if os.path.exists(tmp):
                 os.remove(tmp)
-            continue
+            redrawn = False
+            if r.returncode not in (3, 6, 130):    # not: a missing tesseract/ghostscript, done, Ctrl+C
+                say("  ocrmypdf failed (exit %d)" % r.returncode)
+                try:
+                    redrawn = ocr_by_redraw(exe, p, tmp, tmpdir, n)
+                except KeyboardInterrupt:
+                    stopped = True
+                    break
+            if not redrawn:
+                say("  %s" % ("ocrmypdf found a text layer already and wrote nothing; left as is" if r.returncode == 6
+                              else "left as is" if r.returncode not in (3, 130)
+                              else "ocrmypdf failed (exit %d); left as is" % r.returncode))
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+                continue
+            say("  done from the redrawn pages")
         os.replace(tmp, os.path.join(outdir, name))
         omap[h] = {"copy": name, "from": _lib_rel(p)}
         ocr_map_save(omap)
