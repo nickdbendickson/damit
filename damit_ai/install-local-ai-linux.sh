@@ -376,7 +376,7 @@ EOF
   fi
   PYL="$(make_env "$HEIM_ENV" "python=3.12 pymupdf pypdf numpy")"
   ok "heim python: $PYL"
-  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py ai_doctor.py ai_ui.py ai_score.py; do
+  for t in rag_index.py rag_query.py audit_plugin.py dam_chain.py repo_audit.py suite_check.py eval_heim.py run_digest.py heim_watch.py run_results.py true_hole.py ai_doctor.py ai_ui.py ai_score.py heim_run.py; do
     [[ -f "$HERE/heim/tools/$t" ]] && cp "$HERE/heim/tools/$t" "$HEIM_TOOLS/$t"
   done
   [[ -d "$HERE/heim/eval" ]] && mkdir -p "$HEIM_TOOLS/eval" && cp -R "$HERE/heim/eval/." "$HEIM_TOOLS/eval/"   # code-triage eval set (eval_heim.py); contents, so a re-run does not nest eval/eval

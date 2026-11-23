@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# dam_chain.py v1.5.3 — run both dam-plugin sets headless from Terminal (macOS, conda), stdlib only.
+# dam_chain.py v1.6.0 — run the dam-plugin sets headless from Terminal (conda), stdlib only.
 #
 #   dam_chain.py setup                       one-time: batch profiles that point at your QGIS
-#                                            profiles "nd" and "damsafety", plugins enabled
-#   dam_chain.py plugins --set nd|dwr        load every plugin of the set, check the chain's
+#                                            profiles "nd", "damsafety" and "damit", plugins enabled
+#   dam_chain.py plugins --set nd|dwr|damit  load every plugin of the set, check the chain's
 #                                            algorithms are there, run the self-tests
-#   dam_chain.py open --set nd|dwr           open QGIS (GUI) with that set's profile
+#   dam_chain.py open --set nd|dwr|damit     open QGIS (GUI) with that set's profile
 #   dam_chain.py seed --dams-folder D --csv dams.csv
 #                                            make <D>/<dam_id>/dam.json for each row (never overwrites)
 #   dam_chain.py run --set nd  --dams-folder D --ids DWR-2801,DWR-4031
@@ -22,6 +22,14 @@
 #   dam_chain.py run --set dwr --dams LAYER --ids 2801,4031 --out D --dem DEM --screen-work W
 #                                            the DamSafety Runner's own list chain
 #                                            (ndbreach:chainbatch: Screening -> Runner -> Hazard)
+#   dam_chain.py run --set damit --dams LAYER --ids A,B --out D --dem DEM [--cell 5 --solver fv2]
+#                                            DamIT Runner breach runs for a dams layer
+#                                            (damit_run:batch; DamIT Hazard has no batch classifier
+#                                            yet). Checks first: files, the dam ids in the layer,
+#                                            and every option name against the installed Runner.
+#   --cell / --solver / --manning / --runner-param KEY=VALUE are checked against the Runner's
+#   own parameter list (qgis_process help) before anything runs; an enum takes its option text
+#   (--runner-param SCENARIO=sunny) or its number. --check-only runs only those checks.
 #   dam_chain.py vor ask|research|search|ingest|chat|list ...
 #                                            the literature research assistant (vor, a
 #                                            separate model and library from heim); same as typing
@@ -35,13 +43,23 @@
 #                                            set's plugins, in ~/CrestDams/<set>
 #
 # Every run goes through qgis_process in the conda env (ndqgis), with the set's own QGIS
-# profile, so ND and DamSafety never load together (they share Processing ids).
+# profile, so ND, DamSafety and DamIT never load together (they share Processing ids).
+# v1.6.0 (2026-11-23): the DamIT set (--set damit, profile "damit"), the QGIS profiles folder
+# of Linux and Windows as well as macOS, and option names checked before a run.
 # --dry-run prints the commands without running them. Logs: <dams folder>/_chain_logs/.
 import os, sys, re, csv, json, time, shutil, argparse, subprocess, threading, urllib.request, urllib.error
 from datetime import datetime
 
-QGIS_PROFILES = os.path.expanduser(os.environ.get("DAMCHAIN_QGIS_PROFILES",
-                                   "~/Library/Application Support/QGIS/QGIS3/profiles"))
+def _default_profiles():
+    """Where QGIS keeps its profiles on this computer (the installers use the same folders)."""
+    if sys.platform == "darwin":
+        return "~/Library/Application Support/QGIS/QGIS3/profiles"
+    if os.name == "nt":
+        return os.path.join(os.environ.get("APPDATA", "~"), "QGIS", "QGIS3", "profiles")
+    return "~/.local/share/QGIS/QGIS3/profiles"
+
+
+QGIS_PROFILES = os.path.expanduser(os.environ.get("DAMCHAIN_QGIS_PROFILES", _default_profiles()))
 BATCH_ROOT = os.path.expanduser(os.environ.get("DAMCHAIN_BATCH_ROOT", "~/local-ai/qgis-batch"))
 CREST_DIR = os.path.expanduser(os.environ.get("DAMCHAIN_CREST_DIR", "~/local-ai/crest-desktop"))
 
@@ -61,7 +79,18 @@ SETS = {
                         "DamSafety_PMP"],
             "needs": ["ndbreach:chainbatch", "nddam:runchain", "ndbreach:batch",
                       "ndhazard:classify", "ndbreach:selftest", "nddam:selftest"]},
+    # v1.6.0: DamIT (the national suite). No self-test tools: `plugins --selftest` runs damit_run:check.
+    "damit": {"profile": "damit", "runner": "damit_runner",
+              "plugins": ["damit_core", "damit_catalog", "damit_setup", "damit_data", "damit_screener",
+                          "damit_runner", "damit_hazard", "damit_hazardlite", "damit_pmp", "damit_finder"],
+              "needs": ["damit_run:batch", "damit_run:rundam", "damit_run:check", "damit_run:checkhandoff",
+                        "damit_screen:preflight", "damit_screen:runchain", "damit:classify"]},
 }
+# The Runner tool whose options --cell / --solver / --manning / --runner-param set, per set.
+RUNNER_ALG = {"dwr": "ndbreach:batch", "damit": "damit_run:batch"}
+SOLVER_WORDS = ("default", "acc", "fv2", "mwdg2")
+# --lisflood may name the DamIT Runner's in-process engines instead of a binary (damit_runner/core/lisflood.py)
+DAMIT_ENGINE_WORDS = ("builtin", "built-in", "gpu", "metal", "gpu-sgc")
 DWR_HEC = {"run": 0, "wait": 1, "skip": 2}
 DWR_STOP = {"end": 0, "screening": 1, "runner": 2}
 DEM_UNITS = {"detect": 0, "feet": 1, "us-feet": 2, "meters": 3}
@@ -371,7 +400,7 @@ def write_atomic(path, text):
 def cmd_setup(args):
     """~/local-ai/qgis-batch/<set>/profiles/default -> your real QGIS profile, plugins enabled."""
     for set_name, spec in SETS.items():
-        prof = getattr(args, "%s_profile" % set_name) or spec["profile"]
+        prof = getattr(args, "%s_profile" % set_name, "") or spec["profile"]
         real = os.path.join(QGIS_PROFILES, prof)
         link_dir = os.path.join(BATCH_ROOT, set_name, "profiles")
         link = os.path.join(link_dir, "default")
@@ -386,10 +415,20 @@ def cmd_setup(args):
         os.symlink(real, link)
         print("%s: batch profile -> %s" % (set_name, real))
         qp = QP(args, set_name)
+        failed = []
         for p in spec["plugins"]:
             if os.path.isdir(os.path.join(real, "python", "plugins", p)):
-                qp.plain("plugins", "enable", p)
-        print("   plugins enabled for qgis_process")
+                rc, out = qp.plain("plugins", "enable", p)
+                # rc 1 also means "already enabled" or "no Processing provider" (damit_core); only a
+                # qgis_process that could not start at all (126/127, a crash) is a failure here
+                if rc not in (0, 1) and not args.dry_run:
+                    failed.append(p)
+        if failed:
+            print("   ! qgis_process could not start to enable %s. Is QGIS installed in the conda "
+                  "environment '%s'?" % (", ".join(failed), args.env))
+        else:
+            print("   plugins enabled for qgis_process; `dam_chain.py plugins --set %s` checks the tools"
+                  % set_name)
 
 
 def cmd_plugins(args):
@@ -407,13 +446,30 @@ def cmd_plugins(args):
                     have.add(alg)
         for alg in spec["needs"]:
             print("  %-4s %s" % ("ok" if alg in have else "MISSING", alg))
-        providers = sorted({a.split(":")[0] for a in have if a.split(":")[0].startswith("nd")})
+        providers = sorted({a.split(":")[0] for a in have
+                            if a.split(":")[0].startswith(("nd", "damit"))})
         print("  providers loaded: %s" % ", ".join(providers))
         missing = [a for a in spec["needs"] if a not in have]
         if missing:
             print("  -> run `dam_chain.py setup`, and check the plugins are installed in profile '%s'"
                   % spec["profile"])
-    if args.selftest:
+    if args.selftest and args.set == "damit":
+        # DamIT has no self-test tools; damit_run:check runs LISFLOOD-FP on a tiny channel and imports ANUGA.
+        logs = os.path.join(os.path.expanduser(args.log_dir), "selftest_%s_%s" % (args.set, _stamp()))
+        lis = os.path.expanduser(args.lisflood)
+        p = {}
+        if os.path.isfile(lis):
+            p["LISFLOOD_EXE"] = lis
+        if qp.anuga_py:
+            p["ANUGA_PYTHON"] = qp.anuga_py
+        ok, res, err = qp.run("damit_run:check", p, os.path.join(logs, "damit_run_check.log"), timeout=1800)
+        result = res.get("RESULT") or ""
+        # the check finishes (exit 0) even when LISFLOOD-FP is missing; its lines say OK or PROBLEM
+        ok = ok and bool(result) and not any(ln.startswith("PROBLEM") for ln in result.splitlines())
+        print("  %-4s %s  %s" % ("PASS" if ok else "FAIL", "damit_run:check", result or err))
+        if not args.dry_run:
+            print("  logs: %s" % logs)
+    elif args.selftest:
         logs = os.path.join(os.path.expanduser(args.log_dir), "selftest_%s_%s" % (args.set, _stamp()))
         lis = os.path.expanduser(args.lisflood)
         # ND Screening takes the step-7 cell in feet (CELL_FT), DamSafety Screening in metres (CELL).
@@ -653,7 +709,10 @@ def run_dwr(args):
     p.update(parse_kv(args.param))
     # Per-tool settings (e.g. the Runner's DEM units) reach chainbatch only through the
     # settings file or an overrides CSV; write the overrides CSV for the listed dams.
-    tool_kv = {"ndbreach.batch.%s" % k: v for k, v in parse_kv(args.runner_param).items()}
+    runner_kv = runner_settings(args)
+    if runner_kv and not args.dry_run:
+        runner_kv = check_runner_params(QP(args, "dwr"), RUNNER_ALG["dwr"], runner_kv)
+    tool_kv = {"ndbreach.batch.%s" % k: v for k, v in runner_kv.items()}
     tool_kv.update({"ndhazard.classify.%s" % k: v for k, v in parse_kv(args.classify_param).items()})
     if args.dem_units:
         tool_kv["ndbreach.batch.DEM_Z"] = DEM_UNITS[args.dem_units]
@@ -693,6 +752,229 @@ def run_dwr(args):
         print("summary: %s" % res["SUMMARY"])
     if not ok and getattr(args, "triage", False):
         triage_failure("DamSafety chain", err or counts, log, os.path.dirname(log))
+    sys.exit(0 if ok else 1)
+
+
+def runner_settings(args):
+    """--runner-param KEY=VALUE plus the named options (--cell, --solver, --manning), which win."""
+    kv = parse_kv(getattr(args, "runner_param", None))
+    if getattr(args, "cell", None) is not None:
+        kv["CELL"] = _num_text(args.cell)
+    if getattr(args, "manning", None) is not None:
+        kv["MANNING"] = _num_text(args.manning)
+    if getattr(args, "solver", ""):
+        kv["SOLVER"] = args.solver
+    return kv
+
+
+def _num_text(x):
+    return ("%.6f" % x).rstrip("0").rstrip(".") if isinstance(x, float) else str(x)
+
+
+def tool_params(qp, alg):
+    """{name: definition} of a Processing tool, from `qgis_process --json help` (QGIS 3.22+).
+    None when it cannot be read (an older QGIS, or the tool is not installed)."""
+    rc, out = qp.plain("--json", "help", alg)
+    if rc != 0:
+        return None
+    m = re.search(r"^\{", out or "", re.M)          # warnings may come first
+    if not m:
+        return None
+    try:
+        return json.loads(out[m.start():]).get("parameters") or None
+    except ValueError:
+        try:                                          # anything after the JSON block
+            return json.JSONDecoder().raw_decode(out[m.start():])[0].get("parameters") or None
+        except ValueError:
+            return None
+
+
+def enum_value(name, value, options):
+    """An enum option given by its number or by its text ('fv2' -> the 'FV2 ...' option's number).
+    Returns (number text, None) or (None, the reason)."""
+    opts = {str(k): str(v) for k, v in (options or {}).items()}
+    v = str(value).strip()
+    if v in opts:
+        return v, None
+    low = v.lower()
+    exact = [k for k, t in opts.items() if t.lower() == low]
+    if len(exact) == 1:
+        return exact[0], None
+    word = [k for k, t in opts.items() if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(low), t.lower())]
+    if len(word) == 1:
+        return word[0], None
+    return None, "%s=%s is not one of its options: %s" % (
+        name, value, "; ".join("%s = %s" % (k, t) for k, t in sorted(opts.items(), key=lambda x: int(x[0]))))
+
+
+def check_runner_params(qp, alg, kv):
+    """v1.6.0: every KEY must be a real parameter of the Runner tool, and an enum's text is turned
+    into its number. A wrong name is refused here, before anything runs: the tool itself would
+    ignore it and the run would quietly use the default. Exits with the reasons."""
+    defs = tool_params(qp, alg)
+    if defs is None:
+        sys.exit("cannot read the options of %s (qgis_process --json help %s failed): is the set "
+                 "installed and `dam_chain.py setup` done? Nothing was run." % (alg, alg))
+    out, bad = {}, []
+    for k, v in kv.items():
+        d = defs.get(k)
+        if d is None:
+            near = [n for n in defs if k.lower() in n.lower() or n.lower() in k.lower()]
+            bad.append("%s is not an option of %s%s" % (k, alg, (" (did you mean %s?)" % ", ".join(sorted(near)[:4]))
+                                                       if near else ""))
+            continue
+        opts = d.get("available_options")
+        if opts:
+            n, why = enum_value(k, v, opts)
+            if why:
+                bad.append(why)
+                continue
+            out[k] = n
+        else:
+            out[k] = v
+    if bad:
+        sys.exit("Not run:\n  " + "\n  ".join(bad))
+    return out
+
+
+def layer_ids(path, field=""):
+    """The dam ids in a dams layer, stdlib only: a GeoPackage (first feature table, or
+    'file.gpkg|layername=x') or a CSV. Returns (field, set of ids), or (None, None) when the
+    format cannot be read here (the Runner still reads it)."""
+    src, _, rest = path.partition("|")
+    layer = rest.split("=", 1)[1] if rest.lower().startswith("layername=") else ""
+    src = os.path.expanduser(src)
+    ext = os.path.splitext(src)[1].lower()
+    try:
+        if ext == ".gpkg":
+            import sqlite3
+            con = sqlite3.connect("file:%s?mode=ro&immutable=1" % src.replace("?", "%3f"), uri=True)
+            try:
+                tables = [r[0] for r in con.execute(
+                    "SELECT table_name FROM gpkg_contents WHERE data_type = 'features'")]
+                table = layer if layer in tables else (tables[0] if tables else "")
+                if not table:
+                    return None, None
+                cols = [r[1] for r in con.execute('PRAGMA table_info("%s")' % table.replace('"', '""'))]
+                col = _id_field(cols, field)
+                if not col:
+                    return None, None
+                vals = {str(r[0]).strip() for r in con.execute('SELECT "%s" FROM "%s"' % (
+                    col.replace('"', '""'), table.replace('"', '""'))) if r[0] is not None}
+                return col, vals
+            finally:
+                con.close()
+        if ext == ".csv":
+            with open(src, newline="", encoding="utf-8-sig") as fh:
+                rows = list(csv.DictReader(fh))
+            col = _id_field(list(rows[0].keys()) if rows else [], field)
+            if not col:
+                return None, None
+            return col, {(r.get(col) or "").strip() for r in rows if (r.get(col) or "").strip()}
+    except Exception:        # noqa: BLE001 - an unreadable layer is reported, not fatal here
+        return None, None
+    return None, None
+
+
+def _id_field(cols, field):
+    low = {c.lower(): c for c in cols}
+    if field:
+        return low.get(field.lower())
+    for c in ("dam_id", "nidid", "nid_id", "national_id", "dam id", "id"):
+        if c in low:
+            return low[c]
+    return None
+
+
+def damit_preflight(args, ids):
+    """v1.6.0: what would make a DamIT batch fail or run the wrong dams, checked in a second.
+    Returns a list of problems (empty = go)."""
+    bad = []
+    dams = os.path.expanduser((args.dams or "").partition("|")[0])
+    if not args.dams:
+        bad.append("--dams is missing (the dams points layer)")
+    elif not os.path.exists(dams):
+        bad.append("the dams layer is not there: %s" % dams)
+    if not args.out:
+        bad.append("--out is missing (the folder the runs are written to)")
+    else:
+        parent = os.path.dirname(os.path.abspath(os.path.expanduser(args.out))) or "."
+        if not os.path.isdir(parent):
+            bad.append("the folder above --out does not exist: %s" % parent)
+    if not args.dem:
+        bad.append("--dem is missing (DEM or VRT covering every dam; DamIT batch needs one)")
+    elif not os.path.exists(os.path.expanduser(args.dem)):
+        bad.append("the DEM is not there: %s" % os.path.expanduser(args.dem))
+    if args.dams and os.path.exists(dams) and ids:
+        col, have = layer_ids(args.dams, args.id_field)
+        if have is None:
+            print("  note: cannot read the dam ids of %s here; the Runner will match them" % args.dams)
+        else:
+            missing = [i for i in ids if i not in have]
+            if missing:
+                bad.append("not in the dams layer (field %s): %s" % (col, ", ".join(missing)))
+    return bad
+
+
+def run_damit(args):
+    """v1.6.0: DamIT Runner breach runs for a dams layer (damit_run:batch), one folder per dam
+    under --out. Classification is not part of it: DamIT Hazard has no batch classifier yet."""
+    ids = read_ids(args)
+    bad = damit_preflight(args, ids)
+    qp = QP(args, "damit")
+    runner_kv = runner_settings(args)
+    if not bad and not args.dry_run:
+        runner_kv = check_runner_params(qp, RUNNER_ALG["damit"], runner_kv)
+    elif runner_kv and args.dry_run:
+        print("  note: --dry-run does not check option names or turn option text into numbers")
+    print("preflight: %d error(s)" % len(bad))
+    for b in bad:
+        print("  ERROR  " + b)
+    if bad:
+        sys.exit(1)
+    out = os.path.abspath(os.path.expanduser(args.out))
+    p = {"DAMS": os.path.expanduser(args.dams), "DEM": os.path.expanduser(args.dem), "DAMS_FOLDER": out,
+         "SKIP_DONE": str(not args.redo).lower(), "CLASSIFY": "false", "THREADS": args.threads,
+         "WORKERS": max(1, args.workers)}
+    if args.dem_units:
+        p["DEM_Z"] = DEM_UNITS[args.dem_units]
+    if args.id_field:
+        p["F_ID"] = args.id_field
+    if ids:
+        p["ONLY_IDS"] = ",".join(ids)
+        if args.workers > 1:
+            print("  note: with --ids the Runner runs one dam after another (ONLY_IDS uses one worker)")
+    lis = os.path.expanduser(args.lisflood or "")
+    if os.path.isfile(lis) or lis.strip().lower() in DAMIT_ENGINE_WORDS:
+        p["LISFLOOD_EXE"] = lis          # a binary, or the DamIT Runner's own engines by name
+    if args.anuga:
+        p["TIER"] = 1
+        if qp.anuga_py:
+            p["ANUGA_PYTHON"] = qp.anuga_py
+    p.update(runner_kv)
+    p.update(parse_kv(args.param))
+    if args.check_only:
+        print("OK  checks passed; nothing was run (--check-only)")
+        return
+    if not args.dry_run and os.path.isfile(qp.qp):
+        qp.env.setdefault("NDBREACH_QGIS_PROCESS", qp.qp)     # the batch's worker processes start qgis_process
+    logs = os.path.join(out, "_chain_logs")
+    log = os.path.join(logs, "damit_batch_%s.log" % _stamp())
+    ok, res, err = qp.run(RUNNER_ALG["damit"], p, log, label="DamIT batch")
+    if args.dry_run:
+        return
+    counts = str(res.get("COUNTS") or "")
+    m = re.search(r"(\d+)\s+failed", counts)
+    if ok and m and int(m.group(1)) > 0:
+        ok = False                     # qgis_process exits 0 when dams fail; the counts say so
+    if ok and not counts:
+        ok, err = False, err or "the Runner reported no counts; see the log"
+    print("%s  %s" % ("OK" if ok else "FAILED", counts or err))
+    print("log: %s" % log)
+    if res.get("SUMMARY"):
+        print("summary: %s" % res["SUMMARY"])
+    if not ok and getattr(args, "triage", False):
+        triage_failure("DamIT batch", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
 
 
@@ -805,7 +1087,7 @@ def main():
         vor_passthrough(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "audit":
         audit_passthrough(sys.argv[2:])
-    ap = argparse.ArgumentParser(description="Run the ND and DamSafety dam plugins headless. "
+    ap = argparse.ArgumentParser(description="Run the ND, DamSafety and DamIT dam plugins headless. "
                                              "`vor ...` runs the literature assistant (`research` is an alias); "
                                              "`audit ...` the local repo audit (audit --help).")
     ap.add_argument("--env", default="ndqgis", help="conda env with QGIS (default ndqgis)")
@@ -820,6 +1102,7 @@ def main():
     s = sub.add_parser("setup")
     s.add_argument("--nd-profile", default="")
     s.add_argument("--dwr-profile", default="")
+    s.add_argument("--damit-profile", default="")
 
     s = sub.add_parser("plugins")
     s.add_argument("--set", choices=SETS, required=True)
@@ -875,11 +1158,15 @@ def main():
     g.add_argument("--breach-param", action="append", help="KEY=VALUE for ndbreach:rundam")
     g.add_argument("--classify-param", action="append", help="KEY=VALUE for ndhazard:classify")
     g.add_argument("--timeout-min", type=int, default=480)
-    g = s.add_argument_group("dwr set (ndbreach:chainbatch)")
+    g = s.add_argument_group("dwr and damit sets (ndbreach:chainbatch / damit_run:batch)")
     g.add_argument("--dams", default="", help="dams points layer")
     g.add_argument("--id-field", default="", help="dam id field of the layer")
     g.add_argument("--out", default="", help="output folder, one folder per dam")
     g.add_argument("--dem", default="", help="DEM or VRT covering every dam")
+    g.add_argument("--cell", type=float, default=None, help="model cell size, metres (the Runner's CELL)")
+    g.add_argument("--solver", choices=SOLVER_WORDS, default="", help="LISFLOOD-FP solver (the Runner's SOLVER)")
+    g.add_argument("--manning", type=float, default=None, help="Manning's n (the Runner's MANNING)")
+    g.add_argument("--workers", type=int, default=1, help="damit: dams run side by side (WORKERS)")
     g.add_argument("--screen-work", default="", help="Screening work folder (statewide run + data package)")
     g.add_argument("--hec", choices=DWR_HEC, default="skip",
                    help="HEC-RAS 2D stage (default skip: it cannot run on a Mac)")
@@ -887,10 +1174,11 @@ def main():
     g.add_argument("--stop-after", choices=DWR_STOP, default="end")
     g.add_argument("--settings-file", default="")
     g.add_argument("--overrides-csv", default="")
-    g.add_argument("--check-only", action="store_true", help="preflight only")
+    g.add_argument("--check-only", action="store_true", help="preflight only (damit: the checks, nothing run)")
     g.add_argument("--dem-units", choices=DEM_UNITS, default="",
                    help="the Runner's DEM elevation units (needed when the DEM records none, e.g. a VRT)")
-    g.add_argument("--runner-param", action="append", help="KEY=VALUE for the Runner (ndbreach:batch)")
+    g.add_argument("--runner-param", action="append",
+                   help="KEY=VALUE for the Runner (ndbreach:batch / damit_run:batch); names are checked")
 
     args = ap.parse_args()
     if getattr(args, "heim_model", ""):
@@ -911,6 +1199,8 @@ def main():
         if not args.dams_folder:
             sys.exit("--set nd needs --dams-folder")
         run_nd(args)
+    elif args.set == "damit":
+        run_damit(args)
     else:
         run_dwr(args)
 

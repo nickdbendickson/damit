@@ -1,0 +1,224 @@
+"""heim_run 1.0.0: `heim run "plain English"` drafts a damchain run, and nothing reaches a run unchecked.
+
+Rules agreed 2026-11-23: the model only fills fixed fields; code checks every id against the words and
+the dams layer and every number against the words and a range; anything else asked for is refused, not
+guessed; redo only when the words ask; the command is shown and nothing runs until y; --check-only first;
+the sentence, the reply and the command are logged.
+
+No Ollama and no QGIS: the model, the prompt and damchain are stubbed.
+"""
+import importlib.util
+import io
+import json
+import os
+import sqlite3
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.join(os.path.dirname(HERE), "tools")
+
+
+def load(name, fname):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(TOOLS, fname))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+HR = load("heim_run_under_test", "heim_run.py")
+RQ = load("rag_query_for_heim_run_test", "rag_query.py")
+
+
+def fields(**kw):
+    d = {"ids": [], "cell_m": None, "solver": "", "manning": None, "redo": False, "unsupported": []}
+    d.update(kw)
+    return d
+
+
+class Case(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="heim-run-")
+        os.environ["HEIM_RUN_SETTINGS"] = os.path.join(self.tmp, "heim_run.json")
+        HR.SAVED = os.environ["HEIM_RUN_SETTINGS"]
+        self.dams = os.path.join(self.tmp, "dams.gpkg")
+        con = sqlite3.connect(self.dams)
+        con.execute("CREATE TABLE gpkg_contents (table_name TEXT, data_type TEXT)")
+        con.execute("INSERT INTO gpkg_contents VALUES ('dams', 'features')")
+        con.execute("CREATE TABLE dams (fid INTEGER PRIMARY KEY, dam_id TEXT)")
+        con.executemany("INSERT INTO dams (dam_id) VALUES (?)", [("2801",), ("4031",), ("DWR-3034",)])
+        con.commit()
+        con.close()
+        self.dem = os.path.join(self.tmp, "dem.tif")
+        open(self.dem, "w").close()
+        self.out = os.path.join(self.tmp, "runs")
+        self.calls = []
+
+    def tearDown(self):
+        os.environ.pop("HEIM_RUN_SETTINGS", None)
+
+    def go(self, request, reply, answer="y", rc=(0, 0), extra=()):
+        said, rcs = [], list(rc)
+
+        def chat(messages, fmt=None, timeout=None):
+            self.assertEqual(fmt, HR.SCHEMA)
+            if isinstance(reply, Exception):
+                raise reply
+            return json.dumps(reply) if isinstance(reply, dict) else reply
+
+        def runner(argv):
+            self.calls.append(argv)
+            return rcs.pop(0) if rcs else 0
+        argv = ["--set", "damit", "--dams", self.dams, "--out", self.out, "--dem", self.dem] + list(extra) + [request]
+        code = HR.main(argv, chat=chat, ask=lambda prompt: answer, runner=runner, out=said.append)
+        return code, "\n".join(said)
+
+
+class HeimRunTest(Case):
+    def test_a_good_request_is_shown_checked_then_run(self):
+        code, said = self.go("run 2801 and 4031 at 5 m with FV2", fields(ids=["2801", "4031"], cell_m=5, solver="fv2"))
+        self.assertEqual(code, 0, said)
+        self.assertIn("damchain run --set damit", said)
+        self.assertIn("cell size 5 m (default 10 m)", said)
+        self.assertIn("solver FV2 (default ACC)", said)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.calls[0][-1], "--check-only")                # checks first
+        self.assertEqual(self.calls[1][:3], ["run", "--set", "damit"])
+        self.assertIn("--ids", self.calls[1])
+        self.assertEqual(self.calls[1][self.calls[1].index("--ids") + 1], "2801,4031")
+        self.assertEqual(self.calls[1][self.calls[1].index("--solver") + 1], "fv2")
+        self.assertNotIn("--redo", self.calls[1])
+        logs = os.listdir(os.path.join(self.out, "_chain_logs"))
+        with open(os.path.join(self.out, "_chain_logs", logs[0]), encoding="utf-8") as fh:
+            log = fh.read()
+        self.assertIn("request: run 2801 and 4031 at 5 m with FV2", log)
+        self.assertIn("confirmed: y", log)
+        self.assertIn("run exit: 0", log)
+
+    def test_a_setting_equal_to_the_default_says_so(self):
+        code, said = self.go("run 2801 at 10 m with ACC, n 0.05", fields(ids=["2801"], cell_m=10, solver="acc",
+                                                                       manning=0.05), extra=["--show"])
+        self.assertIn("cell size 10 m (the same as the default)", said)
+        self.assertIn("solver ACC (the same as the default)", said)
+        self.assertIn("Manning's n 0.05 (the same as the default)", said)
+        code, said = self.go("run 2801", fields(ids=["2801"]), extra=["--show"])
+        self.assertIn("Settings: none asked for", said)
+
+    def test_nothing_runs_without_y(self):
+        for answer in ("", "n", "yes please", "Y "):
+            self.calls = []
+            code, said = self.go("run 2801", fields(ids=["2801"]), answer=answer)
+            if answer.strip().lower() in ("y", "yes"):
+                self.assertEqual(len(self.calls), 2)
+            else:
+                self.assertEqual(self.calls, [], answer)
+                self.assertIn("nothing was run", said)
+
+    def test_failed_checks_stop_the_run(self):
+        code, said = self.go("run 2801", fields(ids=["2801"]), rc=(1,))
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.calls), 1)
+        self.assertIn("The checks failed", said)
+
+    def test_an_id_not_in_the_words_or_the_layer(self):
+        code, said = self.go("run 2801", fields(ids=["2801", "4031"]))
+        self.assertEqual(self.calls, [])
+        self.assertIn("'4031' is not in your words", said)
+        code, said = self.go("run 2801 and 5555", fields(ids=["2801", "5555"]))
+        self.assertEqual(self.calls, [])
+        self.assertIn("not in the dams layer", said)
+        self.assertIn("5555", said)
+
+    def test_numbers_must_be_in_the_words_and_in_range(self):
+        for req, f, why in (("run 2801", fields(ids=["2801"], cell_m=5), "cell size 5 is not in your words"),
+                            ("run 2801 at 0.1 m", fields(ids=["2801"], cell_m=0.1), "outside"),
+                            ("run 2801 at 30 ft", fields(ids=["2801"], cell_m=30), "in metres"),
+                            ("run 2801 with n 0.5", fields(ids=["2801"], manning=0.5), "outside"),
+                            ("run 2801", fields(ids=["2801"], manning=0.04), "not in your words"),
+                            ("run 2801", fields(ids=["2801"], solver="fv2"), "FV2 is not in your words")):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(self.calls, [], req)
+            self.assertIn(why, said, req)
+
+    def test_written_numbers_count(self):
+        code, said = self.go("run 2801 at 5m, n=0.035.", fields(ids=["2801"], cell_m=5, manning=0.035))
+        self.assertEqual(code, 0, said)
+        self.assertIn("--manning", self.calls[1])
+
+    def test_anything_else_asked_for_is_refused(self):
+        code, said = self.go("run 2801 with Froehlich 2008 at max pool",
+                             fields(ids=["2801"], unsupported=["breach method Froehlich 2008", "max pool"]))
+        self.assertEqual(self.calls, [])
+        self.assertIn("cannot set 'max pool'", said)
+
+    def test_redo_only_when_the_words_ask(self):
+        code, said = self.go("run 2801", fields(ids=["2801"], redo=True))
+        self.assertIn("left out redo", said)
+        self.assertNotIn("--redo", self.calls[1])
+        self.calls = []
+        code, said = self.go("rerun 2801", fields(ids=["2801"], redo=True))
+        self.assertIn("--redo", self.calls[1])
+        self.assertIn("REDO", said)
+
+    def test_no_model_or_bad_json(self):
+        for reply in (OSError("connection refused"), "I think you want 2801", '{"ids": [}'):
+            self.calls = []
+            code, said = self.go("run 2801", reply)
+            self.assertEqual(self.calls, [])
+            self.assertIn("could not read the request", said)
+
+    def test_show_runs_nothing(self):
+        code, said = self.go("run 2801", fields(ids=["2801"]), extra=["--show"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.calls, [])
+        self.assertIn("--show: nothing was run", said)
+
+    def test_paths_are_remembered_after_a_confirmed_run(self):
+        self.go("run 2801", fields(ids=["2801"]))
+        with open(HR.SAVED, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        self.assertEqual(saved["_last_set"], "damit")
+        self.assertEqual(saved["damit"]["dams"], self.dams)
+        said = []
+        code = HR.main(["run 4031"], chat=lambda m, fmt=None, timeout=None: json.dumps(fields(ids=["4031"])),
+                       ask=lambda p: "y", runner=lambda a: self.calls.append(a) or 0, out=said.append)
+        self.assertEqual(code, 0, said)
+        self.assertIn(self.dams, self.calls[-1])
+
+    def test_no_paths_yet(self):
+        said = []
+        code = HR.main(["--set", "damit", "run 2801"], chat=lambda m, fmt=None, timeout=None: json.dumps(fields(ids=["2801"])),
+                       ask=lambda p: "y", runner=lambda a: 0, out=said.append)
+        self.assertEqual(code, 2)
+        self.assertIn("no dams layer (--dams) yet", "\n".join(said))
+
+
+class CommandWordTest(unittest.TestCase):
+    def test_run_is_a_command_and_a_question_stays_a_question(self):
+        self.assertEqual(RQ.command_word(["run", "2801 at 5 m"]), ("heimrun", ["2801 at 5 m"]))
+        self.assertEqual(RQ.command_word(["run"]), ("heimrun", []))
+        self.assertEqual(RQ.command_word(["run", "--help"]), ("heimrun", ["--help"]))
+        self.assertIsNone(RQ.command_word(["run", "times", "for", "ANUGA?"]))
+        self.assertIsNone(RQ.command_word(["running", "2801"]))
+
+    def test_help_names_it(self):
+        self.assertIn('heim run "run 2801 at 5 m"', RQ.HELP)
+
+
+class InstallTest(unittest.TestCase):
+    def test_every_installer_copies_it(self):
+        root = os.path.dirname(os.path.dirname(HERE))
+        with open(os.path.join(os.path.dirname(HERE), "setup-local-heim.sh"), encoding="utf-8") as fh:
+            self.assertIn("ai_score heim_run; do", fh.read())
+        for name in ("install-local-ai-linux.sh", "install-local-ai-windows.ps1"):
+            p = os.path.join(root, name)
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as fh:
+                    self.assertIn("heim_run.py", fh.read(), name)
+
+
+if __name__ == "__main__":
+    unittest.main()

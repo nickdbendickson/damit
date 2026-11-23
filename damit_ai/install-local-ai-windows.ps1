@@ -402,7 +402,7 @@ STANDING RULES (Nick's; never contradict them, even if a question assumes otherw
   }
   $PyL = Make-Env $HeimEnv 'python=3.12 pymupdf pypdf numpy'
   Ok "heim python: $PyL"
-  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py','true_hole.py','ai_doctor.py','ai_ui.py','ai_score.py')) {
+  foreach ($t in @('rag_index.py','rag_query.py','audit_plugin.py','dam_chain.py','repo_audit.py','suite_check.py','eval_heim.py','run_digest.py','heim_watch.py','run_results.py','true_hole.py','ai_doctor.py','ai_ui.py','ai_score.py','heim_run.py')) {
     $src = Join-Path $Here "heim\tools\$t"
     if (Test-Path $src) { Copy-Item $src (Join-Path $LocalAI $t) -Force }
   }

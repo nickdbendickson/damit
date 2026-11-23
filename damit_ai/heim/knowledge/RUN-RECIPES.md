@@ -6,7 +6,7 @@ logs go**, and **what it skips when run a second time**. The scripts' own header
 full reference; `CLI-HELP.md` lists every flag of the local-AI tools.
 
 Everything headless goes through `qgis_process` in the conda env `ndqgis`, with the QGIS
-profile of **one** plugin set. The ND set and the DamSafety set share Processing ids and
+profile of **one** plugin set. The ND, DamSafety and DamIT sets share Processing ids and
 are never loaded together.
 
 ---
@@ -41,6 +41,61 @@ damchain run --set dwr --dams LAYER --ids 2801,4031 --out D --dem DEM --screen-w
 
 The DamSafety Runner's own list chain (`ndbreach:chainbatch`: Screening, Runner, Hazard).
 Logs in `D/_chain_logs/`. Here the DEM is given on the command line, not fetched.
+
+`--cell`, `--solver` and `--manning` (and `--runner-param KEY=VALUE`) set the Runner's
+`CELL`, `SOLVER` and `MANNING` for the listed dams. From dam_chain 1.6.0 every name is
+checked against `ndbreach:batch` (`qgis_process --json help`) before the chain starts: a
+wrong name stops the run instead of being ignored, and an option may be given by its text
+(`--solver fv2`).
+
+## 2a. A list of dams, DamIT set (`damchain run --set damit`, dam_chain 1.6.0)
+
+```
+damchain setup
+damchain plugins --set damit --selftest
+damchain run --set damit --dams LAYER --ids 2801,4031 --out D --dem DEM --cell 5 --solver fv2 --check-only
+damchain run --set damit --dams LAYER --ids 2801,4031 --out D --dem DEM --cell 5 --solver fv2
+```
+
+- `setup` links `~/local-ai/qgis-batch/damit/profiles/default` to your QGIS profile `damit`
+  (the one install-all makes) and turns the DamIT plugins on for `qgis_process`.
+- `plugins --set damit --selftest` checks the tools are there and runs `damit_run:check`
+  (LISFLOOD-FP on a tiny channel, ANUGA import). DamIT has no self-test tools of its own.
+  It says FAIL when any line of the check says PROBLEM (for example, no LISFLOOD-FP found).
+- The flood engine: `--lisflood PATH` (before `run`) names a LISFLOOD-FP binary; `--lisflood builtin`,
+  `gpu` or `gpu-sgc` picks the DamIT Runner's own engines. Without it, the Runner's saved setting is used.
+- `run` is the DamIT Runner's batch (`damit_run:batch`): breach runs only, one folder per
+  dam under `D`. Classification is not part of it (DamIT Hazard has no batch classifier):
+  classify a run with `damit:classify`.
+- Checks before anything runs: the dams layer, the DEM and the folder above `D` exist;
+  every `--ids` id is in the layer (a `.gpkg` or `.csv` is read; field `--id-field`, else
+  `dam_id` / `NIDID`); every option name is a real `damit_run:batch` parameter.
+  `--check-only` runs only these checks.
+- Second run: dams that finished are skipped (`SKIP_DONE`); `--redo` runs them again.
+  `--workers N` runs dams side by side, but with `--ids` the Runner runs one at a time.
+- Exit code: 1 when any dam failed (the Runner's "N failed" count), even though
+  `qgis_process` itself exits 0. Logs: `D/_chain_logs/damit_batch_<time>.log`.
+
+## 2b. Drafting a run in plain English (`heim run`, heim_run 1.0.0)
+
+```
+heim run --set damit --dams LAYER --out D --dem DEM "run 2801 and 4031 at 5 m with FV2"
+heim run "rerun 2801 with n 0.04"
+heim run --show "run 2801 at 10 m"
+```
+
+- Heim only fills fixed fields: dam ids, cell size (metres), solver, Manning's n, redo.
+  The code builds the `damchain run` command itself, never the model.
+- Refused, not guessed: an id that is not in your words or not in the dams layer; a number
+  that is not in your words or is out of range (cell 0.5-200 m, n 0.01-0.25); a cell in
+  feet; a solver you did not name; anything else you asked for (it says what, and to type
+  the damchain command for it). Redo is dropped unless your words ask for it.
+- It shows the command and what differs from the defaults, runs nothing until you type
+  `y`, then runs `--check-only` first. Your sentence, the model's reply and the command go
+  to `D/_chain_logs/heim_run_<time>.txt`.
+- `--set`, `--dams`, `--out`, `--dem`, `--id-field`, `--dem-units` are remembered per set
+  in `~/local-ai/heim_run.json` after a run you confirmed. `heim run "...?"` (ending in
+  `?`) is still a question for Heim.
 
 ## 3. The review dams (`run_nickreview.sh`, DamSafety repo `tools/mac/`)
 

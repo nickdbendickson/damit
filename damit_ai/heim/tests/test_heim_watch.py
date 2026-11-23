@@ -144,7 +144,13 @@ class Base(StrictCase):
 class TestSettings(StrictCase):
     def setUp(self):
         self.env = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("HEIM_WATCH_")}
-        self.addCleanup(os.environ.update, self.env)
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        # drop what a test set (HEIM_WATCH_MODEL=phi leaked into later tests), then put back what was there
+        for k in [k for k in os.environ if k.startswith("HEIM_WATCH_")]:
+            del os.environ[k]
+        os.environ.update(self.env)
 
     def test_default_explainer_is_the_4b_model(self):
         self.assertEqual(LW.settings()["model"], "qwen3:4b")
