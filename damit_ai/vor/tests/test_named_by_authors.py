@@ -4,6 +4,7 @@ the naming words, and a search no longer spends places on a repeated cover page 
 The Pierce question ('... did Pierce, Thornton and Abt (2010) find ...') never read p.35, the equation page.
 Searched inside that paper p.35 ranked 8th, behind the cover (p.1 and again p.2), two contents pages and pages
 citing 'Pierce (2008)'. The report has no author metadata (it is filed under FEMA); its cover names the authors."""
+import collections
 import os
 import sqlite3
 import sys
@@ -92,6 +93,54 @@ class SearchSkips(unittest.TestCase):
         with open(os.path.join(HERE, "..", "vor.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("idx.search(strip_naming(q), k=min(4, k), per_doc=4, keep=set(named))", src)
+
+
+class ReviewFixes(unittest.TestCase):
+    """Cases from the independent review of 1.4.4."""
+    def setUp(self):
+        self.db = make_db()
+
+    def tearDown(self):
+        self.db.close()
+
+    def ids(self, q):
+        return vor.named_docs(self.db, q)[0]
+
+    def test_words_that_are_not_names(self):
+        self.assertEqual(self.ids("However, Froehlich (2008) says what?"), [61])
+        self.assertEqual(self.ids("What did Froehlich's (2008) paper recommend?"), [61])
+        self.assertEqual(self.ids("What failed at Oroville Dam (2017)?"), [])
+
+    def test_et_al_reads_the_front_pages(self):
+        self.assertEqual(self.ids("What did Pierce et al. (2010) find about length?"), [58])
+
+    def test_an_organisation_and_year(self):
+        self.assertEqual(self.ids("What does USBR (2010) say?"), [59])
+        self.assertEqual(self.ids("What does NRCS (2010) say?"), [])
+
+    def test_year_stored_as_a_number_or_date(self):
+        self.db.execute("UPDATE docs SET year = '2008-05-01' WHERE id = 61")
+        self.assertEqual(self.ids("What did Froehlich (2008) recommend?"), [61])
+        self.db.execute("UPDATE docs SET year = 2008 WHERE id = 61")
+        self.assertEqual(self.ids("What did Froehlich (2008) recommend?"), [61])
+
+    def test_strip_naming_counts_only_real_words(self):
+        self.assertEqual(vor.strip_naming("What does FEMA 333 say?"), "What does FEMA 333 say?")
+
+    def test_merge_hits_drops_the_same_text_twice(self):
+        H = collections.namedtuple("H", "cid doc_id txt page")
+        a, b, c = H(1, 58, COVER, 1), H(2, 58, COVER, 2), H(3, 59, COVER, 1)
+        self.assertEqual([h.cid for h in vor.merge_hits([a], [b, c], 5)], [1, 3])   # other doc: kept
+
+    def test_same_words_in_two_documents_or_two_table_pieces_are_kept(self):
+        self.assertNotEqual(vor.text_key(58, COVER), vor.text_key(59, COVER))
+        self.assertNotEqual(vor.text_key(58, "Table 3 | n | v\n0.05 | 1"), vor.text_key(58, "Table 3 | n | v\n0.06 | 2"))
+        self.assertIsNone(vor.text_key(58, "  "))
+
+    def test_is_contents_leaves_prose_and_data(self):
+        dots = "Step one .......... 2\nStep two .......... 3\nStep three .......... 4\n"
+        self.assertFalse(vor.is_contents(dots))                    # no contents word
+        self.assertFalse(vor.is_contents("Table 4 shows 1.2, 3.4 and 5.6 for each figure."))
 
 
 if __name__ == "__main__":

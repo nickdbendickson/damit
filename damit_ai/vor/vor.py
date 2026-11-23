@@ -567,39 +567,71 @@ _NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bul
                     r"(\d+(?:[.-]\d+)*)", re.I)
 
 
-_CONTENTS = re.compile(r"(?:\.\s?){6,}\s*[ivxlc\d]+")
+_CONTENTS = re.compile(r"(?:\.\s?){6,}\s*(?:[ivxlc]+|\d+)\s*$", re.M | re.I)
+_CONTENTS_WORD = re.compile(r"\b(contents|figure|table|chapter|section|appendix|list of)\b", re.I)
 
 
 def is_contents(txt):
-    """A table-of-contents or list-of-figures passage: three or more dot-leader lines ('Figure 10 ... 31')."""
-    return len(_CONTENTS.findall(txt or "")) >= 3
+    """A table-of-contents or list-of-figures passage: three or more lines ending in dot leaders and a page
+    number ('Figure 10 Comparison ........ 31'), and a contents word somewhere on it."""
+    t = txt or ""
+    return len(_CONTENTS.findall(t)) >= 3 and _CONTENTS_WORD.search(t) is not None
+
+
+def text_key(doc_id, txt):
+    """What makes two passages the same: the same document and the same words (the whole text, so pieces of
+    one table, which share caption and header, stay apart)."""
+    return (doc_id, hashlib.sha1(squash(txt).encode()).hexdigest()) if squash(txt) else None
 
 
 _SURNAME = r"[A-Z][A-Za-z'\-]+"
 _AUTHOR_YEAR = re.compile(r"\b(%s(?:\s*,\s*%s)*(?:\s*,?\s+(?:and|&)\s+%s)?(?:\s+et\s+al\.?)?)\s*\(\s*((?:19|20)\d\d)[a-z]?\s*\)"
                           % (_SURNAME, _SURNAME, _SURNAME))
+NOT_SURNAMES = set("""however also in on at for from the a an and or but what which when where why how does did do is are
+was were according see under per by with dam dams safety program programs report reports table figure equation
+section chapter appendix bureau guidelines guideline manual technical federal state national association
+department agency board committee center institute university survey service corps engineers reclamation
+usbr usace fema nrcs usgs asdso ferc hec tr td""".split())
+
+
+def _cited_names(group):
+    """Surnames in an 'A, B and C' citation, without possessives or words that are not names."""
+    names = [re.sub(r"'s$", "", n) for n in re.findall(_SURNAME, group)]
+    return [n for n in names if n.lower() not in ("et", "al")]
 
 
 def _author_year_docs(db, question):
     """1.4.4: documents the question names by author and year ('Pierce, Thornton and Abt (2010)'). The year
-    must be the document's; one surname must be in its authors field, two or more may instead all be on its
-    first three pages (many reports have no author metadata: Pierce et al. (2010) is filed under FEMA)."""
+    must be the document's. One surname must be in its authors field (or be its organisation); two or more
+    may instead all be on its first three pages, and one with 'et al.' may be there written as an author
+    ('M. W. Pierce') (many reports have no author metadata:
+    Pierce et al. (2010) is filed under FEMA). Words that are not names ('However', 'Dam') are left out."""
     out = []
     for m in _AUTHOR_YEAR.finditer(question or ""):
-        names = [n for n in re.findall(_SURNAME, m.group(1)) if n.lower() not in ("et", "al")]
+        raw = _cited_names(m.group(1))
+        etal = re.search(r"\bet\s+al\b", m.group(1)) is not None
+        names = [n for n in raw if n.lower() not in NOT_SURNAMES]
+        orgs = [n for n in raw if n.lower() in NOT_SURNAMES and n.isupper() and len(n) >= 3]   # 'USBR (1982)'
         year = m.group(2)
-        if not names:
+        if not names and not orgs:
             continue
-        rows = db.execute("SELECT id, title, path, authors FROM docs WHERE trim(CAST(year AS TEXT)) = ?",
-                          (year,)).fetchall()
-        for did, title, path, authors in rows:
+        rows = db.execute("SELECT id, title, path, authors, org FROM docs "
+                          "WHERE substr(trim(CAST(year AS TEXT)), 1, 4) = ?", (year,)).fetchall()
+        for did, title, path, authors, org in rows:
             def has(n, text):
                 return re.search(r"\b%s\b" % re.escape(n), text or "", re.I) is not None
-            ok = all(has(n, authors) for n in names)
-            if not ok and len(names) >= 2:
-                front = " ".join(t for (t,) in db.execute(
-                    "SELECT txt FROM chunks WHERE doc_id = ? AND page <= 3", (did,)).fetchall())
-                ok = all(has(n, front) for n in names)
+            if names:
+                ok = all(has(n, authors) for n in names)
+                if not ok and (len(names) >= 2 or etal):
+                    front = " ".join(t for (t,) in db.execute(
+                        "SELECT txt FROM chunks WHERE doc_id = ? AND page <= 3", (did,)).fetchall())
+                    if len(names) >= 2:
+                        ok = all(has(n, front) for n in names)
+                    else:   # one name and 'et al.': written as an author ('M. W. Pierce', 'Pierce, M.')
+                        n = re.escape(names[0])
+                        ok = re.search(r"\b[A-Z]\.\s*(?:[A-Z]\.\s*)*%s\b|\b%s,\s*[A-Z]\." % (n, n), front) is not None
+            else:
+                ok = len(orgs) == 1 and has(orgs[0], org)
             if ok:
                 out.append((did, "%d  %s" % (did, (title or path)[:80]), m.group(0)))
     return out
@@ -612,7 +644,8 @@ def strip_naming(question):
     q = _AUTHOR_YEAR.sub(" ", question or "")
     q = _NAMED.sub(" ", q)
     q = re.sub(r"\s+", " ", q).strip()
-    return q if len(re.findall(r"[A-Za-z]{3,}", q)) >= 3 else question
+    left = [t for t in re.findall(r"[A-Za-z]{3,}", q) if t.lower() not in STOP]
+    return q if len(left) >= 2 else question
 
 
 def named_docs(db, question):
@@ -648,9 +681,12 @@ def merge_hits(first, rest, k):
     """first (the named documents' passages), then rest, without repeats, k in all."""
     out, seen = [], set()
     for h in list(first) + list(rest):
-        if h.cid in seen:
+        key = text_key(getattr(h, "doc_id", None), getattr(h, "txt", "") or "")
+        if h.cid in seen or (key and key in seen):
             continue
         seen.add(h.cid)
+        if key:
+            seen.add(key)
         out.append(h)
         if len(out) >= k:
             break
@@ -1535,7 +1571,7 @@ class Index:
             # 1.4.4: a passage whose text repeats one already taken (a report's cover printed on p.1 and p.2)
             # is skipped, and a contents page (dot leaders) waits until nothing else is left: on the Pierce
             # (2010) question they held 4 of the 7 places ahead of the equation page.
-            key = squash(row[4])[:400]
+            key = text_key(row[1], row[4])
             if key and key in seen_txt:
                 continue
             if seen_doc.get(row[1], 0) >= per_doc:
@@ -1551,9 +1587,12 @@ class Index:
         for row, sc in late:
             if len(hits) >= k:
                 break
-            if seen_doc.get(row[1], 0) < per_doc:
-                seen_doc[row[1]] = seen_doc.get(row[1], 0) + 1
-                hits.append(Hit(row, sc))
+            key = text_key(row[1], row[4])
+            if (key and key in seen_txt) or seen_doc.get(row[1], 0) >= per_doc:
+                continue
+            seen_txt.add(key)
+            seen_doc[row[1]] = seen_doc.get(row[1], 0) + 1
+            hits.append(Hit(row, sc))
         return hits
 
 
