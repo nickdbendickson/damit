@@ -2223,6 +2223,29 @@ def synthesize(question, ev, mode, out):
         msg = msg[:budget_chars(reserve)] + "\n[findings list cut to fit the context window]"
     msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}]
     body = strip_think(chat(msgs, think=THINK, stream_to=out, num_predict=reserve))
+    if body and LAST_REPLY["done_reason"] == "length":
+        # 1.4.10. On 2026-11-23 (filter-d15f) the model reasoned through most of its allowance,
+        # began the answer and was stopped mid-citation: "... (minimum 0.2 mm) [F1][F2][F3".
+        # The text was not empty, so it went out as the answer with the second half missing.
+        # A reply stopped at its length limit is an unfinished answer: ask again, reasoning off.
+        cut = body
+        first = "it reached its length limit (%d tokens) partway through the answer%s" % (
+            LAST_REPLY["eval_count"], ", most of them spent reasoning" if LAST_REPLY["thinking_chars"] else "")
+        say("\nThe answer above was cut off: %s. Asking once more, with reasoning off and more room." % first)
+        room = int(NUM_CTX - len(msg) / CHARS_PER_TOKEN - 600)
+        again = [msgs[0], {"role": "user", "content": msg + "\n\nWrite the answer itself now, beginning "
+                           "with its first sentence. Do not reason or plan first."}]
+        body = strip_think(chat(again, think=False, stream_to=out,
+                                num_predict=max(reserve, min(reserve * 2, room)), temperature=0.5))
+        if body and LAST_REPLY["done_reason"] != "length":
+            ev.answer_from = "model, second attempt"
+            ev.answer_note = ("the model's first answer was cut off (%s); this is its second attempt" % first)
+            return body
+        if len(body) < len(cut):
+            body = cut
+        ev.answer_note = ("the model's answer was cut off at its length limit twice; the longer of the two is "
+                          "shown and its end is missing")
+        return body
     if body:
         return body
     # 1.3.0. On the first real run (2026-11-12, qwen3.6:27b) four of sixteen questions ended
