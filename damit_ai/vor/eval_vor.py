@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_vor.py v1.4 - score vor's answers against questions with known answers.
+# eval_vor.py v1.5 - score vor's answers against questions with known answers.
 #
 #   python3 eval_vor.py                         # the vor model, all questions
 #   python3 eval_vor.py --model qwen3.6:27b     # any Ollama model (run once per model)
@@ -23,6 +23,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 QFILE = os.path.join(HERE, "eval", "questions.json")
 NOT_COVERED = re.compile(r"(no passage|nothing to cite|not (cover|address|found|contain|in the library)|"
                          r"does not (cover|address|say|contain|include)|doesn't (cover|say)|no (information|evidence|mention))", re.I)
+
+
+_MARKS = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201b": "'", "\u02bc": "'", "\u201c": '"', "\u201d": '"',
+                        "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2212": "-"})
+
+
+def plain_marks(text):
+    """Curly quotes, the modifier apostrophe and hyphen look-alikes as plain ASCII (en dash kept: facts match it)."""
+    return (text or "").translate(_MARKS)
 
 
 def main():
@@ -103,7 +112,9 @@ def main():
             r.update(status="pass" if ok else "fail", test="not covered",
                      why="" if ok else ("invented: %s" % ", ".join(invented) if invented else "answered instead of saying not covered"))
         else:
-            facts_missing = [f for f in q["facts"] if not re.search(f, text, re.I)]
+            # 1.5: typographic quotes and dashes read as plain ones. On 2026-11-23 fema333-low failed on a
+            # correct answer that wrote "owner’s property" (curly apostrophe) against the fact owner'?s
+            facts_missing = [f for f in q["facts"] if not re.search(f, plain_marks(text), re.I)]
             pages = set()
             for p in q.get("pages") or []:
                 pages.update((p - 1, p, p + 1))

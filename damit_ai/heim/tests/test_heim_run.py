@@ -501,3 +501,68 @@ class InstallTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DwrScreeningTest(Case):
+    """heim_run 1.2.0: the first real run (2026-11-23, DWR-2645 with --set dwr) stopped at damchain's checks with
+    'Choose the Screening work folder (or untick Screening)'. DamSafety Screening is now left out unless a
+    Screening work folder is given; the batch-44 kit always ran the DamSafety chain with --no-screen."""
+
+    def dwr(self, extra=(), show=False):
+        said, self.calls = [], []
+        argv = ["--set", "dwr", "--dams", self.dams, "--out", self.out, "--dem", self.dem] + list(extra)
+        argv += (["--show"] if show else []) + ["run DWR-3034 at 30 m with fv2"]
+        code = HR.main(argv, chat=lambda m, fmt=None, timeout=None: json.dumps(
+            fields(ids=["DWR-3034"], cell_m=30, solver="fv2")), ask=lambda p: "y",
+            runner=lambda a: self.calls.append(a) or 0, out=said.append)
+        return code, "\n".join(said)
+
+    def test_without_a_screening_folder_screening_is_left_out(self):
+        code, said = self.dwr()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(self.calls), 2, said)
+        for argv in self.calls:
+            self.assertIn("--no-screen", argv)
+            self.assertNotIn("--screen-work", argv)
+        self.assertIn("--no-screen", said)
+        self.assertIn("Screening: left out", said)
+
+    def test_a_screening_folder_is_passed_and_remembered(self):
+        work = os.path.join(self.tmp, "screen")
+        os.makedirs(work)
+        code, said = self.dwr(["--screen-work", work])
+        self.assertEqual(code, 0, said)
+        self.assertEqual(self.calls[1][self.calls[1].index("--screen-work") + 1], work)
+        self.assertNotIn("--no-screen", self.calls[1])
+        code, said = self.dwr()                      # remembered for the dwr set
+        self.assertEqual(code, 0, said)
+        self.assertIn("--screen-work", self.calls[1])
+        self.assertIn("Screening: work folder " + work, said)
+
+    def test_a_missing_screening_folder_is_refused_before_the_model(self):
+        said, asked = [], []
+        code = HR.main(["--set", "dwr", "--dams", self.dams, "--out", self.out, "--dem", self.dem,
+                        "--screen-work", os.path.join(self.tmp, "nope"), "run DWR-3034"],
+                       chat=lambda m, fmt=None, timeout=None: asked.append(1) or json.dumps(fields(ids=["DWR-3034"])),
+                       ask=lambda p: "y", runner=lambda a: self.calls.append(a) or 0, out=said.append)
+        self.assertEqual(code, 2)
+        self.assertEqual(asked, [])
+        self.assertIn("Screening work folder is not there", "\n".join(said))
+
+    def test_the_damit_set_gets_no_screening_flag(self):
+        code, said = self.go("run 2801", fields(ids=["2801"]))
+        self.assertEqual(code, 0, said)
+        self.assertNotIn("--no-screen", self.calls[1])
+        self.assertNotIn("Screening:", said)
+
+    def test_the_typed_command_after_a_refusal_leaves_screening_out(self):
+        self.assertIn("--no-screen", HR.typed_command("dwr", {}))
+        self.assertNotIn("--no-screen", HR.typed_command("damit", {}))
+
+    def test_damchain_knows_both_flags(self):
+        import subprocess
+        r = subprocess.run([sys.executable, os.path.join(TOOLS, "dam_chain.py"), "run", "--help"],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--no-screen", r.stdout)
+        self.assertIn("--screen-work", r.stdout)

@@ -381,7 +381,7 @@ take a dam's runs out of the database
 
 ---
 
-## heim_run.py 1.1.0
+## heim_run.py 1.2.0
 
 Installed command: `heim run`. Draft a damchain run from plain English: checked, shown, run only when you type y.
 
@@ -398,6 +398,7 @@ Heim drafts a damchain run from plain English. It only fills in dam ids, cell si
 | `--dem` | DEM |  | DEM or VRT covering the dams (remembered per set) |
 | `--id-field` | ID_FIELD |  | dam id field of the layer (remembered per set) |
 | `--dem-units` | one of `detect`, `feet`, `us-feet`, `meters` |  | the DEM's elevation units (remembered per set) |
+| `--screen-work` | SCREEN_WORK |  | --set dwr: DamSafety Screening's work folder (remembered); without it Screening is left out |
 | `--show` |  |  | show the command only; never run |
 | `--version` |  |  | show program's version number and exit |
 
@@ -577,7 +578,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.4.8
+## vor.py 1.4.9
 
 Installed command: `vor`. The literature assistant.
 
@@ -744,7 +745,7 @@ Download public ASDSO-listed dam-safety references into the vor library.
 
 ---
 
-## eval_vor.py 1.4
+## eval_vor.py 1.5
 
 Installed command: `eval_vor.py`. Score a model on the literature questions.
 
