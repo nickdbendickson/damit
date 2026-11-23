@@ -77,9 +77,13 @@ def _label4(mask):
         lab, n = ndimage.label(mask)            # 4-connected by default
         return lab.astype(np.int64), int(n)
     except Exception:                                    # noqa - scipy is not everywhere
-        # DamIT: no metalterrain package (port group F, deferred) - a numpy-only 4-connected
-        # labelling instead of metalterrain.audit._label4 (same labels up to numbering).
-        return _label4_numpy(mask)
+        try:
+            from .metalterrain.audit import _label4 as lab4
+            lab, n = lab4(mask)
+            return lab.astype(np.int64), int(n)
+        except Exception:
+            # numpy-only 4-connected labels when metalterrain is not installed (same components)
+            return _label4_numpy(mask)
 
 
 def _label4_numpy(mask):

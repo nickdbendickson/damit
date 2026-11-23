@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.9.0: core re-synced to DamSafety Runner 3.51.0 (6816c7f). CHANGES COMPUTED RESULTS when the dam point check moves an off-embankment point (default Move) or the reservoir-water side overrides the older downstream rule. LISFLOOD-FP stays the default engine.
 0.8.0: the GPU engine with sub-grid channels (gpu-sgc) as a further engine choice; default unchanged
 0.7.16: metadata.txt percent signs escaped for QGIS (no code change)
 0.7.15: the GPU flood engine (core/metalflood) as a separate engine choice (LISFLOOD_EXE = gpu); default unchanged
@@ -84,7 +85,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

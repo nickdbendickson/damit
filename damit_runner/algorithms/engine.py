@@ -74,12 +74,22 @@ TIERS = [(workflow.TIER_LISFLOOD, "LISFLOOD-FP only"),
          # appended (design #68): indices 0 and 1 and the default are unchanged
          (workflow.TIER_HECRAS, "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; "
                                 "needs HEC-RAS 6.6, see help)")]
-# 3.22.0: the run tools' flood engine choice (LISFLOOD-FP stays index 0 and the default)
-FLOOD_ENGINES = ("lisflood", "gpu", "gpu-sgc")
-# 0.8.0: the GPU engine with sub-grid channels, appended (saved indices unchanged). Labels say "Mac GPU
-# or any CPU": the engine also runs on the CPU build of the same kernels.
-FLOOD_ENGINES_TEXT = ["LISFLOOD-FP", "GPU engine (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU)",
-                      "GPU engine, sub-grid channels (narrow rivers the grid cannot resolve)"]
+# 3.22.0: the run tools' flood engine choice (LISFLOOD-FP stays index 0 and the default).
+# DamIT 0.8.0 saved index 2 as gpu-sgc, so the newer Boann choices are appended after it
+# (DamSafety's list inserts them earlier because gpu-sgc was never index 2 there).
+FLOOD_ENGINES = ("lisflood", "gpu", "gpu-sgc", "gpu-fv", "gpu-fv2", "gpu-dg2", "gpu-subfv",
+                 "auto")
+# Plain labels (the engine runs on a Mac's GPU or any computer's CPU, so no label says
+# "Apple GPU"). Research solvers are marked Advanced. LISFLOOD-FP stays index 0 and the default.
+FLOOD_ENGINES_TEXT = [
+    "LISFLOOD-FP (the standard engine)",
+    "Boann, fast (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU)",
+    "Boann, sub-grid channels (narrow rivers the grid cannot resolve)",
+    "Boann, shock-capturing (HLLC; sharp dam-break fronts and jumps)",
+    "Advanced: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2)",
+    "Advanced: Boann, discontinuous Galerkin 2nd order (RKDG2)",
+    "Advanced: Boann, sub-grid finite volume (coarse grid; research, can over-pond narrow channels)",
+    "Recommended (auto): picks for this computer"]
 DEFAULT_MAX_EXTENT_MI = 20.0     # the run tools' and Setup's default largest domain side
 ZUNITS = [("auto", "Detect from the raster"), ("feet", "Feet"),
           ("us_feet", "US survey feet"), ("meters", "Meters"),
@@ -129,6 +139,22 @@ def _setting(key, default=""):
         return default
 
 
+def _suite_source_label(key):
+    """Where the suite value of `key` comes from, for the self-test report."""
+    try:
+        from ..compat import suite_config as _sc
+        names = _sc.ENV.get(key) or ()
+        env = names[0] if names else ""
+        val = _sc.get(key)
+    except Exception:                                            # noqa - a report label only
+        return "DamIT setting"
+    if val and env and os.environ.get(env) == val:
+        return "environment variable " + env
+    if val:
+        return "DamIT setting " + key
+    return "DamIT setting (unset)"
+
+
 def _suite_setting(key, default=""):
     """The suite setting DamSafety Setup writes, read through the one suite store: a project
     override, the computer setting (QgsSettings 'ndsuite/<key>') or the environment variable.
@@ -141,6 +167,18 @@ def _suite_setting(key, default=""):
     except Exception:
         return default
 
+
+
+def _why_not_a_file(path):
+    """Why a set engine path cannot be used, in words: a link whose target is gone, a folder, or
+    nothing there at all."""
+    if os.path.islink(path) and not os.path.exists(path):
+        return "is a link to {}, which does not exist".format(os.path.realpath(path))
+    if os.path.isdir(path):
+        return "is a folder, not a program"
+    if os.path.lexists(path) or os.path.exists(os.path.realpath(path)):
+        return "is not a file"
+    return "does not exist"
 
 
 def _line_midpoint(part):
@@ -217,6 +255,8 @@ def _crest_line_near(lines, xy, max_m=500.0):
 
 
 CREST_SNAP_M = 500.0      # a crest line farther than this from the dam point is not its line
+# 3.20.13: a CREST_LINE matched by structure id that fails the DWR line guard
+CREST_REFUSED = "Crest line (CREST_LINE) of structure {} not used: {}"
 
 
 def _nearest_on_line(line, xy):
@@ -248,20 +288,46 @@ def _dwr_ids(dam_id, rec):
     return out
 
 
+def _sid_key(v):
+    """Structure-id key: 2645, '02645' and 'DWR-2645' match '2645'. A name or a NID is ''."""
+    s = str(v if v is not None else "").strip()
+    if not s or s.upper() == "NULL":
+        return ""
+    if s.endswith(".0"):
+        s = s[:-2]
+    m = re.match(r"^\s*DWR[-_ ]?0*(\d+)\s*$", s, re.I)
+    if m:
+        return m.group(1).lstrip("0") or "0"
+    s = s.split(".")[0].lstrip("0") or "0"
+    return s if s.isdigit() else ""
+
+
+def _own_crest_lines(lines_attrs, ids, id_field):
+    """Crest lines whose structure id is one of this dam's. No state dam-line pack."""
+    if not (ids and id_field):
+        return []
+    return [(ln, at) for ln, at in lines_attrs if _sid_key(at.get(id_field)) in ids]
+
+
 def _pick_crest_line(lines_attrs, center_xy, ids, id_field):
     """(line, distance, how) of the crest line for this dam, or (None, d, reason). The line whose
-    structure id matches the dam's DWR number wins; otherwise the line nearest the dam point, and
-    only within CREST_SNAP_M. `lines_attrs` is a list of (line, {field: value})."""
+    structure id matches the dam wins; otherwise the nearest line within CREST_SNAP_M. When the
+    dam has structure ids and the layer an id field but no line matches, only a line without a
+    structure id is taken (never another structure's line)."""
     if not lines_attrs:
         return None, None, "no crest line near the dam"
     if ids and id_field:
-        hit = [(ln, at) for ln, at in lines_attrs
-               if str(at.get(id_field) if at.get(id_field) is not None else "").strip()
-               .split(".")[0].lstrip("0") in ids]
+        hit = _own_crest_lines(lines_attrs, ids, id_field)
         if hit:
             ln = min((h[0] for h in hit), key=lambda l: _nearest_on_line(l, center_xy)[0])
-            return ln, _nearest_on_line(ln, center_xy)[0], "DWR structure {}".format(
-                sorted(ids)[0])
+            return ln, _nearest_on_line(ln, center_xy)[0], "structure {}".format(sorted(ids)[0])
+        blank = [(ln, at) for ln, at in lines_attrs if _sid_key(at.get(id_field)) in ("", "0")]
+        if not blank:
+            ln = min((x[0] for x in lines_attrs), key=lambda l: _nearest_on_line(l, center_xy)[0])
+            return None, _nearest_on_line(ln, center_xy)[0], \
+                "no crest line for structure {} (the lines near it are other structures')" \
+                .format("/".join(sorted(ids)))
+        lines_attrs = blank
     ln = min((x[0] for x in lines_attrs), key=lambda l: _nearest_on_line(l, center_xy)[0])
     d = _nearest_on_line(ln, center_xy)[0]
     if d > CREST_SNAP_M:
@@ -309,6 +375,87 @@ def qa_maps_param(alg, parameters, context):
     if alg.parameterDefinition("QA_MAPS") is None or parameters.get("QA_MAPS") in (None, ""):
         return qa_maps.DEFAULT_QA_MAPS
     return qa_maps.normalize(int(alg.parameterAsEnum(parameters, "QA_MAPS", context)))
+
+
+# 3.20.11: DAM_POINT_CHECK (core/dam_point_check.py); the index order is the parameter's
+DAM_POINT_CHECK_MODES = ("off", "warn", "move")
+DAM_POINT_CHECK_LABELS = (
+    "Off (use the dam point as given, as before 3.20.11)",
+    "Warn only (check it; never move it)",
+    "Move clear cases (use the embankment found; otherwise warn) - the default")
+DAM_POINT_CHECK_TIP = (
+    "When there is no dam line, crest line, breach inflow point or top of dam, the dam point is "
+    "checked against the reservoir and embankment on the DEM (LiDAR, 5 m or finer). When the "
+    "point is clearly off the dam (on the water, on high ground beside the pond, or the inflow "
+    "would land in the pond) and the embankment is unambiguous (flat water, one pond, the "
+    "right height and length, no neighbouring dam), the embankment is used as the dam line and "
+    "the run says so first in its warnings; otherwise the point is kept and a REVIEW warning "
+    "says why. A point on the embankment but 10 m or more from the centre of the line found "
+    "moves along to that centre under the same checks (3.20.13). The other dams of a batch (or "
+    "a cascade) are its neighbours; a single dam has none, and the report says the neighbour "
+    "check was not made. Move is the default (3.20.13; the hold-out of 43 dams had 2 wrong "
+    "moves, both a side dike of the same pond). Warn only never moves: its REVIEW warning says "
+    "where the embankment is and whether Move would use it. Off is as before this check. The "
+    "environment variable DAMIT_RUN_DAM_POINT_CHECK (off / warn / move) wins over this.")
+
+
+def _batch_points(feats, id_field, to_dem, height_field=None):
+    """3.20.11: [(index, dam id, point in the DEM CRS, height ft or None)] of a batch's dams (the
+    dam point check's neighbours; G7c also reads their height)."""
+    out = []
+    for j, f in enumerate(feats):
+        try:
+            g = f.geometry()
+            if g is None or g.isEmpty():
+                continue
+            did = str(f[id_field]).strip() if id_field else str(f.id())
+            h = None
+            if height_field:
+                try:
+                    h = qio.num(f[height_field])
+                except Exception:                           # noqa: BLE001
+                    h = None
+            out.append((j, did, to_dem.transform(g.centroid().asPoint()), h))
+        except Exception:                                   # noqa: BLE001 - a bad feature
+            continue
+    return out
+
+
+def _other_dams_near(points, i, p, to_work, crs, radius_m=3000.0):
+    """3.20.11: the other dams of the batch within radius_m of dam i (point p, DEM CRS) as
+    [(id, (x, y) work CRS, height ft or None)], or None."""
+    try:
+        geo = bool(crs.isGeographic())
+    except Exception:                                       # noqa: BLE001
+        geo = False
+    lim = 0.05 if geo else radius_m * 3.5          # a coarse box first (degrees, metres or feet)
+    here = to_work.transform(QgsPointXY(p))
+    out = []
+    for pt in points or ():
+        j, did, q = pt[:3]
+        h = pt[3] if len(pt) > 3 else None
+        if j == i or abs(q.x() - p.x()) > lim or abs(q.y() - p.y()) > lim:
+            continue
+        try:
+            w = to_work.transform(QgsPointXY(q))
+        except Exception:                                   # noqa: BLE001
+            continue
+        d = math.hypot(w.x() - here.x(), w.y() - here.y())
+        if 0.0 < d <= radius_m:
+            out.append((did, (float(w.x()), float(w.y())), h))
+    return out or None
+
+
+def dam_point_check_param(index):
+    """The DAM_POINT_CHECK enum index (or a mode / bool from a settings row) as a mode."""
+    from ..core import dam_point_check as _dpc
+    try:
+        i = int(index)
+        if 0 <= i < len(DAM_POINT_CHECK_MODES):
+            return DAM_POINT_CHECK_MODES[i]
+    except (TypeError, ValueError):
+        pass
+    return _dpc.normalize_mode(index)
 
 
 def qa_basemap_param(alg, parameters, context):
@@ -767,6 +914,13 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
                        "at 10 m and keep that as the record."))
         self._num("GRID_CHECK_CELL", "Finer grid: check run cell (m; 0 = off, 5 = a 5 m check)",
                   workflow.GRID_CHECK_CELL_M, minimum=0.0, advanced=True)
+        # 3.20.11: the dam point checked on the DEM (core/dam_point_check.py)
+        p = QgsProcessingParameterEnum(
+            "DAM_POINT_CHECK", "Check the dam point on the DEM (move = use the embankment found "
+            "when the point is clearly off it)", list(DAM_POINT_CHECK_LABELS),
+            defaultValue=DAM_POINT_CHECK_MODES.index(workflow.dpc.DEFAULT_MODE), optional=True)
+        _set_help(p, DAM_POINT_CHECK_TIP)
+        self.addParameter(set_advanced(p))
         self._num("MANNING", "Manning's n (where there is no n raster)", 0.05, minimum=0.005,
                   maximum=1.0)
         self.addParameter(QgsProcessingParameterRasterLayer(
@@ -920,17 +1074,41 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         p = QgsProcessingParameterEnum("FLOOD_ENGINE", "Flood engine", FLOOD_ENGINES_TEXT,
                                        defaultValue=0, optional=True)
         _set_help(p, "LISFLOOD-FP: the executable below, else the provider setting, else an "
-                  "installed one. GPU engine: LISFLOOD-FP 8.3's ACC (local inertial) scheme "
+                  "installed one. Boann (GPU engine): LISFLOOD-FP 8.3's ACC (local inertial) scheme "
                   "rewritten as GPU kernels; it runs on the Apple GPU through Metal, and on other "
-                  "computers on the CPU build of the same kernels (one core, needs a C++ "
-                  "compiler). It matched LISFLOOD-FP 8.3 within millimetres on the test cases; "
-                  "the run report says which engine ran. ACC only (no FV2 / MWDG2, no near-dam "
-                  "FV1 refine). Typing 'gpu' in the LISFLOOD-FP field does the same. 'GPU engine, "
-                  "sub-grid channels' adds LISFLOOD-FP's sub-grid channels (a channel narrower "
-                  "than the cell, built from the DEM or the SGC rasters); on the Lake Delhi 2010 "
-                  "survey it matched LISFLOOD-FP 8.3's SGC within about 0.1 ft. Typing 'gpu-sgc' "
-                  "does the same.")
+                  "computers on the CPU build of the same kernels (shipped prebuilt for "
+                  "Windows, Linux and macOS, else compiled once with a C++ compiler; every core). "
+                  "It matched LISFLOOD-FP 8.3 within millimetres on the test cases; "
+                  "the run report says which engine ran. 'Boann, shock-capturing' is its HLLC "
+                  "finite-volume solver (the analogue of LISFLOOD-FP's FV1). Typing 'gpu' or "
+                  "'shock' in the LISFLOOD-FP field does the same. 'Recommended (auto)' picks for this "
+                  "computer: Boann's fast ACC on a Mac with an Apple GPU, else LISFLOOD-FP when "
+                  "installed, else Boann on the CPU; the report names the engine that ran. "
+                  "'Advanced' solvers are for research and special cases.")
         self.addParameter(p)
+        # 3.39.0: the solver's Courant number and theta, exposed (were .par / env only). Empty =
+        # each engine's stable default. Both reach LISFLOOD-FP and Boann through the .par; every
+        # Boann solver caps the Courant number at its own stability ceiling, and a run that loses
+        # its mass balance still falls back to the stable settings regardless of what is set here.
+        self._num("CFL", "Courant number for the flood solver (empty = each engine's stable "
+                  "default: ~0.7 ACC and sub-grid channels, 0.45 shock-capturing, 1/3 "
+                  "discontinuous Galerkin). Lower = more robust and slower; the engine caps it "
+                  "at its own stability limit.", optional=True, minimum=0.05, maximum=1.0,
+                  advanced=True)
+        self._num("THETA", "Momentum weighting theta for the local-inertial solver (ACC / "
+                  "sub-grid channels; empty = 1.0, LISFLOOD-FP's default). 0.7 adds the "
+                  "de Almeida et al. 2012 numerical diffusion that steadies a flashy inflow. "
+                  "Ignored by the shock-capturing and Galerkin solvers.", optional=True,
+                  minimum=0.5, maximum=1.0, advanced=True)
+        # 3.42.0: the sub-grid finite-volume coarsening factor r. Only the 'Boann, sub-grid finite
+        # volume' engine reads it: it runs on a grid of r x the DEM cell and keeps each cell's r x r
+        # DEM sub-cells as stage tables, so the run is r*r cheaper but still writes a full-resolution
+        # map. Empty = 4. Ignored by every other engine.
+        self._num("SUBGRID_R", "Sub-grid coarsening factor r (the 'Boann, sub-grid finite volume' "
+                  "engine only): the run uses cells r x the DEM resolution, keeping each cell's "
+                  "r x r DEM sub-cells, so it is r*r cheaper and still writes a full-resolution "
+                  "map. Empty = 4; 1 to 8. Ignored by the other engines.", optional=True,
+                  minimum=1, maximum=8, advanced=True)
         self._text("ANUGA_PYTHON", "ANUGA Python interpreter (a path; a symlink is resolved "
                    "to the real file). Empty = provider setting or auto-detected",
                    advanced=True)
@@ -964,9 +1142,15 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         exe = (self._str(parameters, "LISFLOOD_EXE", context)
                or _suite_setting("lisflood_exe") or _setting(SET_LISFLOOD))
         from ..core import lisflood as lfmod
+        from ..core import data_conventions
         if self.parameterDefinition("FLOOD_ENGINE") is not None and \
                 parameters.get("FLOOD_ENGINE") not in (None, ""):
             _eng = FLOOD_ENGINES[self.parameterAsEnum(parameters, "FLOOD_ENGINE", context)]
+            # Delegate to resolve_exe so every Boann engine the dropdown offers (gpu / gpu-fv /
+            # gpu-fv2 / gpu-dg2 / gpu-sgc / gpu-subfv) maps from one list.
+            if _eng == "auto":
+                _lf = exe if exe and os.path.isfile(exe) else data_conventions.detect_lisflood()
+                return lfmod.choose_auto(_lf)[0]
             if _eng != "lisflood":
                 return lfmod.resolve_exe(_eng)
         # Opt in to the built-in screening engine ONLY by an explicit act: the word "builtin" in
@@ -974,9 +1158,18 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         # so the numpy approximation can never silently stand in for LISFLOOD-FP (M5 safety).
         if exe and str(exe).strip().lower() in lfmod.BUILTIN_WORDS:
             return lfmod.BUILTIN_EXE
-        # 3.22.0: the GPU engine, likewise only by name ("gpu" / "metal")
-        if exe and str(exe).strip().lower() in lfmod.GPU_WORDS + lfmod.GPU_SGC_WORDS:
-            return lfmod.resolve_exe(exe)
+        # An engine named by word in the executable field (builtin, or a Boann engine:
+        # gpu / gpu-fv / gpu-fv2 / gpu-dg2 / gpu-sgc / gpu-subfv). resolve_exe owns the
+        # word->engine list, so a new engine never has to be added here too. An empty field
+        # stays empty (resolve_exe returns it unchanged), so the built-in numpy approximation
+        # is never silently selected and a real path falls through to the file check below.
+        if exe and lfmod.is_auto_word(exe):
+            from ..core import data_conventions
+            return lfmod.choose_auto(data_conventions.detect_lisflood())[0]
+        if exe:
+            _resolved = lfmod.resolve_exe(exe)
+            if _resolved != str(exe).strip():
+                return _resolved
         if not exe or not os.path.isfile(exe):
             found = data_conventions.detect_lisflood()
             if found:
@@ -1024,10 +1217,18 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
             v, w = first
             if real and str(v).strip().lower() in lfmod.BUILTIN_WORDS:
                 return w + " (built-in engine)"
-            if real and str(v).strip().lower() in lfmod.GPU_WORDS:
-                return w + " (GPU engine)"
+            if real and str(v).strip().lower() in lfmod.GPU_FV_WORDS:
+                return w + " (Boann, shock-capturing)"
+            if real and str(v).strip().lower() in lfmod.GPU_FV2_WORDS:
+                return w + " (Boann, shock-capturing 2nd order)"
+            if real and str(v).strip().lower() in lfmod.GPU_DG2_WORDS:
+                return w + " (Boann, discontinuous Galerkin)"
+            if real and str(v).strip().lower() in lfmod.GPU_SUBFV_WORDS:
+                return w + " (Boann, sub-grid finite volume)"
             if real and str(v).strip().lower() in lfmod.GPU_SGC_WORDS:
-                return w + " (GPU engine, sub-grid channels)"
+                return w + " (Boann, sub-grid channels)"
+            if real and str(v).strip().lower() in lfmod.GPU_WORDS:
+                return w + " (Boann)"
             ok = os.path.isfile(v if real else os.path.realpath(v))
             if ok:
                 return w
@@ -1104,6 +1305,15 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         st.planning_cell_m = max(30.0, st.cell_size_m)
         st.allow_unpatched = str(_setting(SET_ALLOW_UNPATCHED, False)).lower() in (
             "true", "1", "yes", "on")
+        # 3.39.0: user Courant / theta from the run tool (None = each engine's stable default).
+        # Threaded into the solver settings in workflow (and overridden by the stability fallback).
+        if self.parameterDefinition("CFL") is not None:
+            st.user_cfl = self._opt(parameters, "CFL", context)
+        if self.parameterDefinition("THETA") is not None:
+            st.user_theta = self._opt(parameters, "THETA", context)
+        if self.parameterDefinition("SUBGRID_R") is not None:
+            _sr = self._opt(parameters, "SUBGRID_R", context)
+            st.user_subgrid_r = int(_sr) if _sr is not None else None
         if self.parameterDefinition("PIPE_FRACTION") is not None:
             st.overrides = brmod.BreachOverrides(
                 self._opt(parameters, "BREACH_WIDTH", context),
@@ -1163,6 +1373,10 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
                 st.crest_burn_data_folder = _SD.data_folder() or ""
             except Exception:                                    # noqa - the burn says why
                 pass
+        if self.parameterDefinition("DAM_POINT_CHECK") is not None and \
+                parameters.get("DAM_POINT_CHECK") not in (None, ""):         # 3.20.11
+            st.dam_point_check = dam_point_check_param(self.parameterAsEnum(
+                parameters, "DAM_POINT_CHECK", context))
         if self.parameterDefinition("LISFLOOD_MAX_WALL_S") is not None:   # audit P2
             st.max_wall_s = max(0.0, float(g("LISFLOOD_MAX_WALL_S") or 0.0))
             st.max_total_wall_s = max(0.0, float(g("LISFLOOD_MAX_TOTAL_WALL_S") or 0.0))
@@ -1641,6 +1855,8 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         st.edits = None if ed.empty() else ed
         st.breach_xy = None
         st.midcrest_line = None
+        st.dam_point_lines = None
+        self._crest_refused = None
         src = self.parameterAsSource(parameters, "CREST_LINE", context)
         if src is not None:
             a, b = tf(src)
@@ -1654,6 +1870,15 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
             clines = qio.lines(src, a, b, center_xy, radius,
                                fields=[id_field] if id_field else ())
             crest, _dist, how = _pick_crest_line(clines, center_xy, ids, id_field)
+            if crest is None and how.startswith(CREST_REFUSED.split("{")[0]):
+                # 3.20.13: the run warns (workflow), saying what placed the dam instead
+                self._crest_refused = how
+            # 3.20.11: the other dams' crest lines, so the dam point check never moves this dam
+            # onto one of them (3.20.13 review: never this dam's own line, even when refused)
+            own = [ln for ln, _at in _own_crest_lines(clines, ids, id_field)]
+            st.dam_point_lines = [[(float(p[0]), float(p[1])) for p in np.asarray(ln)]
+                                  for ln, _at in clines
+                                  if ln is not crest and not any(ln is o for o in own)] or None
             if crest is not None:
                 # 3.12.5: the line also places the dam point at mid-crest (workflow.place_midcrest)
                 st.midcrest_line = [(float(p[0]), float(p[1])) for p in np.asarray(crest)]
@@ -2013,6 +2238,8 @@ class RunDamAlgorithm(_Base):
             feedback.pushInfo(n)
         for n in self.apply_features(st, parameters, context, work, (dam_xy.x(), dam_xy.y())):
             feedback.pushInfo(n)
+        if getattr(self, "_crest_refused", None):                     # 3.20.13
+            dam._crest_line_refused = self._crest_refused
         try:
             if st.scenario in workflow.FLOOD_SCENARIOS:
                 st.flood = self.flood_inputs(parameters, context, dam,
@@ -2062,9 +2289,21 @@ class RunDamAlgorithm(_Base):
                 sel = (np.hypot(xx - dam_xy[0], yy - dam_xy[1]) <= 30.0) & np.isfinite(zz)
                 if sel.any():
                     dam.top_of_dam_ft = float(np.nanmax(zz[sel])) / FT
+                    # 3.20.11: a DEM fill, not a top given (the dam point check still runs)
+                    dam._top_from_dem = True
                     feedback.pushInfo(
                         "Top of dam not given: {:.1f} ft, the highest DEM point within "
                         "30 m of the dam point.".format(dam.top_of_dam_ft))
+                    # 3.20.11 (review 2026-11-17): the dam point check before this fill
+                    # decides the solve gate; a move gives the mid-crest top of the
+                    # embankment found (run_dam reuses the result)
+                    rec = workflow.precheck_dam_point(
+                        dam, st, dam_xy, inflow, src, out_folder=folder,
+                        crs=getattr(writer, "work_srs", None), log=feedback.pushInfo)
+                    if rec is not None and rec.get("outcome") == "moved":
+                        feedback.pushInfo(
+                            "Dam point check: moved to the embankment found; top of dam "
+                            "{:.1f} ft at its mid-crest.".format(dam.top_of_dam_ft))
             if st.scenario in workflow.FLOOD_SCENARIOS:
                 hy, _nb, _fr = workflow._flood_hydrographs(dam, st, [])
             else:
@@ -2131,6 +2370,8 @@ class RunDamAlgorithm(_Base):
             feedback.pushWarning("Models = LISFLOOD-FP then HEC-RAS 2D: the final rasters come "
                                  "from HEC-RAS 2D; the LISFLOOD-FP ones are kept as "
                                  "'LISFLOOD-FP \u2026'.")
+            # 3.20.11 (critique 7): the modelled point when the dam point check moved it
+            dam_xy = workflow.hecras_dam_xy(res, dam_xy)
             try:                                     # audit M18: Cancel stops HEC-RAS too
                 hecras_tier_stage(folder, res, writer, st, dam_xy, fb.log, cancel=fb.cancel)
             except Cancelled:
@@ -2252,7 +2493,9 @@ BATCH_FIELDS = ("Dam", "Folder", "Status", "Scenario", "Final_Model", "Peak_Brea
                 # v3.10.27 (#91): appended after 3.10.23's flag columns, so the columns above keep their places
                 "Flooded_ge_0_1ft_ac", "Flooded_ge_1ft_ac", "Flooded_ge_2ft_ac",
                 "Velocity_P95_fps", "Velocity_P99_fps", "Max_Velocity_Depth_ft",
-                "Flooded_Masked_ac", "Flooded_ge_1ft_Masked_ac")
+                "Flooded_Masked_ac", "Flooded_ge_1ft_Masked_ac",
+                # 3.20.11: appended, so the columns above keep their places
+                "Dam_Point_Check")
 
 
 def _batch_metrics(s):
@@ -2325,6 +2568,22 @@ def batch_flag(dam_id, feat=None):
             if e:
                 return e
     return None
+
+
+def _feature_attrs(feat):
+    """3.20.13: {field: value} of a feature (NULL as None)."""
+    out = {}
+    try:
+        names = feat.fields().names()
+    except Exception:                                     # noqa: BLE001
+        return out
+    for n in names:
+        try:
+            v = feat[n]
+        except Exception:                                 # noqa: BLE001
+            continue
+        out[n] = None if v is None or (hasattr(v, "isNull") and v.isNull()) else v
+    return out
 
 
 WORKER_FILE_PROVIDERS = ("ogr", "gdal")
@@ -2629,6 +2888,8 @@ class BatchAlgorithm(_Base):
         to_dem = QgsCoordinateTransform(src_layer.sourceCrs(), dem.crs(),
                                         context.transformContext())
         feats = list(src_layer.getFeatures())
+        others_dem = _batch_points(feats, fld.get("F_ID"), to_dem,          # 3.20.11
+                                   fld.get("F_HEIGHT"))
         n = max(1, len(feats))
         rows = []
         only = set(x.strip() for x in self._str(parameters, "ONLY_IDS", context).split(",")
@@ -2723,7 +2984,18 @@ class BatchAlgorithm(_Base):
                                  else "parameter",
                                  "point": self.point_info(p, dem.crs(), work, (xy.x(), xy.y()),
                                                           context)}
+                # Match CREST_LINE by this dam's structure id when the layer has one,
+                # so a batch does not put the breach on a neighbouring dam's line.
+                self._crest_ids = _dwr_ids(dam_id, rec)
                 self.apply_features(st, parameters, context, work, (xy.x(), xy.y()))
+                if getattr(self, "_crest_refused", None):                 # 3.20.13
+                    dam._crest_line_refused = self._crest_refused
+                    # worded from what placed the dam instead (the DWR line or the point)
+                    feedback.pushInfo("{}: {}".format(dam_id, workflow.crest_refused_text(
+                        dam, self._crest_refused)))
+                # 3.20.11: the other dams of this batch near this one, for the dam point check
+                # (it never moves a dam onto its neighbour's embankment)
+                st.dam_point_others = _other_dams_near(others_dem, i, p, to_work, dem.crs())
                 if flood:
                     st.flood = self.flood_inputs(parameters, context, dam, files,
                                                  pool_ft=val(feat, "F_POOL"))
@@ -2739,11 +3011,13 @@ class BatchAlgorithm(_Base):
                                       "NDBREACH_HECRAS_TIMEOUT_S says otherwise)".format(
                                           dam_id, _hecras_batch_limit_text()))
                     try:                                 # audit R6: unattended -> 12 h default
-                        hecras_tier_stage(folder, res, writer, st, (xy.x(), xy.y()), fb.log,
+                        hecras_tier_stage(folder, res, writer, st,  # 3.20.11: a moved point
+                                          workflow.hecras_dam_xy(res, (xy.x(), xy.y())), fb.log,
                                           unattended=True, cancel=fb.cancel)   # audit M18
                     except HecRasTierError as e:
                         raise QgsProcessingException(str(e))
                 s = res.summary
+                row["Dam_Point_Check"] = s.get("dam_point_check", "")     # 3.20.11
                 if not s.get("breach_occurs", True) and not s.get("no_breach_scenario"):
                     row.update({"Status": "no breach", "Message": "the dam does not fail in "
                                                                   "this flood"})
@@ -3119,7 +3393,8 @@ class CheckAlgorithm(_Base):
         import tempfile
         exe = self.find_lisflood(parameters, context)
         py = self.find_anuga(parameters, context)
-        lines = []
+        lf_src, an_src, problems = self.engine_sources(parameters, context, exe, py)
+        lines = ["PROBLEM " + n for n in problems]
         with tempfile.TemporaryDirectory(prefix="ndbreach_check_") as tmp:
             if not exe:
                 lines.append("PROBLEM LISFLOOD-FP not found. Build it with "

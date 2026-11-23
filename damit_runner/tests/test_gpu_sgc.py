@@ -66,7 +66,7 @@ class SgcChoice(unittest.TestCase):
         for text in (lf.engine_label(e), lf.describe_exe(e)):
             self.assertIn("NOT LISFLOOD-FP", text)
             self.assertIn("sub-grid channels", text)
-        self.assertEqual(lf.engine_name(e), "the GPU engine (sub-grid channels)")
+        self.assertEqual(lf.engine_name(e), "Boann (sub-grid channels)")
 
     def test_run_tool_choice_is_appended(self):
         try:
