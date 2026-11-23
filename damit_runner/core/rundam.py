@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.8.4: DamSafety #387 - with a dam line the downstream side comes from the reservoir's flat water and the breach inflow is no longer put on the reservoir; CHANGES RESULTS for dams with a dam line whose side was wrong.
 0.8.3: DamSafety #385 - the dam point is checked on the DEM before it is used (DAM_POINT_CHECK, default warn: no number change; move uses the embankment found).
 0.8.2: DamSafety #382 - CHECK THE INFLOW DEPTH warning when the automatic breach inflow is more than 1.3 x H below the top of dam (warning only, no number change).
 0.8.0: the GPU engine with sub-grid channels (gpu-sgc) as a further engine choice; default unchanged
@@ -86,7 +87,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.8.3"
+VERSION = "0.8.4"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
