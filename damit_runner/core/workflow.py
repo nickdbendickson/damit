@@ -43,6 +43,7 @@ import time
 import numpy as np
 
 from . import model_terrain                 # 3.17.7
+from . import run_health                    # 3.46.0
 from . import breach as brmod
 from . import conditioning as cond
 from . import flood as floodmod
@@ -352,7 +353,8 @@ class RunSettings:
         # 3.26.0: LISFLOOD-FP sub-grid river channels (core/sgc.py; off by default). On, every
         # LISFLOOD-FP pass of the main run gets channels built from its own DEM: cells draining
         # sgc_min_area_km2 or more, bankfull width / depth from drainage area (W = a A^b,
-        # D = c A^f, sgc_curve, Bieger et al. 2015 by default), Manning n sgc_channel_n.
+        # D = c A^f, sgc_curve, Bieger et al. 2015 by default in DamIT; sgc.ND_USGS_2026, the
+        # DamSafety default since its 3.53.0, is selectable), Manning n sgc_channel_n.
         # sgc_upstream_sqmi = the drainage area at the dam (sq mi; 0 = not known), added at the
         # breach inflow so the channel below the dam is sized for its watershed. sgc_start:
         # "auto" (channels on hydro-flattened water start full, the rest empty), "empty", "full".
@@ -363,7 +365,10 @@ class RunSettings:
         self.sgc_upstream_sqmi = 0.0
         self.sgc_channel_n = sgcmod.DEFAULT_CHANNEL_N
         self.sgc_start = "auto"
-        self.sgc_curve = list(sgcmod.BIEGER_2015_US)
+        self.sgc_curve = list(sgcmod.DEFAULT_CURVE)
+        # 3.49.0: Boann sub-grid FV (gpu-subfv) coarsening factor r (1-8). None = the engine's
+        # own default (4). The QGIS run tool sets it from SUBGRID_R, the CLI from model.subgrid_r.
+        self.user_subgrid_r = None
         # 3.35.0: closed depressions (potholes) of the model DEM start this share (0-1) full,
         # each to the one flat level that holds that share of its volume (core/pothole_fill.py,
         # 4-connected like the engines' faces). 0 = dry, the default (no change); 1 = full to the
@@ -654,6 +659,10 @@ def key_settings(st):
         for k in ("lisflood_sgc", "sgc_min_area_km2", "sgc_upstream_sqmi", "sgc_channel_n",
                   "sgc_start", "sgc_curve"):
             d.pop(k, None)
+    # 3.49.0: the sub-grid FV coarsening factor is in the key only when it is set (a different r is
+    # a different flood); left at the engine's default it stays out, so earlier checkpoints resume
+    if getattr(st, "user_subgrid_r", None) is None:
+        d.pop("user_subgrid_r", None)
     # 3.35.0: dry potholes (the default) stay out of the key, so earlier checkpoints resume
     if not getattr(st, "pothole_start_fill", 0.0):
         d.pop("pothole_start_fill", None)
@@ -1088,7 +1097,10 @@ def model_dem(terrain_src, structures, model, bounds, cell, refill_paths=(), edi
     if refill_paths:
         from . import dem_refill
         for _p in refill_paths:
-            g = dem_refill.fill_grid(g, _p)
+            if _p == dem_refill.HOLE_FILL:       # 3.74.0: enclosed holes from the ground around
+                g, _n = dem_refill.fill_interior_holes(g)
+            else:
+                g = dem_refill.fill_grid(g, _p)
     cuts = structmod.structure_edits(structures or [], cell, model)
     counts = {}
     if cuts:
@@ -2921,7 +2933,7 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     def stable_kw():
         if stability["on"] and getattr(st, "lisflood_solver", lfmod.SOLVER_ACC) == \
                 lfmod.SOLVER_ACC:
-            return {"theta": lfmod.STABLE_THETA, "cfl": lfmod.STABLE_CFL}
+            return {"theta": lfmod.STABLE_THETA, "cfl": lfmod.stable_cfl(st.lisflood_exe)}
         return {}
 
     # audit P2: the wall-clock record of every LISFLOOD-FP pass (report["lisflood_wall"]) and the
@@ -3034,9 +3046,11 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
                 and lst.solver == lfmod.SOLVER_ACC and err is not None
                 and err > lfmod.STABILITY_RETRY_PCT):
             stability["on"] = True
-            log("LISFLOOD-FP lost its mass balance ({:.1f}% of the injected volume); running "
-                "it again with theta {:g} and CFL {:g}.".format(err, lfmod.STABLE_THETA,
-                                                                lfmod.STABLE_CFL))
+            eng_nm = lfmod.engine_name(st.lisflood_exe)   # "LISFLOOD-FP" or the Boann engine
+            eng_nm = eng_nm[:1].upper() + eng_nm[1:]      # DamIT: "the GPU engine" opens a sentence
+            log("{} lost its mass balance ({:.1f}% of the injected volume); running "
+                "it again with theta {:g} and CFL {:g}.".format(eng_nm, err, lfmod.STABLE_THETA,
+                                                                lfmod.stable_cfl(st.lisflood_exe)))
             lst = settings()
             par = lfmod.write_inputs(wd, dem, inflow_xy, hyd, lst, inflow_line=inline)
             runtime += lfmod.run(wd, par, lst, prog, cancel, log)
@@ -3044,25 +3058,25 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
             env = lfmod.read_results(wd, dem, lst, hyd)
             err2 = env.stats.get("max_volume_error_pct")
             ev = {"run": "lisflood" + tag, "error_pct": err, "stable_error_pct": err2,
-                  "theta": lfmod.STABLE_THETA, "cfl": lfmod.STABLE_CFL}
+                  "theta": lfmod.STABLE_THETA, "cfl": lfmod.stable_cfl(st.lisflood_exe)}
             stability["events"].append(ev)
             report["lisflood_stability"] = {"stable_settings": True,
                                             "theta": lfmod.STABLE_THETA,
-                                            "cfl": lfmod.STABLE_CFL,
+                                            "cfl": lfmod.stable_cfl(st.lisflood_exe),
                                             "events": stability["events"]}
             warnings.append(
-                "LISFLOOD-FP lost its mass balance with its default settings (volume error "
+                "{} lost its mass balance with its default settings (volume error "
                 "{:.1f}% of the injected volume: the solver made water). The run was repeated "
                 "with theta {:g} and CFL {:g} (volume error now {}%), and every later run of "
                 "this dam uses them. The results come from the repeated run.".format(
-                    err, lfmod.STABLE_THETA, lfmod.STABLE_CFL,
+                    eng_nm, err, lfmod.STABLE_THETA, lfmod.stable_cfl(st.lisflood_exe),
                     "?" if err2 is None else "{:.2f}".format(err2)))
         if stability["on"] and lst.solver == lfmod.SOLVER_ACC:
             with open(marker, "w") as f:
                 json.dump({"theta": lst.theta, "cfl": lst.cfl}, f)
             report.setdefault("lisflood_stability", {"stable_settings": True,
                                                      "theta": lfmod.STABLE_THETA,
-                                                     "cfl": lfmod.STABLE_CFL,
+                                                     "cfl": lfmod.stable_cfl(st.lisflood_exe),
                                                      "events": stability["events"]})
         # 3.16.0: a main-run solver other than ACC must write the maximum velocity (checked
         # before the run by _check_solver; this catches a build that stops doing so)
@@ -3151,6 +3165,7 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     max_it = 1 if plan is not None else st.max_iterations
     it = start_it
     refilled = False
+    hole_filled = False                      # 3.74.0: enclosed holes filled from their rim
     hole_held = False
     stop_reason = None
     while it <= max_it:
@@ -3293,6 +3308,39 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
             elif touch_n and refilled:
                 hole_held = True
                 stop_reason = "no-data after one refill"
+            # 3.74.0 (batch 44, DWR-2631: Low against a record of Significant, the flood held
+            # back by 28 wet cells of a 1 m LiDAR gap the 3DEP refill did not close): before
+            # calling the run held, fill the ENCLOSED holes the flood touches from the ground
+            # around them (dem_refill.fill_interior_holes) and run the same domain run again,
+            # once. A hole on the DEM's outer edge or over HOLE_FILL_MAX_AC acres is left: it
+            # still holds the run, with the warning below.
+            if hole_held and touch_n and not hole_filled and plan is None:
+                from . import dem_refill
+                from scipy.ndimage import binary_dilation as _bd
+                _fillable, _left = dem_refill.interior_holes(dem)
+                _wet = np.nan_to_num(lf_env.depth.data) > WET_M
+                _hit = _fillable & _bd(_wet, structure=np.ones((3, 3), bool))
+                if _hit.any():
+                    hole_filled = True
+                    hole_held = False
+                    refill_paths.append(dem_refill.HOLE_FILL)
+                    rec["followed_by_dem_refill"] = True
+                    msg = ("Wet cells sit on DEM no-data that {} did not fill ({:,} cells). The "
+                           "enclosed holes the flood reaches ({:,} no-data cells, each at most "
+                           "{:.0f} ac and inside surveyed ground) were filled from the ground "
+                           "around them, and the same domain run was run again. Check the "
+                           "filled cells (QA/DEM edits) if a channel or road runs through one."
+                           .format("the 3DEP refill" if refilled else "a 3DEP refill",
+                                   touch_n, int(_fillable.sum()),
+                                   dem_refill.HOLE_FILL_MAX_AC))
+                    log(msg)
+                    if msg not in warnings:
+                        warnings.append(msg)
+                    stop_reason = None
+                    state.save(iterations=iterations, next_bounds=list(bounds),
+                               next_sim_time=sim_time, warnings=warnings, lisflood_done=False,
+                               next_it=it)
+                    continue
         if hole_held and not any("held up by a hole" in w for w in warnings):
             warnings.append(
                 "Depth is held up by a hole in the terrain ({:,} wet cells still on no-data, {}). "
@@ -4039,6 +4087,7 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     report["run_finished"] = datetime.datetime.now().isoformat(timespec="seconds")
     report["elapsed_min"] = round((time.time() - t_start) / 60.0, 1)
     res.report_json = os.path.join(model_dir, "run_report.json")
+    report["health"] = run_health.assess(report)             # 3.46.0: the run health card
     _write_json(res.report_json, report)
     res.report_md = os.path.join(model_dir, "run_report.md")
     with open(res.report_md, "w", encoding="utf-8") as f:
@@ -4263,6 +4312,7 @@ def adopt_final_engine(out_folder, final_model, st=None, dam_xy=None, log=None):
     vec.update(res_ns.vectors)
     report.setdefault("outputs", {})["final"] = dict(paths)
     report["outputs"]["vectors"] = vec
+    report["health"] = run_health.assess(report)             # 3.46.0: the run health card
     _write_json(rp, report)
     _write_text(os.path.join(model_dir, "run_report.md"), render_report(report))
     try:
@@ -4469,6 +4519,7 @@ def _write_no_breach(res, report, warnings, model_dir, hy_nb):
     if hy_nb is not None:
         hy_nb.to_csv(os.path.join(model_dir, "no_breach_hydrograph.csv"))
     res.report_json = os.path.join(model_dir, "run_report.json")
+    report["health"] = run_health.assess(report)             # 3.46.0: the run health card
     _write_json(res.report_json, report)
     res.report_md = os.path.join(model_dir, "run_report.md")
     from . import damjson
@@ -5315,8 +5366,12 @@ def render_report(r):
     s = r["summary"]
     h = r["hydrograph"]
     lines = ["# Breach model run: {}".format(s["dam_id"]), "",
-             "{} · {} · finished {}".format(r["tool"], r["policy"], r["run_finished"]), "",
-             "## Result", "",
+             "{} · {} · finished {}".format(r["tool"], r["policy"], r["run_finished"]), ""]
+    # 3.46.0: one pass / warn / fail line before anything else (core/run_health.py)
+    _card = run_health.card_line(r.get("health") or run_health.assess(r))
+    if _card:
+        lines += [_card, ""]
+    lines += ["## Result", "",
              "| | |", "|---|---|",
              "| Scenario | {} |".format(SCENARIO_TEXT.get(s.get("scenario"), "sunny day")),
              "| Final rasters from | {} |".format(s["final_model"]),
