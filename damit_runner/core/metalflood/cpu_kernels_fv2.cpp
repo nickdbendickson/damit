@@ -6,12 +6,15 @@
 #include "kernels_fv2.metal"
 
 // the kernel is a template argument, so the compiler inlines it into the loop. The FV2 argument
-// list is the 27-buffer MF_ARGS_FV2 (FV1's 24 plus h0/hu0/hv0; slopes are recomputed inline).
+// list is the 28-buffer MF_ARGS_FV2 (FV1's 24 plus h0/hu0/hv0 and the stage-start depth hs; slopes
+// are recomputed inline).
 template <void (*K)(const float*, const float*, float*, float*, float*, float*, float*, float*,
                     float*, float*, const uchar*, const uint*, const uint*, const uint*,
                     const float*, const float*, uint*, uint*, float*, float*, float*, float*,
-                    float*, float*, float*, float*, float*, const Params&, uint2)>
+                    float*, float*, float*, float*, float*, float*, const Params&, uint2),
+          bool SERIAL = false>
 static void mf_dispatch(void** b, const Params& p, uint w, uint hgt) {
+    MF_PAR_FOR_IF(!SERIAL)
     for (uint y = 0; y < hgt; ++y) {
         for (uint x = 0; x < w; ++x) {
             uint2 g = {x, y};
@@ -21,7 +24,7 @@ static void mf_dispatch(void** b, const Params& p, uint w, uint hgt) {
               (const uint*)b[13], (const float*)b[14], (const float*)b[15], (uint*)b[16],
               (uint*)b[17], (float*)b[18], (float*)b[19], (float*)b[20], (float*)b[21],
               (float*)b[22], (float*)b[23], (float*)b[24], (float*)b[25], (float*)b[26],
-              p, g);
+              (float*)b[27], p, g);
         }
     }
 }
@@ -34,6 +37,8 @@ int mf_params_size(void) { return (int)sizeof(Params); }
 
 // n SSP-RK2 steps on the window in p; the same dispatch order as the Metal backend's FV2 plan:
 // predictor (stage 0) then corrector (stage 1), each a begin -> slopes -> faces -> cont sweep.
+// Every dispatch runs on all the cores: k_cont_fv2 reads its neighbours' stage-start depth (hs) for
+// the inline eta-slopes, never the h it is overwriting, so its answer does not depend on cell order.
 int mf_run_batch(void** b, const Params* pp, int nsteps) {
     const Params& p = *pp;
     for (int s = 0; s < nsteps; ++s) {
