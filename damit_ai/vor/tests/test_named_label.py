@@ -137,10 +137,31 @@ class Prompts(unittest.TestCase):
         self.assertIn("(WSP 2339), p.10 (from 'WSP 2339', the publication the question names); value)",
                       self.sent[0][-1]["content"])
 
-    def test_the_pipeline_fills_ev_named(self):
-        with open(os.path.join(HERE, "..", "vor.py"), encoding="utf-8") as f:
-            src = f.read()
-        self.assertIn("ev.named = named_docs(db, question, by_doc=True)", src)
+    def pipeline(self, keep):
+        db = make_db()
+        page35 = vor.Hit((4, 58, 35, "35", EQ, "Predicting Peak Outflow from Breached Embankment Dams",
+                          "/lib/PredictPeakOutflwBrchEmbkDms2010.pdf", "", "2010", "FEMA", ""), 0.5)
+
+        class Idx:
+            def search(self, q, k=8, per_doc=3, keep=None):
+                return [page35]
+        self.fake('{"findings": [], "not_covered": []}')
+        import io
+        try:
+            vor._run_pipeline(db, PIERCE_Q, "ask", 1, 8, io.StringIO(), Idx(), False, keep, None, "")
+        finally:
+            db.close()
+        return self.sent[0][-1]["content"]
+
+    def test_the_pipeline_labels_the_named_paper(self):
+        self.assertIn("p.35 (from 'Pierce, Thornton and Abt (2010)', the publication the question names)",
+                      self.pipeline(None))
+
+    def test_with_doc_the_kept_paper_is_labelled_too(self):
+        self.assertIn("the publication the question names", self.pipeline({58}))
+
+    def test_with_doc_another_paper_is_not_labelled(self):
+        self.assertNotIn("the publication the question names", self.pipeline({59}))
 
     def test_pierce_label(self):
         h = hit(4, 58, 35, EQ, "Predicting Peak Outflow from Breached Embankment Dams",
@@ -148,6 +169,84 @@ class Prompts(unittest.TestCase):
         lab = h.model_label({58: ["Pierce, Thornton and Abt (2010)"]})
         self.assertIn("FEMA (2010) Predicting Peak Outflow", lab)
         self.assertIn("from 'Pierce, Thornton and Abt (2010)', the publication the question names", lab)
+
+
+class Plainly(unittest.TestCase):
+    """The independent review of 1.4.9: loose matches only reorder the reading; they must not be labelled."""
+    DOCS = [(1, "Selecting and Accommodating Inflow Design Floods for Dams", "/lib/fema_p-94.pdf", "P-94", "FEMA"),
+            (2, "Guidelines for Dam Breach Analysis", "/lib/fema_p-946.pdf", "P-946", "FEMA"),
+            (3, "Hydraulic Design of Highway Culverts", "/lib/hds5.pdf", "HDS-5", "FHWA"),
+            (4, "Hydraulic Design of Energy Dissipators", "/lib/hds51.pdf", "HDS-51", "FHWA"),
+            (5, "Guidelines for Determining Flood Flow Frequency Bulletin 17C", "/lib/b17c.pdf", "Bulletin 17C", "USGS"),
+            (6, "Selecting Analytical Tools for Concrete Dams", "/lib/FEMA_P-1025.pdf", "P-1025", "FEMA"),
+            (7, "FEMA 2013 guidance A", "/lib/a.pdf", "", "FEMA"), (8, "FEMA 2013 guidance B", "/lib/b.pdf", "", "FEMA"),
+            (9, "Federal Guidelines for Dam Safety: Hazard Potential Classification",
+             "/lib/FEMA Federal Guidelines HazPotential 333_04.ocr.pdf", "", "FEMA"),
+            (10, "Guide for Selecting Manning's Roughness Coefficients", "/lib/usgs-wsp-2339.pdf", "", "USGS"),
+            (11, "Engineering and Design: Hydrologic Engineering Requirements", "/lib/EM_1110-2-1417.pdf", "", "USACE")]
+
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(vor.SCHEMA)
+        self.db.executemany("INSERT INTO docs (id, title, path, number, org) VALUES (?,?,?,?,?)", self.DOCS)
+
+    def tearDown(self):
+        self.db.close()
+
+    def named(self, q):
+        return vor.named_docs(self.db, q, by_doc=True)
+
+    def test_a_shorter_number_does_not_label_the_longer_one(self):
+        self.assertEqual(list(self.named("What inflow design flood does FEMA P-94 recommend?")), [1])
+        self.assertEqual(list(self.named("What does HDS-5 say about inlet control?")), [3])
+        self.assertEqual(list(self.named("What does FEMA P-946 say about the downstream limit?")), [2])
+
+    def test_a_letter_after_the_number_is_another_edition(self):
+        self.assertEqual(self.named("What skew does Bulletin 17B use?"), {})
+
+    def test_a_page_and_a_year_are_not_report_numbers(self):
+        self.assertNotIn(6, self.named("WSP 2339 Table 1 on p 10: n for concrete?"))
+        self.assertEqual(self.named("In FEMA 2013 guidance, what is the hazard classification?"), {})
+
+    def test_plain_names_still_label(self):
+        self.assertEqual(list(self.named("In FEMA 333, what defines a high hazard dam?")), [9])
+        self.assertEqual(list(self.named("In WSP 2339, what base n for concrete?")), [10])
+        self.assertEqual(list(self.named("What does EM 1110-2-1417 require?")), [11])
+
+    def test_reading_order_is_unchanged(self):
+        self.assertEqual(vor.named_docs(self.db, "What inflow design flood does FEMA P-94 recommend?")[0], [1, 2])
+
+
+class Checks(unittest.TestCase):
+    PAGE = "Table 1\nConcrete ....... _ 0.012-0.018 0.011\nRock cut ....... .025\nSand ....... .3 .017"
+
+    def test_a_row_without_its_dot_leaders_checks(self):
+        for q in ("Concrete 0.012-0.018 0.011", "Concrete ....... _ 0.012-0.018 0.011", "Rock cut .025",
+                  "Sand .3 .017"):
+            self.assertEqual(vor.quote_check(q, self.PAGE), "exact", q)
+
+    def test_a_changed_number_without_a_leading_zero_is_caught(self):
+        self.assertEqual(vor.quote_check("Sand .3 .018", self.PAGE), "numbers differ")
+        self.assertEqual(vor.quote_check("Concrete 0.012-0.019 0.011", self.PAGE), "numbers differ")
+        self.assertEqual(vor.nums("n .017 and 0.017, 1,240"), ["0.017", "0.017", "1,240"])
+        self.assertEqual(vor.numbers_outside("n is 0.017", "Sand .3 .017", self.PAGE), [])
+        self.assertEqual(vor.numbers_outside("n is 0.019", "Sand .3 .017", self.PAGE), ["0.019"])
+
+    def test_the_source_label_wins_over_a_report_number(self):
+        sent = []
+        real = vor.chat
+
+        def chat(messages, schema=None, **kw):
+            sent.append(1)
+            return json.dumps({"findings": [{"source": "WSP 2339 (S1)", "quote": ROW, "claim": "c", "kind": "value"}],
+                               "not_covered": []})
+        vor.chat = chat
+        try:
+            ev = vor.Evidence()
+            vor.extract(ev, "q", [wsp()])
+        finally:
+            vor.chat = real
+        self.assertEqual(len(ev.findings), 1, ev.rejected)
 
 
 class EvalMarks(unittest.TestCase):

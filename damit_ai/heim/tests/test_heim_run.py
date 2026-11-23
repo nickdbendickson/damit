@@ -499,9 +499,6 @@ class InstallTest(unittest.TestCase):
                     self.assertIn("heim_run.py", fh.read(), name)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class DwrScreeningTest(Case):
     """heim_run 1.2.0: the first real run (2026-11-23, DWR-2645 with --set dwr) stopped at damchain's checks with
@@ -555,6 +552,32 @@ class DwrScreeningTest(Case):
         self.assertNotIn("--no-screen", self.calls[1])
         self.assertNotIn("Screening:", said)
 
+    def test_no_screen_forgets_a_remembered_folder(self):
+        work = os.path.join(self.tmp, "screen")
+        os.makedirs(work)
+        self.dwr(["--screen-work", work])
+        os.rmdir(work)
+        code, said = self.dwr()
+        self.assertEqual(code, 2, said)
+        self.assertIn("--no-screen to leave Screening out", said)
+        self.assertIn("--no-screen", said.split("To type it yourself")[1])     # the typed command would work
+        code, said = self.dwr(["--no-screen"])
+        self.assertEqual(code, 0, said)
+        self.assertIn("--no-screen", self.calls[1])
+        code, said = self.dwr()                      # forgotten
+        self.assertEqual(code, 0, said)
+        self.assertIn("--no-screen", self.calls[1])
+
+    def test_screening_flags_with_the_damit_set_are_noted_and_not_saved(self):
+        work = os.path.join(self.tmp, "screen")
+        os.makedirs(work)
+        code, said = self.go("run 2801", fields(ids=["2801"]), extra=["--screen-work", work])
+        self.assertEqual(code, 0, said)
+        self.assertIn("for --set dwr only", said)
+        self.assertNotIn("--screen-work", self.calls[1])
+        with open(HR.SAVED) as fh:
+            self.assertNotIn("screen_work", json.load(fh).get("damit", {}))
+
     def test_the_typed_command_after_a_refusal_leaves_screening_out(self):
         self.assertIn("--no-screen", HR.typed_command("dwr", {}))
         self.assertNotIn("--no-screen", HR.typed_command("damit", {}))
@@ -566,3 +589,7 @@ class DwrScreeningTest(Case):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--no-screen", r.stdout)
         self.assertIn("--screen-work", r.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

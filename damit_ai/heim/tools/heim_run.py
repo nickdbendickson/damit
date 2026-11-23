@@ -37,7 +37,7 @@
 #   your paths filled in; Ollama not running or a missing model is one plain line saying what to do.
 #
 # 1.2.0: with --set dwr, DamSafety Screening is left out (--no-screen) unless --screen-work FOLDER is given
-#   (remembered). The first real run (2026-11-23, DWR-2645) stopped at damchain's checks with "Choose the
+#   (remembered; --no-screen forgets it). The first real run (2026-11-23, DWR-2645) stopped at damchain's checks with "Choose the
 #   Screening work folder (or untick Screening)": Screening needs its statewide work folder and the offline
 #   pack, and the batch-44 kit always ran the DamSafety chain with --no-screen.
 #
@@ -483,6 +483,8 @@ def pick_set(args, request, saved):
 def paths_for(args, set_name, saved):
     """dams / out / dem / id_field / dem_units: the flags, else the last ones used for this set."""
     have = dict(saved.get(set_name) or {})
+    if getattr(args, "no_screen", False):
+        have.pop("screen_work", None)               # --no-screen: Screening left out, and the folder forgotten
     for k in ("dams", "out", "dem", "id_field", "dem_units", "screen_work"):
         v = getattr(args, k, "") or ""
         if v and k in ("dams", "out", "dem", "screen_work"):
@@ -491,6 +493,8 @@ def paths_for(args, set_name, saved):
             v = os.path.abspath(os.path.expanduser(path)) + bar + rest
         if v:
             have[k] = v
+    if set_name != "dwr":
+        have.pop("screen_work", None)               # only the DamSafety chain has a Screening step
     return have
 
 
@@ -508,7 +512,8 @@ def check_paths(set_name, p, ids, layer_ids, words=""):
     if not os.path.exists(os.path.expanduser(p["dem"])):
         bad.append("the DEM is not there: %s" % os.path.expanduser(p["dem"]))
     if set_name == "dwr" and p.get("screen_work") and not os.path.isdir(os.path.expanduser(p["screen_work"])):
-        bad.append("the Screening work folder is not there: %s" % os.path.expanduser(p["screen_work"]))
+        bad.append("the Screening work folder is not there: %s (give another with --screen-work, or "
+                   "--no-screen to leave Screening out and forget it)" % os.path.expanduser(p["screen_work"]))
     parent = os.path.dirname(os.path.abspath(os.path.expanduser(p["out"])))
     if not os.path.isdir(parent):
         bad.append("the folder above the output folder does not exist: %s" % parent)
@@ -551,10 +556,12 @@ def check_paths(set_name, p, ids, layer_ids, words=""):
 
 
 def screen_args(set_name, p):
-    """1.2.0: DamSafety Screening needs its statewide work folder; without one it is left out."""
+    """1.2.0: DamSafety Screening needs its statewide work folder; without one (or one that is not there) it is
+    left out."""
     if set_name != "dwr":
         return []
-    return ["--screen-work", p["screen_work"]] if p.get("screen_work") else ["--no-screen"]
+    w = p.get("screen_work")
+    return ["--screen-work", w] if w and os.path.isdir(os.path.expanduser(w)) else ["--no-screen"]
 
 
 def build_argv(set_name, p, f):
@@ -659,6 +666,8 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
                     help="the DEM's elevation units (remembered per set)")
     ap.add_argument("--screen-work", default="",
                     help="--set dwr: DamSafety Screening's work folder (remembered); without it Screening is left out")
+    ap.add_argument("--no-screen", action="store_true",
+                    help="--set dwr: leave Screening out and forget a remembered --screen-work")
     ap.add_argument("--show", action="store_true", help="show the command only; never run")
     ap.add_argument("--version", action="version", version="heim run " + VERSION)
     args = ap.parse_args(argv)
@@ -672,6 +681,8 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
         out("Not run: " + why)
         return 2
     p = paths_for(args, set_name, saved)
+    if set_name != "dwr" and (args.screen_work or args.no_screen):
+        out("  note: --screen-work and --no-screen are for --set dwr only (the DamIT chain has no Screening step); ignored")
     dc = _dam_chain()
     # 1.1.0: the paths first. No dams layer, output folder or DEM is not something the model can help with.
     bad = check_paths(set_name, p, [], dc.layer_ids)

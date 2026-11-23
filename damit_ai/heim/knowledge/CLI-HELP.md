@@ -399,6 +399,7 @@ Heim drafts a damchain run from plain English. It only fills in dam ids, cell si
 | `--id-field` | ID_FIELD |  | dam id field of the layer (remembered per set) |
 | `--dem-units` | one of `detect`, `feet`, `us-feet`, `meters` |  | the DEM's elevation units (remembered per set) |
 | `--screen-work` | SCREEN_WORK |  | --set dwr: DamSafety Screening's work folder (remembered); without it Screening is left out |
+| `--no-screen` |  |  | --set dwr: leave Screening out and forget a remembered --screen-work |
 | `--show` |  |  | show the command only; never run |
 | `--version` |  |  | show program's version number and exit |
 

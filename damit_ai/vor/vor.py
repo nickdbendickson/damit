@@ -55,6 +55,9 @@
 #   the model decided they were not "WSP 2339" or "Pierce, Thornton and Abt" and returned no finding in 4 s
 #   (7 of 11 failures). Each passage of a named publication now says so, with the question's own words, and
 #   a report number the title leaves out is shown beside it. Table values are quoted as whole rows.
+#   Only a plain naming is labelled (not 'P-94' in 'P-946', a year, 'p 10', or words that fit two documents);
+#   with --doc too. The quote check reads a row's dot leaders as a space and sees numbers written '.018';
+#   a finding's source is read from 'S1' before any other number.
 # 1.4.8 (2026-11-23): `vor ocr` tries once more when ocrmypdf fails on a PDF (often JPEG 2000 images
 #   it cannot decode: "JPXDecode ... could not be decoded", exit 4, as on FEMA P-946 and HMR 55A). PyMuPDF
 #   draws each scanned page as a plain image, ocrmypdf reads those, and the copy is the original with
@@ -828,11 +831,12 @@ def named_docs(db, question, spans=False, by_doc=False):
     the passages read: other FEMA manuals repeat its definitions and outranked it. A number match needs the
     prefix and number together ('p946' in 'FEMA P946.pdf'), or, for a number of 3+ digits, the number on its
     own as a whole number plus the prefix anywhere ('FEMA ... 333_04.pdf').
-    1.4.9: by_doc=True returns {id: [the question's words that named it]} for the same documents."""
+    1.4.9: by_doc=True returns {id: [the question's words that named it]}, only where those words name that one
+    document plainly (see _plainly_named); the model is then told the passage is from the named publication."""
     q = _plain(question)
     want = [(m.group(0), m.group(1), m.group(2)) for m in _NAMED.finditer(q)]
     ids, labels, used = [], [], []
-    words = {}
+    strong = {}                                     # the question's words -> documents they name plainly
     if want or _citations(q):
         rows = db.execute("SELECT id, title, path, number, org FROM docs").fetchall() if want else []
         for text, pfx, num in want:
@@ -845,21 +849,44 @@ def named_docs(db, question, spans=False, by_doc=False):
                     ok = bool(re.search(r"(?<![\d.])%s(?![\d])" % re.escape(num), raw)) and squash(pfx) in sq
                 if ok:
                     used.append(text)
-                    words.setdefault(r[0], []).append(text)
+                    if _plainly_named(text, pfx, num, raw):
+                        strong.setdefault(text, set()).add(r[0])
                     if r[0] not in ids:
                         ids.append(r[0])
                         labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
         for did, label, text in _author_year_docs(db, q):
             used.append(text)
-            words.setdefault(did, []).append(text)
+            strong.setdefault(text, set()).add(did)
             if did not in ids:
                 ids.append(did)
                 labels.append(label)
     if by_doc:
-        return {d: list(dict.fromkeys(words.get(d, []))) for d in ids[:6]}
+        words = {}
+        for text, docs in strong.items():
+            if len(docs) == 1:                      # words that fit two documents name neither of them plainly
+                words.setdefault(next(iter(docs)), []).append(text)
+        return {d: words[d] for d in ids[:6] if d in words}
     if spans:
         return ids[:6], labels[:6], used
     return ids[:6], labels[:6]
+
+
+def _plainly_named(text, pfx, num, raw):
+    """1.4.9: does 'FEMA P-946' / 'WSP 2339' in the question name this document plainly, and not by a loose match
+    (named_docs' own test only reorders the reading)? The independent review of 1.4.9 found loose matches that
+    would have been labelled as the named publication: 'P-94' in 'P-946', 'HDS-5' in 'HDS-51', 'Bulletin 17'
+    (B) in 'Bulletin 17C', 'p 10' (a page) in 'P-1025', 'FEMA 2013' (a year) in two FEMA documents.
+    The number must stand on its own in the file name, title or number (no digit or letter after it), and
+    neither a year nor a one-letter prefix written apart from its number counts."""
+    if re.fullmatch(r"(?:19|20)\d\d", num):
+        return False
+    if len(pfx) == 1 and (pfx.islower() or re.search(r"\s", text)):
+        return False
+    numpat = r"[._\s-]?".join(re.escape(g) for g in re.split(r"[.-]", num))
+    if re.search(r"(?<![A-Za-z0-9])%s[\s_.-]*%s(?![0-9A-Za-z])" % (re.escape(pfx), numpat), raw, re.I):
+        return True
+    return (len(re.sub(r"\D", "", num)) >= 3 and squash(pfx) in squash(raw)
+            and re.search(r"(?<![A-Za-z0-9.])%s(?![0-9A-Za-z])" % numpat, raw) is not None)
 
 
 def merge_hits(first, rest, k):
@@ -1893,9 +1920,18 @@ def norm(s):
     return re.sub(r"\s+", " ", s).strip(" .,;:")
 
 
+_LEADERS = re.compile(r"(?: ?(?:_|\.(?!\d)) ?){3,}")
+
+
+def _no_leaders(s):
+    """1.4.9: a table row's dot leaders ('Concrete ....... _ 0.012-0.018') as one space, in the quote and the page
+    alike, so a row quoted without them ('Concrete 0.012-0.018') still checks. Numbers keep their single points."""
+    return re.sub(r"\s+", " ", _LEADERS.sub(" ", s)).strip(" .,;:")
+
+
 def quote_check(quote, source_txt):
     """'exact', 'close' (>= 90% of the quote's characters found in order), or 'not found'."""
-    q, t = norm(quote), norm(source_txt)
+    q, t = _no_leaders(norm(quote)), _no_leaders(norm(source_txt))
     if len(q) < 12:
         return "too short"
     if q in t:
@@ -1908,19 +1944,25 @@ def quote_check(quote, source_txt):
     if m >= 0.9 * len(q) and span <= 1.3 * len(q):
         # a near match must not hide a changed number ("2 and 5 times" -> "3 and 7 times")
         region = t[blocks[0].b: blocks[-1].b + blocks[-1].size]
-        if NUM.findall(q) != NUM.findall(region):
+        if nums(q) != nums(region):
             return "numbers differ"
         return "close"
     return "not found"
 
 
-NUM = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*")
+NUM = re.compile(r"(?<![\w.])\.?\d+(?:[.,]\d+)*")
+
+
+def nums(s):
+    """The numbers in s, '.018' (a table's way of writing it) read as 0.018. 1.4.9: before, a number with no
+    leading zero was not seen at all, so 'Sand .3 .018' passed as a close quote of a row reading '.3 .017'."""
+    return ["0" + n if n.startswith(".") else n for n in NUM.findall(s)]
 
 
 def numbers_outside(claim, quote, source_txt):
     """Numbers in the paraphrase that appear in neither the quote nor the page — likely invented."""
-    allowed = set(NUM.findall(norm(quote))) | set(NUM.findall(norm(source_txt)))
-    bad = [n for n in NUM.findall(norm(claim)) if n not in allowed and n.replace(",", "") not in allowed]
+    allowed = set(nums(norm(quote))) | set(nums(norm(source_txt)))
+    bad = [n for n in nums(norm(claim)) if n not in allowed and n.replace(",", "") not in allowed]
     return bad
 
 
@@ -2111,8 +2153,9 @@ def extract(ev, sub, hits):
     for f in out.get("findings") or []:
         if not isinstance(f, dict):
             continue
-        m = re.search(r"\d+", str(f.get("source", "")))
-        s = int(m.group(0)) if m else -1
+        src = str(f.get("source", ""))
+        m = re.search(r"\bS\s*(\d+)", src, re.I) or re.search(r"(\d+)", src)   # 1.4.9: 'S1' before the
+        s = int(m.group(1)) if m else -1                                     # '2339' of 'WSP 2339 (S1)'
         quote, claim = str(f.get("quote", "")).strip().strip('"'), str(f.get("claim", "")).strip()
         if s not in allowed:
             ev.rejected.append({"sub": sub, "why": "cites S%s, which was not in its passages" % s,
@@ -2311,7 +2354,9 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
         named, named_labels, named_spans = named_docs(db, question, spans=True)
         if named:
             say("The question names: " + "; ".join(named_labels) + " (their passages are read first)")
-            ev.named = named_docs(db, question, by_doc=True)
+    # 1.4.9: the passages of a publication the question names plainly say so (Hit.model_label); with --doc too,
+    # for the documents kept (the 2026-11-23 failures read "Pierce, Thornton and Abt" on a "FEMA (2010)" label)
+    ev.named = {d: w for d, w in named_docs(db, question, by_doc=True).items() if not keep or d in keep}
     log = []
     for i, s in enumerate(subs, 1):
         q = s + ((" " + " ".join(terms)) if (i == 1 and terms) else "")
