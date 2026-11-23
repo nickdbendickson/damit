@@ -1,0 +1,7 @@
+{
+  "schema": "damit.class_benchmark",
+  "purpose": "official",
+  "data_env": "DAMIT_CLASS_BENCHMARK_DATA",
+  "note": "Official classes only. Each dam needs a citation to the National Inventory of Dams or the state record, and receptors or rasters that exist. An empty list is intentional: a dam is left out rather than given a guessed class. Lake Delhi and Edenville are not listed. This checkout has no licensed rasters for them.",
+  "dams": []
+}

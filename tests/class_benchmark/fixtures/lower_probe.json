@@ -1,0 +1,19 @@
+{
+  "schema": "damit.class_benchmark",
+  "purpose": "self-test",
+  "note": "Not an official class and not an NID record. The labeled class is a harness probe: a dry house under FEMA 333 is the lowest class, so the row is LOWER and the script must exit 1.",
+  "dams": [
+    {
+      "id": "selftest-lower",
+      "name": "Synthetic LOWER probe",
+      "state": "",
+      "official_record": false,
+      "presets": ["FEMA333"],
+      "official_class": 3,
+      "official_source": "Not a published class. Labeled 3 only so a lower DamIT class fails the harness.",
+      "receptors": [
+        {"id": "h1", "kind": "structure", "type": "home", "depth_ft": 0.0, "velocity_fps": 0.0}
+      ]
+    }
+  ]
+}
