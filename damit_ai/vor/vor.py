@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.6 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.7 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,8 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.7 (2026-11-23): the same, when the original is not in the library at all (only its OCR copy came
+#   across to ~/Vor): an entry whose file is gone and whose OCR copy is indexed is dropped by `vor ingest`.
 # 1.4.6 (2026-11-23): a scanned original that an older version indexed under ~/DamResearch (before the
 #   library was renamed ~/Vor) is dropped by `vor ingest` when its OCR copy is the document. It matched no
 #   path, so it stayed "no longer has a file" in `vor doctor` and "file gone" in `vor tables` for good.
@@ -119,7 +121,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.6"
+VERSION = "1.4.7"
 
 
 def _home():
@@ -1491,6 +1493,16 @@ def cmd_ingest(a):
                 die(str(e))
             say("  [%d/%d] FAILED %s: %s" % (n, len(files), os.path.basename(path), e))
             failed += 1
+    # 1.4.7: an original whose file is gone (not in the library at all, only its OCR copy is) never
+    # comes up in the walk above. When its searchable copy is indexed, the copy is the document: the
+    # original's entry goes, or it stays "no longer has a file" for good.
+    indexed = {r[0] for r in db.execute("SELECT path FROM docs")}
+    for did, dpath, dh in db.execute("SELECT id, path, sha1 FROM docs").fetchall():
+        rec = omap.get(dh)
+        if rec and not os.path.exists(dpath) and os.path.join(ocr_dir(), rec["copy"]) in indexed:
+            delete_doc(db, did)
+            replaced += 1
+    db.commit()
     if a.prune:
         roots = [os.path.abspath(os.path.expanduser(p)) for p in paths]
         gone = [(i, p) for i, p in db.execute("SELECT id, path FROM docs")
