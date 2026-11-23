@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.2 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.3 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,11 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.3 (2026-11-22, the 1.4.2 call records): the D15F question's model call read all 8 passages (3,444
+#   prompt tokens) and replied exactly '{"findings": [], "not_covered": []}', with the answer page among them.
+#   An empty list of findings is now asked once more, passages in reverse order and a nudge to read each
+#   one; every quote it then offers is still checked against its page. (Its 0.8 s was most likely Ollama
+#   reusing an identical earlier prompt from its cache, so the 1.4.2 'too fast to have read them' note is dropped.)
 # 1.4.2 (from the second real-model test, 2026-11-22): three questions (filter-d15f, filter-band,
 #   pierce-length) came back in 1-2 s with "8 passages read, the model drew no quote" although the right
 #   pages were among them; the cause is not known yet. What 1.4.2 changes: passages are fitted to the
@@ -97,7 +102,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 
 def _home():
@@ -1677,6 +1682,22 @@ EXTRACT_ASK = ("List every finding in these passages that helps answer the sub-q
                "none of the passages answer.")
 
 
+def _note_call(ev, blocks, msg, reply, out, retry=False):
+    """1.4.2: one line and one record per model call (passages, our token count, Ollama's prompt_eval_count,
+    seconds, done_reason, findings), so an empty answer can be traced."""
+    call = {"passages": len(blocks), "est_tokens": est_tokens(SYSTEM + msg),
+            "prompt_tokens": LAST_REPLY.get("prompt_tokens", 0), "seconds": round(LAST_REPLY.get("seconds", 0.0), 1),
+            "done": LAST_REPLY.get("done_reason", ""), "reply_chars": len(reply or ""),
+            "findings": len((out or {}).get("findings") or []) if isinstance(out, dict) else None}
+    if retry:
+        call["retry"] = True
+    ev.calls.append(call)
+    say("  (model read %d passage(s)%s: about %d tokens by our count, %s by Ollama's, %.1f s, done: %s; "
+        "%s finding(s) offered)" % (call["passages"], " again" if retry else "", call["est_tokens"],
+                                     call["prompt_tokens"] or "?", call["seconds"], call["done"] or "?",
+                                     "?" if call["findings"] is None else call["findings"]))
+
+
 def extract(ev, sub, hits):
     """Ask the model for verbatim evidence from these passages, then check every quote ourselves.
 
@@ -1716,17 +1737,25 @@ def extract(ev, sub, hits):
     reply = chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}],
                  schema=EXTRACT_SCHEMA, num_predict=2500)
     out = parse_json(reply)
-    # 1.4.2: one line per model call, so a fast empty answer can be told from a slow one. Three questions
-    # in the 2026-11-22 test came back in 1-2 s with no finding and nothing in the report said why.
-    call = {"passages": len(blocks), "est_tokens": est_tokens(SYSTEM + msg),
-            "prompt_tokens": LAST_REPLY.get("prompt_tokens", 0), "seconds": round(LAST_REPLY.get("seconds", 0.0), 1),
-            "done": LAST_REPLY.get("done_reason", ""), "reply_chars": len(reply or ""),
-            "findings": len((out or {}).get("findings") or []) if isinstance(out, dict) else None}
-    ev.calls.append(call)
-    say("  (model read %d passage(s): about %d tokens by our count, %s by Ollama's, %.1f s, done: %s; "
-        "%s finding(s) offered)" % (call["passages"], call["est_tokens"], call["prompt_tokens"] or "?",
-                                     call["seconds"], call["done"] or "?",
-                                     "?" if call["findings"] is None else call["findings"]))
+    _note_call(ev, blocks, msg, reply, out)
+    if isinstance(out, dict) and not (out.get("findings") or []):
+        # 1.4.3: the model said every passage was irrelevant. On 2026-11-22 it answered the D15F question
+        # with exactly '{"findings": [], "not_covered": []}' although FilterManual p.114 (the answer) was
+        # among the 8 passages; the same question with the same passages had passed earlier. Once more,
+        # with the passages in reverse order (the first ones read were other manuals) and a nudge to read
+        # each one. Nothing new is trusted: every quote still goes through quote_check against its page.
+        say("  (the model offered no finding from %d passage(s); asking once more with them in reverse order)"
+            % len(blocks))
+        msg2 = ("Sub-question: %s\n\nSource passages:\n\n%s\n\n%s\n\nRead every passage to the end before "
+                "deciding. If any sentence or table row states a value, criterion, definition, equation or "
+                "rule that bears on the sub-question, quote it exactly. Return no findings only if no passage "
+                "says anything about it." % (sub, "\n\n".join(b for _, b in reversed(blocks)), EXTRACT_ASK))
+        reply2 = chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg2}],
+                      schema=EXTRACT_SCHEMA, num_predict=2500, temperature=0.5)
+        out2 = parse_json(reply2)
+        _note_call(ev, blocks, msg2, reply2, out2, retry=True)
+        if isinstance(out2, dict) and (out2.get("findings") or []):
+            out, reply = out2, reply2
     if out is None and not strip_think(reply):
         # 1.3.0: nothing came back at all. Once more with twice the room, because the usual
         # cause is the allowance being spent before the first character of the answer.
@@ -1850,10 +1879,8 @@ def no_findings_answer(ev, keep):
         drew = "none of them fitted in the model's window, so the model was not asked"
     else:
         drew = "the model drew no quote from them"
-        fast = [c for c in ev.calls if c.get("seconds") and c["seconds"] < 3]
-        if fast:
-            drew += (" (it answered in %.1f s, after reading %s prompt token(s): too fast to have read them; "
-                     "Ollama's log, ~/.ollama/logs/server.log, may say why)" % (fast[0]["seconds"], fast[0]["prompt_tokens"] or "?"))
+        if any(c.get("retry") for c in ev.calls):
+            drew += ", twice (the second time with the passages in reverse order)"
     return ("There is nothing to cite: %d passage(s) were read and %s. That is not the same as the "
             "library having nothing. These are the passages the search ranked closest to the question, "
             "unchecked:\n\n%s\n\nOpen those pages, or ask again in different words%s."
