@@ -21,6 +21,16 @@ damit_ai/heim/setup-local-heim.sh and vor/setup-vor.zsh.
                                                  # Remove it: stop the server (ollama-serve.pid) and delete DIR.
   .\install-local-ai-windows.ps1 -OllamaPort N    # the Ollama port (default 11434; 11435 with -Prefix)
   .\install-local-ai-windows.ps1 -NoModels        # no model pulls, personas or index: server, envs, tools, commands only
+  .\install-local-ai-windows.ps1 -AllowProfileScripts   # let PowerShell load your profile (Set-ExecutionPolicy
+                                                      # -Scope CurrentUser RemoteSigned) without asking first
+
+  Or double-click  Install-Windows.cmd  in this folder: it starts this script for you.
+
+  Every command also gets a .cmd launcher in %USERPROFILE%\local-ai\bin, which is put on your user PATH, so
+  heim, vor, ai, ai-doctor ... work in cmd.exe, and in PowerShell even where scripts are blocked.
+  What it prints also goes to %USERPROFILE%\local-ai\install.log. If it stops, run it again: it carries
+  on (models already downloaded are not downloaded again). Before the models are pulled it checks the
+  free disk space against their size. At the end it runs ai-doctor and prints the first commands to try.
 
   Run it from the package's damit_ai\ folder: it copies heim\ and vor\ from beside itself.
 
@@ -55,9 +65,27 @@ param(
   [switch]$NoWatchModel,
   [string]$Prefix = '',
   [int]$OllamaPort = 0,
-  [switch]$NoModels
+  [switch]$NoModels,
+  [switch]$AllowProfileScripts
 )
 $ErrorActionPreference = 'Stop'
+
+# The messages, the stop note and the trap come first, so a stop anywhere below (even before the
+# log is open) says how to carry on. `exit 1` from here ends only this script when install-all runs
+# it with &; install-all reads $LASTEXITCODE, and the last line below is `exit 0`.
+$InstallLog = $null; $Transcript = $false
+function Say ($m) { Write-Host "`n== $m" -ForegroundColor White }
+function Ok  ($m) { Write-Host "  ok $m"   -ForegroundColor Green }
+function Warn($m) { Write-Host "  warn $m" -ForegroundColor Yellow }
+function Stop-Log { if ($script:Transcript) { try { Stop-Transcript | Out-Null } catch { } ; $script:Transcript = $false } }
+function Rerun-Note {
+  Write-Host "`n  The install stopped. What it did so far is kept: fix what it says above, then run the same" -ForegroundColor Yellow
+  Write-Host "  command again and it carries on from there (models already downloaded are not downloaded again)." -ForegroundColor Yellow
+  if ($script:InstallLog) { Write-Host "  Everything it printed is in $script:InstallLog" -ForegroundColor Yellow }
+}
+function Die ($m) { Write-Host "  ERROR $m" -ForegroundColor Red; Rerun-Note; Stop-Log; exit 1 }
+# any other stop ($ErrorActionPreference = 'Stop'): the same note, and the log closed
+trap { Write-Host "  ERROR $_" -ForegroundColor Red; Rerun-Note; Stop-Log; exit 1 }
 
 $Here       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LocalAI    = Join-Path $env:USERPROFILE 'local-ai'
@@ -75,7 +103,7 @@ if ($Prefix) {
   # land in your profile (conda's package cache and env list, pip's cache, Ollama's key in
   # ~\.ollama, the GGUF download folder) are pointed into it too.
   $Prefix = [IO.Path]::GetFullPath($Prefix).TrimEnd('\')
-  if ($Prefix -eq $env:USERPROFILE -or $Prefix.Length -le 3) { Write-Host '  ERROR -Prefix needs its own folder' -ForegroundColor Red; exit 1 }
+  if ($Prefix -eq $env:USERPROFILE -or $Prefix.Length -le 3) { Die '-Prefix needs its own folder' }
   $LocalAI = Join-Path $Prefix 'local-ai'; $ModelsDir = Join-Path $LocalAI 'models'; $VorDir = Join-Path $LocalAI 'vor'
   $RHome = Join-Path $Prefix 'Vor'
   if (-not $OllamaPort) { $OllamaPort = 11435 }
@@ -84,6 +112,7 @@ if ($Prefix) {
   # the Heim tools' own defaults are ~\local-ai\...: the index step runs them, so point them here
   $env:HEIM_DB = Join-Path $LocalAI 'knowledge.db'; $env:HEIM_RUNS_DB = Join-Path $LocalAI 'runs.db'; $env:HEIM_REPORTS = Join-Path $LocalAI 'reports'
 }
+$Bin = Join-Path $LocalAI 'bin'      # a .cmd launcher per command (Step 6)
 if ($OllamaPort) {
   $OllamaUrl = "http://127.0.0.1:$OllamaPort"
   $env:OLLAMA_HOST = "127.0.0.1:$OllamaPort"; $env:OLLAMA_URL = $OllamaUrl   # the ollama CLI and the Heim/Vor tools
@@ -92,10 +121,12 @@ if ($DoHeim -and -not (Test-Path (Join-Path $Here 'heim\tools'))) {
   Write-Host "  warn no heim\tools beside this script ($Here): run it from the package's damit_ai\ folder, or Heim gets no tools and no index" -ForegroundColor Yellow
 }
 
-function Say ($m) { Write-Host "`n== $m" -ForegroundColor White }
-function Ok  ($m) { Write-Host "  ok $m"   -ForegroundColor Green }
-function Warn($m) { Write-Host "  warn $m" -ForegroundColor Yellow }
-function Die ($m) { Write-Host "  ERROR $m" -ForegroundColor Red; exit 1 }
+# Everything shown from here on also goes to the install log (Start-Transcript; it records what the
+# script writes, though not always the progress bars of ollama.exe), and a stop says how to carry on.
+New-Item -ItemType Directory -Force -Path $LocalAI | Out-Null
+$InstallLog = Join-Path $LocalAI 'install.log'
+try { Start-Transcript -Path $InstallLog -Append | Out-Null; $script:Transcript = $true } catch { $script:Transcript = $false }
+
 function Sha ($p) { (Get-FileHash -Algorithm SHA256 -Path $p).Hash.ToLower() }
 function ServerUp {
   try { Invoke-RestMethod -Uri "$OllamaUrl/api/version" -TimeoutSec 3 | Out-Null; return $true }
@@ -205,8 +236,10 @@ if ($Prefix -and (ServerUp)) {
     Die "something else already answers on $OllamaUrl (another Ollama?). Stop it, or pick a free port with -OllamaPort N"
   }
 }
+$StartedServer = $false
 if (-not (ServerUp)) {
   Ok "starting ollama serve on $OllamaUrl"
+  $StartedServer = $true
   # -Prefix: the server's home is the sandbox, so its key (~\.ollama) is made there
   $keep = @{ USERPROFILE = $env:USERPROFILE; HOME = $env:HOME }
   if ($Prefix) { $env:USERPROFILE = $LocalAI; $env:HOME = $LocalAI }
@@ -240,6 +273,7 @@ $ccands = @(
 foreach ($c in $ccands) { if ($c -and (Test-Path $c)) { $Conda = $c; break } }
 if ($Conda) { Ok "conda: $Conda" } else { Warn 'no conda found - will use python venvs (needs python on PATH)' }
 
+$CondaLog = Join-Path $LocalAI 'conda.log'
 function Make-Env ($name, $spec) {   # returns the python.exe path
   if ($Conda -and $Prefix) {
     # -Prefix: the env is made BY PATH in the sandbox (install-all -Sandbox builds it there first)
@@ -248,17 +282,18 @@ function Make-Env ($name, $spec) {   # returns the python.exe path
       # conda's home is the sandbox while it runs (it rewrites ~\.conda\environments.txt otherwise)
       $keep = @{ USERPROFILE = $env:USERPROFILE; HOME = $env:HOME }
       $env:USERPROFILE = Join-Path $LocalAI '.home'; $env:HOME = $env:USERPROFILE
-      try { & $Conda create -y -p $ep -c conda-forge --override-channels @($spec -split '\s+') *> $null }
+      try { & $Conda create -y -p $ep -c conda-forge --override-channels @($spec -split '\s+') *>> $CondaLog }
       finally { $env:USERPROFILE = $keep.USERPROFILE; $env:HOME = $keep.HOME }
-      if ($LASTEXITCODE -ne 0) { Warn "conda create $ep failed - falling back to a venv"; $script:Conda = $null }
+      if ($LASTEXITCODE -ne 0) { Warn "conda create $ep failed (see $CondaLog) - falling back to a venv"; $script:Conda = $null }
     }
     if ($Conda) { return (Join-Path $ep 'python.exe') }
   }
   if ($Conda) {
     $envpath = ((& $Conda env list) | Select-String -Pattern "^\s*$name\s" | Select-Object -First 1)
     if (-not $envpath) {
-      & $Conda create -y -n $name -c conda-forge --override-channels @($spec -split '\s+') *> $null
-      if ($LASTEXITCODE -ne 0) { Warn "conda create $name failed - falling back to a venv"; $script:Conda = $null }
+      Ok "making the conda environment $name (a few minutes; its output goes to $CondaLog)"
+      & $Conda create -y -n $name -c conda-forge --override-channels @($spec -split '\s+') *>> $CondaLog
+      if ($LASTEXITCODE -ne 0) { Warn "conda create $name failed (see $CondaLog) - falling back to a venv"; $script:Conda = $null }
     }
     if ($Conda) {
       $line = ((& $Conda env list) | Select-String -Pattern "(?<![\w-])$name\s" | Select-Object -First 1).ToString()
@@ -267,7 +302,9 @@ function Make-Env ($name, $spec) {   # returns the python.exe path
     }
   }
   $py = (Get-Command python -ErrorAction SilentlyContinue).Source
-  if (-not $py) { Die 'no conda and no python on PATH' }
+  # Windows ships a 'python' in WindowsApps that only opens the Microsoft Store: it is not a Python
+  if ($py -and $py -like '*\WindowsApps\*') { Warn "the 'python' on PATH ($py) is the Microsoft Store shortcut, not a Python"; $py = $null }
+  if (-not $py) { Die 'no conda and no Python: install Miniforge (github.com/conda-forge/miniforge, no admin needed) and run this again' }
   $venv = Join-Path $LocalAI "$name-venv"
   & $py -m venv $venv *> $null
   if (-not (Test-Path (Join-Path $venv 'Scripts\python.exe'))) { Die "venv $name failed" }
@@ -346,6 +383,46 @@ function Pull ($m) {
   }
 }
 
+# Free disk space before the downloads (12-22 GB): a full disk half way through a pull is the worst place
+# to find out. Sizes: the 4-bit files in the table above; qwen3-embedding is ~0.64 GB.
+function Model-Bytes ($tag) {
+  $keepSpec = $env:HEIM_GGUF_SPEC; $env:HEIM_GGUF_SPEC = $null
+  try { $sp = Get-HfGgufSpec $tag } finally { $env:HEIM_GGUF_SPEC = $keepSpec }
+  if ($sp) { return [int64]$sp[3] }
+  if ($tag -like 'qwen3-embedding:*') { return [int64]639000000 }
+  return [int64]0
+}
+if (-not $NoModels) {
+  $want = @()
+  if ($WatchModel -eq 'phi') { $WatchModel = 'phi4-mini' } elseif ($WatchModel -eq 'small') { $WatchModel = 'qwen3:4b' }
+  if ($DoHeim) { $want += @($ChatModel, 'nomic-embed-text'); if (-not $NoWatchModel) { $want += $WatchModel } }
+  if ($DoVor)  { $want += @($ChatModel, 'qwen3-embedding:0.6b') }
+  $haveList = @(& $Ollama list 2>$null)
+  $need = [int64]0; $needNames = @()
+  foreach ($m in ($want | Where-Object { $_ } | Select-Object -Unique)) {
+    if ($haveList -match ('^' + [regex]::Escape($m))) { continue }
+    $need += (Model-Bytes $m); $needNames += $m
+  }
+  # a pull stopped part way left its blobs\*-partial* files: a re-run downloads only the rest
+  $part = [int64](Get-ChildItem -Path (Join-Path $ModelsDir 'blobs') -Filter '*-partial*' -File -ErrorAction SilentlyContinue |
+                  Measure-Object -Property Length -Sum).Sum
+  $need = [Math]::Max([int64]0, $need - $part)
+  if ($need -gt 0 -and $env:HEIM_SKIP_DISK_CHECK -eq '1') {
+    Ok "disk-space check skipped (HEIM_SKIP_DISK_CHECK=1); models to download: $($needNames -join ', ')"
+  } elseif ($need -gt 0 -and -not $StartedServer -and -not $Prefix) {
+    # an Ollama that was already running keeps models in ITS folder, which may not be $ModelsDir
+    Ok "models to download: $($needNames -join ', ') (about $('{0:N1}' -f ($need / 1GB)) GB) into the folder of the Ollama that was already running; make sure that disk has room. Ctrl+C is safe, a re-run carries on."
+  } elseif ($need -gt 0) {
+    $free = (Get-PSDrive -Name ((Resolve-Path $ModelsDir).Drive.Name)).Free
+    $gb = { param($b) '{0:N1}' -f ($b / 1GB) }
+    if ($free -lt ($need + [int64]($need / 10) + 1GB)) {
+      $small = if ($ChatModel -ne 'qwen3:8b') { ' (or add -Small for a smaller chat model)' } else { '' }
+      Die "not enough free disk space for the models ($($needNames -join ', ')): they need about $(& $gb $need) GB in $ModelsDir and $(& $gb $free) GB is free. Free some space$small, then run this again (or set HEIM_SKIP_DISK_CHECK=1 to try anyway)."
+    }
+    Ok "models to download: $($needNames -join ', ') (about $(& $gb $need) GB; $(& $gb $free) GB free). Progress shows below; Ctrl+C is safe, a re-run carries on."
+  }
+}
+
 # ===========================================================================
 if ($DoHeim) {
   Say 'Heim - code triage'
@@ -419,8 +496,11 @@ if ($DoVor) {
   Say 'vor - literature'
   $Embed = 'qwen3-embedding:0.6b'
   if (-not $NoModels) {
-  & $Ollama pull $Embed *> $null
-  if ($LASTEXITCODE -ne 0) { Warn 'qwen3-embedding pull failed; using nomic-embed-text'; $Embed = 'nomic-embed-text' }
+  if (-not ((& $Ollama list) -match [regex]::Escape($Embed))) {
+    Ok "pulling $Embed (Vor's search model, about 0.6 GB)"
+    & $Ollama pull $Embed
+    if ($LASTEXITCODE -ne 0) { Warn 'qwen3-embedding pull failed; using nomic-embed-text'; $Embed = 'nomic-embed-text' }
+  }
   }
   Pull $ChatModel; Pull $Embed
   $mf = Join-Path $VorDir 'Modelfile'
@@ -482,6 +562,55 @@ if ($DoIndex -and $DoHeim -and (Test-Path (Join-Path $Here 'heim\knowledge'))) {
 }
 
 # ---------------------------------------------------------------------------
+# Vor's library: a new install has nothing to answer from. The offline pack's library (download-all)
+# is copied in (nothing already there is overwritten) and indexed; without one, the line to fetch the
+# starter library is printed at the end.
+$LibEmpty = $false
+if ($DoVor) {
+  $libDir = Join-Path $RHome 'library'
+  $hasDocs = Get-ChildItem -Path $libDir -Recurse -File -Include '*.pdf','*.md','*.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $hasDocs) {
+    $LibEmpty = $true
+    $offLib = Join-Path $Offline 'Vor\library'
+    if (Get-ChildItem -Path $offLib -Recurse -File -Filter '*.pdf' -ErrorAction SilentlyContinue | Select-Object -First 1) {
+      Say "Vor's library: the offline pack's publications"
+      & robocopy.exe $offLib $libDir /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+      if ($LASTEXITCODE -ge 8) { Warn "some library files were not copied (robocopy exit $LASTEXITCODE)" } else { Ok "copied into $libDir" }
+      $global:LASTEXITCODE = 0
+      $LibEmpty = $false
+    }
+  }
+  # index the library when it has files and no index yet (also when an earlier run copied it and
+  # its ingest was stopped); a library you already indexed is left to `vor ingest`
+  $hasLib = Get-ChildItem -Path $libDir -Recurse -File -Include '*.pdf','*.md','*.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($hasLib -and -not (VorHasIndex $RHome)) {
+    if (-not $NoModels -and -not $NoIndex) {
+      Say "Vor's library: indexing it"
+      Ok 'a while for a full library; Ctrl+C is safe, then run: vor ingest'
+      $env:VOR_HOME = $RHome
+      & $PyR (Join-Path $VorDir 'vor.py') ingest
+      if ($LASTEXITCODE -ne 0) { Warn 'the library index stopped; run: vor ingest' }
+      $global:LASTEXITCODE = 0
+    } else { Ok "Vor's library is not indexed yet (no models or -NoIndex this run): run  vor ingest  later" }
+  }
+}
+
+# ---------------------------------------------------------------------------
+if (-not $NoModels) {
+  Say 'Check (ai-doctor)'
+  $env:VOR_HOME = $RHome; $env:VOR_TOOL = Join-Path $VorDir 'vor.py'
+  if ($DoVor) { $env:VOR_PYTHON = $PyR }
+  if ($DoHeim) {
+    & $PyL (Join-Path $LocalAI 'ai_doctor.py')
+    if ($LASTEXITCODE -ne 0) { Warn 'ai-doctor found a PROBLEM above: its line says what to run' }
+  } else {
+    & $PyR (Join-Path $VorDir 'vor.py') doctor
+    if ($LASTEXITCODE -ne 0) { Warn 'vor doctor found a PROBLEM above: its line says what to run' }
+  }
+  $global:LASTEXITCODE = 0
+}
+
+# ---------------------------------------------------------------------------
 Say "Step 5 - PowerShell profile ($(if ($Prefix) { "$LocalAI\env.ps1" } else { $PROFILE }))"
 $mark = '# >>> dam local AI (heim + vor) >>>'
 if ($Prefix) {
@@ -500,7 +629,7 @@ if ($Prefix) {
     "set `"HEIM_DB=$LocalAI\knowledge.db`"", "set `"HEIM_RUNS_DB=$LocalAI\runs.db`"", "set `"HEIM_REPORTS=$LocalAI\reports`"",
     "set `"DAMAUDIT_REPORTS=$LocalAI\reports`"", "set `"DAMAUDIT_GOLDEN=$LocalAI\golden`"",
     "set `"DAMCHAIN_BATCH_ROOT=$LocalAI\qgis-batch`"", "set `"DAMCHAIN_CREST_DIR=$LocalAI\crest-desktop`"", "set `"VOR_TOOL=$VorDir\vor.py`"",
-    "set `"PATH=$LocalAI;$VorDir;%PATH%`"")
+    "set `"PATH=$LocalAI\bin;$LocalAI;$VorDir;%PATH%`"")
   if ($DoHeim) {
     $el += "`$env:HEIM_NUM_CTX = '$NumCtx'"; $el += "`$env:HEIM_WATCH_MODEL = '$WatchModel'"
     $el += "function heim     { & '$PyL' '$LocalAI\rag_query.py' @args }"
@@ -517,7 +646,7 @@ if ($Prefix) {
     $el += "function heim-index  { & '$PyL' '$LocalAI\rag_index.py' @args }"
     $ec += "set `"HEIM_NUM_CTX=$NumCtx`""; $ec += "set `"HEIM_WATCH_MODEL=$WatchModel`""
   }
-  if ($DoVor) { $el += "`$env:VOR_HOME = '$RHome'"; $el += "function vor { & '$PyR' '$VorDir\vor.py' @args }"; $ec += "set `"VOR_HOME=$RHome`"" }
+  if ($DoVor) { $el += "`$env:VOR_HOME = '$RHome'"; $el += "`$env:VOR_PYTHON = '$PyR'"; $el += "function vor { & '$PyR' '$VorDir\vor.py' @args }"; $ec += "set `"VOR_HOME=$RHome`""; $ec += "set `"VOR_PYTHON=$PyR`"" }
   $el += '# <<< dam local AI <<<'
   $el | Set-Content (Join-Path $LocalAI 'env.ps1') -Encoding UTF8
   $ec | Set-Content (Join-Path $LocalAI 'env.cmd') -Encoding ASCII
@@ -574,6 +703,7 @@ if ($writeBlock) {
   }
   if ($DoVor) {
     $lines += "`$env:VOR_HOME = '$RHome'"
+    $lines += "`$env:VOR_PYTHON = '$PyR'"
     $lines += "function vor { & '$PyR' '$VorDir\vor.py' @args }"
   }
   $lines += '# <<< dam local AI <<<'
@@ -585,14 +715,122 @@ if ($writeBlock) {
 }
 
 # ---------------------------------------------------------------------------
+# .cmd launchers for EVERY command in local-ai\bin, which goes on the user PATH. They work in cmd.exe,
+# and in PowerShell where the profile does not load (a blocked execution policy): PowerShell runs its
+# profile function when there is one and the launcher when there is not. Paths under your user folder
+# are written as %USERPROFILE%\..., so a user name with letters outside ASCII survives the .cmd file.
+Say "Step 6 - command launchers ($Bin)"
+New-Item -ItemType Directory -Force -Path $Bin | Out-Null
+function Cmd-Path ($p) {
+  $u = $env:USERPROFILE.TrimEnd('\')
+  if ($p -and $p.StartsWith($u + '\', [StringComparison]::OrdinalIgnoreCase)) { return '%USERPROFILE%' + $p.Substring($u.Length) }
+  return $p
+}
+$launchEnv = @()
+if ($DoHeim) { $launchEnv += "set `"HEIM_NUM_CTX=$NumCtx`""; $launchEnv += "set `"HEIM_WATCH_MODEL=$WatchModel`"" }
+if ($DoVor)  { $launchEnv += "set `"VOR_HOME=$(Cmd-Path $RHome)`""; $launchEnv += "set `"VOR_PYTHON=$(Cmd-Path $PyR)`"" }
+function New-Launcher ($name, $py, $script, $pre) {
+  $l = @('@echo off', 'setlocal') + $launchEnv + @("`"$(Cmd-Path $py)`" `"$(Cmd-Path $script)`" $pre%*")
+  $l | Set-Content (Join-Path $Bin "$name.cmd") -Encoding ASCII
+}
+$made = @()
+if ($DoHeim) {
+  foreach ($c in @(@('heim','rag_query.py',''), @('damchain','dam_chain.py',''), @('heim-chat','rag_query.py','--chat '),
+                   @('heim-add','rag_index.py','--add '), @('heim-doctor','rag_index.py','--doctor '),
+                   @('heim-index','rag_index.py',''), @('heim-digest','run_digest.py',''), @('heim-watch','heim_watch.py',''),
+                   @('heim-runs','run_results.py',''), @('ai-doctor','ai_doctor.py',''), @('ai','ai_ui.py',''),
+                   @('ai-score','ai_score.py',''))) {
+    New-Launcher $c[0] $PyL (Join-Path $LocalAI $c[1]) $c[2]; $made += $c[0]
+  }
+}
+if ($DoVor) { New-Launcher 'vor' $PyR (Join-Path $VorDir 'vor.py') ''; $made += 'vor' }
+Ok "$($made -join ', ')"
+if (-not $Prefix) {
+  # the user PATH as stored (REG_EXPAND_SZ, %VARS% kept), with local-ai\bin added once
+  $envKey = 'HKCU:\Environment'
+  $raw = (Get-Item $envKey).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+  if (-not (($raw -split ';') | Where-Object { $_.TrimEnd('\') -ieq $Bin.TrimEnd('\') })) {
+    $new = if ($raw) { $raw.TrimEnd(';') + ';' + $Bin } else { $Bin }
+    Set-ItemProperty -Path $envKey -Name 'Path' -Value $new -Type ExpandString
+    # tell Windows the environment changed (new windows see the PATH without signing out):
+    # setting a user variable through .NET broadcasts WM_SETTINGCHANGE
+    [Environment]::SetEnvironmentVariable('OLLAMA_MODELS', $ModelsDir, 'User')
+    Ok "$Bin added to your user PATH (new windows)"
+  } else { Ok "$Bin is on your user PATH" }
+  $env:Path = "$env:Path;$Bin"
+}
+
+# ---------------------------------------------------------------------------
+# PowerShell runs no profile under the default policy on Windows 10/11 (Restricted), and then the heim /
+# vor functions are not there. This process may run with -ExecutionPolicy Bypass, which hides that, so
+# the policy a NEW window gets is worked out from the other scopes.
+function Profile-Policy {
+  $list = Get-ExecutionPolicy -List
+  foreach ($sc in @('MachinePolicy', 'UserPolicy', 'CurrentUser', 'LocalMachine')) {
+    $v = "$(($list | Where-Object { "$($_.Scope)" -eq $sc }).ExecutionPolicy)"
+    if ($v -and $v -ne 'Undefined') { return $v }
+  }
+  if ((Get-CimInstance Win32_OperatingSystem).ProductType -ne 1) { return 'RemoteSigned' }   # Windows Server
+  return 'Restricted'
+}
+# -NonInteractive (a scheduled or scripted run) makes Read-Host fail, so it is not asked there
+$NonInteractive = [bool]([Environment]::GetCommandLineArgs() | Where-Object { $_ -like '-NonI*' })
+if ($Prefix) {
+  Say 'Step 7 - execution policy (not checked for a -Prefix sandbox)'
+  Ok "env.ps1 is dot-sourced by hand; if PowerShell refuses it, use env.cmd in cmd.exe or the launchers in $Bin"
+} else {
+Say 'Step 7 - can PowerShell load your profile?'
+$pol = Profile-Policy
+if ($pol -in @('Restricted', 'AllSigned')) {
+  $doIt = [bool]$AllowProfileScripts
+  if (-not $doIt -and [Environment]::UserInteractive -and -not $NonInteractive -and -not [Console]::IsInputRedirected) {
+    Write-Host "  A new PowerShell window here uses the execution policy '$pol', so it does not load your profile," -ForegroundColor Yellow
+    Write-Host "  where the heim / vor commands are written. The usual fix, for your user only, is:" -ForegroundColor Yellow
+    Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Yellow
+    Write-Host "  (scripts you made or installed on this PC run; scripts downloaded from the internet must be signed)." -ForegroundColor Yellow
+    try { $ans = Read-Host '  Do that now? Type y for yes, anything else leaves it as it is' } catch { $ans = '' }
+    $doIt = ($ans -match '^\s*y(es)?\s*$')
+  }
+  if ($doIt) {
+    try { Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction Stop }
+    catch {
+      # this window's own -ExecutionPolicy Bypass outranks CurrentUser: PowerShell still SAVES the new
+      # setting and then reports the override as an error. It is not a failure; Profile-Policy re-checks.
+      if ("$($_.FullyQualifiedErrorId)" -notlike '*ExecutionPolicyOverride*') { Warn "could not change it: $($_.Exception.Message)" }
+    }
+    $pol = Profile-Policy
+  }
+  if ($pol -in @('Restricted', 'AllSigned')) {
+    Warn "the policy stays '$pol' (your organisation may set it). The commands still work: the .cmd launchers in $Bin run them in PowerShell and in cmd.exe."
+  } else { Ok "execution policy for your user: $pol (your profile loads in a new window)" }
+} else { Ok "execution policy '$pol': your profile loads" }
+}
+
+# ---------------------------------------------------------------------------
 Say 'Done'
 if ($Prefix) {
   Write-Host "  Sandbox ${Prefix}: in each PowerShell run  . '$LocalAI\env.ps1'  (cmd.exe: $LocalAI\env.cmd). Its Ollama: $OllamaUrl (dam-ollama-serve starts it again)."
-  Write-Host "  To remove it: Stop-Process -Id (Get-Content '$PidFile'), then delete $Prefix. Then:"
+  Write-Host "  To remove it: Stop-Process -Id (Get-Content '$PidFile'), then delete $Prefix."
+  Write-Host "  Try it now (after loading env.ps1 or env.cmd):"
 } else {
-Write-Host "  Open a new PowerShell (the profile loads automatically), then:"
+  Write-Host "  Try it now. Open a NEW PowerShell or Command Prompt window first (it reads the new commands), then:"
 }
-if ($DoHeim)     { Write-Host '    heim "where is the breach width computed"   # set ND_REPO/DWR_REPO/CREST_REPO first for repo audits' }
-if ($DoVor) { Write-Host "    vor ingest    # after dropping PDFs in $RHome\library (or run vor\fetch_asdso.py --catalog)" }
-Write-Host "  .cmd launchers for cmd.exe are in $LocalAI (heim.cmd, damchain.cmd) and $VorDir (vor.cmd)."
+if ($DoVor)  { Write-Host '    vor "what breach width does Froehlich 2008 give?"     answered from your library, quotes checked' }
+if ($DoHeim) {
+  Write-Host '    heim "what does REFINE_NEAR do?"                      the suite''s tools and known behaviours'
+  Write-Host '    ai                                                     both on one page in your browser'
+  Write-Host '    heim help                                              the short list of commands'
+}
+if ($DoVor -and $LibEmpty) {
+  Write-Host "  Vor's library is empty, so vor has nothing to quote yet. Add your own PDFs:  vor add FILE ..."
+  Write-Host "  or fetch the starter library of public dam-safety publications (a few hundred MB), then index it:"
+  Write-Host "    PowerShell:   & '$PyR' '$VorDir\fetch_asdso.py' --catalog"
+  Write-Host "    Command Prompt:  `"$PyR`" `"$VorDir\fetch_asdso.py`" --catalog"
+  Write-Host "    then:  vor ingest"
+}
+$doctor = if ($DoHeim) { 'ai-doctor' } else { 'vor doctor' }
+Write-Host "  Check it again any time:  $doctor     Everything this printed:  $InstallLog"
+if ($DoHeim) { Write-Host '  For developers: set ND_REPO / DWR_REPO / CREST_REPO to your clones, then  heim "where is the breach width computed"' }
 Write-Host '  The local AIs need no admin rights and no GPU; a discrete GPU only makes them faster.'
+Stop-Log
+exit 0

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# dam_chain.py v1.6.0 — run the dam-plugin sets headless from Terminal (conda), stdlib only.
+# dam_chain.py v1.6.1 — run the dam-plugin sets headless from Terminal (conda), stdlib only.
 #
 #   dam_chain.py setup                       one-time: batch profiles that point at your QGIS
 #                                            profiles "nd", "damsafety" and "damit", plugins enabled
@@ -48,6 +48,8 @@
 # profile, so ND, DamSafety and DamIT never load together (they share Processing ids).
 # v1.6.0 (2026-11-23): the DamIT set (--set damit, profile "damit"), the QGIS profiles folder
 # of Linux and Windows as well as macOS, and option names checked before a run.
+# v1.6.1: a wrong path is said before conda or QGIS is looked for; after a run, each dam's result
+# folder and the `heim runs add` line that reads them into Heim.
 # --dry-run prints the commands without running them. Logs: <dams folder>/_chain_logs/.
 import os, sys, re, csv, json, time, shutil, argparse, subprocess, threading, urllib.request, urllib.error
 from datetime import datetime
@@ -309,6 +311,14 @@ def _json_results(out):
 def _q(s):
     s = str(s)
     return s if re.fullmatch(r"[\w@%+=:,./-]+", s) else "'" + s.replace("'", "'\\''") + "'"
+
+
+def _paste(s):
+    """A path for a line the user copies into THEIR shell: double quotes on Windows (cmd and
+    PowerShell both read them), _q's single quotes elsewhere. _q stays for the POSIX wrappers."""
+    if os.name == "nt":
+        return subprocess.list2cmdline([str(s)])
+    return _q(s)
 
 
 def _heim_chat(prompt, timeout=1800):
@@ -769,6 +779,8 @@ def run_dwr(args):
     print("log: %s" % log)
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
+    if ok and not args.check_only:
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(p["OUT_FOLDER"]))
     if not ok and getattr(args, "triage", False):
         triage_failure("DamSafety chain", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
@@ -982,6 +994,12 @@ def run_damit(args):
     under --out. Classification is not part of it: DamIT Hazard has no batch classifier yet."""
     ids = read_ids(args)
     bad = damit_preflight(args, ids)
+    if bad:
+        # v1.6.1: a wrong path is said before anything looks for conda or QGIS
+        print("preflight: %d error(s)" % len(bad))
+        for b in bad:
+            print("  ERROR  " + b)
+        sys.exit(1)
     qp = QP(args, "damit")
     # --param goes through the same name check as --runner-param here: the DamIT Runner is the one tool
     runner_kv = dict(parse_kv(args.param), **runner_settings(args))
@@ -1040,9 +1058,11 @@ def run_damit(args):
         ok, err = False, err or "the Runner reported no counts; see the log"
     done = sum(int(x) for x in re.findall(r"(\d+)\s+(?:run|failed|skipped|with no breach|flagged)\b", counts))
     want = len(set(ids))
+    rows = []
     try:                              # distinct ids in the Runner's summary, when it wrote one
         with open(res.get("SUMMARY") or "", newline="", encoding="utf-8-sig") as fh:
-            seen = {(r.get("Dam") or "").strip() for r in csv.DictReader(fh)}
+            rows = list(csv.DictReader(fh))
+        seen = {(r.get("Dam") or "").strip() for r in rows}
         done = len(set(ids) & seen) if seen else done
     except (OSError, ValueError):
         pass
@@ -1057,9 +1077,26 @@ def run_damit(args):
     print("log: %s" % log)
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
+    print_results(rows, ids, out, ok)
     if not ok and getattr(args, "triage", False):
         triage_failure("DamIT batch", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
+
+
+def print_results(rows, ids, out, ok=True, most=20):
+    """v1.6.1: where each dam's results are, and the one line that reads them into Heim."""
+    want = set(ids)
+    mine = [r for r in rows if not want or (r.get("Dam") or "").strip() in want]
+    if mine:
+        print("results:")
+        for r in mine[:most]:
+            print("  %-14s %-10s %s" % ((r.get("Dam") or "").strip(), (r.get("Status") or "").strip(),
+                                        (r.get("Folder") or "").strip()))
+        if len(mine) > most:
+            print("  ... and %d more (see the summary)" % (len(mine) - most))
+    # no summary rows: offer the folder only when the run itself said OK (a failed run's folder may be empty)
+    if any((r.get("Status") or "").strip() == "done" for r in mine) or (ok and not rows and os.path.isdir(out)):
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(out))
 
 
 def default_lisflood():
@@ -1171,7 +1208,7 @@ def main():
         vor_passthrough(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "audit":
         audit_passthrough(sys.argv[2:])
-    ap = argparse.ArgumentParser(description="Run the ND, DamSafety and DamIT dam plugins headless. "
+    ap = argparse.ArgumentParser(prog="damchain", description="Run the ND, DamSafety and DamIT dam plugins headless. "
                                              "`vor ...` runs the literature assistant (`research` is an alias); "
                                              "`audit ...` the local repo audit (audit --help).")
     ap.add_argument("--env", default="ndqgis", help="conda env with QGIS (default ndqgis)")

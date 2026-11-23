@@ -111,6 +111,18 @@ class DoctorTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "Vor", "vor.db")),
                          "a doctor that makes an empty index hides the thing it is looking for")
 
+    def test_a_new_install_with_nothing_yet_is_a_watch_not_a_problem(self):
+        """1.4.5: ai-doctor at the end of a first install said PROBLEM for an empty library and no index.
+        Nothing is wrong yet: it is a WATCH that says how to add publications."""
+        os.makedirs(os.path.join(self.tmp, "Vor", "library"))
+        m, c = self.checks()
+        self.assertEqual(self.levels(c, "PROBLEM"), [], c)
+        w = [t for t in self.levels(c, "WATCH") if "no index at" in t]
+        self.assertEqual(len(w), 1, c)
+        self.assertIn("The library is empty", w[0])
+        self.assertIn("vor add FILE", w[0])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "Vor", "vor.db")))
+
     def test_an_empty_index_is_a_problem(self):
         self.library("Vor", files=("a.md",), index=())
         m, c = self.checks()

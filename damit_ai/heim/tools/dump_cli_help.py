@@ -77,7 +77,9 @@ def capture(path):
         if k.startswith(ENV_PREFIXES):
             del os.environ[k]
     os.environ["HOME"] = os.environ["USERPROFILE"] = EMPTY_HOME
-    sys.argv = [os.path.basename(path)]
+    # "--help", not no arguments: a tool may answer a bare command itself (vor and heim print their
+    # short list) and never reach its parser
+    sys.argv = [os.path.basename(path), "--help"]
     argparse.ArgumentParser.parse_args = stop
     argparse.ArgumentParser.parse_known_args = stop
     try:

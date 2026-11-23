@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-# rag_query.py v2.8 — query the RAG store, streaming output (stdlib only; numpy if present)
+# rag_query.py v2.9 — query the RAG store, streaming output (stdlib only; numpy if present)
 #
 #   rag_query.py "question"            one question, answered from the indexed documents
 #   rag_query.py -c standards "..."    from one collection
 #   rag_query.py --chat                a conversation: every question is looked up first
 #   rag_query.py runs ...              the run results database (run_results.py: heim runs)
 #
+# v2.9: `heim` on its own (or `heim help`) prints the short command list instead of "no question
+#   given". When Ollama is not running, a model is missing or Ollama sends an error, the answer is one
+#   plain line that says what to do (ollama_problem), not a Python traceback; HEIM_DEBUG=1 shows the
+#   traceback. `heim run add FOLDER` / `heim run show 2801` (run_results words after `run`) say
+#   "did you mean heim runs ...". The usage lines name the installed commands (heim, heim-index).
 # v2.8: `heim run "..."` drafts a damchain run (heim_run.py beside this file): it shows the
 #   command and runs nothing until you type y. "run ...?" (ending in ?) is still a question.
 # v2.7: at most PER_FILE (3) of the passages handed to the model come from one file, while other
@@ -131,6 +136,61 @@ def ensure_ollama(base, log=print):
         time.sleep(0.5)
     log("Ollama did not answer within 30 s; see %s" % logf)
     return False
+
+
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
+
+
+def ollama_problem(e, base=None):
+    """One plain line for a failed call to Ollama, or None when `e` is not one (then the traceback is a
+    real bug and is shown). The same function is in rag_query.py and run_results.py (a test keeps them
+    identical)."""
+    import socket
+    base = base or BASE
+    if type(e).__name__ == "OllamaError":
+        return "Ollama stopped with an error: %s" % " ".join(str(e).split())[:300]
+    if isinstance(e, urllib.error.HTTPError):
+        body = getattr(e, "heim_body", None)     # read once: a second call finds the stream empty
+        if body is None:
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 - the body is only for the message
+                body = ""
+            try:
+                e.heim_body = body
+            except AttributeError:
+                pass
+        try:
+            body = json.loads(body).get("error") or body
+        except (ValueError, AttributeError):
+            pass
+        m = re.search(r"model\s+['\"]?([^'\"\s]+)['\"]?\s+not\s+found", body, re.I)
+        if e.code == 404 or m:
+            name = m.group(1) if m else "the model this asks for"
+            if name.split(":")[0] in ("heim", "vor"):
+                fix = "the installer makes it: run the installer again (it keeps what is there)"
+            else:
+                fix = ("run the installer again (it fetches what is missing), or:  ollama pull %s" % name
+                       if m else "run the installer again")
+            return "Ollama has no model %s; %s. (ollama list shows what it has.)" % (name, fix)
+        return "Ollama answered with an error (HTTP %s): %s" % (e.code, " ".join(str(body).split())[:300])
+    if isinstance(e, (socket.timeout, TimeoutError)) or (
+            isinstance(e, urllib.error.URLError) and isinstance(e.reason, (socket.timeout, TimeoutError))):
+        return ("Ollama took too long to answer at %s. The model may still be loading or too big for this "
+                "computer: try again, or re-run the installer with --small (Windows: -Small)." % base)
+    if isinstance(e, urllib.error.URLError) or (isinstance(e, ConnectionError) and not isinstance(e, BrokenPipeError)):
+        return "Ollama is not answering at %s. To start it, %s; then try again." % (base, start_hint())
+    return None
 
 
 class Store(object):
@@ -298,10 +358,11 @@ def unpack_vec(v):
 
 def retrieve(q, coll, top_k):
     if not os.path.exists(DB):
-        sys.exit("No index at %s — run rag_index.py first." % DB)
+        sys.exit("No index at %s. Index the knowledge pack: heim-index -c heim_knowledge <folder> "
+                 "(the installer does this; ai-doctor checks it)." % DB)
     store = Store(coll)
     if not store.rows:
-        h = (" Collection '%s' empty — index it: rag_index.py -c %s <folder>" % (coll, coll)) if coll != "all" else ""
+        h = (" Collection '%s' empty — index it: heim-index -c %s <folder>" % (coll, coll)) if coll != "all" else ""
         sys.exit("Index is empty.%s" % h)
     slow_note(store)
     return store.search([q], top_k)
@@ -320,6 +381,10 @@ def chat_payload(prompt, stream, think=True):
     if think:
         p["think"] = True
     return p
+
+
+class OllamaError(RuntimeError):
+    """An error Ollama sent inside an answer (an out-of-memory, a model that failed to load)."""
 
 
 def stream_answer(prompt, think=True):
@@ -346,7 +411,7 @@ def stream_answer(prompt, think=True):
             except json.JSONDecodeError:
                 continue
             if ch.get("error"):
-                raise RuntimeError(ch["error"])
+                raise OllamaError(ch["error"])
             msg = ch.get("message") or {}
             if msg.get("thinking") and not thinking_shown:
                 sys.stdout.write("(thinking…)\n")
@@ -388,7 +453,7 @@ def answer(prompt):
         print("\n[interrupted]")
         return None
     except Exception as e:
-        print("[stream failed (%s) — non-streaming fallback]" % e)
+        print("[the streamed answer failed (%s); trying once without streaming]" % (ollama_problem(e) or e))
         out = post(BASE + "/api/chat", chat_payload(prompt, False, think=False))
         ans = (out.get("message") or {}).get("content") or ""
         print(ans)
@@ -487,7 +552,7 @@ def chat(coll, top_k, ask=input):
         try:
             hits = store.search([q] + ([earlier[0] + "\n" + q] if earlier else []), top_k)
         except Exception as e:
-            print("could not look that up: %s\n(is Ollama running? heim-start)" % e)
+            print("could not look that up: %s" % (ollama_problem(e) or e))
             continue
         if hits:
             print("Looked up %d passages:" % len(hits))
@@ -499,7 +564,14 @@ def chat(coll, top_k, ask=input):
             prompt = q if not earlier else ("Earlier question: %s\nEarlier answer: %s\n\nQuestion: %s"
                                             % (earlier[0], earlier[1][:1200], q))
         print("-" * 70)
-        ans = answer(prompt)
+        try:
+            ans = answer(prompt)
+        except Exception as e:  # noqa: BLE001 - Ollama down mid-chat: say so, keep the chat
+            msg = ollama_problem(e)
+            if msg is None:
+                raise
+            print(msg)
+            continue
         if ans is None:
             continue
         if ans.strip():
@@ -520,7 +592,7 @@ The commands you will use (the rest: heim --help, heim runs --help, vor --help):
   ai                         all of the above on one page in your browser (this computer only)
   ai-score                   run both answer tests and keep a dated score history
 
-Ollama is started for you when it is not running (heim-start still works).
+Ollama is started for you when it is not running.
 More: heim add FILE, heim doctor, heim-digest / heim-watch (run watcher), damchain, heim-index.
 """
 
@@ -583,6 +655,13 @@ def command_word(argv):
     if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "run", "help"):
         return None
     word, rest = argv[0], argv[1:]
+    if (word == "run" and rest and rest[0].split()[:1] and rest[0].split()[0].lower() in RUNS_WORDS
+            and not " ".join(rest).rstrip().endswith("?")):
+        # v2.9: `heim run add FOLDER` is `heim runs add FOLDER` with a letter missing ("run ... ?" is
+        # still a question, below). The words are split, so `heim run "show 2801"` gives `heim runs show 2801`.
+        words = rest[0].split() + rest[1:]
+        sys.exit("Did you mean:  heim runs %s\n(heim runs reads finished runs and answers from them; heim run "
+                 "\"...\" drafts a new model run)" % " ".join(_shell_quote(w) for w in words))
     if word == "run":
         # v2.8: `heim run "..."` drafts a damchain run; "run times for ANUGA?" stays a question
         if not rest or rest[0].startswith("-") or not " ".join(rest).rstrip().endswith("?"):
@@ -608,7 +687,36 @@ def command_word(argv):
     return None
 
 
+def _shell_quote(w):
+    """A word quoted for the shell the user types in: cmd.exe and PowerShell take "...", not '...'."""
+    if os.name == "nt":
+        return w if re.fullmatch(r"[\w@%+=:,./\\-]+", w) else '"%s"' % w.replace('"', '')
+    return shlex.quote(w)
+
+
+# words of `heim runs` (run_results.py) that never start a run request: `heim run add ...` gets "did you
+# mean". ("at" is left out: "run at 5 m ..." is a run request, and heim run refuses it with its reason.)
+RUNS_WORDS = ("add", "list", "show", "hydrograph", "compare", "ask", "sql", "schema", "forget")
+
+
 def main():
+    """v2.9: an Ollama that is not running, a missing model or an error from Ollama is one plain line,
+    not a traceback (HEIM_DEBUG=1 shows the traceback)."""
+    try:
+        _main()
+    except KeyboardInterrupt:
+        print("\n[interrupted]")
+        sys.exit(130)
+    except Exception as e:  # noqa: BLE001 - only Ollama failures are turned into a line
+        msg = ollama_problem(e)
+        if msg is None or os.environ.get("HEIM_DEBUG") == "1":
+            raise
+        sys.stdout.flush()
+        print("heim: " + msg, file=sys.stderr)
+        sys.exit(1)
+
+
+def _main():
     word = command_word(sys.argv[1:])
     if word and word[0] in ("index", "runs", "heimrun"):
         tool = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -624,7 +732,7 @@ def main():
         os.execv(sys.executable, [sys.executable, tool] + word[1])
     if word:
         sys.argv[1:] = word[1]
-    ap = argparse.ArgumentParser(description="Ask Heim a question, answered from the indexed documents.",
+    ap = argparse.ArgumentParser(prog="heim", description="Ask Heim a question, answered from the indexed documents.",
                                  epilog="Also: heim doctor (is Heim reading what you think it is), "
                                         "heim add FILE ... (index a file), heim chat (a conversation), "
                                         "heim runs ... (dam-breach run results: heim runs --help), "
@@ -643,7 +751,8 @@ def main():
         return
     q = " ".join(args.question).strip()
     if not q:
-        sys.exit("no question given")
+        print(HELP)            # v2.9: `heim` on its own: the short list, not "no question given"
+        return
     dams = run_question(q)
     if dams:
         answer_from_runs(q, dams)
