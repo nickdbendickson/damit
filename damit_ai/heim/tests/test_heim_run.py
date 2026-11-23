@@ -171,8 +171,10 @@ class HeimRunTest(Case):
             self.assertIn("heim run takes metres", said, req)
 
     def test_a_number_nothing_accounts_for_stops_it(self):
-        for req, f in (("run 2801 at 5 m and 4031 at 10 m", fields(ids=["2801", "4031"], cell_m=5)),
-                       ("run 2801 for 48", fields(ids=["2801"]))):
+        code, said = self.go("run 2801 at 5 m and 4031 at 10 m", fields(ids=["2801", "4031"], cell_m=5))
+        self.assertEqual(self.calls, [])
+        self.assertIn("Not run", said)
+        for req, f in (("run 2801 for 48", fields(ids=["2801"])),):
             self.calls = []
             code, said = self.go(req, f)
             self.assertEqual(self.calls, [], req)
@@ -274,6 +276,37 @@ class HeimRunTest(Case):
         for req, f in (("run 2801.A at 5 m", fields(ids=["2801.A"], cell_m=5)),
                        ("run 2801 at 5 m.", fields(ids=["2801"], cell_m=5)),
                        ("rerun 2801 and 4031", fields(ids=["2801", "4031"], redo=True))):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(code, 0, req + "\n" + said)
+
+    def test_sixth_review(self):
+        con = sqlite3.connect(self.dams)
+        con.executemany("INSERT INTO dams (dam_id) VALUES (?)", [(x,) for x in ("5", "10", "48", "5000")])
+        con.commit()
+        con.close()
+        for req, f in (
+                ("Run 2801. 4031 at 5 m.", fields(ids=["2801", "4031"], cell_m=5)),
+                ("run 2801; 4031 at 5 m with FV2", fields(ids=["2801", "4031"], cell_m=5, solver="fv2")),
+                ("run 2801, and 4031 with FV2", fields(ids=["2801", "4031"], solver="fv2")),
+                ("run 2801 and for 4031 use FV2", fields(ids=["2801", "4031"], solver="fv2")),
+                ("run 2801 and on 4031 use FV2", fields(ids=["2801", "4031"], solver="fv2")),
+                ("rerun 2801. 4031 with FV2", fields(ids=["2801", "4031"], solver="fv2", redo=True)),
+                ("run 2801 with the cell size set to 5", fields(ids=["2801", "5"])),
+                ("run 2801 and 4031 with the grid size set to 10", fields(ids=["2801", "4031", "10"])),
+                ("run 2801 using 10 for the cell size", fields(ids=["2801", "10"])),
+                ("run 2801, size 5", fields(ids=["2801", "5"])),
+                ("run 2801 for 48", fields(ids=["2801", "48"])),
+                ("run 2801 with the cell size set to 5", fields(ids=["2801"]))):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(self.calls, [], req)
+            self.assertIn("Not run", said, req)
+        for req, f in (("run dam 2801 and dam 4031 with FV2", fields(ids=["2801", "4031"], solver="fv2")),
+                       ("please run dams 2801, 4031 and 5000 using FV2", fields(ids=["2801", "4031", "5000"], solver="fv2")),
+                       ("rerun no. 2801 and no. 4031", fields(ids=["2801", "4031"], redo=True)),
+                       ("run 2801, 4031, and 5000 with FV2", fields(ids=["2801", "4031", "5000"], solver="fv2")),
+                       ("run 2801 and 4031 at 5 m with FV2.", fields(ids=["2801", "4031"], cell_m=5, solver="fv2"))):
             self.calls = []
             code, said = self.go(req, f)
             self.assertEqual(code, 0, req + "\n" + said)

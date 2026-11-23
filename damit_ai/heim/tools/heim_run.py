@@ -10,8 +10,9 @@
 #   - your words hold anything besides a run word, dam ids, the settings above and a few small words
 #     ("the", "and", "with", "at", "dam" ...): "the 30 m high dam", "thanks", "2 at a time" stop it;
 #   - a dam id is not in your words as a word of its own, or not in the dams layer;
-#   - with several dams: a run / redo word other than once before them, a dam named twice, or a dam
-#     after a setting ("run 2801 at 5 m and 4031"): one set of settings goes to every dam;
+#   - with several dams: anything but a plain list between them ("Run 2801. 4031 at 5 m."), a dam id
+#     after a word other than a run word / "dam" / a list word, a run / redo word other than once
+#     before them, a dam named twice, or a dam after a setting: one set of settings goes to every dam;
 #   - a cell size is not in your words after "at" / "cell" or before "cells", is out of range, or is
 #     in feet, cm...;
 #   - Manning's n is not in your words next to "n" / "Manning", or is out of range;
@@ -153,6 +154,8 @@ _FILLER = {
 _VERB = re.compile(r"\b(?:run|re-?run|re\s+run|re-?do|redo|rerunning|redoing|running)\b", re.I)
 _REDO_PHRASES = re.compile(r"\b(?:again|one\s+more\s+time|overwrite|replace|from\s+scratch|re-?do(?:ing)?|"
                            r"re[-\s]?run(?:ning)?)\b", re.I)
+_LIST_WORDS = {",", "and", "&", "+", "dam", "dams", "the", "number", "no"}
+_BEFORE_ID = _LIST_WORDS | {"", "dam", "dams", "id", "ids", "no.", "please", "heim", "overwrite", "replace", "redo"}
 _PLACEHOLDERS = {"none", "nothing", "n/a", "na", "null", "-", "no", "empty", ""}
 
 
@@ -291,6 +294,29 @@ def check_fields(request, data):
             continue
         if i not in ids:
             ids.append(i)
+    # A dam id follows a run word, 'dam' or a list word ("run 2801", "dam no. 2801", "2801, 4031 and
+    # 5000"): "cell size set to 5" or "for 48" is not dam 5 or 48. With several dams, only a plain list
+    # sits between them, so a setting in a second clause ("Run 2801. 4031 at 5 m.", "for 4031 use
+    # FV2") cannot reach the other dams.
+    blanked = list(words)
+    for a, b in taken:
+        blanked[a:b] = " " * (b - a)
+    blanked = "".join(blanked)
+    for q in sorted(set(id_pos)) if len(ids) > 1 else []:
+        prev = re.search(r"(\S+)\s*$", re.sub(r"(?i)\bno\.\s*$", "no.", blanked[:q]))
+        word = prev.group(1).lower().strip("\"'(") if prev else ""
+        if word not in _BEFORE_ID and not _VERB.fullmatch(word):
+            bad.append("a dam id comes after %r; write the dams right after the run word (\"run 2801 "
+                       "and 4031 at 5 m\")" % prev.group(1))
+            break
+    if len(ids) > 1 and id_pos:
+        between = re.sub(r"(?i)\bno\.", " ", blanked[min(id_pos):max(id_pos)])
+        odd = [t for t in re.findall(r"[^\W\d_]+|[^\w\s]", between) if t.lower() not in _LIST_WORDS]
+        if len(ids) == 2 and re.search(r",\s*and\b", between, re.I):
+            odd.append(", and")            # "run 2801, and 4031 with FV2": a second clause, not a list
+        if odd:
+            bad.append("only a list of dams may sit between them (found %r); heim run gives every dam the "
+                       "same settings, so write \"run 2801 and 4031 at 5 m\", or run them one at a time" % odd[0])
     if len(ids) > 1 and len(set(id_pos)) > len(ids):
         bad.append("your words name a dam more than once; heim run gives every dam the same settings, so "
                    "name each dam once (\"run 2801 and 4031 at 5 m\"), or run them one at a time")
@@ -393,6 +419,8 @@ def check_fields(request, data):
             continue
         if t not in unknown:
             unknown.append(t)
+    if f["cell_m"] is None and re.search(r"\b(?:cells?|grid|resolution|res)\b|\bsize\b", rest, re.I) and not bad:
+        bad.append("your words speak of a cell size but none was read; write it as \"at 5 m\"")
     if unknown and not bad:
         bad.append("heim run does not know %s; it reads only dam ids, a cell size in m, a solver (ACC, FV2, "
                    "MWDG2), Manning's n and rerun. Type the damchain command for anything else"
