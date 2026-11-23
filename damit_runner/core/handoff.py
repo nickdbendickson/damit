@@ -38,8 +38,8 @@ import os
 import re
 import sys
 
-DEFAULT_IDS = {"classify": ("ndhazard:classify", "ndhazard:classifydam", "ndhazard:rundam"),
-               "batch": ("ndhazard:batch", "ndhazard:batchclassify", "ndhazard:batch_classify")}
+DEFAULT_IDS = {"classify": ("damit:classify",),
+               "batch": ("damit:batch", "damit:classify")}
 
 RASTER_KEYS = (("depth", ("depth",)), ("velocity", ("veloc",)), ("arrival", ("arriv",)),
                ("wse", ("wse", "water surface", "watersurface", "elevation")))
@@ -112,7 +112,7 @@ def find_algorithm(kind, algorithm_id="", registry=None):
     if not algorithm_id:      # any ndhazard algorithm whose id or name mentions it
         for a in reg.algorithms():
             aid = a.id().lower()
-            if aid.startswith("ndhazard:") and (kind in aid or (
+            if aid.startswith("damit:") and (kind in aid or (
                     kind == "classify" and "class" in aid)):
                 return a
     return None

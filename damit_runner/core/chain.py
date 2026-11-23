@@ -1,8 +1,9 @@
-"""Runner 3.10.67: the batch chain - a list of dams, each through the whole suite in turn.
+"""The batch chain: a list of dams, each through DamIT in turn.
 
 For each dam: Screening (that dam only) -> Runner -> HEC-RAS 2D build -> HEC-RAS run ->
-Hazard import (ndhazard:hecrasplan) -> Hazard classify (ND + TM11) and its saved Hazard state;
-then the next dam. A dam that fails never stops the list (unless 'keep going' is off).
+Hazard import (damit:rasimport) -> Hazard classify (damit:classify). A review mark
+(damit:markreviewed) is optional and never lowers the class. A dam that fails never stops
+the list (unless 'keep going' is off).
 
 This module has no QGIS: the stages are run by an `ops` object (algorithms_chain.QgisOps in
 QGIS, a fake in the tests) and everything else - settings, overrides, the plan of stages,
@@ -10,9 +11,9 @@ resume, the summary files - is here.
 
 Settings: ONE suite settings file (damsuite.settings format, plugin|tool|key|value rows).
   * the chain's own choices are the rows ("damit_run", "chainbatch", KEY), KEYS below;
-  * each stage's tool takes its rows: ("ndscreen", "window", ...) for Screening,
-    ("damit_run", "batch", ...), ("damit_run", "hecrasexport", ...), ("ndhazard", "hecrasplan",
-    ...), ("ndhazard", "classify", ...). They are passed to the tools as EXPLICIT parameters
+  * each stage's tool takes its rows: ("damit_screen", "runchain", ...) for Screening,
+    ("damit_run", "batch", ...), ("damit_run", "hecrasexport", ...), ("damit", "rasimport",
+    ...), ("damit", "classify", ...). They are passed to the tools as EXPLICIT parameters
     (a tool's own default for a key the file does not set), so the run does not depend on
     which settings file a plugin window chose in this QGIS session.
   * an overrides CSV changes values for single dams: a dam_id column, then one column per
@@ -43,12 +44,12 @@ STAGE_LABELS = {"screening": "Screening", "runner": "Runner", "hec_build": "HEC-
                 "hec_run": "HEC-RAS run", "hazard_import": "Hazard import",
                 "classify": "Hazard classify"}
 ALGS = {"screening": "damit_screen:runchain", "runner": "damit_run:batch",
-        "hec_build": "damit_run:hecrasexport", "hazard_import": "ndhazard:hecrasplan",
-        "classify": "ndhazard:classify", "save_state": "ndhazard:savedamstate"}
+        "hec_build": "damit_run:hecrasexport", "hazard_import": "damit:rasimport",
+        "classify": "damit:classify", "save_state": "damit:markreviewed"}
 # the settings rows each stage's tool takes
-STAGE_TOOLS = {"screening": ("ndscreen", "window"), "runner": ("damit_run", "batch"),
+STAGE_TOOLS = {"screening": ("damit_screen", "runchain"), "runner": ("damit_run", "batch"),
                "hec_build": ("damit_run", "hecrasexport"),
-               "hazard_import": ("ndhazard", "hecrasplan"), "classify": ("ndhazard", "classify")}
+               "hazard_import": ("damit", "rasimport"), "classify": ("damit", "classify")}
 # an output a done stage must still have on disk to be kept on a resume
 REQUIRED_OUTPUT = {"screening": "work", "runner": "depth", "hec_build": "package",
                    "hec_run": "plan_hdf", "hazard_import": "depth", "classify": "summary"}
@@ -983,9 +984,8 @@ def preflight(dam_ids, values, env, overrides=None, override_problems=(), missin
                                        "enabled".format(STAGE_LABELS[s], ALGS[s], _plugin_of(
                                            ALGS[s]))))
         if ALGS["save_state"] not in algs:
-            out.append((WARNING, "", "ndhazard:savedamstate is missing (DamSafety Hazard "
-                                     "2.18.59 or later): the dams are classified but their "
-                                     "Hazard window state is not saved"))
+            out.append((WARNING, "", "damit:markreviewed is not installed: the dams are "
+                                     "classified but not marked reviewed. The class is unchanged."))
     if note:
         out.append((WARNING, "", note))
     if mode == "wait" and float(cv.get("HEC_WAIT_MIN") or 0) <= 0:
@@ -1023,5 +1023,5 @@ def preflight(dam_ids, values, env, overrides=None, override_problems=(), missin
 
 
 def _plugin_of(alg):
-    return {"nddam": "DamSafety Screening", "damit_run": "DamSafety Runner",
-            "ndhazard": "DamSafety Hazard"}.get(alg.split(":")[0], alg.split(":")[0])
+    return {"damit_screen": "DamIT Screener", "damit_run": "DamIT Runner",
+            "damit": "DamIT Hazard"}.get(alg.split(":")[0], alg.split(":")[0])

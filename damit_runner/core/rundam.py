@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.9.2: Processing tools from DamSafety Runner 3.51.0. No change to an existing rundam result unless one of the new tools is run.
 0.9.1: Boann engines and metalterrain re-copied from DWR 6816c7f. CHANGES COMPUTED RESULTS only when a Boann engine is named. FV2 is experimental. carve_channels is not used by a run.
 0.9.0: core re-synced to DamSafety Runner 3.51.0 (6816c7f). CHANGES COMPUTED RESULTS when the dam point check moves an off-embankment point (default Move) or the reservoir-water side overrides the older downstream rule. LISFLOOD-FP stays the default engine.
 0.8.0: the GPU engine with sub-grid channels (gpu-sgc) as a further engine choice; default unchanged
@@ -86,7 +87,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

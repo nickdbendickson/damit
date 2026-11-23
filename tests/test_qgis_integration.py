@@ -129,10 +129,17 @@ class Integration(unittest.TestCase):
         self.assertIsNone(RP.ENGINE_IMPORT_ERROR)
         reg = QgsApplication.processingRegistry()
         have = sorted(a.id() for a in reg.providerById("damit_run").algorithms())
-        self.assertEqual(have, ["damit_run:batch", "damit_run:cascade", "damit_run:check", "damit_run:checkhandoff",
-                                "damit_run:delineate", "damit_run:estimate", "damit_run:finishanuga",
-                                "damit_run:hecrasexport", "damit_run:hydrograph", "damit_run:rundam",
-                                "damit_run:sensitivity"])
+        self.assertEqual(have, [
+            "damit_run:animation", "damit_run:batch", "damit_run:benchmark", "damit_run:cascade",
+            "damit_run:chainbatch", "damit_run:check", "damit_run:checkhandoff",
+            "damit_run:conditiondem", "damit_run:consequences", "damit_run:culvertprep",
+            "damit_run:delineate", "damit_run:estimate", "damit_run:fillgaps",
+            "damit_run:finishanuga", "damit_run:hazardhandoff", "damit_run:hecrasexport",
+            "damit_run:hecrasimport", "damit_run:hydrograph", "damit_run:nested",
+            "damit_run:nlcdmanning", "damit_run:probabilistic", "damit_run:products",
+            "damit_run:rainfallrunoff", "damit_run:rundam", "damit_run:selftest",
+            "damit_run:sensitivity", "damit_run:spillwayadequacy", "damit_run:submittal",
+            "damit_run:validationrecord", "damit_run:verification", "damit_run:verifymanifest"])
         for a in reg.providerById("damit_run").algorithms():
             self.assertTrue(a.parameterDefinitions(), a.id())
             self.assertTrue(a.displayName(), a.id())

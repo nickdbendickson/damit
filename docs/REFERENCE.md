@@ -14,7 +14,7 @@ DamIT: multi-jurisdiction dam hazard screening, breach modeling, and classificat
 |---|---|---|---|
 | `damit_catalog/` | DamIT Catalog | none | Appendix A data catalog (JSON) + Python loader, evaluator and hand-off schema |
 | `damit_screener/` | DamIT Screener | `damit_screen` | Preflight, scenario-driven screening chain with a 2D screening flood (built-in engine), preliminary suggestion, hand-off packages |
-| `damit_runner/` | DamIT Runner | `damit_run` | Full breach engine: LISFLOOD-FP (built-in solver), ANUGA 2D, HEC-RAS 2D. 8 Processing algorithms: rundam, batch, sensitivity, cascade, hydrograph, estimate, check, finishanuga |
+| `damit_runner/` | DamIT Runner | `damit_run` | Full breach engine: LISFLOOD-FP (built-in solver), ANUGA 2D, HEC-RAS 2D export. Processing algorithms: the hand-off rundam, checkhandoff and hecrasexport, the ported engine tools (batch, sensitivity, cascade, hydrograph, estimate, check, finishanuga, delineate) and, since 0.9.2, probabilistic, nested, consequences, animation, hecrasimport, submittal, verification, validationrecord, verifymanifest, selftest, fillgaps, nlcdmanning, conditiondem, benchmark, hazardhandoff, products, culvertprep, rainfallrunoff, spillwayadequacy and chainbatch. |
 | [`damit_hazard/`](../damit_hazard/README.md) | DamIT Hazard | `damit` | Suggested hazard class from flood rasters and receptor layers, 19 jurisdiction presets or a custom method set (`damit:classify`) |
 | [`damit_core/`](../damit_core/README.md) | DamIT Core | none | Shared library: suite settings, DamIT plugin list and version check, US state table, dam-record field helpers, catalog access, HTTP helper. Menu: About only |
 | [`damit_setup/`](../damit_setup/README.md) | DamIT Setup | none | Start here: suite data folder, work folder, state / preset, suite check, settings fill, hand-off to `damit_screen:preflight` |
@@ -196,6 +196,8 @@ those dams in `flood_failed`.
 The eight tools from `batch` down are the DamSafety Runner's own (`algorithms/engine.py`, `core/`), registered since
 0.4.1. Until then they failed to import and were silently absent. They take DamSafety's parameters and write
 DamSafety's dam-folder layout; `damit_run:rundam` stays the tool the Screener hand-off and DamIT Crest call.
+
+**More tools (0.9.2).** Wrappers from DamSafety Runner 3.51.0, with DamIT ids. Monte Carlo (`probabilistic`), a nested fine/coarse run (`nested`), consequences (placeholder fatality and damage tables; they do not classify), an animation, HEC-RAS result import (`hecrasimport`; the export was already `hecrasexport`), a Word submittal report, analytic verification and a validation record, a manifest check, a self-test, DEM gap fill, Manning's n from NLCD, a conditioning preview, a benchmark, a hand-off to `damit:classify` (`hazardhandoff`), flood polygons, culvert prep, rainfall-to-inflow (the storm depth comes from DamIT PMP or the engineer) and spillway adequacy (the residual freeboard is an input). `chainbatch` runs Screener, Runner, the HEC-RAS export, `damit:rasimport` and `damit:classify`. The statewide LiDAR mosaic and any ND-only hand-off are not included. LISFLOOD-FP stays the default. None of these change an existing `rundam` result unless you run them.
 
 **Batch workers (0.6.0).** One dam gains little from more LISFLOOD-FP threads, so a long batch is shortened by running
 dams side by side. Workers need `qgis_process` (set `NDBREACH_QGIS_PROCESS` to its full path if it is not found), layers

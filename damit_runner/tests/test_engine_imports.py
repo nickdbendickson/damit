@@ -45,7 +45,7 @@ class ImportChain(unittest.TestCase):
 
 def _make_test(mod_name):
     def test(self):
-        if mod_name in QGIS_ONLY:
+        if mod_name in QGIS_ONLY or ".algorithms.algorithms_" in mod_name:
             self.skipTest("QGIS-only module")
         try:
             importlib.import_module(mod_name)
@@ -137,7 +137,7 @@ class CoreModules(unittest.TestCase):
 
     def test_rundam_version(self):
         from damit_runner.core import rundam as RD
-        self.assertEqual(RD.VERSION, "0.9.1")
+        self.assertEqual(RD.VERSION, "0.9.2")
         self.assertEqual(RD.ENGINE_LISFLOOD, 1)
         # 0.3.0: LISFLOOD-FP and ANUGA run; HEC-RAS 2D is refused
         with self.assertRaises(RD.RunError):

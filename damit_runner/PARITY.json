@@ -112,9 +112,9 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "018103af37353811d3806feb03470268384e7471f83d76c9f218424ac5e53b6c",
+   "diff": "b37140d98fca4663ab30b30567c26cfc2add2395d11ce6fa5ba7608f207424e8",
    "from": "DamSafety_Runner/algorithms.py",
-   "note": "ported from DWR 6816c7f; gpu-sgc stays enum index 2; FV2 label is experimental (DWR #478 not in this pin); state dam-line pack not ported"
+   "note": "A3: empty classification id is damit:classify / damit:batch"
   },
   "damit_runner/compat/nodata_sample.py": {
    "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
@@ -197,9 +197,9 @@
    "from": "DamSafety_Runner/core/cascade.py"
   },
   "damit_runner/core/chain.py": {
-   "diff": "31a67e75a2ab5498a108d1af1630fffba24e4168d093139df736df0739748b3a",
+   "diff": "df49b9013da01d4fdacfd1c8fd282c70422810152bda34ceb5351ce68106c117",
    "from": "DamSafety_Runner/core/chain.py",
-   "note": "ported from DWR 6816c7f"
+   "note": "A3: chain targets damit_screen, damit_run and damit:rasimport / damit:classify"
   },
   "damit_runner/core/ckpt_sign.py": {
    "diff": "1a7825762893179ee92eb1e130d3bade9ccf9e3024ab9cead7b6c83d53e2155a",
@@ -285,9 +285,9 @@
    "from": "DamSafety_Runner/core/grid_default.py"
   },
   "damit_runner/core/handoff.py": {
-   "diff": "c54413562123911bc9f32e7db05227de49883960dfd87778a00afeecb62429dc",
+   "diff": "6cd69c856d62a4f7b221dea1adcc4aac5f31776ca1fcedeb4c2dfc576793d565",
    "from": "DamSafety_Runner/core/handoff.py",
-   "note": "ported from DWR 6816c7f"
+   "note": "A3: empty hand-off id is damit:classify, not ndhazard"
   },
   "damit_runner/core/hecras.py": {
    "diff": "d0727c4d6f8c79f0469f5983a96f9cff81dbf083e69a8b6afd89e9dbfe2b0ca2",

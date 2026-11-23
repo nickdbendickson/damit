@@ -2435,7 +2435,7 @@ class SensitivityAlgorithm(RunDamAlgorithm):
         self._num("SENS_MAX", "Most cases (0 = all)", 0, minimum=0, integer=True, advanced=True)
         self._bool("CLASSIFY", "Classify every case with the ND hazard classification plugin",
                    False, advanced=True)
-        self._text("CLASS_ALG", "Classification algorithm ID (empty = ndhazard:classify)",
+        self._text("CLASS_ALG", "Classification algorithm ID (empty = damit:classify)",
                    advanced=True)
         self._text("CLASS_MAP", "Classification parameters, JSON (see the README)",
                    advanced=True)
@@ -2722,7 +2722,7 @@ class BatchAlgorithm(_Base):
                    "Batch_Breach_Runs.csv (the workers use it)", advanced=True)
         self._bool("CLASSIFY", "Classify afterwards with the ND hazard plugin's batch tool "
                    "and merge the result", False)
-        self._text("CLASS_ALG", "Classification batch algorithm ID (empty = ndhazard:batch)",
+        self._text("CLASS_ALG", "Classification batch algorithm ID (empty = damit:batch)",
                    advanced=True)
         self._text("CLASS_MAP", "Classification parameters, JSON (see the README)",
                    advanced=True)

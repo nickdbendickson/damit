@@ -21,17 +21,37 @@ except ImportError:
     HAVE_NUMPY = False
 
 EXPECTED_ALGORITHMS = [
+    "damit_run:animation",
     "damit_run:batch",
+    "damit_run:benchmark",
     "damit_run:cascade",
+    "damit_run:chainbatch",
     "damit_run:check",
     "damit_run:checkhandoff",
+    "damit_run:conditiondem",
+    "damit_run:consequences",
+    "damit_run:culvertprep",
     "damit_run:delineate",
     "damit_run:estimate",
+    "damit_run:fillgaps",
     "damit_run:finishanuga",
+    "damit_run:hazardhandoff",
     "damit_run:hecrasexport",
+    "damit_run:hecrasimport",
     "damit_run:hydrograph",
+    "damit_run:nested",
+    "damit_run:nlcdmanning",
+    "damit_run:probabilistic",
+    "damit_run:products",
+    "damit_run:rainfallrunoff",
     "damit_run:rundam",
+    "damit_run:selftest",
     "damit_run:sensitivity",
+    "damit_run:spillwayadequacy",
+    "damit_run:submittal",
+    "damit_run:validationrecord",
+    "damit_run:verification",
+    "damit_run:verifymanifest",
 ]
 
 
@@ -107,8 +127,8 @@ class RunnerMinInstall(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + "\n" + r.stderr)
         self.assertIn("runner_mininst_ok", r.stdout)
 
-    def test_runner_min_install_loads_eleven_algorithms(self):
-        """A Runner + Catalog plugin folder registers the same 11 algorithms as a44b4fb."""
+    def test_runner_min_install_loads_algorithms(self):
+        """A Runner + Catalog plugin folder registers the ported damit_run tools."""
         qgis_py = _qgis_python_path()
         if not qgis_py:
             self.skipTest("qgis not importable")
@@ -150,10 +170,16 @@ prov = reg.providerById('damit_run')
 assert prov is not None, 'damit_run provider missing'
 have = sorted(a.id() for a in prov.algorithms())
 want = [
-    'damit_run:batch', 'damit_run:cascade', 'damit_run:check', 'damit_run:checkhandoff',
-    'damit_run:delineate', 'damit_run:estimate', 'damit_run:finishanuga',
-    'damit_run:hecrasexport', 'damit_run:hydrograph', 'damit_run:rundam',
-    'damit_run:sensitivity',
+    'damit_run:animation', 'damit_run:batch', 'damit_run:benchmark', 'damit_run:cascade',
+    'damit_run:chainbatch', 'damit_run:check', 'damit_run:checkhandoff',
+    'damit_run:conditiondem', 'damit_run:consequences', 'damit_run:culvertprep',
+    'damit_run:delineate', 'damit_run:estimate', 'damit_run:fillgaps', 'damit_run:finishanuga',
+    'damit_run:hazardhandoff', 'damit_run:hecrasexport', 'damit_run:hecrasimport', 'damit_run:hydrograph',
+    'damit_run:nested', 'damit_run:nlcdmanning', 'damit_run:probabilistic',
+    'damit_run:products', 'damit_run:rainfallrunoff', 'damit_run:rundam',
+    'damit_run:selftest', 'damit_run:sensitivity', 'damit_run:spillwayadequacy',
+    'damit_run:submittal', 'damit_run:validationrecord', 'damit_run:verification',
+    'damit_run:verifymanifest',
 ]
 assert have == want, have
 print('runner_mininst_algos_ok', len(have), ','.join(have))
@@ -169,7 +195,7 @@ app.exitQgis()
                            env=env, cwd=tmp)
         self.assertEqual(r.returncode, 0, r.stdout + "\n" + r.stderr)
         self.assertIn("runner_mininst_algos_ok", r.stdout)
-        self.assertIn("runner_mininst_algos_ok 11 ", r.stdout)
+        self.assertIn("runner_mininst_algos_ok 31 ", r.stdout)
 
 
 if __name__ == "__main__":
