@@ -183,8 +183,52 @@ class DamitRunTest(unittest.TestCase):
     def test_lisflood_may_name_a_runner_engine(self):
         _, _, fake = self.go(lisflood="builtin")
         self.assertEqual(self.runs(fake)[0][2]["LISFLOOD_EXE"], "builtin")
-        _, _, fake = self.go(lisflood=os.path.join(self.tmp, "no-such-lisflood"))
-        self.assertNotIn("LISFLOOD_EXE", self.runs(fake)[0][2])
+        _, _, fake = self.go(lisflood="sub-grid channels")
+        self.assertEqual(self.runs(fake)[0][2]["LISFLOOD_EXE"], "sub-grid channels")
+        code, out, fake = self.go(lisflood=os.path.join(self.tmp, "no-such-lisflood"))
+        self.assertEqual(code, 1)
+        self.assertIn("not a file and not one of the Runner's engines", out)
+        self.assertEqual(self.runs(fake), [])
+        _, _, fake = self.go(lisflood=os.path.join(self.tmp, "no-such-lisflood"), lisflood_given=False)
+        self.assertNotIn("LISFLOOD_EXE", self.runs(fake)[0][2])     # the Runner's own setting
+
+    def test_the_id_field_is_the_runners_and_is_passed_on(self):
+        # review 2026-11-23: NIDID before DAM_ID, as the Runner picks (data_conventions FIELD_SYNONYMS)
+        p = os.path.join(self.tmp, "two.csv")
+        with open(p, "w") as fh:
+            fh.write("DAM_ID,NIDID,NAME\n2801,ND00123,a\n")
+        self.assertEqual(DC.layer_ids(p)[0], "NIDID")
+        code, out, fake = self.go(dams=p, ids="2801")
+        self.assertEqual(code, 1)
+        self.assertIn("not in the dams layer (field NIDID)", out)
+        code, out, fake = self.go(dams=p, ids="ND00123")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.runs(fake)[0][2]["F_ID"], "NIDID")
+        self.assertEqual(DC._id_field(["Dam ID", "x"], ""), "Dam ID")
+        self.assertEqual(DC._id_field(["NIDID_2024"], ""), "NIDID_2024")
+        code, out, _ = self.go(ids="dwr-3034")
+        self.assertIn("did you mean DWR-3034", out)
+
+    def test_no_dam_run_for_the_ids_is_a_failure(self):
+        code, out, _ = self.go(FakeQP([(True, {"COUNTS": "0 run, 0 failed, 0 skipped, 0 with no breach"}, "")]))
+        self.assertEqual(code, 1)
+        self.assertIn("none of --ids 2801,4031 was found by the Runner", out)
+        code, out, _ = self.go(FakeQP([(True, {"COUNTS": "0 run, 0 failed, 2 skipped, 0 with no breach"}, "")]))
+        self.assertEqual(code, 0, out)
+
+    def test_param_is_checked_too(self):
+        code, out, fake = self.go(param=["SOLVR=2"])
+        self.assertIn("SOLVR is not an option", str(code))
+        self.assertEqual(self.runs(fake), [])
+
+    def test_option_text_by_its_start(self):
+        real = {"0": "Sunny day: no inflow, breach at the top of dam (ND 5.1.1)",
+                "1": "Flood: inflow hydrograph from inputs/pmf_inflow.csv",
+                "2": "Per dam: flood if its folder has inputs/pmf_inflow.csv, else sunny day",
+                "3": "Flood without breach"}
+        self.assertEqual(DC.enum_value("SCENARIO", "sunny", real), ("0", None))
+        self.assertEqual(DC.enum_value("SCENARIO", "per dam", real), ("2", None))
+        self.assertIsNone(DC.enum_value("SCENARIO", "flood", real)[0])
 
     def test_ids_from_a_csv_layer_and_another_field(self):
         csvp = os.path.join(self.tmp, "dams.csv")
@@ -206,10 +250,10 @@ class SelftestAndSetupTest(unittest.TestCase):
     def tearDown(self):
         DC.QP = self._qp
 
-    def selftest(self, result):
+    def selftest(self, result, dry=False):
         fake = FakeQP([(True, {"RESULT": result}, "")])
         DC.QP = fake
-        a = Args(selftest=True, log_dir=self.tmp, lisflood="", env="ndqgis")
+        a = Args(selftest=True, log_dir=self.tmp, lisflood="", env="ndqgis", dry_run=dry)
         out, keep = io.StringIO(), sys.stdout
         sys.stdout = out
         try:
@@ -224,6 +268,7 @@ class SelftestAndSetupTest(unittest.TestCase):
         out = self.selftest("OK LISFLOOD-FP 8.3 (patched)\nANUGA: no conda environment")
         self.assertIn("PASS damit_run:check", out)
         self.assertIn("FAIL damit_run:check", self.selftest(""))
+        self.assertNotIn("FAIL", self.selftest("", dry=True))
 
     def test_setup_says_when_qgis_process_cannot_start(self):
         profiles = os.path.join(self.tmp, "profiles")

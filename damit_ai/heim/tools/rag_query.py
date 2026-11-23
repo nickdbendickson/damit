@@ -616,6 +616,11 @@ def main():
         if not os.path.exists(tool):
             sys.exit("ERROR: %s is missing; re-run the Heim installer" % tool)
         sys.stdout.flush()
+        if os.name == "nt":
+            # Windows has no real exec: os.execv starts a new process, ends this one (the console
+            # prompt comes back under `heim run`'s y question) and does not quote the arguments
+            import subprocess
+            sys.exit(subprocess.call([sys.executable, tool] + word[1]))   # nosec B603
         os.execv(sys.executable, [sys.executable, tool] + word[1])
     if word:
         sys.argv[1:] = word[1]

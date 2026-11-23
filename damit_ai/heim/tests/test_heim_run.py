@@ -134,7 +134,7 @@ class HeimRunTest(Case):
     def test_numbers_must_be_in_the_words_and_in_range(self):
         for req, f, why in (("run 2801", fields(ids=["2801"], cell_m=5), "cell size 5 is not in your words"),
                             ("run 2801 at 0.1 m", fields(ids=["2801"], cell_m=0.1), "outside"),
-                            ("run 2801 at 30 ft", fields(ids=["2801"], cell_m=30), "in metres"),
+                            ("run 2801 at 30 ft", fields(ids=["2801"], cell_m=30), "takes metres"),
                             ("run 2801 with n 0.5", fields(ids=["2801"], manning=0.5), "outside"),
                             ("run 2801", fields(ids=["2801"], manning=0.04), "not in your words"),
                             ("run 2801", fields(ids=["2801"], solver="fv2"), "FV2 is not in your words")):
@@ -142,6 +142,99 @@ class HeimRunTest(Case):
             code, said = self.go(req, f)
             self.assertEqual(self.calls, [], req)
             self.assertIn(why, said, req)
+
+    def test_a_number_must_stand_in_its_own_place(self):
+        # review 2026-11-23: digits inside a decimal or an id, and ids swapped with a cell size.
+        # Every id the model gives is in the layer, so only the reading of the words can stop these.
+        con = sqlite3.connect(self.dams)
+        con.executemany("INSERT INTO dams (dam_id) VALUES (?)", [(x,) for x in ("5", "04", "10", "ND00123", "DWR-50")])
+        con.commit()
+        con.close()
+        for req, f in (("run 2801 at 5.5 m", fields(ids=["5"], cell_m=5.5)),
+                       ("run 2801 with n 0.04", fields(ids=["04"], manning=0.04)),
+                       ("run ND00123", fields(ids=["ND00123"], cell_m=123)),
+                       ("run DWR-50", fields(ids=["DWR-50"], cell_m=50)),
+                       ("run 10 at 5 m", fields(ids=["5"], cell_m=10)),
+                       ("run 2801 at 5 m", fields(ids=["2801"], manning=5))):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(self.calls, [], req)
+            self.assertIn("Not run", said, req)
+
+    def test_feet_and_other_units_are_refused(self):
+        for req in ("run 2801 at 10.0 ft", "run 2801 with 10-foot cells", "run 2801 at 50 cm",
+                    "run 2801 at .5 ft", "run 2801 at 5\u2019 cells", "run 2801 at 10 feet"):
+            v = 0.5 if ".5 ft" in req else (50 if "cm" in req else (5 if "5\u2019" in req else 10))
+            self.calls = []
+            code, said = self.go(req, fields(ids=["2801"], cell_m=v))
+            self.assertEqual(self.calls, [], req)
+            self.assertIn("heim run takes metres", said, req)
+
+    def test_a_number_nothing_accounts_for_stops_it(self):
+        for req, f in (("run 2801 at 5 m and 4031 at 10 m", fields(ids=["2801", "4031"], cell_m=5)),
+                       ("run 2801 with the 2 m DEM", fields(ids=["2801"])),
+                       ("run 2801 for 48", fields(ids=["2801"]))):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(self.calls, [], req)
+            self.assertIn("did not use", said, req)
+
+    def test_what_it_cannot_set_is_refused_even_if_the_model_drops_it(self):
+        for req in ("run 2801 with ANUGA", "run 2801 at max pool", "run all dams", "run 2801 with the PMF"):
+            self.calls = []
+            code, said = self.go(req, fields(ids=["2801"]))
+            self.assertEqual(self.calls, [], req)
+            self.assertIn("heim run cannot set", said, req)
+
+    def test_not_means_not(self):
+        code, said = self.go("run 2801 but do not overwrite finished dams", fields(ids=["2801"], redo=True))
+        self.assertIn("left out redo", said)
+        self.assertNotIn("--redo", self.calls[1])
+        self.calls = []
+        code, said = self.go("run 2801, never rerun", fields(ids=["2801"], redo="false"))
+        self.assertNotIn("--redo", self.calls[1])
+        self.calls = []
+        code, said = self.go("run 2801, not FV2", fields(ids=["2801"], solver="fv2"))
+        self.assertEqual(self.calls, [])
+        self.assertIn("your words say not FV2", said)
+
+    def test_an_id_takes_the_layers_spelling(self):
+        code, said = self.go("run dwr-3034", fields(ids=["dwr-3034"]))
+        self.assertEqual(code, 0, said)
+        self.assertEqual(self.calls[1][self.calls[1].index("--ids") + 1], "DWR-3034")
+
+    def test_a_dwr_id_does_not_switch_the_set(self):
+        self.go("run 2801", fields(ids=["2801"]))
+        said = []
+        self.calls = []
+        code = HR.main(["run DWR-3034"], chat=lambda m, fmt=None, timeout=None: json.dumps(fields(ids=["DWR-3034"])),
+                       ask=lambda p: "y", runner=lambda a: self.calls.append(a) or 0, out=said.append)
+        self.assertEqual(code, 0, said)
+        self.assertEqual(self.calls[-1][2], "damit", said)
+
+    def test_paths_are_remembered_in_full(self):
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            said = []
+            HR.main(["--set", "damit", "--dams", "dams.gpkg", "--out", "runs", "--dem", "dem.tif", "run 2801"],
+                    chat=lambda m, fmt=None, timeout=None: json.dumps(fields(ids=["2801"])),
+                    ask=lambda p: "y", runner=lambda a: 0, out=said.append)
+        finally:
+            os.chdir(here)
+        with open(HR.SAVED, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["damit"]["dams"], self.dams)
+
+    def test_every_reading_is_logged(self):
+        self.go("run 2801", fields(ids=["2810"]))
+        self.go("run 2801", fields(ids=["2801"]), answer="n")
+        self.go("run 2801", fields(ids=["2801"]), extra=["--show"])
+        with open(HR.drafts_log(), encoding="utf-8") as fh:
+            log = fh.read()
+        self.assertIn("refused: dam id '2810'", log)
+        self.assertIn("stopped (no y)", log)
+        self.assertIn("shown (--show)", log)
+        self.assertIn('"2810"', log)
 
     def test_written_numbers_count(self):
         code, said = self.go("run 2801 at 5m, n=0.035.", fields(ids=["2801"], cell_m=5, manning=0.035))
@@ -203,6 +296,13 @@ class CommandWordTest(unittest.TestCase):
         self.assertEqual(RQ.command_word(["run", "--help"]), ("heimrun", ["--help"]))
         self.assertIsNone(RQ.command_word(["run", "times", "for", "ANUGA?"]))
         self.assertIsNone(RQ.command_word(["running", "2801"]))
+
+    def test_windows_does_not_exec(self):
+        # os.execv on Windows ends heim and leaves `heim run` asking for y behind the console prompt
+        with open(os.path.join(TOOLS, "rag_query.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn('if os.name == "nt":', src)
+        self.assertIn("sys.exit(subprocess.call([sys.executable, tool] + word[1]))", src)
 
     def test_help_names_it(self):
         self.assertIn('heim run "run 2801 at 5 m"', RQ.HELP)

@@ -22,7 +22,7 @@ Run the ND, DamSafety and DamIT dam plugins headless. `vor ...` runs the literat
 | `--env` | ENV | `ndqgis` | conda env with QGIS (default ndqgis) |
 | `--qgis-process` | QGIS_PROCESS |  | path to qgis_process (default: found in the env) |
 | `--threads` | THREADS | `1` |  |
-| `--lisflood` | LISFLOOD | `~/dam-suite/bin/lisflood` | LISFLOOD-FP binary (missing = the plugins' own choice / built-in engine) |
+| `--lisflood` | LISFLOOD |  | LISFLOOD-FP binary (nd/dwr sets: default ~/dam-suite/bin/lisflood; damit set: passed only when given, and may be builtin, gpu or gpu-sgc) |
 | `--dry-run` |  |  | print the commands, run nothing |
 | `--quiet` |  |  | don't stream each step's progress lines to the terminal (the full log is still written) |
 

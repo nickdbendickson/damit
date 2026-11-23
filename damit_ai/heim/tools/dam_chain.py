@@ -27,9 +27,11 @@
 #                                            (damit_run:batch; DamIT Hazard has no batch classifier
 #                                            yet). Checks first: files, the dam ids in the layer,
 #                                            and every option name against the installed Runner.
-#   --cell / --solver / --manning / --runner-param KEY=VALUE are checked against the Runner's
-#   own parameter list (qgis_process help) before anything runs; an enum takes its option text
-#   (--runner-param SCENARIO=sunny) or its number. --check-only runs only those checks.
+#   --cell / --solver / --manning / --runner-param KEY=VALUE (and, for the damit set, --param) are
+#   checked against the Runner's own parameter list (qgis_process help) before anything runs; an
+#   enum takes its option text (--runner-param SCENARIO=sunny) or its number; text that fits two
+#   options is refused. --check-only runs only those checks. The damit set passes --lisflood only
+#   when you give it (a binary, or builtin / gpu / gpu-sgc); otherwise the Runner's setting is used.
 #   dam_chain.py vor ask|research|search|ingest|chat|list ...
 #                                            the literature research assistant (vor, a
 #                                            separate model and library from heim); same as typing
@@ -90,7 +92,9 @@ SETS = {
 RUNNER_ALG = {"dwr": "ndbreach:batch", "damit": "damit_run:batch"}
 SOLVER_WORDS = ("default", "acc", "fv2", "mwdg2")
 # --lisflood may name the DamIT Runner's in-process engines instead of a binary (damit_runner/core/lisflood.py)
-DAMIT_ENGINE_WORDS = ("builtin", "built-in", "gpu", "metal", "gpu-sgc")
+DAMIT_ENGINE_WORDS = ("builtin", "built-in", "built in", "internal", "gpu", "metal", "gpu engine", "metalflood",
+                      "gpu-sgc", "metal-sgc", "sgc", "boann-sgc", "gpu sgc", "subgrid channels",
+                      "sub-grid channels")
 DWR_HEC = {"run": 0, "wait": 1, "skip": 2}
 DWR_STOP = {"end": 0, "screening": 1, "runner": 2}
 DEM_UNITS = {"detect": 0, "feet": 1, "us-feet": 2, "meters": 3}
@@ -466,7 +470,8 @@ def cmd_plugins(args):
         result = res.get("RESULT") or ""
         # the check finishes (exit 0) even when LISFLOOD-FP is missing; its lines say OK or PROBLEM
         ok = ok and bool(result) and not any(ln.startswith("PROBLEM") for ln in result.splitlines())
-        print("  %-4s %s  %s" % ("PASS" if ok else "FAIL", "damit_run:check", result or err))
+        if not args.dry_run:
+            print("  %-4s %s  %s" % ("PASS" if ok else "FAIL", "damit_run:check", result or err))
         if not args.dry_run:
             print("  logs: %s" % logs)
     elif args.selftest:
@@ -800,9 +805,15 @@ def enum_value(name, value, options):
     exact = [k for k, t in opts.items() if t.lower() == low]
     if len(exact) == 1:
         return exact[0], None
-    word = [k for k, t in opts.items() if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(low), t.lower())]
-    if len(word) == 1:
-        return word[0], None
+    # the start of an option's text ('sunny' -> 'Sunny day: ...'), then a whole word anywhere in it
+    # ('fv2' -> 'FV2 (finite volume)'); text that fits more than one option is refused, never guessed
+    for hits in ([k for k, t in opts.items() if re.match(r"%s(?![a-z0-9])" % re.escape(low), t.lower())],
+                 [k for k, t in opts.items()
+                  if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(low), t.lower())]):
+        if len(hits) == 1:
+            return hits[0], None
+        if len(hits) > 1:
+            break
     return None, "%s=%s is not one of its options: %s" % (
         name, value, "; ".join("%s = %s" % (k, t) for k, t in sorted(opts.items(), key=lambda x: int(x[0]))))
 
@@ -876,13 +887,32 @@ def layer_ids(path, field=""):
     return None, None
 
 
+# The DamIT Runner's own id-field names, in its order (damit_runner/core/data_conventions.py
+# FIELD_SYNONYMS["F_ID"]), matched the way it matches them (letters and digits only, any case), so
+# the ids checked here are the ids the Runner reads. run_damit passes the field it found as F_ID.
+ID_FIELD_SYNONYMS = ("nationalid", "nidid", "nid_id", "damid", "dam_id", "ndid", "structureid", "id",
+                     "damnumber", "damno", "swcid", "nidfedid")
+
+
+def _norm_field(s):
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
 def _id_field(cols, field):
-    low = {c.lower(): c for c in cols}
+    norm = {}
+    for c in cols:
+        norm.setdefault(_norm_field(c), c)
     if field:
-        return low.get(field.lower())
-    for c in ("dam_id", "nidid", "nid_id", "national_id", "dam id", "id"):
-        if c in low:
-            return low[c]
+        return norm.get(_norm_field(field))
+    for s in ID_FIELD_SYNONYMS:
+        if _norm_field(s) in norm:
+            return norm[_norm_field(s)]
+    for s in ID_FIELD_SYNONYMS:                    # a name that contains one (e.g. 'NIDID_2024')
+        ns = _norm_field(s)
+        if len(ns) >= 5:
+            cand = [c for k, c in norm.items() if ns in k]
+            if cand:
+                return sorted(cand, key=len)[0]
     return None
 
 
@@ -905,14 +935,19 @@ def damit_preflight(args, ids):
         bad.append("--dem is missing (DEM or VRT covering every dam; DamIT batch needs one)")
     elif not os.path.exists(os.path.expanduser(args.dem)):
         bad.append("the DEM is not there: %s" % os.path.expanduser(args.dem))
-    if args.dams and os.path.exists(dams) and ids:
+    args._id_col = None
+    if args.dams and os.path.exists(dams):
         col, have = layer_ids(args.dams, args.id_field)
+        args._id_col = col
         if have is None:
-            print("  note: cannot read the dam ids of %s here; the Runner will match them" % args.dams)
+            if ids:
+                print("  note: cannot read the dam ids of %s here; the Runner will match them" % args.dams)
         else:
             missing = [i for i in ids if i not in have]
             if missing:
-                bad.append("not in the dams layer (field %s): %s" % (col, ", ".join(missing)))
+                low = {h.lower(): h for h in have}
+                bad.append("not in the dams layer (field %s): %s" % (col, ", ".join(
+                    i + (" (did you mean %s?)" % low[i.lower()] if i.lower() in low else "") for i in missing)))
     return bad
 
 
@@ -922,7 +957,8 @@ def run_damit(args):
     ids = read_ids(args)
     bad = damit_preflight(args, ids)
     qp = QP(args, "damit")
-    runner_kv = runner_settings(args)
+    # --param goes through the same name check as --runner-param here: the DamIT Runner is the one tool
+    runner_kv = dict(parse_kv(args.param), **runner_settings(args))
     if not bad and not args.dry_run:
         runner_kv = check_runner_params(qp, RUNNER_ALG["damit"], runner_kv)
     elif runner_kv and args.dry_run:
@@ -938,21 +974,28 @@ def run_damit(args):
          "WORKERS": max(1, args.workers)}
     if args.dem_units:
         p["DEM_Z"] = DEM_UNITS[args.dem_units]
-    if args.id_field:
-        p["F_ID"] = args.id_field
+    if args.id_field or getattr(args, "_id_col", None):
+        p["F_ID"] = getattr(args, "_id_col", None) or args.id_field   # the field the ids were checked in
     if ids:
         p["ONLY_IDS"] = ",".join(ids)
         if args.workers > 1:
             print("  note: with --ids the Runner runs one dam after another (ONLY_IDS uses one worker)")
-    lis = os.path.expanduser(args.lisflood or "")
-    if os.path.isfile(lis) or lis.strip().lower() in DAMIT_ENGINE_WORDS:
-        p["LISFLOOD_EXE"] = lis          # a binary, or the DamIT Runner's own engines by name
+    # Only a --lisflood you typed is passed on; otherwise the DamIT Runner uses its own setting (and
+    # finds ~/dam-suite/bin/lisflood itself when nothing is set), so an engine chosen in QGIS stays chosen.
+    lis = os.path.expanduser(args.lisflood or "") if getattr(args, "lisflood_given", True) else ""
+    if lis:
+        if os.path.isfile(lis) or lis.strip().lower() in DAMIT_ENGINE_WORDS:
+            p["LISFLOOD_EXE"] = lis      # a binary, or the DamIT Runner's own engines by name
+        else:
+            bad.append("--lisflood %s is not a file and not one of the Runner's engines (%s)"
+                       % (lis, "builtin, gpu, gpu-sgc"))
+            print("  ERROR  " + bad[-1])
+            sys.exit(1)
     if args.anuga:
         p["TIER"] = 1
         if qp.anuga_py:
             p["ANUGA_PYTHON"] = qp.anuga_py
     p.update(runner_kv)
-    p.update(parse_kv(args.param))
     if args.check_only:
         print("OK  checks passed; nothing was run (--check-only)")
         return
@@ -969,6 +1012,12 @@ def run_damit(args):
         ok = False                     # qgis_process exits 0 when dams fail; the counts say so
     if ok and not counts:
         ok, err = False, err or "the Runner reported no counts; see the log"
+    done = sum(int(x) for x in re.findall(r"(\d+)\s+(?:run|failed|skipped|with no breach|flagged)\b", counts))
+    if ok and ids and done == 0:
+        # ONLY_IDS that match no dam: the Runner skips every feature and says "0 run, 0 failed ..."
+        ok, err = False, "none of --ids %s was found by the Runner in field %s" % (
+            ",".join(ids), p.get("F_ID") or "(its own choice)")
+        counts = ""
     print("%s  %s" % ("OK" if ok else "FAILED", counts or err))
     print("log: %s" % log)
     if res.get("SUMMARY"):
@@ -1093,8 +1142,9 @@ def main():
     ap.add_argument("--env", default="ndqgis", help="conda env with QGIS (default ndqgis)")
     ap.add_argument("--qgis-process", default="", help="path to qgis_process (default: found in the env)")
     ap.add_argument("--threads", type=int, default=1)
-    ap.add_argument("--lisflood", default=default_lisflood(),
-                    help="LISFLOOD-FP binary (missing = the plugins' own choice / built-in engine)")
+    ap.add_argument("--lisflood", default=None,
+                    help="LISFLOOD-FP binary (nd/dwr sets: default ~/dam-suite/bin/lisflood; damit set: "
+                         "passed only when given, and may be builtin, gpu or gpu-sgc)")
     ap.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     ap.add_argument("--quiet", action="store_true", help="don't stream each step's progress lines to the terminal (the full log is still written)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1181,6 +1231,11 @@ def main():
                    help="KEY=VALUE for the Runner (ndbreach:batch / damit_run:batch); names are checked")
 
     args = ap.parse_args()
+    # v1.6.0: remember whether --lisflood was typed (the DamIT set then passes it on; otherwise the
+    # DamIT Runner's own engine setting is used). The ND and DamSafety sets keep the suite default.
+    args.lisflood_given = args.lisflood is not None
+    if args.lisflood is None:
+        args.lisflood = default_lisflood()
     if getattr(args, "heim_model", ""):
         globals()["HEIM_MODEL"] = args.heim_model
     if args.cmd == "setup":

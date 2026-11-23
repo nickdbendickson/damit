@@ -7,14 +7,19 @@
 #
 # The local model only FILLS IN FIXED FIELDS (dam ids, cell size, solver, Manning's n, redo). It never
 # writes the command. This code builds the command and refuses, rather than guesses, when:
-#   - a dam id is not in your words, or not in the dams layer;
-#   - a number (cell, n) is not in your words, is out of range, or the cell is given in feet;
-#   - the solver word is not in your words;
-#   - you asked for something these fields cannot hold (it says what, and how to type it yourself);
-#   - redo (run again over finished dams) is set but your own words did not ask for it.
+#   - a dam id is not in your words as a word of its own, or not in the dams layer;
+#   - a cell size is not in your words next to m / "at" / "cell", is out of range, or is in feet, cm...;
+#   - Manning's n is not in your words next to "n" / "Manning", or is out of range;
+#   - your words hold a number that no field accounts for ("the 2 m DEM", a second cell size);
+#   - the solver word is not in your words, or your words say "not" that solver;
+#   - you asked for something these fields cannot hold (ANUGA, a pool, a scenario, a DEM, all dams...),
+#     whether or not the model listed it (it says what, and how to type it yourself);
+#   - redo (run again over finished dams) is set but your own words did not ask for it ("do not
+#     overwrite" is not asking): redo is then left out, with a note.
 # It then shows the exact damchain command and what differs from the defaults, runs nothing until you
 # type y, runs damchain's checks (--check-only) first, and writes your sentence, the model's reply and
-# the command to <out>/_chain_logs/heim_run_<time>.txt. Typing the damchain command yourself is still
+# the command to <out>/_chain_logs/heim_run_<time>.txt. Every reading, refused, stopped or run, also
+# goes to ~/local-ai/reports/heim_run_drafts.log. Typing the damchain command yourself is still
 # the main way to run; this is a drafting aid. Paths (dams layer, output folder, DEM) come from the
 # flags, or from the last ones you used for that set (~/local-ai/heim_run.json).
 #
@@ -33,7 +38,8 @@ VERSION = "1.0.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAVED = os.path.expanduser(os.environ.get("HEIM_RUN_SETTINGS", "~/local-ai/heim_run.json"))
 SETS = ("damit", "dwr")
-SET_WORDS = {"damit": r"\bdamit\b", "dwr": r"\b(?:dwr|damsafety|dam\s*safety)\b"}
+# a set named on its own ('DWR-2801' is a dam id, not the DamSafety set)
+SET_WORDS = {"damit": r"(?<![\w-])damit(?![\w-])", "dwr": r"(?<![\w-])(?:dwr|damsafety)(?![\w-])"}
 SOLVERS = ("acc", "fv2", "mwdg2")
 CELL_RANGE = (0.5, 200.0)          # metres
 MANNING_RANGE = (0.01, 0.25)
@@ -93,79 +99,147 @@ def model_fields(request, chat=None):
     return data, reply
 
 
-def _numbers_in(text):
-    """Every number written in the text ('5m', '0.04.', 'n=0.035' all count)."""
-    return [float(x) for x in re.findall(r"(?<!\d)(?<!\d\.)(\d+(?:\.\d+)?|\.\d+)(?!\d|\.\d)", text)]
+# A number standing on its own: not inside an id (ND00123, DWR-50), not part of a longer decimal.
+_NUM = re.compile(r"(?<![\w.\-])(\d+(?:\.\d+)?|\.\d+)(?![\d]|\.\d)")
+_METRE = re.compile(r"\s*-?\s*(?:m|metres?|meters?)(?![a-z])", re.I)
+_OTHER_UNIT = re.compile(r"\s*-?\s*(ft|feet|foot|cm|mm|km|yd|yards?|inch(?:es)?|mi|miles?|us\s*ft)(?![a-z])|"
+                         r"\s*(['’′″\"])", re.I)
+_CELL_BEFORE = re.compile(r"(?:\bat|\bcells?(?:\s+size)?|\bgrid(?:\s+size)?|\bresolution|\bres)\s*(?:of|=|:|to|is)?\s*$",
+                          re.I)
+_N_BEFORE = re.compile(r"(?:\bn|\bmanning'?s?(?:\s+n)?|\broughness)\s*(?:of|=|:|to|is)?\s*$", re.I)
+_NEG = r"\b(?:not|no|never|don'?t|do\s+not|without|avoid|skip)\b\W+(?:\w+\W+){0,3}?"
+# Things a sentence may ask for that heim run cannot set. Refused even when the model leaves them out.
+_CANNOT = re.compile(r"\b(anuga|lisflood|hec-?ras|gpu|sgc|boann|builtin|built-in|scenario|pmf|sunny|"
+                     r"froehlich|macdonald|von\s+thun|pool|inflow|hours?|duration|classif\w*|hazard|"
+                     r"workers?|threads?|dem|lidar|terrain|vrt|every\s+dam|all\s+(?:the\s+)?dams|tier|mesh)\b",
+                     re.I)
 
 
-def _in_words(value, text):
-    return any(abs(v - float(value)) < 1e-9 for v in _numbers_in(text))
+def read_numbers(text):
+    """Each number written on its own in the text, with what it is next to:
+    {"value", "text", "role": "cell" | "n" | "plain", "unit": "m" | other unit | ""}."""
+    out = []
+    for m in _NUM.finditer(text):
+        after = text[m.end():]
+        if after[:1].isalpha() and not (_METRE.match(after) or _OTHER_UNIT.match(after)):
+            continue                                    # '2801a': part of a word, not a number
+        before = text[max(0, m.start() - 30):m.start()]
+        unit = ""
+        if _METRE.match(after):
+            unit = "m"
+        else:
+            u = _OTHER_UNIT.match(after)
+            if u and (u.group(1) or _CELL_BEFORE.search(before)):   # a quote is feet only for a cell size
+                unit = (u.group(1) or u.group(2)).lower()
+        if _N_BEFORE.search(before):
+            role = "n"
+        elif unit or _CELL_BEFORE.search(before):
+            role = "cell"
+        else:
+            role = "plain"
+        out.append({"value": float(m.group(1)), "text": m.group(1), "role": role, "unit": unit})
+    return out
+
+
+def _same(a, b):
+    return abs(float(a) - float(b)) < 1e-9
+
+
+def _negated(word_re, text):
+    return bool(re.search(_NEG + r"(?:%s)" % word_re, text, re.I))
 
 
 def check_fields(request, data):
-    """Code's check of the model's fields against the request. Returns (fields, refusals, notes)."""
+    """Code's check of the model's fields against the request. Returns (fields, refusals, notes).
+    Every value must stand in the words in its own place: a dam id as a word of its own (a number
+    followed by m or ft is a cell size, one after n is Manning's n), a cell size next to m / 'at' /
+    'cell', n next to 'n' / 'Manning'. A number in the words that no field accounts for, or a thing
+    heim run cannot set, stops the run: it is refused, not guessed."""
     bad, notes = [], []
     words = request
+    nums = read_numbers(words)
+    used = set()
     ids = []
     for raw in data.get("ids") or []:
         i = str(raw).strip()
         if not i:
             continue
-        if not re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(i), words, re.I):
-            bad.append("dam id %r is not in your words" % i)
-        elif i not in ids:
+        hit = None
+        if re.fullmatch(r"\d+(?:\.\d+)?", i):
+            hit = next((k for k, n in enumerate(nums) if n["role"] == "plain" and n["text"] == i), None)
+        elif re.search(r"(?<![\w.\-])%s(?![\w\-]|\.\d)" % re.escape(i), words, re.I):
+            hit = -1
+        if hit is None:
+            bad.append("dam id %r is not in your words as a dam id" % i)
+            continue
+        if hit >= 0:
+            used.add(hit)
+        if i not in ids:
             ids.append(i)
     if not ids and not bad:
         bad.append("no dam id: name the dams (e.g. \"run 2801 and 4031\"); a question about runs ends "
                    "with ? (heim run times for ANUGA?)")
     f = {"ids": ids, "cell_m": None, "solver": "", "manning": None, "redo": False}
-    cell = data.get("cell_m")
-    if cell is not None:
+
+    def number(key, what):
+        v = data.get(key)
+        if v is None or isinstance(v, bool):
+            return None
         try:
-            cell = float(cell)
+            return float(v)
         except (TypeError, ValueError):
-            cell = None
-            bad.append("the cell size is not a number")
+            bad.append("%s is not a number" % what)
+            return None
+    cell = number("cell_m", "the cell size")
     if cell is not None:
-        if not _in_words(cell, words):
-            bad.append("cell size %g is not in your words" % cell)
-        elif re.search(r"(?<![\w.])%s\s*(?:ft|feet|foot|')" % re.escape(_g(cell)), words, re.I):
-            bad.append("the cell size is in metres; say it in metres (e.g. \"at 5 m\")")
+        at = [k for k, n in enumerate(nums) if n["role"] == "cell" and _same(n["value"], cell)]
+        metric = [k for k in at if nums[k]["unit"] in ("m", "")]
+        if not at:
+            bad.append("cell size %s is not in your words as a cell size (write it as \"at 5 m\")" % _g(cell))
+        elif not metric:
+            bad.append("the cell size is given in %s; heim run takes metres (e.g. \"at 5 m\")"
+                       % nums[at[0]]["unit"])
         elif not CELL_RANGE[0] <= cell <= CELL_RANGE[1]:
-            bad.append("cell size %g m is outside %g-%g m" % ((cell,) + CELL_RANGE))
+            bad.append("cell size %s m is outside %g-%g m" % ((_g(cell),) + CELL_RANGE))
         else:
             f["cell_m"] = cell
-    n = data.get("manning")
+            used.update(metric)
+    n = number("manning", "Manning's n")
     if n is not None:
-        try:
-            n = float(n)
-        except (TypeError, ValueError):
-            n = None
-            bad.append("Manning's n is not a number")
-    if n is not None:
-        if not _in_words(n, words):
-            bad.append("Manning's n %g is not in your words" % n)
+        at = [k for k, x in enumerate(nums) if x["role"] == "n" and _same(x["value"], n)]
+        if not at:
+            bad.append("Manning's n %s is not in your words as Manning's n (write it as \"n 0.04\")" % _g(n))
         elif not MANNING_RANGE[0] <= n <= MANNING_RANGE[1]:
-            bad.append("Manning's n %g is outside %g-%g" % ((n,) + MANNING_RANGE))
+            bad.append("Manning's n %s is outside %g-%g" % ((_g(n),) + MANNING_RANGE))
         else:
             f["manning"] = n
+            used.update(at)
+    left = [nums[k]["text"] + (" " + nums[k]["unit"] if nums[k]["unit"] else "")
+            for k in range(len(nums)) if k not in used]
+    if left and not bad:
+        bad.append("your words have %s, which heim run did not use; it will not guess what %s for "
+                   "(type the damchain command yourself)" % (", ".join(left), "it is" if len(left) == 1 else "they are"))
     solver = str(data.get("solver") or "").strip().lower()
     if solver:
         if solver not in SOLVERS:
             bad.append("solver %r is not one of %s" % (solver, ", ".join(SOLVERS)))
         elif not re.search(r"\b%s\b" % solver, words, re.I):
             bad.append("solver %s is not in your words" % solver.upper())
+        elif _negated(solver, words):
+            bad.append("your words say not %s; name the solver to use, or none" % solver.upper())
         else:
             f["solver"] = solver
-    if data.get("redo"):
-        if REDO_WORDS.search(words):
+    if data.get("redo") is True:
+        if REDO_WORDS.search(words) and not _negated(REDO_WORDS.pattern, words):
             f["redo"] = True
         else:
             notes.append("left out redo: your words did not ask to run finished dams again")
-    for u in data.get("unsupported") or []:
-        u = str(u).strip()
-        if u:
-            bad.append("heim run cannot set %r; type the damchain command yourself (damchain run --help)" % u)
+    asked = [str(u).strip() for u in data.get("unsupported") or [] if str(u).strip()]
+    for m in _CANNOT.finditer(words):
+        if not any(m.group(0).lower() in a.lower() for a in asked):
+            asked.append(m.group(0))
+    for u in asked:
+        bad.append("heim run cannot set %r; type the damchain command yourself (damchain run --help)" % u)
     return f, bad, notes
 
 
@@ -209,6 +283,10 @@ def paths_for(args, set_name, saved):
     have = dict(saved.get(set_name) or {})
     for k in ("dams", "out", "dem", "id_field", "dem_units"):
         v = getattr(args, k, "") or ""
+        if v and k in ("dams", "out", "dem"):
+            # full paths, so a path remembered from one folder means the same file from any other
+            path, bar, rest = v.partition("|")
+            v = os.path.abspath(os.path.expanduser(path)) + bar + rest
         if v:
             have[k] = v
     return have
@@ -235,7 +313,19 @@ def check_paths(set_name, p, ids, layer_ids):
             bad.append("cannot read the dam ids in %s here (a .gpkg or .csv can be read; or give "
                        "--id-field); type the damchain command yourself for this layer" % p["dams"])
         else:
-            missing = [i for i in ids if i not in have]
+            # the layer's own spelling is what the Runner matches; 'nd00123' in the words is ND00123
+            low = {}
+            for h in have:
+                low.setdefault(h.lower(), []).append(h)
+            missing = []
+            for k, i in enumerate(ids):
+                if i in have:
+                    continue
+                same = low.get(i.lower(), [])
+                if len(same) == 1:
+                    ids[k] = same[0]
+                else:
+                    missing.append(i)
             if missing:
                 bad.append("not in the dams layer (field %s): %s" % (col, ", ".join(missing)))
     return bad
@@ -292,6 +382,19 @@ def _log(path, lines):
         fh.write("\n".join(lines) + "\n")
 
 
+def drafts_log():
+    """Every reading is kept here, run or not: the sentence, the model's reply, and what happened."""
+    return os.path.join(os.path.dirname(SAVED), "reports", "heim_run_drafts.log")
+
+
+def _draft(request, reply, outcome):
+    try:
+        _log(drafts_log(), ["%s  %s" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), outcome),
+                            "  request: " + request, "  model reply: " + " ".join((reply or "").split()), ""])
+    except OSError:
+        pass
+
+
 def main(argv=None, chat=None, ask=input, runner=None, out=_say):
     ap = argparse.ArgumentParser(prog="heim run", description=(
         "Heim drafts a damchain run from plain English. It only fills in dam ids, cell size, solver, "
@@ -323,6 +426,7 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
         data, reply = model_fields(request, chat=chat)
     except Exception as e:            # noqa: BLE001 - no model, bad JSON: say so and stop
         out("Not run: Heim could not read the request (%s). Type the damchain command yourself." % e)
+        _draft(request, "", "not read: %s" % e)
         return 2
     f, bad, notes = check_fields(request, data)
     if not bad:
@@ -333,6 +437,7 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
         out("Not run:")
         for b in bad:
             out("  - " + b)
+        _draft(request, reply, "refused: " + " | ".join(bad))
         return 2
     cmd = build_argv(set_name, p, f)
     shown = "damchain " + _quote(cmd)
@@ -344,6 +449,7 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
     out("Output: %s   DEM: %s" % (p["out"], p["dem"]))
     if args.show:
         out("(--show: nothing was run)")
+        _draft(request, reply, "shown (--show): " + shown)
         return 0
     try:
         answer = ask("Run it? Type y to run, anything else stops: ")
@@ -351,7 +457,9 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
         answer = ""
     if answer.strip().lower() not in ("y", "yes"):
         out("Stopped; nothing was run.")
+        _draft(request, reply, "stopped (no y): " + shown)
         return 1
+    _draft(request, reply, "confirmed: " + shown)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     logp = os.path.join(os.path.abspath(os.path.expanduser(p["out"])), "_chain_logs", "heim_run_%s.txt" % stamp)
     _log(logp, ["heim run %s  %s" % (VERSION, stamp), "request: " + request, "model reply: " + (reply or "").strip(),

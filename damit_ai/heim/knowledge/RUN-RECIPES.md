@@ -63,18 +63,23 @@ damchain run --set damit --dams LAYER --ids 2801,4031 --out D --dem DEM --cell 5
   (LISFLOOD-FP on a tiny channel, ANUGA import). DamIT has no self-test tools of its own.
   It says FAIL when any line of the check says PROBLEM (for example, no LISFLOOD-FP found).
 - The flood engine: `--lisflood PATH` (before `run`) names a LISFLOOD-FP binary; `--lisflood builtin`,
-  `gpu` or `gpu-sgc` picks the DamIT Runner's own engines. Without it, the Runner's saved setting is used.
+  `gpu` or `gpu-sgc` picks the DamIT Runner's own engines. Without `--lisflood`, damchain passes no
+  engine and the Runner uses its own setting (an engine chosen in QGIS stays chosen). A `--lisflood`
+  that is neither a file nor an engine name is refused.
 - `run` is the DamIT Runner's batch (`damit_run:batch`): breach runs only, one folder per
   dam under `D`. Classification is not part of it (DamIT Hazard has no batch classifier):
   classify a run with `damit:classify`.
 - Checks before anything runs: the dams layer, the DEM and the folder above `D` exist;
-  every `--ids` id is in the layer (a `.gpkg` or `.csv` is read; field `--id-field`, else
-  `dam_id` / `NIDID`); every option name is a real `damit_run:batch` parameter.
-  `--check-only` runs only these checks.
+  every `--ids` id is in the layer (a `.gpkg` or `.csv` is read; field `--id-field`, else the
+  first the Runner itself would pick: NationalID, NIDID, NID_ID, DamID, DAM_ID, ...; that field is
+  passed to the Runner as `F_ID`, so both read the same ids); every option name given with
+  `--cell`, `--solver`, `--manning`, `--runner-param` or `--param` is a real `damit_run:batch`
+  parameter. Option text may be the start of the option (`SCENARIO=sunny`) or its number; text
+  that fits two options is refused. `--check-only` runs only these checks.
 - Second run: dams that finished are skipped (`SKIP_DONE`); `--redo` runs them again.
   `--workers N` runs dams side by side, but with `--ids` the Runner runs one at a time.
-- Exit code: 1 when any dam failed (the Runner's "N failed" count), even though
-  `qgis_process` itself exits 0. Logs: `D/_chain_logs/damit_batch_<time>.log`.
+- Exit code: 1 when any dam failed (the Runner's "N failed" count), or when `--ids` was given
+  and the Runner found none of them, even though `qgis_process` itself exits 0. Logs: `D/_chain_logs/damit_batch_<time>.log`.
 
 ## 2b. Drafting a run in plain English (`heim run`, heim_run 1.0.0)
 
@@ -86,15 +91,23 @@ heim run --show "run 2801 at 10 m"
 
 - Heim only fills fixed fields: dam ids, cell size (metres), solver, Manning's n, redo.
   The code builds the `damchain run` command itself, never the model.
-- Refused, not guessed: an id that is not in your words or not in the dams layer; a number
-  that is not in your words or is out of range (cell 0.5-200 m, n 0.01-0.25); a cell in
-  feet; a solver you did not name; anything else you asked for (it says what, and to type
-  the damchain command for it). Redo is dropped unless your words ask for it.
+- Refused, not guessed:
+  - an id that is not a word of its own in your sentence, or not in the dams layer (any case:
+    `nd00123` runs as the layer's `ND00123`);
+  - a cell size not written as one ("at 5 m", "5 m cells", "cell 5"), out of 0.5-200 m, or in
+    feet, cm or another unit; a Manning's n not written next to "n" or "Manning", or out of 0.01-0.25;
+  - a number nothing accounts for ("with the 2 m DEM", a second cell size for another dam);
+  - a solver you did not name, or one your words say "not" to;
+  - anything it cannot set (ANUGA, an engine, a pool, a scenario, PMF, a DEM, all dams, ...),
+    whether or not the model noticed it. It says what, and to type the damchain command for it.
+  Redo is left out, with a note, unless your words ask for it; "do not overwrite" is not asking.
 - It shows the command and what differs from the defaults, runs nothing until you type
   `y`, then runs `--check-only` first. Your sentence, the model's reply and the command go
-  to `D/_chain_logs/heim_run_<time>.txt`.
+  to `D/_chain_logs/heim_run_<time>.txt`. Every reading, refused, stopped, shown or run, is
+  also kept in `~/local-ai/reports/heim_run_drafts.log`.
 - `--set`, `--dams`, `--out`, `--dem`, `--id-field`, `--dem-units` are remembered per set
-  in `~/local-ai/heim_run.json` after a run you confirmed. `heim run "...?"` (ending in
+  (paths in full) in `~/local-ai/heim_run.json` after a run you confirmed. A dam id such as
+  `DWR-2801` does not switch the set; the word `dwr` or `damit` on its own does. `heim run "...?"` (ending in
   `?`) is still a question for Heim.
 
 ## 3. The review dams (`run_nickreview.sh`, DamSafety repo `tools/mac/`)
