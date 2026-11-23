@@ -10,7 +10,8 @@
 #   - your words hold anything besides a run word, dam ids, the settings above and a few small words
 #     ("the", "and", "with", "at", "dam" ...): "the 30 m high dam", "thanks", "2 at a time" stop it;
 #   - a dam id is not in your words as a word of its own, or not in the dams layer;
-#   - two runs, or a dam after a setting ("run 2801 at 5 m and 4031"): one set of settings for all;
+#   - with several dams: a run / redo word other than once before them, a dam named twice, or a dam
+#     after a setting ("run 2801 at 5 m and 4031"): one set of settings goes to every dam;
 #   - a cell size is not in your words after "at" / "cell" or before "cells", is out of range, or is
 #     in feet, cm...;
 #   - Manning's n is not in your words next to "n" / "Manning", or is out of range;
@@ -109,7 +110,7 @@ def model_fields(request, chat=None):
 
 
 # A number standing on its own: not inside an id (ND00123, DWR-50), not part of a longer decimal.
-_NUM = re.compile(r"(?<![\w.\-])(\d+(?:\.\d+)?|\.\d+)(?![\d]|\.\d)")
+_NUM = re.compile(r"(?<![\w.\-])(\d+(?:\.\d+)?|\.\d+)(?![\d]|\.\w)")
 _METRE = re.compile(r"\s*-?\s*(?:m|metres?|meters?)(?![a-z])", re.I)
 _OTHER_UNIT = re.compile(r"\s*-?\s*(ft|feet|foot|cm|mm|km|yd|yards?|inch(?:es)?|mi|miles?|us\s*ft|"
                          r"(?:us\s+)?survey\s+f\w*|[ap]\.?m\b\.?|o'?clock|h|hrs?|hours?|min\w*|s|secs?|"
@@ -175,7 +176,7 @@ def read_numbers(text):
             out.append({"value": float(m.group(1)), "text": m.group(1), "role": "other", "unit": "",
                         "span": (m.start(), m.end())})
             continue
-        before = text[max(0, m.start() - 30):m.start()]
+        before = text[:m.start()]          # the whole word before ('on' is not 'n')
         unit = ""
         if _METRE.match(after):
             unit = "m"
@@ -187,10 +188,11 @@ def read_numbers(text):
                 span = (m.start(), m.end())
         if _N_BEFORE.search(before):
             role = "n"
-        elif _CELL_BEFORE.search(before) or _CELL_AFTER.match(after[_unit_len(after):]):
-            role = "cell"
-        elif unit:
-            role = "other"                 # a length or a time, but not said to be the cell size
+        elif (_CELL_BEFORE.search(before) and not re.search(r"\bbreach\s+at\s*$", before, re.I)) or \
+                (unit and _CELL_AFTER.match(after[_unit_len(after):])):
+            role = "cell"                  # not 'breach at 5 m', not '5 cells' (a count)
+        elif unit or _CELL_AFTER.match(after):
+            role = "other"                 # a length or a time not said to be the cell size, or '5 cells'
         else:
             role = "plain"
         if role in ("cell", "n") and (re.match(r",\d", after) or re.search(r"\d,$", before)):
@@ -206,7 +208,7 @@ def _same(a, b):
 
 
 def _id_re(i):
-    return r"(?<![\w.\-])%s(?![\w\-]|\.\d)" % re.escape(i)
+    return r"(?<![\w.\-])%s(?![\w\-]|\.\w)" % re.escape(i)      # 2801 is not read out of 2801.A
 
 
 def _solver_re(x):
@@ -270,6 +272,9 @@ def check_fields(request, data):
         else:
             spelled = set()
             for m in re.finditer(_id_re(i), words, re.I):
+                if any(n["role"] in ("cell", "n") and m.start() <= n["span"][0] and n["span"][1] <= m.end()
+                       for n in nums):
+                    continue                       # '10M' after 'at' is a cell size, not dam 10M
                 hit = -1
                 spelled.add(m.group(0))
                 taken.append(m.span())
@@ -286,6 +291,9 @@ def check_fields(request, data):
             continue
         if i not in ids:
             ids.append(i)
+    if len(ids) > 1 and len(set(id_pos)) > len(ids):
+        bad.append("your words name a dam more than once; heim run gives every dam the same settings, so "
+                   "name each dam once (\"run 2801 and 4031 at 5 m\"), or run them one at a time")
     if not ids and not bad:
         bad.append("no dam id: name the dams (e.g. \"run 2801 and 4031\"); a question about runs ends "
                    "with ? (heim run times for ANUGA?)")
@@ -318,7 +326,10 @@ def check_fields(request, data):
     n = number("manning", "Manning's n")
     if n is not None:
         at = [k for k, x in enumerate(nums) if x["role"] == "n" and _same(x["value"], n)]
-        if not at:
+        if at and not [k for k in at if not nums[k]["unit"]]:
+            bad.append("Manning's n has no unit; %s %s is a length, not n (write it as \"n 0.04\")"
+                       % (_g(n), nums[at[0]]["unit"]))
+        elif not at:
             bad.append("Manning's n %s is not in your words as Manning's n (write it as \"n 0.04\")" % _g(n))
         elif not MANNING_RANGE[0] <= n <= MANNING_RANGE[1]:
             bad.append("Manning's n %s is outside %g-%g" % ((_g(n),) + MANNING_RANGE))
@@ -362,9 +373,10 @@ def check_fields(request, data):
     verbs = _VERB.findall(rest)
     redo_hits = [m for m in _REDO_PHRASES.finditer(rest)]
     run_pos = [m.start() for m in _VERB.finditer(rest)] + [m.start() for m in redo_hits]
-    if len(ids) > 1 and id_pos and any(min(id_pos) < q < max(id_pos) for q in run_pos):
-        bad.append("a run or redo word comes between the dams; heim run gives every dam the same run, so "
-                   "write it once (\"rerun 2801 and 4031\"), or run them one at a time")
+    if len(ids) > 1 and id_pos and (any(min(id_pos) < q < max(id_pos) for q in run_pos)
+                                    or any(m.start() > min(id_pos) for m in redo_hits)):
+        bad.append("with several dams, a run or redo word goes once, before them (\"rerun 2801 and 4031\"); "
+                   "otherwise run the dams one at a time")
     elif len(verbs) > 1 and len(ids) > 1:
         bad.append("your words have more than one run (%s); heim run makes one run with one set of "
                    "settings for every dam: run them one at a time" % ", ".join(verbs))
@@ -445,7 +457,7 @@ def paths_for(args, set_name, saved):
     return have
 
 
-def check_paths(set_name, p, ids, layer_ids):
+def check_paths(set_name, p, ids, layer_ids, words=""):
     bad = []
     for k, what in (("dams", "dams layer (--dams)"), ("out", "output folder (--out)"), ("dem", "DEM (--dem)")):
         if not p.get(k):
@@ -488,6 +500,14 @@ def check_paths(set_name, p, ids, layer_ids):
                     missing.append(i)
             if missing:
                 bad.append("not in the dams layer (field %s): %s" % (col, ", ".join(missing)))
+            # a longer id of the layer written in the words ('2801 A' when 2801 and '2801 A' are both
+            # dams): the words may name that dam, not the shorter one
+            for i in ids:
+                longer = sorted(h for h in have if len(h) > len(i) and h.lower().startswith(i.lower())
+                                and words and re.search(r"(?<![\w.\-])%s(?![\w\-]|\.\w)" % re.escape(h), words, re.I))
+                if longer:
+                    bad.append("your words may name dam %s, not %s (both are in the layer); write the dam "
+                               "plainly, or type the damchain command" % (longer[0], i))
     return bad
 
 
@@ -590,7 +610,7 @@ def main(argv=None, chat=None, ask=input, runner=None, out=_say):
         return 2
     f, bad, notes = check_fields(request, data)
     if not bad:
-        bad = check_paths(set_name, p, f["ids"], dc.layer_ids)
+        bad = check_paths(set_name, p, f["ids"], dc.layer_ids, unicodedata.normalize("NFKC", request))
     for n in notes:
         out("  note: " + n)
     if bad:

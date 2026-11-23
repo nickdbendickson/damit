@@ -100,14 +100,18 @@ heim run --show "run 2801 at 10 m"
   a, and, with, using, at, on, for, dam, cell, solver, Manning, please ...).
 - Refused, not guessed:
   - any other word ("the 30 m high dam", "thanks", "2 at a time", "FV2 crashed last time");
-  - a run or redo word between the dams ("run 2801 and overwrite 4031") or a dam after a
-    setting ("run 2801 at 5 m and 4031"):
+  - with several dams, a run or redo word anywhere but once before them ("run 2801 and
+    overwrite 4031", "run 4031 and 2801 again"; write "rerun 2801 and 4031"), a dam named twice,
+    or a dam after a setting ("run 2801 at 5 m and 4031"):
     every dam gets the same settings, so run them one at a time;
   - an id that is not a word of its own in your sentence, or not in the dams layer (any case:
     `nd00123` runs as the layer's `ND00123`; when the layer has both `a1` and `A1`, the
     spelling you wrote is the one run);
   - a cell size not written as one ("at 5 m", "5 m cells", "cell 5"), out of 0.5-200 m, or in
-    feet, cm or another unit; a Manning's n not written next to "n" or "Manning", or out of 0.01-0.25;
+    feet, cm or another unit ("5 cells" and "breach at 5 m" are not cell sizes); a Manning's n
+    not written next to "n" or "Manning", written with a unit, or out of 0.01-0.25;
+  - a dam id read out of a longer one (2801 out of 2801.A or 2801-B), or a shorter dam when
+    your words may name a longer one of the layer;
   - a number nothing accounts for ("with the 2 m DEM", a second cell size for another dam);
   - a solver you did not name, or two solvers named (FV-2 counts as FV2);
   - any "not", "except", "instead of", "skip", "don't" ...: it does not work out what is ruled

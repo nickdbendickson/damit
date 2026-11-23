@@ -195,7 +195,7 @@ class HeimRunTest(Case):
                 ("Can you run 2801 at 5 m? Thanks again", fields(ids=["2801"], cell_m=5, redo=True), "does not know"),
                 ("since we're running 2801 anyway, do it at 5 m", fields(ids=["2801"], cell_m=5, redo=True),
                  "does not know"),
-                ("redo 4031 and run 2801", fields(ids=["4031", "2801"], redo=True), "comes between the dams"),
+                ("redo 4031 and run 2801", fields(ids=["4031", "2801"], redo=True), "a run or redo word goes once"),
                 ("run 2801 at 5 m and 4031", fields(ids=["2801", "4031"], cell_m=5), "a dam comes after a setting"),
                 ("run 2801 with FV2, and 4031", fields(ids=["2801", "4031"], solver="fv2"), "a dam comes after"),
                 ("run 2801 at 5 m, don\u00b4t overwrite it", fields(ids=["2801"], cell_m=5, redo=True), "does not know"),
@@ -222,9 +222,9 @@ class HeimRunTest(Case):
         con.commit()
         con.close()
         for req, f, why in (
-                ("run 2801 and overwrite 4031", fields(ids=["2801", "4031"], redo=True), "comes between the dams"),
-                ("overwrite 4031 and run 2801", fields(ids=["4031", "2801"], redo=True), "comes between the dams"),
-                ("run 4031 again and 2801", fields(ids=["4031", "2801"], redo=True), "comes between the dams"),
+                ("run 2801 and overwrite 4031", fields(ids=["2801", "4031"], redo=True), "a run or redo word goes once"),
+                ("overwrite 4031 and run 2801", fields(ids=["4031", "2801"], redo=True), "a run or redo word goes once"),
+                ("run 4031 again and 2801", fields(ids=["4031", "2801"], redo=True), "a run or redo word goes once"),
                 ("run 2801-B", fields(ids=["2801", "2801-B"]), "not in your words as a dam id"),
                 ("run 2801_2", fields(ids=["2801"]), "not in your words as a dam id"),
                 ("run 2801 at 5 m, n0.035", fields(ids=["2801"], cell_m=5), "does not know"),
@@ -243,6 +243,37 @@ class HeimRunTest(Case):
                        ("run 2801 with FV 2", fields(ids=["2801"], solver="fv2")),
                        ("run 2801-B", fields(ids=["2801-B"])),
                        ("Run dams 2801, 4031 & DWR-3034 at 10 m.", fields(ids=["2801", "4031", "DWR-3034"], cell_m=10))):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(code, 0, req + "\n" + said)
+
+    def test_fifth_review(self):
+        con = sqlite3.connect(self.dams)
+        con.executemany("INSERT INTO dams (dam_id) VALUES (?)",
+                        [(x,) for x in ("2801.A", "2801.ACC", "4031.N", "10M", "5m", "2801 A")])
+        con.commit()
+        con.close()
+        for req, f, why in (
+                ("run 2801.A", fields(ids=["2801"]), "not in your words as a dam id"),
+                ("run 2801.ACC", fields(ids=["2801"], solver="acc"), "not in your words as a dam id"),
+                ("run 2801 and 4031.N", fields(ids=["2801", "4031"]), "not in your words as a dam id"),
+                ("run 2801 at 10M", fields(ids=["2801", "10M"]), "not in your words as a dam id"),
+                ("run 2801 at 5m", fields(ids=["2801", "5m"]), "not in your words as a dam id"),
+                ("run 2801 and 4031 with 4031 at 5 m", fields(ids=["2801", "4031"], cell_m=5), "more than once"),
+                ("run 2801 and 4031, 4031 with FV2", fields(ids=["2801", "4031"], solver="fv2"), "more than once"),
+                ("run 4031 now and 2801 again", fields(ids=["4031", "2801"], redo=True), "a run or redo word goes once"),
+                ("run 2801 with the breach at 5 m", fields(ids=["2801"], cell_m=5), "not in your words as a cell size"),
+                ("run 2801 with roughness 0.05 m", fields(ids=["2801"], manning=0.05), "is a length, not n"),
+                ("run 2801 with 5 cells", fields(ids=["2801"], cell_m=5), "not in your words as a cell size"),
+                ("run 2801 on" + " " * 29 + "0.04", fields(ids=["2801"], manning=0.04), "not in your words as Manning"),
+                ("run 2801 A", fields(ids=["2801"]), "may name dam 2801 A")):
+            self.calls = []
+            code, said = self.go(req, f)
+            self.assertEqual(self.calls, [], req)
+            self.assertIn(why, said, req)
+        for req, f in (("run 2801.A at 5 m", fields(ids=["2801.A"], cell_m=5)),
+                       ("run 2801 at 5 m.", fields(ids=["2801"], cell_m=5)),
+                       ("rerun 2801 and 4031", fields(ids=["2801", "4031"], redo=True))):
             self.calls = []
             code, said = self.go(req, f)
             self.assertEqual(code, 0, req + "\n" + said)
