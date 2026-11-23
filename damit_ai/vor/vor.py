@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.0 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.2 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,15 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.2 (from the second real-model test, 2026-11-22): three questions (filter-d15f, filter-band,
+#   pierce-length) came back in 1-2 s with "8 passages read, the model drew no quote" although the right
+#   pages were among them; the cause is not known yet. What 1.4.2 changes: passages are fitted to the
+#   window in tokens (digits and table bars are a token each; tables were counted at 3.2 characters a
+#   token and could overfill it), a passage over PASSAGE_MAX is cut instead of ending the reading, only
+#   passages the model was handed count as read, and every model call prints its passages, our token
+#   count, Ollama's prompt_eval_count, seconds and done_reason (the eval keeps them). Table passages cannot
+#   grow past PASSAGE_MAX: all-empty columns are dropped, a mostly empty grid is not kept, a long row is
+#   cut. `vor tables --check` lists over-long passages already indexed; `vor tables --redo` re-reads them.
 # 1.4.1 (from the first real-model test, 2026-11-22): a question that names a report ('FEMA 333',
 #   'P-946', 'TD-39') reads that report's passages first; four FEMA 333 questions had never read FEMA 333,
 #   because other FEMA manuals repeat its definitions. And a cited sentence whose quote holds the opposite
@@ -88,7 +97,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 
 def _home():
@@ -143,6 +152,7 @@ CHARS_PER_TOKEN = 3.2
 CHUNK_TARGET = 1100
 CHUNK_MAX = 1600
 CHUNK_OVERLAP = 200
+PASSAGE_MAX = 4 * CHUNK_MAX  # 1.4.2: most characters of one passage handed to the model
 MIN_PAGE_CHARS = 40
 EMBED_BATCH = 16
 MAX_FILE_BYTES = 300 * 1024 * 1024
@@ -293,12 +303,14 @@ _format_ok = [True]
 # reply can come back EMPTY with nothing wrong at the HTTP level - a reasoning model spends its
 # whole num_predict allowance in message.thinking and writes no content - and before this
 # nothing recorded which of those happened.
-LAST_REPLY = {"done_reason": "", "eval_count": 0, "thinking_chars": 0, "content_chars": 0}
+LAST_REPLY = {"done_reason": "", "eval_count": 0, "thinking_chars": 0, "content_chars": 0, "prompt_tokens": 0,
+              "seconds": 0.0}
 
 
-def _note_reply(done_reason, eval_count, thinking_chars, content_chars):
+def _note_reply(done_reason, eval_count, thinking_chars, content_chars, prompt_tokens=0, seconds=0.0):
     LAST_REPLY.update(done_reason=str(done_reason or ""), eval_count=int(eval_count or 0),
-                      thinking_chars=int(thinking_chars or 0), content_chars=int(content_chars or 0))
+                      thinking_chars=int(thinking_chars or 0), content_chars=int(content_chars or 0),
+                      prompt_tokens=int(prompt_tokens or 0), seconds=float(seconds or 0.0))
 
 
 def strip_think(text):
@@ -355,7 +367,7 @@ def chat(messages, schema=None, think=False, stream_to=None, num_predict=None, t
             msg = out.get("message") or {}
             content = (msg.get("content") or "").strip()
             _note_reply(out.get("done_reason"), out.get("eval_count"), len(msg.get("thinking") or ""),
-                        len(content))
+                        len(content), out.get("prompt_eval_count"), (out.get("total_duration") or 0) / 1e9)
             return content
         return _stream(p, stream_to)
     except RuntimeError as e:
@@ -375,6 +387,7 @@ def _stream(p, out):
     req = urllib.request.Request(BASE + "/api/chat", data=json.dumps(p).encode(),
                                  headers={"Content-Type": "application/json"})
     buf, thinking_shown, thinking_chars, done_reason, eval_count = [], False, 0, "", 0
+    prompt_tokens, seconds = 0, 0.0
     try:
         r = urllib.request.urlopen(req, timeout=3600)
     except urllib.error.HTTPError as e:
@@ -406,10 +419,11 @@ def _stream(p, out):
                 out.flush()
             if ch.get("done"):
                 done_reason, eval_count = ch.get("done_reason") or "", ch.get("eval_count") or 0
+                prompt_tokens, seconds = ch.get("prompt_eval_count") or 0, (ch.get("total_duration") or 0) / 1e9
                 break
     out.write("\n")
     text = "".join(buf).strip()
-    _note_reply(done_reason, eval_count, thinking_chars, len(text))
+    _note_reply(done_reason, eval_count, thinking_chars, len(text), prompt_tokens, seconds)
     return text
 
 
@@ -701,7 +715,11 @@ def table_markdown(rows):
         return ""
     n = max(len(r) for r in rows)
     rows = [r + [""] * (n - len(r)) for r in rows]
-    if sum(1 for r in rows for c in r if c) < 4:
+    keep = [j for j in range(n) if any(r[j] for r in rows)]          # 1.4.2: no all-empty columns
+    rows = [[r[j] for j in keep] for r in rows]
+    n = len(keep)
+    filled = sum(1 for r in rows for c in r if c)
+    if n < 2 or filled < 4 or filled < 0.2 * n * len(rows):          # 1.4.2: a mostly empty grid
         return ""
     out = ["| " + " | ".join(rows[0]) + " |", "|" + "---|" * n]
     out += ["| " + " | ".join(r) + " |" for r in rows[1:]]
@@ -710,7 +728,7 @@ def table_markdown(rows):
 
 def table_chunks(caption, md):
     """Passages for one table: the caption and the header on every piece, rows never split."""
-    lines = md.split("\n")
+    lines = [ln if len(ln) <= CHUNK_MAX else ln[:CHUNK_MAX - 2] + " …" for ln in md.split("\n")]   # 1.4.2
     head, body = lines[:2], lines[2:]
     lead = ("Table: %s\n" % caption) if caption else "Table:\n"
     out, cur = [], []
@@ -1626,6 +1644,10 @@ class Evidence:
         self.answer_note = ""    # set when the model's own write-up could not be used
         self.answer_from = "model"   # "model" | "model, second attempt" | "findings"
         self.term_flags = []     # opposite_terms(): a sentence whose quote says the opposite
+        self.cut = []            # 1.4.2: passages cut to PASSAGE_MAX (or the window) before the model read them
+        self.cut_cids = set()
+        self.calls = []          # 1.4.2: one dict per extract() model call (passages, tokens, seconds, ...)
+        self.not_asked = 0       # 1.4.2: extract() calls where no passage fitted, so the model was not asked
 
     def add_source(self, h):
         if h.cid not in self.by_cid:
@@ -1638,28 +1660,73 @@ def budget_chars(reserve_tokens):
     return max(4000, int((NUM_CTX - reserve_tokens) * CHARS_PER_TOKEN))
 
 
+def est_tokens(text):
+    """Tokens a passage costs, on the safe side. 1.4.2: prose runs about CHARS_PER_TOKEN characters a token,
+    but Qwen reads every digit as its own token and a table's '|' and '---' cost one each, so a table
+    passage counted at 3.2 characters a token could fill twice the room it was given."""
+    text = text or ""
+    d = sum(c.isdigit() for c in text)
+    p = text.count("|")
+    return int((len(text) - d - p) / CHARS_PER_TOKEN + d + p) + 1
+
+
+EXTRACT_ASK = ("List every finding in these passages that helps answer the sub-question. For each: the source "
+               "label (like S3), an exact quote copied from that passage (one or two sentences, under 300 "
+               "characters), a one-sentence plain claim that says no more than the quote, and its kind. "
+               "Skip passages that are not relevant. In not_covered, list parts of the sub-question that "
+               "none of the passages answer.")
+
+
 def extract(ev, sub, hits):
-    """Ask the model for verbatim evidence from these passages, then check every quote ourselves."""
-    budget = budget_chars(2500)
+    """Ask the model for verbatim evidence from these passages, then check every quote ourselves.
+
+    1.4.2: the passages are fitted to the window in tokens, not characters, a passage longer than
+    PASSAGE_MAX (or than the room left) is cut rather than ending the reading, and only the passages
+    actually handed to the model are counted as read."""
+    room = NUM_CTX - 2500 - est_tokens(SYSTEM + EXTRACT_ASK + sub) - 200
     blocks, used = [], 0
     for h in hits:
+        txt = h.txt or ""
+        head = "[S%d] %s, %s\n" % (len(ev.sources) + 1, h.short(), h.pg)     # label fixed below
+        left = room - used - est_tokens(head)
+        if left < 150:
+            continue                       # no room for this one; a shorter one further down may fit
+        keep = len(txt)
+        if keep > PASSAGE_MAX:
+            keep = PASSAGE_MAX
+        while keep > 200 and est_tokens(txt[:keep]) > left:
+            keep = int(keep * 0.8)
+        if est_tokens(txt[:keep]) > left:
+            continue
         s = ev.add_source(h)
-        b = "[S%d] %s, %s\n%s" % (s, h.short(), h.pg, h.txt)
-        if used + len(b) > budget:
-            break
+        if keep < len(txt):
+            if h.cid not in ev.cut_cids:
+                ev.cut_cids.add(h.cid)
+                ev.cut.append("%s, %s: %d of %d characters" % (h.short(), h.pg, keep, len(txt)))
+            txt = txt[:keep] + "\n[passage cut here: %d of %d characters shown]" % (keep, len(txt))
+        b = "[S%d] %s, %s\n%s" % (s, h.short(), h.pg, txt)
         blocks.append((s, b))
-        used += len(b)
+        used += est_tokens(b)
     if not blocks:
+        say("  (no passage fitted in the model's window, so the model was not asked)")
+        ev.not_asked += 1
         return
-    msg = ("Sub-question: %s\n\nSource passages:\n\n%s\n\n"
-           "List every finding in these passages that helps answer the sub-question. For each: the source "
-           "label (like S3), an exact quote copied from that passage (one or two sentences, under 300 "
-           "characters), a one-sentence plain claim that says no more than the quote, and its kind. "
-           "Skip passages that are not relevant. In not_covered, list parts of the sub-question that "
-           "none of the passages answer." % (sub, "\n\n".join(b for _, b in blocks)))
+    msg = ("Sub-question: %s\n\nSource passages:\n\n%s\n\n%s"
+           % (sub, "\n\n".join(b for _, b in blocks), EXTRACT_ASK))
     reply = chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}],
                  schema=EXTRACT_SCHEMA, num_predict=2500)
     out = parse_json(reply)
+    # 1.4.2: one line per model call, so a fast empty answer can be told from a slow one. Three questions
+    # in the 2026-11-22 test came back in 1-2 s with no finding and nothing in the report said why.
+    call = {"passages": len(blocks), "est_tokens": est_tokens(SYSTEM + msg),
+            "prompt_tokens": LAST_REPLY.get("prompt_tokens", 0), "seconds": round(LAST_REPLY.get("seconds", 0.0), 1),
+            "done": LAST_REPLY.get("done_reason", ""), "reply_chars": len(reply or ""),
+            "findings": len((out or {}).get("findings") or []) if isinstance(out, dict) else None}
+    ev.calls.append(call)
+    say("  (model read %d passage(s): about %d tokens by our count, %s by Ollama's, %.1f s, done: %s; "
+        "%s finding(s) offered)" % (call["passages"], call["est_tokens"], call["prompt_tokens"] or "?",
+                                     call["seconds"], call["done"] or "?",
+                                     "?" if call["findings"] is None else call["findings"]))
     if out is None and not strip_think(reply):
         # 1.3.0: nothing came back at all. Once more with twice the room, because the usual
         # cause is the allowance being spent before the first character of the answer.
@@ -1779,8 +1846,14 @@ def no_findings_answer(ev, keep):
         drew = "the model offered %d quote(s), and none of them passed the check against its page" % len(quoted)
     elif other:
         drew = "the model's reply could not be used (%s)" % other[0].get("why", "no reason recorded")
+    elif ev.not_asked and not ev.calls:
+        drew = "none of them fitted in the model's window, so the model was not asked"
     else:
         drew = "the model drew no quote from them"
+        fast = [c for c in ev.calls if c.get("seconds") and c["seconds"] < 3]
+        if fast:
+            drew += (" (it answered in %.1f s, after reading %s prompt token(s): too fast to have read them; "
+                     "Ollama's log, ~/.ollama/logs/server.log, may say why)" % (fast[0]["seconds"], fast[0]["prompt_tokens"] or "?"))
     return ("There is nothing to cite: %d passage(s) were read and %s. That is not the same as the "
             "library having nothing. These are the passages the search ranked closest to the question, "
             "unchecked:\n\n%s\n\nOpen those pages, or ask again in different words%s."
@@ -1912,7 +1985,7 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
     for n, did in enumerate(order, 1):
         h = next(s for s in ev.sources if s.doc_id == did)
         say("  [%d] %s" % (n, cite_line(h)))
-    if unknown or unc or ev.answer_note or ev.term_flags or any(f["numbers"] for f in ev.findings if f["F"] in used_f):
+    if unknown or unc or ev.answer_note or ev.term_flags or ev.cut or any(f["numbers"] for f in ev.findings if f["F"] in used_f):
         say("\nChecks: %s" % "; ".join(checks_summary(ev, unknown, used_f, unc)))
     if path:
         say("\nReport (evidence table, quotes, rejected items): %s" % path)
@@ -1952,6 +2025,10 @@ def checks_summary(ev, unknown, used_f, unc):
         c.append("%d long sentence(s) carry no citation - treat them as the model's own words" % unc)
     for t in getattr(ev, "term_flags", []):
         c.append("CHECK " + t)
+    cut = getattr(ev, "cut", [])
+    if cut:
+        c.append("%d passage(s) were too long and only their start was read (%s)"
+                 % (len(cut), "; ".join(cut[:3]) + ("; ..." if len(cut) > 3 else "")))
     if not c:
         c.append("all cited quotes found on their pages; no uncited sentences")
     if ev.answer_note:
@@ -2185,8 +2262,30 @@ def cmd_bib(a):
     say("%d BibTeX entries read, %d library documents updated." % (len(entries), hit))
 
 
+def long_passages(db, limit=PASSAGE_MAX):
+    """(doc id, file, page, characters) of every passage longer than `limit`, longest first."""
+    return db.execute("SELECT c.doc_id, d.path, c.page, length(c.txt) FROM chunks c JOIN docs d ON d.id = c.doc_id "
+                      "WHERE length(c.txt) > ? ORDER BY length(c.txt) DESC", (limit,)).fetchall()
+
+
 def cmd_tables(a):
-    """Add table passages to PDFs indexed before 1.4.0 (backend 'pymupdf'), embedding only the tables."""
+    """Add table passages to PDFs indexed before 1.4.0 (backend 'pymupdf'), embedding only the tables.
+    1.4.2: --check lists passages longer than PASSAGE_MAX; --redo reads the tables of those documents again
+    with the 1.4.2 limits (no all-empty columns, no mostly empty grids, no row longer than a passage)."""
+    if getattr(a, "check", False):
+        db = connect()
+        try:
+            rows = long_passages(db)
+        finally:
+            db.close()
+        if not rows:
+            say("No passage is longer than %d characters. Nothing to redo." % PASSAGE_MAX)
+            return
+        say("%d passage(s) longer than %d characters (Vor reads only their start):" % (len(rows), PASSAGE_MAX))
+        for did, path, page, n in rows[:40]:
+            say("  %8d  doc %d  p.%s  %s" % (n, did, page, os.path.basename(path)))
+        say("Fix: vor tables --redo")
+        return
     try:
         import pymupdf  # noqa: F401
     except ImportError:
@@ -2196,18 +2295,28 @@ def cmd_tables(a):
             die("`vor tables` needs PyMuPDF (the installer puts it in Vor's Python).")
     db = connect()
     try:
-        _add_tables(db)
+        _add_tables(db, redo=getattr(a, "redo", False))
     finally:
         db.close()
 
 
-def _add_tables(db):
-    rows = db.execute("SELECT id, path, title FROM docs WHERE backend = 'pymupdf' ORDER BY id").fetchall()
-    if not rows:
-        say("Every PDF already has its tables (or none was read with PyMuPDF). Nothing to do.")
-        return
-    say("Looking for tables in %d document(s) indexed before Vor 1.4.0 (only pages with numbers are searched) ..."
-        % len(rows))
+def _add_tables(db, redo=False):
+    if redo:
+        ids = sorted({r[0] for r in long_passages(db)})
+        rows = [db.execute("SELECT id, path, title FROM docs WHERE id=?", (i,)).fetchone() for i in ids]
+        rows = [r for r in rows if r and (r[1] or "").lower().endswith(".pdf")]
+        if not rows:
+            say("No PDF has a passage longer than %d characters. Nothing to redo." % PASSAGE_MAX)
+            return
+        say("Reading the tables of %d document(s) again (they hold passages longer than %d characters) ..."
+            % (len(rows), PASSAGE_MAX))
+    else:
+        rows = db.execute("SELECT id, path, title FROM docs WHERE backend = 'pymupdf' ORDER BY id").fetchall()
+        if not rows:
+            say("Every PDF already has its tables (or none was read with PyMuPDF). Nothing to do.")
+            return
+        say("Looking for tables in %d document(s) indexed before Vor 1.4.0 (only pages with numbers are searched) ..."
+            % len(rows))
     pre = doc_prefix(EMBED_MODEL)
     added = 0
     for n, (did, path, title) in enumerate(rows, 1):
@@ -2627,6 +2736,8 @@ def main():
     add_scope_args(s)
     s.set_defaults(fn=cmd_chat)
     s = sub.add_parser("tables", help="add the PDFs' tables as their own passages (documents indexed before 1.4.0)")
+    s.add_argument("--check", action="store_true", help="list passages too long for Vor to read whole; changes nothing")
+    s.add_argument("--redo", action="store_true", help="read the tables again of documents with a passage that is too long")
     s.set_defaults(fn=cmd_tables)
     s = sub.add_parser("ocr", help="OCR scanned PDFs (needs ocrmypdf) and re-index them")
     s.add_argument("--min-fraction", type=float, default=OCR_MIN_FRACTION,
