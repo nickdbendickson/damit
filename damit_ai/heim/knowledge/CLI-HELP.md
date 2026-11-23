@@ -579,7 +579,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.4.9
+## vor.py 1.4.10
 
 Installed command: `vor`. The literature assistant.
 
@@ -685,12 +685,14 @@ interactive; '!' prefix = deep research
 
 #### `vor.py tables`
 
-add the PDFs' tables as their own passages (documents indexed before 1.4.0)
+add or re-read the PDFs' tables as their own passages (documents indexed before 1.4.10)
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
 | `--check` |  |  | list passages too long for Vor to read whole; changes nothing |
 | `--redo` |  |  | read the tables again of documents with a passage that is too long |
+| `--again` |  |  | read the tables of every PDF again (1.4.10 also reads tables printed without lines) |
+| `--doc` | KEY |  | read the tables of this publication again: an id from `vor list`, or part of its file name, title or report number |
 
 #### `vor.py ocr`
 
@@ -746,7 +748,7 @@ Download public ASDSO-listed dam-safety references into the vor library.
 
 ---
 
-## eval_vor.py 1.5
+## eval_vor.py 1.6
 
 Installed command: `eval_vor.py`. Score a model on the literature questions.
 

@@ -191,6 +191,79 @@ class SynthesizeTest(Base):
         self.assertIn(QUOTE, report.split("## References")[0])
 
 
+class CutAnswerTest(Base):
+    """1.4.10: an answer stopped at its length limit is unfinished, not an answer. On 2026-11-23
+    (filter-d15f) the model reasoned through most of its 3000 tokens, began writing and was cut
+    mid-citation: '... (minimum 0.2 mm) [F1][F2][F3'. That text went out as the whole answer."""
+
+    CUT = dict(thinking="Weigh the dispersive case. " * 60, content="Failure causes economic loss [F1][F",
+               done_reason="length", eval_count=3000)
+
+    def test_a_cut_answer_is_asked_for_again_with_reasoning_off(self):
+        Ollama.script = [self.CUT, dict(content="Failure causes economic loss but no probable loss of life [F1].")]
+        ev = self.evidence()
+        body = dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        self.assertEqual(body, "Failure causes economic loss but no probable loss of life [F1].")
+        first, second = Ollama.seen
+        self.assertIs(second["think"], False)
+        self.assertGreater(second["options"]["num_predict"], first["options"]["num_predict"])
+        self.assertIn("Write the answer itself now", second["messages"][-1]["content"])
+        self.assertEqual(ev.answer_from, "model, after cut-off")
+        self.assertIn("cut off", ev.answer_note)
+        self.assertIn("length limit (3000 tokens) partway through the answer, most of them spent reasoning",
+                      ev.answer_note)
+        self.assertTrue(any("was cut off" in m for m in self.said), self.said)
+
+    def test_cut_twice_keeps_the_longer_text_and_says_its_end_is_missing(self):
+        longer = dict(content="Failure causes economic loss but no probable loss of life, and the dam [F",
+                      done_reason="length", eval_count=6000)
+        Ollama.script = [self.CUT, longer]
+        ev = self.evidence()
+        body = dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        self.assertEqual(len(Ollama.seen), 2, "one retry, not a loop")
+        self.assertEqual(body, longer["content"])
+        self.assertEqual(ev.answer_from, "model")
+        self.assertIn("its end is missing", ev.answer_note)
+
+    def test_cut_then_empty_keeps_the_first_text(self):
+        Ollama.script = [self.CUT, dict(content="", done_reason="stop", eval_count=1)]
+        ev = self.evidence()
+        body = dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        self.assertEqual(body, self.CUT["content"])
+        self.assertIn("its end is missing", ev.answer_note)
+        self.assertIn("second attempt wrote no answer", ev.answer_note)
+        self.assertNotIn("twice", ev.answer_note)
+
+    def test_little_reasoning_is_not_called_most_of_the_tokens(self):
+        Ollama.script = [dict(thinking="ok", content="Failure causes economic loss " * 20 + "[F",
+                              done_reason="length", eval_count=3000),
+                         dict(content="Economic loss, no lives [F1].")]
+        ev = self.evidence()
+        dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        self.assertNotIn("most of them spent reasoning", ev.answer_note)
+        self.assertIn("with reasoning off", " ".join(self.said))
+
+    def test_no_reasoning_and_no_more_room_is_not_asked_again(self):
+        Ollama.script = [dict(content="Failure causes economic loss [F", done_reason="length", eval_count=3000)]
+        ev = self.evidence()
+        old = dr.NUM_CTX
+        dr.NUM_CTX = 3500                              # the retry could not be given more room
+        try:
+            body = dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        finally:
+            dr.NUM_CTX = old
+        self.assertEqual(len(Ollama.seen), 1, "the same request again would be cut the same way")
+        self.assertEqual(body, "Failure causes economic loss [F")
+        self.assertIn("no more room to ask again", ev.answer_note)
+
+    def test_a_finished_answer_is_not_asked_for_again(self):
+        Ollama.script = [dict(thinking="short plan", content="Economic loss, no lives [F1].", done_reason="stop")]
+        ev = self.evidence()
+        dr.synthesize("How is significant hazard defined?", ev, "ask", io.StringIO())
+        self.assertEqual(len(Ollama.seen), 1)
+        self.assertEqual(ev.answer_note, "")
+
+
 class PipelineTest(Base):
     """The whole of `vor ask`, against the stand-in: retrieve, extract, check the quote, write."""
 

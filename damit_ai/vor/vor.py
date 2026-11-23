@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.9 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.10 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -34,8 +34,9 @@
 #     --per-doc N      passages allowed from any one publication (default 3; with --doc
 #                      the cap is lifted unless you set it, so a long guideline can give
 #                      up all -k passages).
-#   vor tables                 add the PDFs' tables as their own passages (documents indexed
-#                                      before 1.4.0; new ones get them at ingest). Needs PyMuPDF.
+#   vor tables                 add the PDFs' tables as their own passages (documents whose tables
+#                                      were read before 1.4.10; new ones get them at ingest). Needs PyMuPDF.
+#                                      --again: every PDF's tables read again; --doc KEY: one PDF's.
 #   vor ocr                    OCR the scanned PDFs (needs ocrmypdf) and re-ingest them
 #   vor remove DOC             drop a document from the index (file is not touched)
 #   vor doctor                 check Ollama, the two models and the database
@@ -49,6 +50,18 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.10 (2026-11-23): tables printed without ruling lines (USGS WSP 2339 tables 1-4) are read row by row from
+#   where their words sit, so "Cobble | 64-256 | 0.030-0.050" stays one line instead of three columns read one
+#   after another; `vor tables --again` / `--doc KEY` reads an indexed PDF's tables again. An answer cut off at
+#   its length limit is asked for again with reasoning off. The write-up may not call a checked finding
+#   misattributed; differing values are given with their source and year. Review fixes: a row whose first cell
+#   is long text still counts when it holds values; a full-width table on a two-column page keeps every column;
+#   wrapped and bare 'TABLE 2' captions; skewed scans levelled; side-by-side tables; headings on every piece; a
+#   changed file is never re-read for tables; plain `vor tables` (and doctor) cover tables read by 1.4.0-1.4.9.
+#   Second review: lines regrouped round their middle word (WSP Table 1's Boulder row was split); equations or a
+#   figure beside a left-column table stay out of it; centred captions; tables stop at REFERENCES; sentences that
+#   run on into 'Table 3.' are not captions; year headings repeat; `--doc` falls back only on whole numbers of
+#   3+ digits.
 # 1.4.9 (2026-11-23): the model is told which passages come from the publication the question names. On the
 #   2026-11-23 real-model test Vor read the right pages (WSP 2339 Table 1 p.10, Pierce et al. p.35) but each
 #   passage was labelled only "Arcement (1989) Guide for Selecting..." or "FEMA (2010) Predicting Peak...", so
@@ -134,7 +147,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.9"
+VERSION = "1.4.10"
 
 
 def _home():
@@ -583,6 +596,10 @@ def find_docs(db, key):
     for part in [p.strip() for p in str(key).split(",") if p.strip()]:
         if part.isdigit():
             hit = [r for r in rows if r[0] == int(part)]
+            if not hit and len(part) >= 3:                # 1.4.10: '2339' with no doc 2339 is a report number
+                num = re.compile(r"(?<!\d)%s(?!\d)" % part)  # a whole number: '233' is not '2339'
+                hit = [r for r in rows if num.search(r[3] or "") or num.search(os.path.basename(r[2] or ""))
+                       or num.search(r[1] or "")]
         else:
             if len(squash(part)) < 2:
                 die("--doc %r is too short to match on; use the id from `vor list`" % part)
@@ -1029,6 +1046,8 @@ def extract_pdf(path):
         raise RuntimeError("no PDF reader: install PyMuPDF (pip install pymupdf) or poppler (pdftotext)")
 
 
+TABLES_BACKEND = "pymupdf+tables2"   # 1.4.10: tables printed without ruling lines read too ('pymupdf+tables' = 1.4.0-1.4.9)
+OLD_TABLE_BACKENDS = ("pymupdf", "pymupdf+tables")
 TABLE_IDX = 1000            # chunk idx of a page's first table passage (text passages count from 0)
 TABLE_MIN_NUMBER_LINES = 6  # a page is searched for tables only with this many lines of numbers (the finder
                             # takes about 0.7 s a page; USGS WSP 2339: 13 of 44 pages searched, every n table found)
@@ -1114,7 +1133,13 @@ def _table_rows(t, words=None, pm=None):
     return rows or t.extract()
 
 
-_CAPTION = re.compile(r"^\s*table\s+[0-9A-Z]+[.:\s-]", re.I)
+# 1.4.10: a real table number ('Table 1.', 'TABLE 3:', 'Table A-1', 'Table IV', a bare 'TABLE 2' line), not any
+# line that happens to begin with the word ('table was lower ...', 'TABLE OF CONTENTS').
+_CAPTION = re.compile(r"^\s*(?:Table|TABLE)\s+(?:[A-Z]{0,3}[.-]?\d+[A-Za-z]?|[IVXL]+|l(?=[.:])|[A-Z](?=[.:]|\s+[A-Z]))"
+                      r"(?:[.:\s-]|$)")
+# 1.4.10: the back matter of a report, where a table that runs to the foot of a page must stop
+_BACK_HEADING = re.compile(r"^\s*(?:SELECTED\s+|LITERATURE\s+)?(?:REFERENCES(?:\s+CITED)?|LITERATURE\s+CITED|BIBLIOGRAPHY)\s*$",
+                           re.I)
 
 
 def _table_caption(words, bbox, pm):
@@ -1139,6 +1164,242 @@ def _table_caption(words, bbox, pm):
     return (near[-1].strip() if near else "")[:200]
 
 
+# 1.4.10: a table drawn without ruling lines (USGS WSP 2339's tables 1-3) is invisible to PyMuPDF's table
+# finder, and its plain text comes out a column at a time: every material name, then every grain size, then
+# every n range. On 2026-11-23 the model read that page four times and could not pair 'Cobble' with
+# '64-256' or 'Very large' with '0.050-0.100'. These rows are rebuilt from the words' positions instead.
+LAYOUT_MAX_LINES = 80        # most lines read below one caption
+
+
+def _skew(ws):
+    """The page's slope (dy per dx) from neighbouring words the PDF puts on one line: a scanned page's text
+    layer is often a degree or two off level, enough to pair a row's value with the next row's name."""
+    by = {}
+    for w in ws:
+        by.setdefault((w[5], w[6]), []).append(w)
+    sl = []
+    for ln in by.values():
+        ln = sorted(ln, key=lambda w: w[0])
+        for a, b in zip(ln, ln[1:]):
+            if b[0] - a[0] > 5:
+                sl.append(((b[1] + b[3]) - (a[1] + a[3])) / 2.0 / (b[0] - a[0]))
+    sl.sort()
+    return sl[len(sl) // 2] if len(sl) >= 5 else 0.0
+
+
+def _word_lines(words):
+    """The words as lines: grouped by the middle of their height (levelled for a skewed scan), each line left
+    to right."""
+    ws = [w for w in words if str(w[4]).strip()]
+    if not ws:
+        return []
+    hs = sorted(w[3] - w[1] for w in ws)
+    tol = max(1.0, 0.45 * hs[len(hs) // 2])
+    s = _skew(ws)
+    if abs(s) > 0.05:               # about 3 degrees: too far off level to read rows from
+        return []
+    lines = []
+    for w in sorted(ws, key=lambda w: ((w[1] + w[3]) / 2 - w[0] * s, w[0])):
+        yc = (w[1] + w[3]) / 2 - w[0] * s
+        if lines and abs(yc - lines[-1][0]) <= tol:
+            lines[-1][1].append(w)
+        else:
+            lines.append([yc, [w]])
+    # a line is seeded by its first word, which may be the other column's, a little higher than this row: each
+    # word then moves to whichever neighbouring line's middle word it sits nearest
+    mids = [sorted((x[1] + x[3]) / 2 - x[0] * s for x in ln)[len(ln) // 2] for _, ln in lines]
+    regrouped = [[] for _ in lines]
+    for i, (_, ln) in enumerate(lines):
+        for w in ln:
+            yc = (w[1] + w[3]) / 2 - w[0] * s
+            j = min((k for k in (i - 1, i, i + 1) if 0 <= k < len(lines)), key=lambda k: abs(yc - mids[k]))
+            regrouped[j].append(w)
+    return [(m, sorted(ln, key=lambda w: w[0])) for m, ln in zip(mids, regrouped) if ln]
+
+
+def _segments(line, gap):
+    """A line's words split where the space between two words is wider than gap: its cells."""
+    segs = []
+    for w in line:
+        if segs and w[0] - segs[-1][-1][2] <= gap:
+            segs[-1].append(w)
+        else:
+            segs.append([w])
+    return segs
+
+
+def _seg_text(seg):
+    return " ".join(str(w[4]) for w in seg)
+
+
+def _is_prose(seg, min_width):
+    """A run of running text: six words or more, mostly words in lower case, at least min_width wide."""
+    words = [str(w[4]) for w in seg]
+    alpha = sum(1 for t in words if re.match(r"^[(\"']?[a-z][a-z'-]*[,.;:)]?$", t))
+    return len(words) >= 6 and alpha >= 0.6 * len(words) and seg[-1][2] - seg[0][0] >= min_width
+
+
+def _column_edges(segd, min_width, page_width):
+    """Left edges of the second and later columns of running text: where a run of prose starts on a line that
+    also starts with prose, seen on two lines or more."""
+    xs = sorted(sg[i][0][0] for _, sg in segd for i in range(1, len(sg))
+                if _is_prose(sg[i], min_width) and _is_prose(sg[0], min_width))
+    groups = []
+    for x in xs:
+        if groups and x - groups[-1][-1] <= 0.02 * page_width:
+            groups[-1].append(x)
+        else:
+            groups.append([x])
+    return [g[0] for g in groups if len(g) >= 2]
+
+
+_HEAD_NUMBER = re.compile(r"\(\d{1,2}\)|(?:1[89]|20)\d\d(?:[-\u2013]\d\d(?:\d\d)?)?")
+
+
+def _pack_table(caption, rows):
+    """A table's rows as passages: the caption and the column headings (the lines above the first row with a
+    cell that is only a number) on every piece, and a cell's wrapped lines kept with their row."""
+    def num(r, label):
+        return any(_NUMBER_LINE.fullmatch(c.strip()) and not (label and _HEAD_NUMBER.fullmatch(c.strip()))
+                   for c in r.split(" | "))
+    # a heading row of years or column numbers ('1984 | 1985', '(1) | (2)') is not the first row of values
+    h = next((j for j, r in enumerate(rows[:4]) if num(r, True)), None)
+    if h is None:
+        h = next((j for j, r in enumerate(rows) if num(r, False)), 0)
+    # the repeated heading ends at its last line with cells (and that line's wrapped words): section lines
+    # such as 'Sand channels' are printed once, where they stand
+    hl = [j for j in range(h) if " | " in rows[j]]
+    if hl:
+        e = hl[-1] + 1
+        while e < h and re.match(r"^[a-z(]", rows[e]):
+            e += 1
+        h = e
+    if h and len("\n".join(rows[:h])) > CHUNK_MAX // 4:
+        h = 0                             # too long for a heading: those lines are rows, kept in the body
+    lead = "Table (rows as printed): %s\n" % caption[:200]
+    if h:
+        lead += "\n".join(rows[:h]) + "\n"
+    groups = []
+    for r in rows[h:]:
+        r = r if len(r) <= CHUNK_MAX // 2 else r[:CHUNK_MAX // 2 - 2] + " …"
+        if groups and " | " not in r and len(lead) + sum(len(x) + 1 for x in groups[-1] + [r]) <= CHUNK_MAX:
+            groups[-1].append(r)          # a wrapped cell's next line stays with its row
+        else:
+            groups.append([r])
+    out, cur = [], []
+    for g in groups:
+        if cur and len(lead) + sum(len(x) + 1 for x in cur + g) > CHUNK_MAX:
+            out.append(lead + "\n".join(cur))
+            cur = []
+        cur.extend(g)
+    if cur:
+        out.append(lead + "\n".join(cur))
+    return out
+
+
+def layout_table_chunks(words, page_width):
+    """Passages for each 'Table N' on a page, its rows rebuilt from where the words sit: one printed row to
+    a line, its cells joined by ' | '. A table set in one column of a page of running text keeps only that
+    column's words; two tables side by side each keep their own strip. Reading stops at the next caption or
+    at the first line of running text that starts at the table's left edge. [] when there is no caption or
+    nothing that looks like rows."""
+    lines = _word_lines(words)
+    if not lines or not page_width:
+        return []
+    cw = sorted((w[2] - w[0]) / max(1, len(str(w[4]))) for _, ln in lines for w in ln)
+    em = cw[len(cw) // 2]
+    gap = 1.8 * em
+    prose_w = min(0.3 * page_width, 30 * em)      # a line of running text, scaled to the type size
+    col_w = min(0.25 * page_width, 25 * em)
+    segd = [(yc, _segments(ln, gap)) for yc, ln in lines]
+    edges = _column_edges(segd, col_w, page_width)
+    near_edge = lambda x: next((e for e in edges if abs(x - e) <= 0.03 * page_width), None)
+    hs = sorted(w[3] - w[1] for _, ln in lines for w in ln)
+    pitch = 1.6 * hs[len(hs) // 2]
+
+    def goes_on(n, g):
+        # 'Table 3.' that a sentence on the line just above runs on into is running text, not a caption
+        if n == 0 or segd[n][0] - segd[n - 1][0] > pitch or not _is_prose(g, 0):
+            return False
+        return any(abs(p[0][0] - g[0][0]) <= 0.03 * page_width and _is_prose(p, 0)
+                   and not re.search(r"[.:;?!]$", _seg_text(p)) for p in segd[n - 1][1])
+    out = []
+    for n, (yc, sg) in enumerate(segd):
+        # a caption starts its line, or a column, or sits beside another caption: 'Table 1 gives ...' inside
+        # a cell is not one
+        caps = [i for i, g in enumerate(sg) if _CAPTION.match(_seg_text(g)) and not goes_on(n, g)
+                and (i == 0 or near_edge(g[0][0]) is not None or _CAPTION.match(_seg_text(sg[0]))
+                     or (not edges and g[0][0] > 0.4 * page_width and _is_prose(sg[i - 1], col_w)))]
+        for j, cap_i in enumerate(caps):
+            cap_seg = sg[cap_i]
+            lo, hi = 0.0, float(page_width) + 1
+            if len(caps) > 1:
+                lo = cap_seg[0][0] - 2 if j else 0.0
+                hi = sg[caps[j + 1]][0][0] - 2 if j + 1 < len(caps) else hi
+            else:
+                if cap_i > 0:                       # the table sits in a later column
+                    e_l = near_edge(cap_seg[0][0])
+                    if e_l is None:
+                        # no column edge seen: the table starts after the running text beside it, which may be
+                        # left of a centred caption
+                        ends = [sgb[0][-1][2] for _, sgb in segd[n:n + LAYOUT_MAX_LINES]
+                                if len(sgb) > 1 and _is_prose(sgb[0], col_w)]
+                        e_l = min(cap_seg[0][0], max(ends + [sg[cap_i - 1][-1][2]])) + 2
+                    lo = e_l - 2
+                e_r = next((e for e in edges if e > cap_seg[-1][2] + 2), None)
+                if e_r is not None:
+                    # bounded on the right only where the next column goes on as running text beside the rows
+                    # (or by nothing laid out in columns: equations, a figure, blank space), not where the
+                    # table's own columns run on across the edge
+                    beside = [g for _, sgb in segd[n + 1:n + 9] for g in sgb if g[0][0] >= e_r - 2]
+                    xs = [g[0][0] for g in beside if not _is_prose(g, col_w)]
+                    tol = 0.02 * page_width
+                    head = next((sgb for _, sgb in segd[n + 1:n + 3] if not _seg_text(sgb[0]).startswith("[")), [])
+                    body = [sgb for _, sgb in segd[n + 2:n + 6]]
+                    crosses = (sum(1 for g in head if g[-1][2] < e_r - 2) >= 2
+                               and any(g[0][0] >= e_r - 2 and not _is_prose(g, 0) and len(g) <= 4 for g in head)
+                               and not any(_is_prose(g, col_w) for g in sg[cap_i + 1:] if g[0][0] >= e_r - 2)
+                               # and the rows go on across the edge, row after row
+                               and sum(1 for b in body if sum(1 for g in b if g[-1][2] < e_r - 2) >= 2
+                                       and any(g[0][0] >= e_r - 2 for g in b)) >= 3)
+                    prose_beside = sum(1 for g in beside if _is_prose(g, col_w)) * 2 >= len(beside)
+                    columns_beside = any(sum(1 for y in xs if abs(y - x) <= tol) >= 3 for x in xs)
+                    if not crosses and (prose_beside or not columns_beside):
+                        hi = e_r - 2
+            left = cap_seg[0][0]
+            caption = _seg_text(cap_seg)
+            span = min(hi, float(page_width)) - max(lo, 0.0)
+            rows, k = [], n + 1
+            while k < len(segd) and len(rows) < LAYOUT_MAX_LINES:
+                ws = [w for g in segd[k][1] for w in g if w[0] >= lo and w[2] <= hi]
+                k += 1
+                if not ws:
+                    continue
+                cells = _segments(ws, gap)
+                first = _seg_text(cells[0])
+                at_left = cells[0][0][0] <= left + 0.05 * page_width
+                if not rows and first.startswith("["):
+                    caption += " " + " ".join(_seg_text(c) for c in cells)
+                    continue
+                if (not rows and k == n + 2 and len(cells) == 1 and at_left
+                        and (_is_prose(cells[0], 0)
+                             or (cap_seg[-1][2] - max(lo, 0.0) >= 0.8 * span and first[:1].islower()))):
+                    caption += " " + first          # the caption wrapped onto a second line
+                    continue
+                if at_left and (_CAPTION.match(first) or re.match(r"^(figure|fig\.)\s+\d", first, re.I)
+                                or _BACK_HEADING.match(first)):
+                    break
+                values = [_seg_text(c) for c in cells[1:]]
+                if (at_left and not re.match(r"^\d{1,2}$", str(cells[0][0][4])) and _is_prose(cells[0], prose_w)
+                        and not (values and all(re.search(r"\d", t) and len(t.split()) <= 3 for t in values))):
+                    break                           # running text below the table (a long name with values is a row)
+                rows.append(" | ".join(_seg_text(c) for c in cells))
+            if sum(1 for r in rows if " | " in r) < 3 or not any(re.search(r"\d", r) for r in rows):
+                continue
+            out.extend(_pack_table(caption, rows))
+    return out
+
+
 def extract_pdf_tables(path, pages_text=None):
     """{page_no: [table passage, ...]} found by PyMuPDF's table finder; {} without PyMuPDF or on error.
     Only pages that look like they hold a table are searched (the finder is slow and most pages hold none)."""
@@ -1159,12 +1420,13 @@ def extract_pdf_tables(path, pages_text=None):
             text = pages_text.get(i + 1) if pages_text else None
             if text is None:
                 text = pg.get_text("text") or ""
-            if not table_candidate(text) or not hasattr(pg, "find_tables"):
+            captioned = any(_CAPTION.match(ln) for ln in text.splitlines())
+            if not (table_candidate(text) or captioned) or not hasattr(pg, "find_tables"):
                 continue
             try:
                 found = pg.find_tables()
             except Exception:
-                continue
+                found = None
             try:
                 words = pg.get_text("words") or []
             except Exception:
@@ -1181,6 +1443,13 @@ def extract_pdf_tables(path, pages_text=None):
                 except Exception:
                     cap = ""
                 out.setdefault(i + 1, []).extend(table_chunks(cap, md))
+            if captioned and not out.get(i + 1) and words:
+                try:
+                    laid = layout_table_chunks(words, pg.rect.width)
+                except Exception:
+                    laid = []
+                if laid:
+                    out[i + 1] = laid
     finally:
         d.close()
     return out
@@ -1686,7 +1955,7 @@ def ingest_one(db, path, h, side, n, total):
         for p in sorted(tables):
             for k, c in enumerate(tables[p]):
                 items.append((p, labels.get(p, ""), TABLE_IDX + k, c))
-        backend = "pymupdf+tables"
+        backend = TABLES_BACKEND
     if not items:
         say("  [%d/%d] NO TEXT (scanned? run `vor ocr`): %s" % (n, total, name))
         db.execute("INSERT INTO docs(sha1,path,title,authors,year,org,number,pages,notext,backend,added,meta_src)"
@@ -2216,13 +2485,52 @@ def synthesize(question, ev, mode, out):
                  "Put the finding labels after every sentence that states a fact, like [F2] or [F2][F5].")
     msg = ("Question: %s\n\nVerified findings (each quote has been checked against its page):\n\n%s\n\n"
            "Parts the sources did not cover:\n%s\n\n%s\nUse ONLY these findings. Do not add facts, numbers or "
-           "references that are not in them. If they do not answer the question, say so."
+           "references that are not in them. If they do not answer the question, say so. Each quote has been "
+           "checked on its page, so never call a finding wrong, mistaken or misattributed: where findings give "
+           "different values for one method (two editions or years of it), give each value with the source and "
+           "the year it is stated for."
            % (question, "\n".join(lines) or "(no findings)", gaps, shape))
     reserve = 3000 if mode == "ask" else 5000
     if len(msg) > budget_chars(reserve):
         msg = msg[:budget_chars(reserve)] + "\n[findings list cut to fit the context window]"
     msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": msg}]
     body = strip_think(chat(msgs, think=THINK, stream_to=out, num_predict=reserve))
+    if body and LAST_REPLY["done_reason"] == "length":
+        # 1.4.10. On 2026-11-23 (filter-d15f) the model reasoned through most of its allowance,
+        # began the answer and was stopped mid-citation: "... (minimum 0.2 mm) [F1][F2][F3".
+        # The text was not empty, so it went out as the answer with the second half missing.
+        # A reply stopped at its length limit is an unfinished answer: ask again, reasoning off.
+        cut = body
+        reasoned = LAST_REPLY["thinking_chars"] > 0
+        first = "it reached its length limit (%d tokens) partway through the answer%s" % (
+            LAST_REPLY["eval_count"],
+            ", most of them spent reasoning" if LAST_REPLY["thinking_chars"] > LAST_REPLY["content_chars"] else "")
+        room = int(NUM_CTX - len(msg) / CHARS_PER_TOKEN - 600)
+        allow = max(reserve, min(reserve * 2, room))
+        if not reasoned and allow <= reserve:
+            # the same request again would be cut the same way
+            ev.answer_note = ("the model's answer was cut off (%s) and there was no more room to ask again; "
+                              "its end is missing" % first)
+            return cut
+        changes = " and ".join(x for x in ("with reasoning off" if reasoned else "",
+                                             "with more room" if allow > reserve else "") if x)
+        say("\nThe answer above was cut off: %s. Asking once more, %s." % (first, changes))
+        again = [msgs[0], {"role": "user", "content": msg + "\n\nWrite the answer itself now, beginning "
+                           "with its first sentence. Do not reason or plan first."}]
+        body = strip_think(chat(again, think=False, stream_to=out, num_predict=allow, temperature=0.5))
+        if body and LAST_REPLY["done_reason"] != "length":
+            ev.answer_from = "model, after cut-off"
+            ev.answer_note = ("the model's first answer was cut off (%s); this is its second attempt" % first)
+            return body
+        if body:
+            if len(body) < len(cut):
+                body = cut
+            ev.answer_note = ("the model's answer was cut off at its length limit twice; the longer of the two "
+                              "is shown and its end is missing")
+            return body
+        ev.answer_note = ("the model's answer was cut off (%s) and its second attempt wrote no answer (%s); the "
+                          "cut-off first answer is shown and its end is missing" % (first, empty_reply_reason()))
+        return cut
     if body:
         return body
     # 1.3.0. On the first real run (2026-11-12, qwen3.6:27b) four of sixteen questions ended
@@ -2704,7 +3012,8 @@ def long_passages(db, limit=PASSAGE_MAX):
 
 
 def cmd_tables(a):
-    """Add table passages to PDFs indexed before 1.4.0 (backend 'pymupdf'), embedding only the tables.
+    """Add table passages to PDFs whose tables were read before 1.4.10 (backend 'pymupdf' or 'pymupdf+tables'),
+    replacing their old table passages and embedding only the tables.
     1.4.2: --check lists passages longer than PASSAGE_MAX; --redo reads the tables of those documents again
     with the 1.4.2 limits (no all-empty columns, no mostly empty grids, no row longer than a passage)."""
     if getattr(a, "check", False):
@@ -2730,13 +3039,33 @@ def cmd_tables(a):
             die("`vor tables` needs PyMuPDF (the installer puts it in Vor's Python).")
     db = connect()
     try:
-        _add_tables(db, redo=getattr(a, "redo", False))
+        only = None
+        if getattr(a, "doc", None):
+            only, labels = find_docs(db, a.doc)
+            if not only:
+                die("--doc %r matches no document (see: vor list)" % a.doc)
+            for lab in labels:
+                say("  " + lab)
+        _add_tables(db, redo=getattr(a, "redo", False), again=getattr(a, "again", False), only=only)
     finally:
         db.close()
 
 
-def _add_tables(db, redo=False):
-    if redo:
+def _add_tables(db, redo=False, again=False, only=None):
+    if only or again:
+        # 1.4.10: read the tables of these PDFs again whatever Vor version indexed them (tables drawn without
+        # ruling lines are read since 1.4.10). Their text passages are left as they are.
+        q = "SELECT id, path, title FROM docs WHERE backend LIKE 'pymupdf%'"
+        rows = db.execute(q + " ORDER BY id").fetchall()
+        if only:
+            rows = [r for r in rows if r[0] in set(only)]
+        rows = [r for r in rows if (r[1] or "").lower().endswith(".pdf")]
+        if not rows:
+            say("No PDF read with PyMuPDF matches. Nothing to do.")
+            return
+        say("Reading the tables of %d document(s) again (only pages with numbers or a 'Table N' caption are "
+            "searched) ..." % len(rows))
+    elif redo:
         ids = sorted({r[0] for r in long_passages(db)})
         rows = [db.execute("SELECT id, path, title FROM docs WHERE id=?", (i,)).fetchone() for i in ids]
         rows = [r for r in rows if r and (r[1] or "").lower().endswith(".pdf")]
@@ -2746,18 +3075,26 @@ def _add_tables(db, redo=False):
         say("Reading the tables of %d document(s) again (they hold passages longer than %d characters) ..."
             % (len(rows), PASSAGE_MAX))
     else:
-        rows = db.execute("SELECT id, path, title FROM docs WHERE backend = 'pymupdf' ORDER BY id").fetchall()
+        rows = db.execute("SELECT id, path, title FROM docs WHERE backend IN (?, ?) ORDER BY id",
+                          OLD_TABLE_BACKENDS).fetchall()
         if not rows:
             say("Every PDF already has its tables (or none was read with PyMuPDF). Nothing to do.")
             return
-        say("Looking for tables in %d document(s) indexed before Vor 1.4.0 (only pages with numbers are searched) ..."
-            % len(rows))
+        say("Looking for tables in %d document(s) indexed before Vor 1.4.10 (only pages with numbers or a "
+            "'Table N' caption are searched) ..." % len(rows))
     pre = doc_prefix(EMBED_MODEL)
-    added = 0
+    added = was_total = 0
     for n, (did, path, title) in enumerate(rows, 1):
         if not os.path.isfile(path):
             say("  [%d/%d] file gone, skipped: %s" % (n, len(rows), path))
             continue
+        # 1.4.10: a file that is not the one indexed (emptied, half-copied, another edition) would replace good
+        # table passages with none or with another document's
+        h = (db.execute("SELECT sha1 FROM docs WHERE id=?", (did,)).fetchone() or [""])[0]
+        if h and sha1_of(path) != h:
+            say("  [%d/%d] file changed since it was indexed, skipped (run: vor ingest): %s" % (n, len(rows), path))
+            continue
+        was = db.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=? AND idx >= ?", (did, TABLE_IDX)).fetchone()[0]
         labels = dict(db.execute("SELECT page, label FROM chunks WHERE doc_id=? GROUP BY page", (did,)).fetchall())
         tables = extract_pdf_tables(path)
         items = [(p, labels.get(p, ""), TABLE_IDX + k, c) for p in sorted(tables) for k, c in enumerate(tables[p])]
@@ -2777,11 +3114,16 @@ def _add_tables(db, redo=False):
                         (did, p, lab, i, c, array("f", v).tobytes()))
             if db.fts:
                 cur.execute("INSERT INTO chunks_fts(rowid, txt, title) VALUES(?,?,?)", (cur.lastrowid, c, title))
-        cur.execute("UPDATE docs SET backend = 'pymupdf+tables' WHERE id=?", (did,))
+        cur.execute("UPDATE docs SET backend = ? WHERE id=?", (TABLES_BACKEND, did))
         db.commit()
         added += len(items)
-        say("  [%d/%d] %s: %d table passage(s)" % (n, len(rows), os.path.basename(path), len(items)))
-    say("Added %d table passage(s). Searches see them now." % added)
+        was_total += was
+        say("  [%d/%d] %s: %d table passage(s)%s" % (n, len(rows), os.path.basename(path), len(items),
+                                                     " (was %d)" % was if was else ""))
+    if was_total:
+        say("Table passages now: %d (there were %d). Searches see them now." % (added, was_total))
+    else:
+        say("Added %d table passage(s). Searches see them now." % added)
 
 
 def cmd_remove(a):
@@ -3080,12 +3422,17 @@ def library_checks():
             rows = db.execute("SELECT path, notext, added, sha1, id, pages FROM docs").fetchall()
             fts = db.fts
             no_tables = db.execute("SELECT COUNT(*) FROM docs WHERE backend = 'pymupdf'").fetchone()[0]
+            old_tables = db.execute("SELECT COUNT(*) FROM docs WHERE backend = 'pymupdf+tables'").fetchone()[0]
         finally:
             db.close()
         if no_tables:
             add("WATCH", "%d PDF(s) were indexed before Vor 1.4.0 read tables as tables: a table row's numbers "
                          "are only in running text, without their column headings. Run: vor tables "
                          "(embeds only the tables)" % no_tables)
+        if old_tables:
+            add("WATCH", "%d PDF(s) had their tables read before Vor 1.4.10, which also reads tables printed "
+                         "without ruling lines (USGS WSP 2339's, for one). Run: vor tables (embeds only the "
+                         "tables)" % old_tables)
         if not nc:
             add("PROBLEM", "the index is empty (%d documents, 0 passages): every question will get "
                 "'no passage'. %s" % (nd, ("%d file(s) are in the library. Run: vor ingest" % len(on_disk))
@@ -3302,9 +3649,13 @@ def main():
     s.add_argument("-k", type=int, default=8)
     add_scope_args(s)
     s.set_defaults(fn=cmd_chat)
-    s = sub.add_parser("tables", help="add the PDFs' tables as their own passages (documents indexed before 1.4.0)")
+    s = sub.add_parser("tables", help="add or re-read the PDFs' tables as their own passages (documents indexed before 1.4.10)")
     s.add_argument("--check", action="store_true", help="list passages too long for Vor to read whole; changes nothing")
     s.add_argument("--redo", action="store_true", help="read the tables again of documents with a passage that is too long")
+    s.add_argument("--again", action="store_true",
+                   help="read the tables of every PDF again (1.4.10 also reads tables printed without lines)")
+    s.add_argument("--doc", metavar="KEY", help="read the tables of this publication again: an id from `vor list`, "
+                   "or part of its file name, title or report number")
     s.set_defaults(fn=cmd_tables)
     s = sub.add_parser("ocr", help="OCR scanned PDFs (needs ocrmypdf) and re-index them")
     s.add_argument("--min-fraction", type=float, default=OCR_MIN_FRACTION,
