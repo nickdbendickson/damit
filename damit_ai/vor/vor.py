@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.3 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.4 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,13 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.4 (2026-11-22): the Pierce question named its paper as 'Pierce, Thornton and Abt (2010)' and the equation
+#   page (p.35) was never read. Searched inside that paper it ranked 8th, behind the cover (on p.1 and again on
+#   p.2), two contents pages and pages that merely cite 'Pierce (2008)'. Now a question that names authors and a
+#   year reads that document first (the year must match; the names must be its authors, or, two or more of them,
+#   on its first three pages); inside a named document the search leaves out the naming words; a named
+#   document gives up to 4 passages; and every search skips a passage repeating one already taken and puts
+#   contents pages (dot leaders) last.
 # 1.4.3 (2026-11-22, the 1.4.2 call records): the D15F question's model call read all 8 passages (3,444
 #   prompt tokens) and replied exactly '{"findings": [], "not_covered": []}', with the answer page among them.
 #   An empty list of findings is now asked once more, passages in reverse order and a nudge to read each
@@ -102,7 +109,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.3"
+VERSION = "1.4.4"
 
 
 def _home():
@@ -560,6 +567,54 @@ _NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bul
                     r"(\d+(?:[.-]\d+)*)", re.I)
 
 
+_CONTENTS = re.compile(r"(?:\.\s?){6,}\s*[ivxlc\d]+")
+
+
+def is_contents(txt):
+    """A table-of-contents or list-of-figures passage: three or more dot-leader lines ('Figure 10 ... 31')."""
+    return len(_CONTENTS.findall(txt or "")) >= 3
+
+
+_SURNAME = r"[A-Z][A-Za-z'\-]+"
+_AUTHOR_YEAR = re.compile(r"\b(%s(?:\s*,\s*%s)*(?:\s*,?\s+(?:and|&)\s+%s)?(?:\s+et\s+al\.?)?)\s*\(\s*((?:19|20)\d\d)[a-z]?\s*\)"
+                          % (_SURNAME, _SURNAME, _SURNAME))
+
+
+def _author_year_docs(db, question):
+    """1.4.4: documents the question names by author and year ('Pierce, Thornton and Abt (2010)'). The year
+    must be the document's; one surname must be in its authors field, two or more may instead all be on its
+    first three pages (many reports have no author metadata: Pierce et al. (2010) is filed under FEMA)."""
+    out = []
+    for m in _AUTHOR_YEAR.finditer(question or ""):
+        names = [n for n in re.findall(_SURNAME, m.group(1)) if n.lower() not in ("et", "al")]
+        year = m.group(2)
+        if not names:
+            continue
+        rows = db.execute("SELECT id, title, path, authors FROM docs WHERE trim(CAST(year AS TEXT)) = ?",
+                          (year,)).fetchall()
+        for did, title, path, authors in rows:
+            def has(n, text):
+                return re.search(r"\b%s\b" % re.escape(n), text or "", re.I) is not None
+            ok = all(has(n, authors) for n in names)
+            if not ok and len(names) >= 2:
+                front = " ".join(t for (t,) in db.execute(
+                    "SELECT txt FROM chunks WHERE doc_id = ? AND page <= 3", (did,)).fetchall())
+                ok = all(has(n, front) for n in names)
+            if ok:
+                out.append((did, "%d  %s" % (did, (title or path)[:80]), m.group(0)))
+    return out
+
+
+def strip_naming(question):
+    """The question without the words that name a document ('FEMA 333', 'Pierce, Thornton and Abt (2010)'). They
+    pick the document; inside it they only match its cover and reference pages, which outranked the page with
+    the answer. Returns the question unchanged when too little would be left."""
+    q = _AUTHOR_YEAR.sub(" ", question or "")
+    q = _NAMED.sub(" ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    return q if len(re.findall(r"[A-Za-z]{3,}", q)) >= 3 else question
+
+
 def named_docs(db, question):
     """Documents the question names by report number ('FEMA 333', 'P-946', 'TD-39', 'WSP 2339'), as
     (ids, labels). The 2026-11-22 real-model test asked four FEMA 333 questions and FEMA 333 was never
@@ -567,7 +622,7 @@ def named_docs(db, question):
     the prefix and number together ('p946' in 'FEMA P946.pdf'), or, for a number of 3+ digits, the
     number on its own as a whole number plus the prefix anywhere ('FEMA ... 333_04.pdf')."""
     want = [(m.group(1), m.group(2)) for m in _NAMED.finditer(question or "")]
-    if not want:
+    if not want and not _AUTHOR_YEAR.search(question or ""):
         return [], []
     rows = db.execute("SELECT id, title, path, number, org FROM docs").fetchall()
     ids, labels = [], []
@@ -582,6 +637,10 @@ def named_docs(db, question):
             if ok and r[0] not in ids:
                 ids.append(r[0])
                 labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
+    for did, label, _ in _author_year_docs(db, question):
+        if did not in ids:
+            ids.append(did)
+            labels.append(label)
     return ids[:6], labels[:6]
 
 
@@ -1466,19 +1525,35 @@ class Index:
             for rank, (cid, _) in enumerate(lst):
                 fused[cid] = fused.get(cid, 0.0) + 1.0 / (60 + rank)
         order = sorted(fused, key=lambda c: -fused[c])
-        hits, seen_doc = [], {}
+        hits, seen_doc, seen_txt, late = [], {}, set(), []
         for cid in order:
             row = self.db.execute(
                 "SELECT c.id, c.doc_id, c.page, c.label, c.txt, d.title, d.path, d.authors, d.year, d.org, d.number "
                 "FROM chunks c JOIN docs d ON d.id=c.doc_id WHERE c.id=?", (cid,)).fetchone()
             if not row:
                 continue
+            # 1.4.4: a passage whose text repeats one already taken (a report's cover printed on p.1 and p.2)
+            # is skipped, and a contents page (dot leaders) waits until nothing else is left: on the Pierce
+            # (2010) question they held 4 of the 7 places ahead of the equation page.
+            key = squash(row[4])[:400]
+            if key and key in seen_txt:
+                continue
             if seen_doc.get(row[1], 0) >= per_doc:
                 continue
+            if is_contents(row[4]):
+                late.append((row, fused[cid]))
+                continue
+            seen_txt.add(key)
             seen_doc[row[1]] = seen_doc.get(row[1], 0) + 1
             hits.append(Hit(row, fused[cid]))
             if len(hits) >= k:
                 break
+        for row, sc in late:
+            if len(hits) >= k:
+                break
+            if seen_doc.get(row[1], 0) < per_doc:
+                seen_doc[row[1]] = seen_doc.get(row[1], 0) + 1
+                hits.append(Hit(row, sc))
         return hits
 
 
@@ -1980,7 +2055,8 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
         q = s + ((" " + " ".join(terms)) if (i == 1 and terms) else "")
         hits = idx.search(q, k=k, per_doc=per_doc if per_doc is not None else 3, keep=keep)
         if named:
-            hits = merge_hits(idx.search(q, k=min(3, k), per_doc=3, keep=set(named)), hits, k)
+            # 1.4.4: inside the named documents, search without the naming words, and read up to 4 passages
+            hits = merge_hits(idx.search(strip_naming(q), k=min(4, k), per_doc=4, keep=set(named)), hits, k)
         log.append((s, hits))
         say("[%d/%d] reading %d passages for: %s" % (i, len(subs), len(hits), textwrap_short(s, 90)))
         extract(ev, s, hits)
