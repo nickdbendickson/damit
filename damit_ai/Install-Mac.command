@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Double-click this file in Finder to install (or update) both local AIs, Heim and Vor, on this Mac.
-# The first time, macOS may say it is from an unidentified developer: right-click it, choose Open,
-# then Open again. It runs the two installers in this folder, one after the other.
+# The first time, macOS says it can't verify the file (it is not signed): System Settings >
+# Privacy & Security > Open Anyway, or run it in Terminal as  zsh Install-Mac.command  (no popup).
+# It runs the two installers in this folder, one after the other.
 cd "${0:A:h}" || exit 1
 zsh heim/setup-local-heim.sh && zsh vor/setup-vor.zsh --ocr
 rc=$?
