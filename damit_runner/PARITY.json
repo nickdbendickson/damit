@@ -110,9 +110,9 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "1860a52d7b53bd920e12d9272636383d1d2874a06fb546265db6fdd1ce7d1a9e",
+   "diff": "b5bf6347c3553a73bbeb88c31c2927e771332090bb9d5a164ac703ce2498b606",
    "from": "DamSafety_Runner/algorithms.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): DAM_POINT_CHECK tip (C1 centre snap). Deliberate DamIT difference: DAM_POINT_CHECK defaults to warn, not DamSafety 3.20.13's move (dam_point_check.DEFAULT_MODE; the moves are not validated outside North Dakota, Nick 2026-11-23). Repo audit 2026-11-23: ported _suite_source_label and _why_not_a_file (dropped in the port; engine_sources raised NameError). _suite_source_label reads DamIT's compat suite_config (DamIT setting, then env), since DamIT has no suite_config.source()."
+   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): DAM_POINT_CHECK tip (C1 centre snap). Deliberate DamIT difference: DAM_POINT_CHECK defaults to warn, not DamSafety 3.20.13's move (dam_point_check.DEFAULT_MODE; the moves are not validated outside North Dakota, Nick 2026-11-23). Repo audit 2026-11-23: ported _suite_source_label and _why_not_a_file (dropped in the port; engine_sources raised NameError). _suite_source_label reads DamIT's compat suite_config (DamIT setting, then env), since DamIT has no suite_config.source(). Docstring only (2026-11-23): _suite_setting describes DamIT's compat.suite_config (DamIT setting, then DAMIT_RUN_LISFLOOD_EXE / NDBREACH_LISFLOOD), not DamSafety Setup or QgsSettings ndsuite. No result change."
   },
   "damit_runner/compat/nodata_sample.py": {
    "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
