@@ -1433,10 +1433,16 @@ def ensure_ollama(base, log=print):
 
 
 def start_hint():
-    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
     if sys.platform == "darwin":
         return "run heim-start in a Terminal tab of its own, or open the Ollama app"
-    return "open the Ollama app, or run  ollama serve  in another window"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
 
 
 def ollama_problem(e, base=None):
@@ -1448,10 +1454,16 @@ def ollama_problem(e, base=None):
     if type(e).__name__ == "OllamaError":
         return "Ollama stopped with an error: %s" % " ".join(str(e).split())[:300]
     if isinstance(e, urllib.error.HTTPError):
-        try:
-            body = e.read().decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 - the body is only for the message
-            body = ""
+        body = getattr(e, "heim_body", None)     # read once: a second call finds the stream empty
+        if body is None:
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 - the body is only for the message
+                body = ""
+            try:
+                e.heim_body = body
+            except AttributeError:
+                pass
         try:
             body = json.loads(body).get("error") or body
         except (ValueError, AttributeError):
@@ -1462,7 +1474,8 @@ def ollama_problem(e, base=None):
             if name.split(":")[0] in ("heim", "vor"):
                 fix = "the installer makes it: run the installer again (it keeps what is there)"
             else:
-                fix = "fetch it with:  ollama pull %s" % name if m else "run the installer again"
+                fix = ("run the installer again (it fetches what is missing), or:  ollama pull %s" % name
+                       if m else "run the installer again")
             return "Ollama has no model %s; %s. (ollama list shows what it has.)" % (name, fix)
         return "Ollama answered with an error (HTTP %s): %s" % (e.code, " ".join(str(body).split())[:300])
     if isinstance(e, (socket.timeout, TimeoutError)) or (
@@ -1724,7 +1737,8 @@ def main(argv=None):
         # `heim runs "run 2801 at 5 m"`: a model run is `heim run`, without the s
         _say("heim runs does not know %r. Its commands: %s.%s" % (
             first, ", ".join(sub.choices), "\nTo draft a new model run (heim run, no s):  heim run %s"
-            % shlex.quote(" ".join(words[words.index(first):])) if re.match(r"(?i)\s*re-?run\b|\s*run\b", first) else ""))
+            % (shlex.quote(" ".join(words[words.index(first):])) if os.name != "nt"
+               else '"%s"' % " ".join(words[words.index(first):]).replace('"', '')) if re.match(r"(?i)\s*re-?run\b|\s*run\b", first) else ""))
         return 2
     args = ap.parse_args(argv)
     if args.db:

@@ -85,12 +85,13 @@ CODE_WORDS = re.compile(
     r"\b[A-Za-z]+_[A-Za-z0-9_]+\b|"                                                  # REFINE_NEAR, run_dam
     r"\b[a-z]+[A-Z][A-Za-z]+\b|"                                                     # camelCase
     r"\b[a-z_]+:[a-z_]+\b|"                                                          # damit_run:batch
-    r"\b(?i:module|script|plugins?|qgis|algorithm|damchain|damit|damsafety|runner|screener|crest|finder|"
-    r"heim|vor|boann\w*|watcher|flags?|switch|traceback|exception|crash\w*|bugs?|installer|ollama|conda|"
+    r"\b(?i:module|script|plugins?|qgis|algorithm|damchain|damit|damsafety|runner|screener|"
+    r"heim|vor|boann\w*|watcher|traceback|exception|crash\w*|bugs?|installer|ollama|conda|"
     r"gpu|metal|cli|command|terminal|python)\b")
 # Words left out on purpose, because the publications use them too: class (hazard class), function,
 # code (building code), parameters (breach parameters), profile (water surface profile), log
-# (log-Pearson), error (standard error), setting, screening, installation, test, version.
+# (log-Pearson), error (standard error), setting, screening, installation, test, version, crest (the
+# dam crest), finder, switch, flag.
 
 
 def route(question, target="auto"):

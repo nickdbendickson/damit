@@ -13,7 +13,7 @@ Two assistants that run on this computer only (nothing is sent anywhere):
    - If it stops, read the last lines, fix that (often: free disk space), and run it again.
      It carries on where it stopped. Everything it printed is in ~/local-ai/install.log
 
-2. Open a NEW terminal window (or run: source ~/.bashrc).
+2. Open a NEW terminal window (or run the  source ...  line the installer printed at the end).
 
 3. Try it:
      vor "what breach width does Froehlich 2008 give?"

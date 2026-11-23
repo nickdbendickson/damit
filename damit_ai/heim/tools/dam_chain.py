@@ -313,6 +313,14 @@ def _q(s):
     return s if re.fullmatch(r"[\w@%+=:,./-]+", s) else "'" + s.replace("'", "'\\''") + "'"
 
 
+def _paste(s):
+    """A path for a line the user copies into THEIR shell: double quotes on Windows (cmd and
+    PowerShell both read them), _q's single quotes elsewhere. _q stays for the POSIX wrappers."""
+    if os.name == "nt":
+        return subprocess.list2cmdline([str(s)])
+    return _q(s)
+
+
 def _heim_chat(prompt, timeout=1800):
     """Ask the local Ollama model once; return its text (thinking stripped). Raises on transport error."""
     payload = {"model": HEIM_MODEL, "messages": [{"role": "user", "content": prompt}],
@@ -772,7 +780,7 @@ def run_dwr(args):
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
     if ok and not args.check_only:
-        print("Read the results into Heim (then ask about them):  heim runs add %s" % _q(p["OUT_FOLDER"]))
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(p["OUT_FOLDER"]))
     if not ok and getattr(args, "triage", False):
         triage_failure("DamSafety chain", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
@@ -1069,13 +1077,13 @@ def run_damit(args):
     print("log: %s" % log)
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
-    print_results(rows, ids, out)
+    print_results(rows, ids, out, ok)
     if not ok and getattr(args, "triage", False):
         triage_failure("DamIT batch", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
 
 
-def print_results(rows, ids, out, most=20):
+def print_results(rows, ids, out, ok=True, most=20):
     """v1.6.1: where each dam's results are, and the one line that reads them into Heim."""
     want = set(ids)
     mine = [r for r in rows if not want or (r.get("Dam") or "").strip() in want]
@@ -1086,8 +1094,9 @@ def print_results(rows, ids, out, most=20):
                                         (r.get("Folder") or "").strip()))
         if len(mine) > most:
             print("  ... and %d more (see the summary)" % (len(mine) - most))
-    if any((r.get("Status") or "").strip() == "done" for r in mine) or (not rows and os.path.isdir(out)):
-        print("Read the results into Heim (then ask about them):  heim runs add %s" % _q(out))
+    # no summary rows: offer the folder only when the run itself said OK (a failed run's folder may be empty)
+    if any((r.get("Status") or "").strip() == "done" for r in mine) or (ok and not rows and os.path.isdir(out)):
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(out))
 
 
 def default_lisflood():

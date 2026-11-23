@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -36,6 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HEIM = os.path.dirname(HERE)
 TOOLS = os.path.join(HEIM, "tools")
 AI = os.path.dirname(HEIM)
+REPO = os.path.dirname(AI)
 VOR = os.path.join(AI, "vor", "vor.py")
 
 
@@ -84,6 +86,12 @@ class OllamaProblemTest(unittest.TestCase):
     def test_a_missing_pulled_model_says_ollama_pull(self):
         msg = RQ.ollama_problem(http_error(404, json.dumps({"error": "model 'nomic-embed-text' not found"})))
         self.assertIn("ollama pull nomic-embed-text", msg)
+        self.assertIn("run the installer again", msg)
+
+    def test_the_error_body_is_read_once_and_kept(self):
+        e = http_error(404, json.dumps({"error": "model 'nomic-embed-text' not found"}))
+        first, second = RQ.ollama_problem(e), RQ.ollama_problem(e)
+        self.assertEqual(first, second)                    # a second look does not find an empty stream
 
     def test_timeouts_and_errors_inside_an_answer(self):
         self.assertIn("took too long", RQ.ollama_problem(socket.timeout("timed out")))
@@ -192,6 +200,12 @@ class RunOrRunsTest(unittest.TestCase):
         self.assertEqual(RQ.command_word(["run", "2801 at 5 m"])[0], "heimrun")
         self.assertEqual(RQ.command_word(["run", "at 5 m 2801"])[0], "heimrun")
         self.assertEqual(RQ.command_word(["run", "--show", "2801"])[0], "heimrun")
+        # a question that starts with one of those words is still a question
+        self.assertIsNone(RQ.command_word(["run", "list of the solvers?"]))
+        # one quoted argument is split into its words
+        with self.assertRaises(SystemExit) as cm:
+            RQ.command_word(["run", "show 2801"])
+        self.assertIn("heim runs show 2801\n", str(cm.exception.code))
 
     def test_heim_runs_with_a_run_request_points_to_heim_run(self):
         out = io.StringIO()
@@ -326,6 +340,25 @@ class DamchainNoviceTest(unittest.TestCase):
         with redirect_stdout(out):
             DC.print_results([{"Dam": "4031", "Status": "failed", "Folder": "/r/4031"}], ["4031"], "/r")
         self.assertNotIn("heim runs add", out.getvalue())     # nothing finished: nothing to read in
+        tmp = tempfile.mkdtemp(prefix="dc-pr-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            DC.print_results([], [], tmp, False)
+        self.assertNotIn("heim runs add", out.getvalue())     # no summary and the run FAILED: no offer
+        out = io.StringIO()
+        with redirect_stdout(out):
+            DC.print_results([], [], tmp, True)
+        self.assertIn("heim runs add", out.getvalue())
+
+    def test_lines_to_paste_use_double_quotes_on_windows(self):
+        from unittest import mock
+        with mock.patch.object(DC.os, "name", "nt"):
+            self.assertEqual(DC._paste(r"C:\My Runs"), '"C:\\My Runs"')
+        self.assertEqual(DC._paste("/r out"), "'/r out'")
+        with mock.patch.object(HR.os, "name", "nt"):
+            self.assertEqual(HR._quote(["damchain", "--dams", r"C:\My Dams\d.gpkg"]),
+                             'damchain --dams "C:\\My Dams\\d.gpkg"')
 
 
 class AiPageRouteTest(unittest.TestCase):
@@ -405,6 +438,27 @@ class AiDoctorExtrasTest(unittest.TestCase):
         self.assertTrue(ready, text)
         self.assertIn("damchain setup", text)
 
+    def test_the_damchain_line_on_windows(self):
+        from unittest import mock
+        tmp = tempfile.mkdtemp(prefix="doc-dc-nt-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        fake = os.path.join(tmp, "dam_chain.py")
+        self.doc.HERE = tmp
+        with open(fake, "w") as fh:
+            fh.write("import sys\ndef conda_exe():\n    sys.exit('conda not found')\n")
+        with mock.patch.object(self.doc.os, "name", "nt"):
+            self.assertIn("Miniforge Prompt", self.doc.damchain_status()[1])
+        # a Windows env keeps qgis_process as Library\bin\qgis_process-qgis.bat
+        lib = os.path.join(tmp, "Library", "bin")
+        os.makedirs(lib)
+        open(os.path.join(lib, "qgis_process-qgis.bat"), "w").close()
+        with open(fake, "w") as fh:
+            fh.write("def conda_exe():\n    return 'conda'\ndef env_prefix(c, n):\n    return %r\n"
+                     "def find_qgis_process(p):\n    return 'qgis_process'\n" % tmp)
+        with mock.patch.object(self.doc.os, "name", "nt"):
+            ready, text = self.doc.damchain_status()
+        self.assertTrue(ready, text)
+
     def test_the_damchain_line_never_changes_the_exit_code(self):
         tmp = tempfile.mkdtemp(prefix="doc-exit-")
         self.addCleanup(shutil.rmtree, tmp, True)
@@ -428,7 +482,12 @@ class InstallerTextTest(unittest.TestCase):
 
     def test_linux(self):
         t = source(os.path.join(AI, "install-local-ai-linux.sh"))
-        self.assertIn('exec > >(tee -a "$INSTALL_LOG") 2>&1', t)
+        # tee outlives a Ctrl+C, so the stop note reaches the log too
+        self.assertIn('exec > >(trap \'\' INT; exec tee -i -a "$INSTALL_LOG") 2>&1', t)
+        self.assertIn("HEIM_SKIP_DISK_CHECK", t)
+        self.assertIn("-partial*", t)                                   # a stopped pull's part is not counted twice
+        self.assertIn('! vor_has_index "$RHOME"', t)                     # a copied but unindexed library is indexed
+        self.assertIn("echo 'vor doctor'", t)                            # a Vor-only install is not sent to ai-doctor
         self.assertIn("trap on_exit EXIT", t)
         self.assertIn("not enough free disk space for the models", t)
         self.assertNotIn('"$OLLAMA" pull "$EMBED" >/dev/null', t)      # the 0.6 GB pull shows its progress
@@ -454,7 +513,40 @@ class InstallerTextTest(unittest.TestCase):
         self.assertEqual(functions - launched, set(), "profile commands without a .cmd launcher")
         self.assertIn("`$env:VOR_PYTHON = '$PyR'", t)
         # the policy question is never asked of a script that cannot answer
-        self.assertIn("[Environment]::UserInteractive -and -not [Console]::IsInputRedirected", t)
+        self.assertIn("[Environment]::UserInteractive -and -not $NonInteractive -and -not [Console]::IsInputRedirected", t)
+        self.assertIn("-like '-NonI*'", t)
+        self.assertIn("try { $ans = Read-Host", t)
+        self.assertIn("*ExecutionPolicyOverride*", t)                   # Bypass outranking CurrentUser is not a failure
+        self.assertIn("HEIM_SKIP_DISK_CHECK", t)
+        self.assertIn("'*-partial*'", t)
+        self.assertIn("-not $StartedServer -and -not $Prefix", t)
+        self.assertIn("if ($hasLib -and -not (VorHasIndex $RHome))", t)
+        self.assertIn("if ($DoHeim) { 'ai-doctor' } else { 'vor doctor' }", t)
+        self.assertIn("Command Prompt:", t)                              # the starter-library line for cmd.exe too
+        # a -Prefix sandbox never changes the user's execution policy
+        i7 = t.index("Say 'Step 7 - can PowerShell load your profile?'")
+        self.assertIn("if ($Prefix) {", t[t.rindex("# -NonInteractive", 0, i7):i7])
+        # the stop note and trap are defined before anything can stop (the -Prefix check, the log)
+        self.assertLess(t.index("function Rerun-Note"), t.index("if ($Prefix) {"))
+        self.assertLess(t.index("trap {"), t.index("Start-Transcript"))
+        self.assertEqual(t.rstrip().splitlines()[-1], "exit 0")
+
+    def test_install_all_windows_reads_the_ai_installers_exit_code(self):
+        t = source(os.path.join(REPO, "suite_install", "install-all-windows.ps1"))
+        i = t.index("damit_ai\\install-local-ai-windows.ps1') @ai")
+        self.assertIn("if ($LASTEXITCODE -ne 0) { $AiOk = $false", t[i:i + 400])
+
+    def test_double_click_launchers_pass_the_result_on(self):
+        with open(os.path.join(AI, "Install-Windows.cmd"), newline="") as fh:
+            c = fh.read()
+        self.assertIn("\r\n", c)
+        self.assertIn('set "RC=%ERRORLEVEL%"', c)
+        self.assertIn("exit /b %RC%", c)
+        m = source(os.path.join(AI, "Install-Mac.command"))
+        self.assertIn("vor.py\" ingest", m)
+        self.assertIn("exit $rc", m)
+        h = source(os.path.join(HEIM, "setup-local-heim.sh"))
+        self.assertIn("exit 1      # Install-Mac.command", h)
 
     def test_windows_braces_and_quotes_balance(self):
         """A rough check for a script nothing here can parse: braces, brackets and parentheses balance
@@ -551,6 +643,7 @@ class _Stub(BaseHTTPRequestHandler):
 FAKE_OLLAMA = """#!/bin/bash
 ST="$FAKE_STATE/models.txt"; touch "$ST"
 case "$1" in
+  serve) echo $$ > "$FAKE_STATE/serve.pid"; exec python3 "$(dirname "$0")/stub_server.py" ;;
   list) echo "NAME ID SIZE MODIFIED"; while read -r m; do echo "$m  abc  1 GB  now"; done < "$ST" ;;
   pull|create) echo "pulling $2 100%"; echo "$2" >> "$ST" ;;
 esac
@@ -562,6 +655,22 @@ if [[ "$1" == create ]]; then n=""; while [[ $# -gt 0 ]]; do [[ "$1" == -n ]] &&
   mkdir -p "$E/$n/bin"; ln -sf "$(command -v python3)" "$E/$n/bin/python"; fi
 exit 0
 """
+# `ollama serve` in the fake: the same stub, on the port the installer gave it in OLLAMA_HOST
+STUB_SERVER = """import json, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_GET(self):
+        o = {"version": "0.9.0"} if self.path.startswith("/api/version") else {"models": []}
+        b = json.dumps(o).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers()
+        self.wfile.write(b)
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(404); self.end_headers()
+HTTPServer(("127.0.0.1", int(os.environ["OLLAMA_HOST"].rsplit(":", 1)[1])), H).serve_forever()
+"""
 SMALL_DF = """#!/bin/bash
 echo "Filesystem 1024-blocks Used Available Capacity Mounted"
 echo "/dev/x 100 1 2000000 1% /"
@@ -571,20 +680,19 @@ echo "/dev/x 100 1 2000000 1% /"
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash") and shutil.which("curl") and shutil.which("python3"),
                      "needs bash, curl and python3")
 class LinuxInstallerRunTest(unittest.TestCase):
-    """The Linux installer run whole against a stand-in Ollama (a local HTTP stub and a fake `ollama`),
-    a fake conda and, for the disk check, a fake `df`."""
+    """The Linux installer run whole against a stand-in Ollama (a fake `ollama` whose `serve` is a local
+    HTTP stub), a fake conda and, for the disk check, a fake `df`."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="lin-inst-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.httpd = HTTPServer(("127.0.0.1", 0), _Stub)
-        self.port = self.httpd.server_address[1]
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
+        with socket.socket() as so:                  # a free port; the installer starts `ollama serve` on it
+            so.bind(("127.0.0.1", 0))
+            self.port = so.getsockname()[1]
+        self.addCleanup(self._stop_serve)
         self.bin = os.path.join(self.tmp, "bin")
         os.makedirs(self.bin)
-        for name, text in (("ollama", FAKE_OLLAMA), ("conda", FAKE_CONDA)):
+        for name, text in (("ollama", FAKE_OLLAMA), ("conda", FAKE_CONDA), ("stub_server.py", STUB_SERVER)):
             p = os.path.join(self.bin, name)
             with open(p, "w") as fh:
                 fh.write(text)
@@ -598,12 +706,26 @@ class LinuxInstallerRunTest(unittest.TestCase):
         with open(os.path.join(lib, "FEMA-P-946.pdf"), "wb") as fh:
             fh.write(b"%PDF-1.4 stand-in")
 
-    def run_installer(self, extra_path=None, *args):
+    def _stop_serve(self):
+        try:
+            with open(os.path.join(self.tmp, "state", "serve.pid")) as fh:
+                os.kill(int(fh.read().strip()), signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+
+    def already_running(self):
+        """An Ollama the user had running before the install (the test's own stub on the port)."""
+        httpd = HTTPServer(("127.0.0.1", self.port), _Stub)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+
+    def run_installer(self, extra_path=None, *args, env=None):
         home = os.path.join(self.tmp, "home")
         os.makedirs(home, exist_ok=True)
         path = os.pathsep.join(([extra_path] if extra_path else []) + [self.bin, "/usr/bin", "/bin"])
         env = {"HOME": home, "PATH": path, "LANG": "C", "FAKE_STATE": os.path.join(self.tmp, "state"),
-               "CONDA_EXE": os.path.join(self.bin, "conda"), "HEIM_NO_AUTOSTART": "1"}
+               "CONDA_EXE": os.path.join(self.bin, "conda"), "HEIM_NO_AUTOSTART": "1", **(env or {})}
         p = subprocess.run(["bash", os.path.join(self.pkg, "install-local-ai-linux.sh"),
                             "--ollama-port=%d" % self.port, "--no-index"] + list(args),
                            cwd=self.pkg, env=env, capture_output=True, text=True, timeout=300)
@@ -614,6 +736,7 @@ class LinuxInstallerRunTest(unittest.TestCase):
         self.assertEqual(code, 0, out[-3000:])
         self.assertIn("models to download:", out)
         self.assertIn("pulling qwen3-embedding:0.6b", out)
+        self.assertIn("starting ollama serve", out)
         self.assertIn("Check (ai-doctor)", out)
         self.assertIn("versions: heim", out)
         self.assertIn("Try it now", out)
@@ -639,11 +762,53 @@ class LinuxInstallerRunTest(unittest.TestCase):
         self.assertIn("1.9 GB is free", out)
         self.assertIn("The install stopped", out)
         self.assertIn("run the", out)
+        self.assertIn("HEIM_SKIP_DISK_CHECK=1", out)
         self.assertNotIn("pulling", out)
         st = os.path.join(self.tmp, "state", "models.txt")
         if os.path.exists(st):
             with open(st) as fh:
                 self.assertEqual(fh.read().strip(), "", "a model was pulled before the disk check stopped it")
+
+
+    def test_a_stopped_pull_part_is_not_counted_twice(self):
+        """A pull stopped part way left blobs/*-partial*: only the rest is needed on the disk."""
+        fake = os.path.join(self.tmp, "smalldf")
+        os.makedirs(fake)
+        with open(os.path.join(fake, "df"), "w") as fh:
+            fh.write(SMALL_DF)
+        os.chmod(os.path.join(fake, "df"), 0o755)
+        blobs = os.path.join(self.tmp, "home", "local-ai", "models", "blobs")
+        os.makedirs(blobs)
+        with open(os.path.join(blobs, "sha256-abc-partial"), "wb") as fh:
+            fh.truncate(200 * 1024 ** 3)            # sparse: as large as every model, on no real disk
+        code, out, home = self.run_installer(fake)
+        self.assertEqual(code, 0, out[-3000:])
+        self.assertNotIn("not enough free disk space", out)
+
+    def test_skip_disk_check_lets_the_install_try_anyway(self):
+        fake = os.path.join(self.tmp, "smalldf")
+        os.makedirs(fake)
+        with open(os.path.join(fake, "df"), "w") as fh:
+            fh.write(SMALL_DF)
+        os.chmod(os.path.join(fake, "df"), 0o755)
+        code, out, home = self.run_installer(fake, env={"HEIM_SKIP_DISK_CHECK": "1"})
+        self.assertEqual(code, 0, out[-3000:])
+        self.assertIn("disk-space check skipped (HEIM_SKIP_DISK_CHECK=1)", out)
+        self.assertIn("pulling", out)
+
+    def test_an_ollama_already_running_gets_a_note_not_a_stop(self):
+        """Its models go to ITS folder, which need not be ~/local-ai/models: no stop on that disk's space."""
+        self.already_running()
+        fake = os.path.join(self.tmp, "smalldf")
+        os.makedirs(fake)
+        with open(os.path.join(fake, "df"), "w") as fh:
+            fh.write(SMALL_DF)
+        os.chmod(os.path.join(fake, "df"), 0o755)
+        code, out, home = self.run_installer(fake)
+        self.assertEqual(code, 0, out[-3000:])
+        self.assertNotIn("starting ollama serve", out)
+        self.assertIn("into the folder of the Ollama that was already running", out)
+        self.assertNotIn("not enough free disk space", out)
 
 
 if __name__ == "__main__":

@@ -74,8 +74,10 @@ vor.
 
 ## After it finishes
 
-The installer copies the offline pack's Vor library in (when there is one and your library is
-empty), runs `ai-doctor`, and prints the first commands to try. Open a new shell (the
+The Linux and Windows installers copy the offline pack's Vor library in (when there is one and
+your library is empty), index it, run `ai-doctor`, and print the first commands to try. On a Mac,
+`Install-Mac.command` copies and indexes the library the same way after the two setup scripts (run
+on their own, `setup-local-heim.sh` and `setup-vor.zsh` do not touch the library). Open a new shell (the
 aliases/functions load from `~/.bashrc` / `~/.zshrc` / PowerShell `$PROFILE`), then:
 
 ```

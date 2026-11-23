@@ -70,6 +70,23 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# The messages, the stop note and the trap come first, so a stop anywhere below (even before the
+# log is open) says how to carry on. `exit 1` from here ends only this script when install-all runs
+# it with &; install-all reads $LASTEXITCODE, and the last line below is `exit 0`.
+$InstallLog = $null; $Transcript = $false
+function Say ($m) { Write-Host "`n== $m" -ForegroundColor White }
+function Ok  ($m) { Write-Host "  ok $m"   -ForegroundColor Green }
+function Warn($m) { Write-Host "  warn $m" -ForegroundColor Yellow }
+function Stop-Log { if ($script:Transcript) { try { Stop-Transcript | Out-Null } catch { } ; $script:Transcript = $false } }
+function Rerun-Note {
+  Write-Host "`n  The install stopped. What it did so far is kept: fix what it says above, then run the same" -ForegroundColor Yellow
+  Write-Host "  command again and it carries on from there (models already downloaded are not downloaded again)." -ForegroundColor Yellow
+  if ($script:InstallLog) { Write-Host "  Everything it printed is in $script:InstallLog" -ForegroundColor Yellow }
+}
+function Die ($m) { Write-Host "  ERROR $m" -ForegroundColor Red; Rerun-Note; Stop-Log; exit 1 }
+# any other stop ($ErrorActionPreference = 'Stop'): the same note, and the log closed
+trap { Write-Host "  ERROR $_" -ForegroundColor Red; Rerun-Note; Stop-Log; exit 1 }
+
 $Here       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LocalAI    = Join-Path $env:USERPROFILE 'local-ai'
 $ModelsDir  = Join-Path $LocalAI 'models'
@@ -86,7 +103,7 @@ if ($Prefix) {
   # land in your profile (conda's package cache and env list, pip's cache, Ollama's key in
   # ~\.ollama, the GGUF download folder) are pointed into it too.
   $Prefix = [IO.Path]::GetFullPath($Prefix).TrimEnd('\')
-  if ($Prefix -eq $env:USERPROFILE -or $Prefix.Length -le 3) { Write-Host '  ERROR -Prefix needs its own folder' -ForegroundColor Red; exit 1 }
+  if ($Prefix -eq $env:USERPROFILE -or $Prefix.Length -le 3) { Die '-Prefix needs its own folder' }
   $LocalAI = Join-Path $Prefix 'local-ai'; $ModelsDir = Join-Path $LocalAI 'models'; $VorDir = Join-Path $LocalAI 'vor'
   $RHome = Join-Path $Prefix 'Vor'
   if (-not $OllamaPort) { $OllamaPort = 11435 }
@@ -108,20 +125,8 @@ if ($DoHeim -and -not (Test-Path (Join-Path $Here 'heim\tools'))) {
 # script writes, though not always the progress bars of ollama.exe), and a stop says how to carry on.
 New-Item -ItemType Directory -Force -Path $LocalAI | Out-Null
 $InstallLog = Join-Path $LocalAI 'install.log'
-try { Start-Transcript -Path $InstallLog -Append | Out-Null; $Transcript = $true } catch { $Transcript = $false }
+try { Start-Transcript -Path $InstallLog -Append | Out-Null; $script:Transcript = $true } catch { $script:Transcript = $false }
 
-function Say ($m) { Write-Host "`n== $m" -ForegroundColor White }
-function Ok  ($m) { Write-Host "  ok $m"   -ForegroundColor Green }
-function Warn($m) { Write-Host "  warn $m" -ForegroundColor Yellow }
-function Stop-Log { if ($script:Transcript) { try { Stop-Transcript | Out-Null } catch { } ; $script:Transcript = $false } }
-function Rerun-Note {
-  Write-Host "`n  The install stopped. What it did so far is kept: fix what it says above, then run the same" -ForegroundColor Yellow
-  Write-Host "  command again and it carries on from there (models already downloaded are not downloaded again)." -ForegroundColor Yellow
-  Write-Host "  Everything it printed is in $InstallLog" -ForegroundColor Yellow
-}
-function Die ($m) { Write-Host "  ERROR $m" -ForegroundColor Red; Rerun-Note; Stop-Log; exit 1 }
-# any other stop ($ErrorActionPreference = 'Stop'): the same note, and the log closed
-trap { Write-Host "  ERROR $_" -ForegroundColor Red; Rerun-Note; Stop-Log; exit 1 }
 function Sha ($p) { (Get-FileHash -Algorithm SHA256 -Path $p).Hash.ToLower() }
 function ServerUp {
   try { Invoke-RestMethod -Uri "$OllamaUrl/api/version" -TimeoutSec 3 | Out-Null; return $true }
@@ -231,8 +236,10 @@ if ($Prefix -and (ServerUp)) {
     Die "something else already answers on $OllamaUrl (another Ollama?). Stop it, or pick a free port with -OllamaPort N"
   }
 }
+$StartedServer = $false
 if (-not (ServerUp)) {
   Ok "starting ollama serve on $OllamaUrl"
+  $StartedServer = $true
   # -Prefix: the server's home is the sandbox, so its key (~\.ollama) is made there
   $keep = @{ USERPROFILE = $env:USERPROFILE; HOME = $env:HOME }
   if ($Prefix) { $env:USERPROFILE = $LocalAI; $env:HOME = $LocalAI }
@@ -396,12 +403,21 @@ if (-not $NoModels) {
     if ($haveList -match ('^' + [regex]::Escape($m))) { continue }
     $need += (Model-Bytes $m); $needNames += $m
   }
-  if ($need -gt 0) {
+  # a pull stopped part way left its blobs\*-partial* files: a re-run downloads only the rest
+  $part = [int64](Get-ChildItem -Path (Join-Path $ModelsDir 'blobs') -Filter '*-partial*' -File -ErrorAction SilentlyContinue |
+                  Measure-Object -Property Length -Sum).Sum
+  $need = [Math]::Max([int64]0, $need - $part)
+  if ($need -gt 0 -and $env:HEIM_SKIP_DISK_CHECK -eq '1') {
+    Ok "disk-space check skipped (HEIM_SKIP_DISK_CHECK=1); models to download: $($needNames -join ', ')"
+  } elseif ($need -gt 0 -and -not $StartedServer -and -not $Prefix) {
+    # an Ollama that was already running keeps models in ITS folder, which may not be $ModelsDir
+    Ok "models to download: $($needNames -join ', ') (about $('{0:N1}' -f ($need / 1GB)) GB) into the folder of the Ollama that was already running; make sure that disk has room. Ctrl+C is safe, a re-run carries on."
+  } elseif ($need -gt 0) {
     $free = (Get-PSDrive -Name ((Resolve-Path $ModelsDir).Drive.Name)).Free
     $gb = { param($b) '{0:N1}' -f ($b / 1GB) }
     if ($free -lt ($need + [int64]($need / 10) + 1GB)) {
       $small = if ($ChatModel -ne 'qwen3:8b') { ' (or add -Small for a smaller chat model)' } else { '' }
-      Die "not enough free disk space for the models ($($needNames -join ', ')): they need about $(& $gb $need) GB in $ModelsDir and $(& $gb $free) GB is free. Free some space$small, then run this again."
+      Die "not enough free disk space for the models ($($needNames -join ', ')): they need about $(& $gb $need) GB in $ModelsDir and $(& $gb $free) GB is free. Free some space$small, then run this again (or set HEIM_SKIP_DISK_CHECK=1 to try anyway)."
     }
     Ok "models to download: $($needNames -join ', ') (about $(& $gb $need) GB; $(& $gb $free) GB free). Progress shows below; Ctrl+C is safe, a re-run carries on."
   }
@@ -562,13 +578,20 @@ if ($DoVor) {
       if ($LASTEXITCODE -ge 8) { Warn "some library files were not copied (robocopy exit $LASTEXITCODE)" } else { Ok "copied into $libDir" }
       $global:LASTEXITCODE = 0
       $LibEmpty = $false
-      if (-not $NoModels -and -not $NoIndex) {
-        Ok 'indexing them (a while for a full library; Ctrl+C is safe, then run: vor ingest)'
-        $env:VOR_HOME = $RHome
-        & $PyR (Join-Path $VorDir 'vor.py') ingest
-        if ($LASTEXITCODE -ne 0) { Warn 'the library index stopped; run: vor ingest' }
-      }
     }
+  }
+  # index the library when it has files and no index yet (also when an earlier run copied it and
+  # its ingest was stopped); a library you already indexed is left to `vor ingest`
+  $hasLib = Get-ChildItem -Path $libDir -Recurse -File -Include '*.pdf','*.md','*.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($hasLib -and -not (VorHasIndex $RHome)) {
+    if (-not $NoModels -and -not $NoIndex) {
+      Say "Vor's library: indexing it"
+      Ok 'a while for a full library; Ctrl+C is safe, then run: vor ingest'
+      $env:VOR_HOME = $RHome
+      & $PyR (Join-Path $VorDir 'vor.py') ingest
+      if ($LASTEXITCODE -ne 0) { Warn 'the library index stopped; run: vor ingest' }
+      $global:LASTEXITCODE = 0
+    } else { Ok "Vor's library is not indexed yet (no models or -NoIndex this run): run  vor ingest  later" }
   }
 }
 
@@ -750,26 +773,38 @@ function Profile-Policy {
   if ((Get-CimInstance Win32_OperatingSystem).ProductType -ne 1) { return 'RemoteSigned' }   # Windows Server
   return 'Restricted'
 }
+# -NonInteractive (a scheduled or scripted run) makes Read-Host fail, so it is not asked there
+$NonInteractive = [bool]([Environment]::GetCommandLineArgs() | Where-Object { $_ -like '-NonI*' })
+if ($Prefix) {
+  Say 'Step 7 - execution policy (not checked for a -Prefix sandbox)'
+  Ok "env.ps1 is dot-sourced by hand; if PowerShell refuses it, use env.cmd in cmd.exe or the launchers in $Bin"
+} else {
 Say 'Step 7 - can PowerShell load your profile?'
 $pol = Profile-Policy
 if ($pol -in @('Restricted', 'AllSigned')) {
   $doIt = [bool]$AllowProfileScripts
-  if (-not $doIt -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+  if (-not $doIt -and [Environment]::UserInteractive -and -not $NonInteractive -and -not [Console]::IsInputRedirected) {
     Write-Host "  A new PowerShell window here uses the execution policy '$pol', so it does not load your profile," -ForegroundColor Yellow
     Write-Host "  where the heim / vor commands are written. The usual fix, for your user only, is:" -ForegroundColor Yellow
     Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Yellow
     Write-Host "  (scripts you made or installed on this PC run; scripts downloaded from the internet must be signed)." -ForegroundColor Yellow
-    $ans = Read-Host '  Do that now? Type y for yes, anything else leaves it as it is'
+    try { $ans = Read-Host '  Do that now? Type y for yes, anything else leaves it as it is' } catch { $ans = '' }
     $doIt = ($ans -match '^\s*y(es)?\s*$')
   }
   if ($doIt) {
-    try { Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction Stop } catch { Warn "could not change it: $($_.Exception.Message)" }
+    try { Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction Stop }
+    catch {
+      # this window's own -ExecutionPolicy Bypass outranks CurrentUser: PowerShell still SAVES the new
+      # setting and then reports the override as an error. It is not a failure; Profile-Policy re-checks.
+      if ("$($_.FullyQualifiedErrorId)" -notlike '*ExecutionPolicyOverride*') { Warn "could not change it: $($_.Exception.Message)" }
+    }
     $pol = Profile-Policy
   }
   if ($pol -in @('Restricted', 'AllSigned')) {
     Warn "the policy stays '$pol' (your organisation may set it). The commands still work: the .cmd launchers in $Bin run them in PowerShell and in cmd.exe."
   } else { Ok "execution policy for your user: $pol (your profile loads in a new window)" }
 } else { Ok "execution policy '$pol': your profile loads" }
+}
 
 # ---------------------------------------------------------------------------
 Say 'Done'
@@ -789,10 +824,13 @@ if ($DoHeim) {
 if ($DoVor -and $LibEmpty) {
   Write-Host "  Vor's library is empty, so vor has nothing to quote yet. Add your own PDFs:  vor add FILE ..."
   Write-Host "  or fetch the starter library of public dam-safety publications (a few hundred MB), then index it:"
-  Write-Host "    & '$PyR' '$VorDir\fetch_asdso.py' --catalog"
-  Write-Host "    vor ingest"
+  Write-Host "    PowerShell:   & '$PyR' '$VorDir\fetch_asdso.py' --catalog"
+  Write-Host "    Command Prompt:  `"$PyR`" `"$VorDir\fetch_asdso.py`" --catalog"
+  Write-Host "    then:  vor ingest"
 }
-Write-Host "  Check it again any time:  ai-doctor     Everything this printed:  $InstallLog"
+$doctor = if ($DoHeim) { 'ai-doctor' } else { 'vor doctor' }
+Write-Host "  Check it again any time:  $doctor     Everything this printed:  $InstallLog"
 if ($DoHeim) { Write-Host '  For developers: set ND_REPO / DWR_REPO / CREST_REPO to your clones, then  heim "where is the breach width computed"' }
 Write-Host '  The local AIs need no admin rights and no GPU; a discrete GPU only makes them faster.'
 Stop-Log
+exit 0

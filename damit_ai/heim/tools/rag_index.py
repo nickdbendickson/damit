@@ -73,10 +73,16 @@ _pp = [None]
 
 
 def start_hint():
-    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
     if sys.platform == "darwin":
         return "run heim-start in a Terminal tab of its own, or open the Ollama app"
-    return "open the Ollama app, or run  ollama serve  in another window"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
 
 
 def _detect():

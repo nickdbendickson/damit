@@ -5,7 +5,8 @@ Two assistants that run on this Mac only (nothing is sent anywhere):
   Heim  answers about the dam-suite tools, their settings and known behaviours, and reads
         finished breach runs so you can ask for exact numbers.
 
-1. Install (about 15-60 minutes, most of it downloading 8-22 GB of models)
+1. Install (about 15-60 minutes, most of it downloading about 8-46 GB of models, depending on
+   how much memory this Mac has)
    Double-click  Install-Mac.command  in this folder.
    - The first time, macOS may say it is from an unidentified developer: right-click the
      file, choose Open, then Open again.

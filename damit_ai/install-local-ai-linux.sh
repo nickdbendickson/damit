@@ -124,7 +124,8 @@ fi
 mkdir -p "$LOCAL_AI"
 INSTALL_LOG="$LOCAL_AI/install.log"
 printf '\n=== %s  install-local-ai-linux.sh %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${ARGS[*]+"${ARGS[*]}"}" >> "$INSTALL_LOG"
-exec > >(tee -a "$INSTALL_LOG") 2>&1
+# tee ignores Ctrl+C (and -i), so it lives on to write the stop note below into the log as well
+exec > >(trap '' INT; exec tee -i -a "$INSTALL_LOG") 2>&1
 on_exit() {
   local rc=$?
   if (( rc != 0 )); then
@@ -225,7 +226,9 @@ if [[ -n "$SANDBOX" ]] && curl -sf "$OLLAMA_HOST_URL/api/version" >/dev/null 2>&
     || die "something else already answers on $OLLAMA_HOST_URL (another Ollama?). Stop it, or pick a free port with --ollama-port=N"
 fi
 # start the server if it isn't answering
+STARTED_SERVER=0
 if ! curl -sf "$OLLAMA_HOST_URL/api/version" >/dev/null 2>&1; then
+  STARTED_SERVER=1
   ok "starting ollama serve on $OLLAMA_HOST_URL (log: $LOCAL_AI/ollama-serve.log)"
   SERVE_ENV=(OLLAMA_MODELS="$MODELS_DIR" OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0)
   [[ -z "$OLLAMA_PORT" ]] || SERVE_ENV+=(OLLAMA_HOST="127.0.0.1:$OLLAMA_PORT")
@@ -363,10 +366,19 @@ if [[ "$NO_MODELS" == 0 ]]; then
     grep -q "^$m" <<< "$HAVE_LIST" && continue
     NEED=$(( NEED + $(model_bytes "$m") )); NEED_NAMES="$NEED_NAMES $m"
   done
-  if (( NEED > 0 )); then
+  # a pull stopped part way left blobs/*-partial* files: a re-run downloads only the rest
+  PART=$(find "$MODELS_DIR/blobs" -type f -name '*-partial*' -exec wc -c {} + 2>/dev/null \
+         | awk '$2 != "total" {s += $1} END {printf "%d", s}' || true)
+  NEED=$(( NEED - ${PART:-0} )); (( NEED > 0 )) || NEED=0
+  if (( NEED > 0 )) && [[ "${HEIM_SKIP_DISK_CHECK:-0}" == 1 ]]; then
+    ok "disk-space check skipped (HEIM_SKIP_DISK_CHECK=1); models to download:$NEED_NAMES"
+  elif (( NEED > 0 )) && [[ "$STARTED_SERVER" == 0 && -z "$SANDBOX" ]]; then
+    # an Ollama that was already running keeps models in ITS folder, which may not be $MODELS_DIR
+    ok "models to download:$NEED_NAMES (about $(gb "$NEED") GB) into the folder of the Ollama that was already running; make sure that disk has room. Ctrl+C is safe, a re-run carries on."
+  elif (( NEED > 0 )); then
     FREE=$(df -Pk "$MODELS_DIR" 2>/dev/null | awk 'NR==2{print $4*1024}' || true)
     if [[ -n "$FREE" ]] && (( FREE < NEED + NEED / 10 + 1073741824 )); then
-      die "not enough free disk space for the models:$NEED_NAMES need about $(gb "$NEED") GB in $MODELS_DIR and $(gb "$FREE") GB is free. Free some space$([[ "$CHAT_MODEL" == qwen3:8b ]] || echo " (or add --small for a smaller chat model)"), then run this again."
+      die "not enough free disk space for the models:$NEED_NAMES need about $(gb "$NEED") GB in $MODELS_DIR and $(gb "$FREE") GB is free. Free some space$([[ "$CHAT_MODEL" == qwen3:8b ]] || echo " (or add --small for a smaller chat model)"), then run this again (or set HEIM_SKIP_DISK_CHECK=1 to try anyway)."
     fi
     ok "models to download:$NEED_NAMES (about $(gb "$NEED") GB; $(gb "${FREE:-0}") GB free). Their progress shows below; Ctrl+C is safe, a re-run carries on."
   fi
@@ -504,10 +516,18 @@ if [[ "$DO_VOR" == 1 && -z "$(find "$RHOME/library" -type f \( -iname '*.pdf' -o
     if cp -Rn "$OFFLINE/Vor/library/." "$RHOME/library/"; then ok "copied into $RHOME/library"
     else warn "some library files were not copied (see above)"; fi
     LIB_EMPTY=0
-    if [[ "$NO_MODELS" == 0 && "$INDEX_KN" == 1 ]]; then
-      ok "indexing them (a while for a full library; Ctrl+C is safe, then run: vor ingest)"
-      VOR_HOME="$RHOME" "$VOR_DIR/python" "$VOR_DIR/vor.py" ingest || warn "the library index stopped; run: vor ingest"
-    fi
+  fi
+fi
+# index the library when it has files and no index yet (also when an earlier run copied it and its
+# ingest was stopped); a library already indexed is left to `vor ingest`
+if [[ "$DO_VOR" == 1 && -n "$(find "$RHOME/library" -type f \( -iname '*.pdf' -o -iname '*.md' -o -iname '*.txt' \) -print -quit 2>/dev/null || true)" ]] \
+   && ! vor_has_index "$RHOME"; then
+  if [[ "$NO_MODELS" == 0 && "$INDEX_KN" == 1 ]]; then
+    say "Vor's library: indexing it"
+    ok "a while for a full library; Ctrl+C is safe, then run: vor ingest"
+    VOR_HOME="$RHOME" "$VOR_DIR/python" "$VOR_DIR/vor.py" ingest || warn "the library index stopped; run: vor ingest"
+  else
+    ok "Vor's library is not indexed yet (no models or --no-index this run): run  vor ingest  later"
   fi
 fi
 
@@ -626,7 +646,7 @@ if [[ "$DO_VOR" == 1 && "$LIB_EMPTY" == 1 ]]; then cat <<EOF
     vor ingest
 EOF
 fi
-echo "  Check it again any time:  ai-doctor     Everything this printed:  $INSTALL_LOG"
+echo "  Check it again any time:  $([[ "$DO_HEIM" == 1 ]] && echo ai-doctor || echo 'vor doctor')     Everything this printed:  $INSTALL_LOG"
 [[ "$DO_HEIM" == 1 ]] && echo "  For developers: set ND_REPO / DWR_REPO / CREST_REPO to your clones, then  heim \"where is the breach width computed\""
 cat <<EOF
   openSUSE GUI-QGIS note (only if you also run the plugins here): a conda QGIS may need system

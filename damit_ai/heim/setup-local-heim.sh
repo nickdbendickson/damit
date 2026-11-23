@@ -480,10 +480,16 @@ _pp = [None]
 
 
 def start_hint():
-    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
     if sys.platform == "darwin":
         return "run heim-start in a Terminal tab of its own, or open the Ollama app"
-    return "open the Ollama app, or run  ollama serve  in another window"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
 
 
 def _detect():
@@ -1383,10 +1389,16 @@ def ensure_ollama(base, log=print):
 
 
 def start_hint():
-    """How to start Ollama on this computer (heim-start exists only on a Mac install)."""
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
     if sys.platform == "darwin":
         return "run heim-start in a Terminal tab of its own, or open the Ollama app"
-    return "open the Ollama app, or run  ollama serve  in another window"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
 
 
 def ollama_problem(e, base=None):
@@ -1398,10 +1410,16 @@ def ollama_problem(e, base=None):
     if type(e).__name__ == "OllamaError":
         return "Ollama stopped with an error: %s" % " ".join(str(e).split())[:300]
     if isinstance(e, urllib.error.HTTPError):
-        try:
-            body = e.read().decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 - the body is only for the message
-            body = ""
+        body = getattr(e, "heim_body", None)     # read once: a second call finds the stream empty
+        if body is None:
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 - the body is only for the message
+                body = ""
+            try:
+                e.heim_body = body
+            except AttributeError:
+                pass
         try:
             body = json.loads(body).get("error") or body
         except (ValueError, AttributeError):
@@ -1412,7 +1430,8 @@ def ollama_problem(e, base=None):
             if name.split(":")[0] in ("heim", "vor"):
                 fix = "the installer makes it: run the installer again (it keeps what is there)"
             else:
-                fix = "fetch it with:  ollama pull %s" % name if m else "run the installer again"
+                fix = ("run the installer again (it fetches what is missing), or:  ollama pull %s" % name
+                       if m else "run the installer again")
             return "Ollama has no model %s; %s. (ollama list shows what it has.)" % (name, fix)
         return "Ollama answered with an error (HTTP %s): %s" % (e.code, " ".join(str(body).split())[:300])
     if isinstance(e, (socket.timeout, TimeoutError)) or (
@@ -1798,9 +1817,10 @@ def chat(coll, top_k, ask=input):
         try:
             ans = answer(prompt)
         except Exception as e:  # noqa: BLE001 - Ollama down mid-chat: say so, keep the chat
-            if ollama_problem(e) is None:
+            msg = ollama_problem(e)
+            if msg is None:
                 raise
-            print(ollama_problem(e))
+            print(msg)
             continue
         if ans is None:
             continue
@@ -1885,10 +1905,13 @@ def command_word(argv):
     if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "run", "help"):
         return None
     word, rest = argv[0], argv[1:]
-    if word == "run" and rest and rest[0].split()[:1] and rest[0].split()[0].lower() in RUNS_WORDS:
-        # v2.9: `heim run add FOLDER` is `heim runs add FOLDER` with a letter missing
+    if (word == "run" and rest and rest[0].split()[:1] and rest[0].split()[0].lower() in RUNS_WORDS
+            and not " ".join(rest).rstrip().endswith("?")):
+        # v2.9: `heim run add FOLDER` is `heim runs add FOLDER` with a letter missing ("run ... ?" is
+        # still a question, below). The words are split, so `heim run "show 2801"` gives `heim runs show 2801`.
+        words = rest[0].split() + rest[1:]
         sys.exit("Did you mean:  heim runs %s\n(heim runs reads finished runs and answers from them; heim run "
-                 "\"...\" drafts a new model run)" % " ".join(shlex.quote(r) for r in rest))
+                 "\"...\" drafts a new model run)" % " ".join(_shell_quote(w) for w in words))
     if word == "run":
         # v2.8: `heim run "..."` drafts a damchain run; "run times for ANUGA?" stays a question
         if not rest or rest[0].startswith("-") or not " ".join(rest).rstrip().endswith("?"):
@@ -1912,6 +1935,13 @@ def command_word(argv):
                 return ("runs", ["add"] + rest)      # run folders: numbers into the run database
             return ("index", ["--add"] + rest)
     return None
+
+
+def _shell_quote(w):
+    """A word quoted for the shell the user types in: cmd.exe and PowerShell take "...", not '...'."""
+    if os.name == "nt":
+        return w if re.fullmatch(r"[\w@%+=:,./\\-]+", w) else '"%s"' % w.replace('"', '')
+    return shlex.quote(w)
 
 
 # words of `heim runs` (run_results.py) that never start a run request: `heim run add ...` gets "did you
@@ -3085,6 +3115,14 @@ def _q(s):
     return s if re.fullmatch(r"[\w@%+=:,./-]+", s) else "'" + s.replace("'", "'\\''") + "'"
 
 
+def _paste(s):
+    """A path for a line the user copies into THEIR shell: double quotes on Windows (cmd and
+    PowerShell both read them), _q's single quotes elsewhere. _q stays for the POSIX wrappers."""
+    if os.name == "nt":
+        return subprocess.list2cmdline([str(s)])
+    return _q(s)
+
+
 def _heim_chat(prompt, timeout=1800):
     """Ask the local Ollama model once; return its text (thinking stripped). Raises on transport error."""
     payload = {"model": HEIM_MODEL, "messages": [{"role": "user", "content": prompt}],
@@ -3544,7 +3582,7 @@ def run_dwr(args):
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
     if ok and not args.check_only:
-        print("Read the results into Heim (then ask about them):  heim runs add %s" % _q(p["OUT_FOLDER"]))
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(p["OUT_FOLDER"]))
     if not ok and getattr(args, "triage", False):
         triage_failure("DamSafety chain", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
@@ -3841,13 +3879,13 @@ def run_damit(args):
     print("log: %s" % log)
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
-    print_results(rows, ids, out)
+    print_results(rows, ids, out, ok)
     if not ok and getattr(args, "triage", False):
         triage_failure("DamIT batch", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
 
 
-def print_results(rows, ids, out, most=20):
+def print_results(rows, ids, out, ok=True, most=20):
     """v1.6.1: where each dam's results are, and the one line that reads them into Heim."""
     want = set(ids)
     mine = [r for r in rows if not want or (r.get("Dam") or "").strip() in want]
@@ -3858,8 +3896,9 @@ def print_results(rows, ids, out, most=20):
                                         (r.get("Folder") or "").strip()))
         if len(mine) > most:
             print("  ... and %d more (see the summary)" % (len(mine) - most))
-    if any((r.get("Status") or "").strip() == "done" for r in mine) or (not rows and os.path.isdir(out)):
-        print("Read the results into Heim (then ask about them):  heim runs add %s" % _q(out))
+    # no summary rows: offer the folder only when the run itself said OK (a failed run's folder may be empty)
+    if any((r.get("Status") or "").strip() == "done" for r in mine) or (ok and not rows and os.path.isdir(out)):
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(out))
 
 
 def default_lisflood():
@@ -4749,7 +4788,7 @@ SCRIPT_EOF_REPOAUDIT
   for f in rag_index rag_query audit_plugin suite_check dam_chain repo_audit; do
     "$HEIM_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
   done
-  ok "rag_index 2.9, rag_query 2.8, audit_plugin 1.3, suite_check 1.0, dam_chain 1.6.0, repo_audit 1.0 written and compiled"
+  ok "rag_index 2.9.1, rag_query 2.9, audit_plugin 1.3, suite_check 1.0, dam_chain 1.6.1, repo_audit 1.0 written and compiled"
   # v3.7/v3.8: the run watcher (deterministic digest + the small explainer) is copied, not generated
   for f in run_digest heim_watch run_results true_hole ai_doctor ai_ui ai_score heim_run; do
     if [[ -f "${0:A:h}/tools/$f.py" ]]; then
@@ -4919,4 +4958,5 @@ FOR DEVELOPERS (set ND_REPO etc. in ~/.zshrc first):
 NEXT
 else
   printf '\033[1;33m%s/%s passed — fix failures, re-run (completed steps auto-skip).\033[0m\n' "$PASS" "$TOTAL"
+  exit 1      # Install-Mac.command and install-all.sh read this: a failed check is not "Done"
 fi

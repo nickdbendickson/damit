@@ -585,7 +585,10 @@ def changes(set_name, f):
 
 
 def _quote(a):
-    return " ".join(shlex.quote(x) for x in a)
+    """A command line to copy and paste: Windows shells take double quotes, not shlex's single ones."""
+    if os.name == "nt":
+        return subprocess.list2cmdline([str(x) for x in a])
+    return " ".join(shlex.quote(str(x)) for x in a)
 
 
 def _log(path, lines):

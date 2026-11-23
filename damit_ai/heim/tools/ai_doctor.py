@@ -79,6 +79,9 @@ def damchain_status():
         spec.loader.exec_module(dc)
         conda = dc.conda_exe()
     except SystemExit:
+        if os.name == "nt":
+            return False, ("no conda on PATH here; run damchain from the Miniforge Prompt, where conda works "
+                           "(only needed for damchain)")
         return False, "no conda found, so the plugins cannot be run from a Terminal here (only needed for damchain)"
     except Exception as e:  # noqa: BLE001 - an older or broken copy: say so
         return False, "could not be checked (%s)" % e
@@ -89,6 +92,17 @@ def damchain_status():
     except OSError as e:
         return False, "conda could not be asked (%s)" % e
     qp = dc.find_qgis_process(prefix)
+    if not os.path.isfile(qp) and os.name == "nt":
+        # a Windows conda env keeps it as Library\bin\qgis_process-qgis.bat (or .exe)
+        lib = os.path.join(prefix, "Library", "bin")
+        try:
+            hits = sorted(f for f in os.listdir(lib) if f.lower().startswith("qgis_process"))
+        except OSError:
+            hits = []
+        if not hits:
+            return False, ("the 'ndqgis' environment has no qgis_process in %s; damchain needs it on the "
+                           "environment's PATH" % lib)
+        qp = os.path.join(lib, hits[0])
     if not os.path.isfile(qp):
         return False, "the 'ndqgis' environment has no qgis_process in its bin folder (%s)" % prefix
     return True, "ready: qgis_process in %s. Next: damchain setup, then damchain plugins --set damit" % prefix
