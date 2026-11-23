@@ -579,7 +579,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.4.9
+## vor.py 1.4.10
 
 Installed command: `vor`. The literature assistant.
 
@@ -691,6 +691,8 @@ add the PDFs' tables as their own passages (documents indexed before 1.4.0)
 |---|---|---|---|
 | `--check` |  |  | list passages too long for Vor to read whole; changes nothing |
 | `--redo` |  |  | read the tables again of documents with a passage that is too long |
+| `--again` |  |  | read the tables of every PDF again (1.4.10 also reads tables printed without lines) |
+| `--doc` | KEY |  | read the tables of this publication again: an id from `vor list`, or part of its file name, title or report number |
 
 #### `vor.py ocr`
 

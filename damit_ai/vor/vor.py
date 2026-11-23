@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.9 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.10 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -36,6 +36,7 @@
 #                      up all -k passages).
 #   vor tables                 add the PDFs' tables as their own passages (documents indexed
 #                                      before 1.4.0; new ones get them at ingest). Needs PyMuPDF.
+#                                      --again: every PDF's tables read again; --doc KEY: one PDF's.
 #   vor ocr                    OCR the scanned PDFs (needs ocrmypdf) and re-ingest them
 #   vor remove DOC             drop a document from the index (file is not touched)
 #   vor doctor                 check Ollama, the two models and the database
@@ -49,6 +50,11 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.10 (2026-11-23): tables printed without ruling lines (USGS WSP 2339 tables 1-4) are read row by row from
+#   where their words sit, so "Cobble | 64-256 | 0.030-0.050" stays one line instead of three columns read one
+#   after another; `vor tables --again` / `--doc KEY` reads an indexed PDF's tables again. An answer cut off at
+#   its length limit is asked for again with reasoning off. The write-up may not call a checked finding
+#   misattributed; differing values are given with their source and year.
 # 1.4.9 (2026-11-23): the model is told which passages come from the publication the question names. On the
 #   2026-11-23 real-model test Vor read the right pages (WSP 2339 Table 1 p.10, Pierce et al. p.35) but each
 #   passage was labelled only "Arcement (1989) Guide for Selecting..." or "FEMA (2010) Predicting Peak...", so
@@ -134,7 +140,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.9"
+VERSION = "1.4.10"
 
 
 def _home():
@@ -1139,6 +1145,117 @@ def _table_caption(words, bbox, pm):
     return (near[-1].strip() if near else "")[:200]
 
 
+# 1.4.10: a table drawn without ruling lines (USGS WSP 2339's tables 1-3) is invisible to PyMuPDF's table
+# finder, and its plain text comes out a column at a time: every material name, then every grain size, then
+# every n range. On 2026-11-23 the model read that page four times and could not pair 'Cobble' with
+# '64-256' or 'Very large' with '0.050-0.100'. These rows are rebuilt from the words' positions instead.
+LAYOUT_MAX_LINES = 80        # most lines read below one caption
+
+
+def _word_lines(words):
+    """The words as lines: grouped by the middle of their height, each line left to right."""
+    ws = [w for w in words if str(w[4]).strip()]
+    if not ws:
+        return []
+    hs = sorted(w[3] - w[1] for w in ws)
+    tol = max(1.0, 0.45 * hs[len(hs) // 2])
+    lines = []
+    for w in sorted(ws, key=lambda w: ((w[1] + w[3]) / 2, w[0])):
+        yc = (w[1] + w[3]) / 2
+        if lines and abs(yc - lines[-1][0]) <= tol:
+            lines[-1][1].append(w)
+        else:
+            lines.append([yc, [w]])
+    return [(yc, sorted(ln, key=lambda w: w[0])) for yc, ln in lines]
+
+
+def _segments(line, gap):
+    """A line's words split where the space between two words is wider than gap: its cells."""
+    segs = []
+    for w in line:
+        if segs and w[0] - segs[-1][-1][2] <= gap:
+            segs[-1].append(w)
+        else:
+            segs.append([w])
+    return segs
+
+
+def _seg_text(seg):
+    return " ".join(str(w[4]) for w in seg)
+
+
+def _is_prose(seg, min_width):
+    """A run of running text: six words or more, mostly words in lower case, at least min_width wide."""
+    words = [str(w[4]) for w in seg]
+    alpha = sum(1 for t in words if re.match(r"^[(\"']?[a-z][a-z'-]*[,.;:)]?$", t))
+    return len(words) >= 6 and alpha >= 0.6 * len(words) and seg[-1][2] - seg[0][0] >= min_width
+
+
+def layout_table_chunks(words, page_width):
+    """Passages for each 'Table N' on a page, its rows rebuilt from where the words sit: one printed row to
+    a line, its cells joined by ' | '. A table set in one column of a two-column page keeps only that
+    column's words. Reading stops at the next caption or at the first line of running text that starts
+    at the table's left edge. [] when there is no caption or nothing that looks like rows."""
+    lines = _word_lines(words)
+    if not lines or not page_width:
+        return []
+    cw = sorted((w[2] - w[0]) / max(1, len(str(w[4]))) for _, ln in lines for w in ln)
+    gap = 1.8 * cw[len(cw) // 2]
+    segd = [(yc, _segments(ln, gap)) for yc, ln in lines]
+    # the right-hand column's left edge, from lines of running text in both columns
+    rights = sorted(sg[i][0][0] for _, sg in segd for i in range(1, len(sg))
+                    if _is_prose(sg[i], 0.25 * page_width) and _is_prose(sg[0], 0.25 * page_width)
+                    and sg[i][0][0] > 0.4 * page_width)
+    split = rights[len(rights) // 2] if rights else None
+    out = []
+    for n, (yc, sg) in enumerate(segd):
+        # a caption starts its line, or the right-hand column: 'Table 1 gives ...' inside a cell is not one
+        cap_i = next((i for i, g in enumerate(sg) if _CAPTION.match(_seg_text(g))
+                      and (i == 0 or (split is not None and abs(g[0][0] - split) <= 0.03 * page_width))), None)
+        if cap_i is None:
+            continue
+        cap_seg = sg[cap_i]
+        lo, hi = 0.0, float(page_width) + 1
+        if split is not None:
+            if cap_seg[-1][2] < split - 2:
+                hi = split - 2                      # the table sits in the left column
+            elif cap_seg[0][0] >= split - 2:
+                lo = split - 2                      # the table sits in the right column
+        left = cap_seg[0][0]
+        caption = _seg_text(cap_seg)
+        rows, k = [], n + 1
+        while k < len(segd) and len(rows) < LAYOUT_MAX_LINES:
+            ws = [w for g in segd[k][1] for w in g if w[0] >= lo and w[2] <= hi]
+            k += 1
+            if not ws:
+                continue
+            cells = _segments(ws, gap)
+            first = _seg_text(cells[0])
+            if not rows and first.startswith("["):
+                caption += " " + " ".join(_seg_text(c) for c in cells)
+                continue
+            if (cells[0][0][0] <= left + 0.05 * page_width
+                    and (_CAPTION.match(first) or re.match(r"^(figure|fig\.)\s+\d", first, re.I))):
+                break
+            if (cells[0][0][0] <= left + 0.05 * page_width and not re.match(r"^\d{1,2}$", str(cells[0][0][4]))
+                    and _is_prose(cells[0], 0.3 * page_width)):
+                break
+            rows.append(" | ".join(_seg_text(c) for c in cells))
+        if sum(1 for r in rows if " | " in r) < 3 or not any(re.search(r"\d", r) for r in rows):
+            continue
+        lead = "Table (rows as printed): %s\n" % caption[:200]
+        cur = []
+        for r in rows:
+            r = r if len(r) <= CHUNK_MAX else r[:CHUNK_MAX - 2] + " …"
+            if cur and len(lead) + sum(len(x) + 1 for x in cur + [r]) > CHUNK_MAX:
+                out.append(lead + "\n".join(cur))
+                cur = []
+            cur.append(r)
+        if cur:
+            out.append(lead + "\n".join(cur))
+    return out
+
+
 def extract_pdf_tables(path, pages_text=None):
     """{page_no: [table passage, ...]} found by PyMuPDF's table finder; {} without PyMuPDF or on error.
     Only pages that look like they hold a table are searched (the finder is slow and most pages hold none)."""
@@ -1159,12 +1276,13 @@ def extract_pdf_tables(path, pages_text=None):
             text = pages_text.get(i + 1) if pages_text else None
             if text is None:
                 text = pg.get_text("text") or ""
-            if not table_candidate(text) or not hasattr(pg, "find_tables"):
+            captioned = any(_CAPTION.match(ln) for ln in text.splitlines())
+            if not (table_candidate(text) or captioned) or not hasattr(pg, "find_tables"):
                 continue
             try:
                 found = pg.find_tables()
             except Exception:
-                continue
+                found = None
             try:
                 words = pg.get_text("words") or []
             except Exception:
@@ -1181,6 +1299,13 @@ def extract_pdf_tables(path, pages_text=None):
                 except Exception:
                     cap = ""
                 out.setdefault(i + 1, []).extend(table_chunks(cap, md))
+            if captioned and not out.get(i + 1) and words:
+                try:
+                    laid = layout_table_chunks(words, pg.rect.width)
+                except Exception:
+                    laid = []
+                if laid:
+                    out[i + 1] = laid
     finally:
         d.close()
     return out
@@ -2216,7 +2341,10 @@ def synthesize(question, ev, mode, out):
                  "Put the finding labels after every sentence that states a fact, like [F2] or [F2][F5].")
     msg = ("Question: %s\n\nVerified findings (each quote has been checked against its page):\n\n%s\n\n"
            "Parts the sources did not cover:\n%s\n\n%s\nUse ONLY these findings. Do not add facts, numbers or "
-           "references that are not in them. If they do not answer the question, say so."
+           "references that are not in them. If they do not answer the question, say so. Each quote has been "
+           "checked on its page, so never call a finding wrong, mistaken or misattributed: where findings give "
+           "different values for one method (two editions or years of it), give each value with the source and "
+           "the year it is stated for."
            % (question, "\n".join(lines) or "(no findings)", gaps, shape))
     reserve = 3000 if mode == "ask" else 5000
     if len(msg) > budget_chars(reserve):
@@ -2753,13 +2881,31 @@ def cmd_tables(a):
             die("`vor tables` needs PyMuPDF (the installer puts it in Vor's Python).")
     db = connect()
     try:
-        _add_tables(db, redo=getattr(a, "redo", False))
+        only = None
+        if getattr(a, "doc", None):
+            only, labels = find_docs(db, a.doc)
+            if not only:
+                die("--doc %r matches no document (see: vor list)" % a.doc)
+        _add_tables(db, redo=getattr(a, "redo", False), again=getattr(a, "again", False), only=only)
     finally:
         db.close()
 
 
-def _add_tables(db, redo=False):
-    if redo:
+def _add_tables(db, redo=False, again=False, only=None):
+    if only or again:
+        # 1.4.10: read the tables of these PDFs again whatever Vor version indexed them (tables drawn without
+        # ruling lines are read since 1.4.10). Their text passages are left as they are.
+        q = "SELECT id, path, title FROM docs WHERE backend LIKE 'pymupdf%'"
+        rows = db.execute(q + " ORDER BY id").fetchall()
+        if only:
+            rows = [r for r in rows if r[0] in set(only)]
+        rows = [r for r in rows if (r[1] or "").lower().endswith(".pdf")]
+        if not rows:
+            say("No PDF read with PyMuPDF matches. Nothing to do.")
+            return
+        say("Reading the tables of %d document(s) again (only pages with numbers or a 'Table N' caption are "
+            "searched) ..." % len(rows))
+    elif redo:
         ids = sorted({r[0] for r in long_passages(db)})
         rows = [db.execute("SELECT id, path, title FROM docs WHERE id=?", (i,)).fetchone() for i in ids]
         rows = [r for r in rows if r and (r[1] or "").lower().endswith(".pdf")]
@@ -3328,6 +3474,10 @@ def main():
     s = sub.add_parser("tables", help="add the PDFs' tables as their own passages (documents indexed before 1.4.0)")
     s.add_argument("--check", action="store_true", help="list passages too long for Vor to read whole; changes nothing")
     s.add_argument("--redo", action="store_true", help="read the tables again of documents with a passage that is too long")
+    s.add_argument("--again", action="store_true",
+                   help="read the tables of every PDF again (1.4.10 also reads tables printed without lines)")
+    s.add_argument("--doc", metavar="KEY", help="read the tables of this publication again: an id from `vor list`, "
+                   "or part of its file name, title or report number")
     s.set_defaults(fn=cmd_tables)
     s = sub.add_parser("ocr", help="OCR scanned PDFs (needs ocrmypdf) and re-index them")
     s.add_argument("--min-fraction", type=float, default=OCR_MIN_FRACTION,
