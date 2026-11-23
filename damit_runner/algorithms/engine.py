@@ -142,6 +142,36 @@ def _suite_setting(key, default=""):
         return default
 
 
+def _suite_source_label(key):
+    """Where the suite value of `key` comes from, for the self-test report. DamIT's suite_config
+    answers a key from the DamIT setting first, then the environment variables, in that order (the
+    DamSafety original asks damsuite.suite_config.source(), which DamIT's compat layer does not have)."""
+    try:
+        from ..compat import suite_config as _sc
+        names = tuple(_sc.ENV.get(key, ()))
+        mine = _sc._DAMIT_KEY.get(key)
+        core = _sc._core_settings() if mine else None
+        if core is not None and core.get(mine) not in (None, ""):
+            return "DamIT setting " + mine
+    except Exception:                                            # a report label only
+        names = ()
+    for name in names:
+        if os.environ.get(name):
+            return "environment variable " + name
+    return "suite setting " + key
+
+
+def _why_not_a_file(path):
+    """Why a set engine path cannot be used, in words: a link whose target is gone, a folder, or
+    nothing there at all."""
+    if os.path.islink(path) and not os.path.exists(path):
+        return "is a link to {}, which does not exist".format(os.path.realpath(path))
+    if os.path.isdir(path):
+        return "is a folder, not a program"
+    if os.path.lexists(path) or os.path.exists(os.path.realpath(path)):
+        return "is not a file"
+    return "does not exist"
+
 
 def _line_midpoint(part):
     """Point halfway along the line, not the middle vertex."""

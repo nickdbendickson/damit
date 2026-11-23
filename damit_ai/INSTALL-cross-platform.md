@@ -139,8 +139,7 @@ and it seeds the models from `offline/models` so nothing is pulled). Flags: `--n
 ## openSUSE GUI-QGIS note
 
 The AIs need no system libraries. If you *also* run the QGIS plugins on the same
-openSUSE box and the Qt `xcb` platform plugin fails, install the GL/X libraries:
-
-```
-sudo zypper install -y Mesa-libGL1 libxcb-cursor0 libxkbcommon-x11-0
-```
+openSUSE box and the Qt `xcb` platform plugin fails, it needs the system GL/X
+packages `Mesa-libGL1`, `libxcb-cursor0` and `libxkbcommon-x11-0`. These are
+operating-system packages installed with zypper by whoever administers the
+computer; the AI installer never runs sudo and never installs them itself.

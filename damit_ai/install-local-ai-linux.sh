@@ -649,9 +649,9 @@ fi
 echo "  Check it again any time:  $([[ "$DO_HEIM" == 1 ]] && echo ai-doctor || echo 'vor doctor')     Everything this printed:  $INSTALL_LOG"
 [[ "$DO_HEIM" == 1 ]] && echo "  For developers: set ND_REPO / DWR_REPO / CREST_REPO to your clones, then  heim \"where is the breach width computed\""
 cat <<EOF
-  openSUSE GUI-QGIS note (only if you also run the plugins here): a conda QGIS may need system
-  GL/X libraries. If the xcb platform plugin fails, install them with:
-    sudo zypper install -y Mesa-libGL1 libxcb-cursor0 libxkbcommon-x11-0
-  The local AIs themselves need none of that.
+  openSUSE GUI-QGIS note (only if you also run the plugins here): a conda QGIS may need the
+  system GL/X packages Mesa-libGL1, libxcb-cursor0 and libxkbcommon-x11-0. They are operating
+  system packages (zypper), so whoever administers this computer installs them; this installer
+  never does, and the local AIs themselves need none of them.
 EOF
 exit 0
