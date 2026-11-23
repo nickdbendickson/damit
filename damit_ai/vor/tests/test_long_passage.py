@@ -65,30 +65,35 @@ class LongFirstPassage(unittest.TestCase):
         vor.extract(ev, "sub two", [hit(1, 98, huge)])
         self.assertEqual(len(ev.cut), 1)
 
-    def test_a_fast_empty_answer_says_so(self):
-        ev = vor.Evidence()
-        ev.add_source(hit(1, 114, "x"))
-        ev.calls = [{"passages": 1, "seconds": 1.2, "prompt_tokens": 40}]
-        self.assertIn("too fast", vor.no_findings_answer(ev, None))
+    def test_an_empty_list_is_asked_once_more_in_reverse(self):
+        replies = ['{"findings": [], "not_covered": []}',
+                   json.dumps({"findings": [{"source": "S2", "quote": QUOTE, "claim": "c", "kind": "k"}]})]
+        sent = []
 
-    def test_every_passage_is_capped_not_only_the_first(self):
-        long_txt = "word " * 3000                               # 15,000 characters, under the window
+        def chat2(messages, schema=None, **kw):
+            sent.append((messages[-1]["content"], kw.get("temperature")))
+            return replies[len(sent) - 1]
+        vor.chat = chat2
         ev = vor.Evidence()
-        vor.extract(ev, "q", [hit(1, 1, "short one"), hit(2, 2, long_txt), hit(3, 3, "third")])
-        self.assertIn("[S3]", self.sent[0])
-        self.assertEqual(len(ev.cut), 1)
+        vor.extract(ev, "q", [hit(1, 98, "Other manual text."), hit(2, 114, "Table 5. " + QUOTE)])
+        self.assertEqual(len(sent), 2)
+        self.assertLess(sent[1][0].index("[S2]"), sent[1][0].index("[S1]"))     # reverse order
+        self.assertEqual(sent[1][1], 0.5)
+        self.assertEqual(len(ev.findings), 1)
+        self.assertTrue(ev.calls[1].get("retry"))
 
-    def test_short_passages_are_untouched(self):
+    def test_empty_twice_says_so(self):
+        vor.chat = lambda messages, schema=None, **kw: '{"findings": [], "not_covered": []}'
+        ev = vor.Evidence()
+        vor.extract(ev, "q", [hit(1, 98, "a"), hit(2, 114, "b")])
+        self.assertEqual(len(ev.calls), 2)
+        self.assertIn("twice", vor.no_findings_answer(ev, None))
+        self.assertNotIn("too fast", vor.no_findings_answer(ev, None))
+
+    def test_a_reply_with_findings_is_not_asked_again(self):
         ev = vor.Evidence()
         vor.extract(ev, "q", [hit(1, 1, "alpha"), hit(2, 2, QUOTE)])
-        self.assertNotIn("passage cut", self.sent[0])
-        self.assertEqual(ev.cut, [])
-
-    def test_checks_say_a_passage_was_cut(self):
-        ev = vor.Evidence()
-        ev.cut = ["Filters, p.98: 6400 of 80001 characters"]
-        line = "; ".join(vor.checks_summary(ev, [], set(), 0))
-        self.assertIn("too long", line)
+        self.assertEqual(len(self.sent), 1)
 
 
 class TablesStaySmall(unittest.TestCase):
