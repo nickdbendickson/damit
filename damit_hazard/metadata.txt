@@ -4,8 +4,8 @@ qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
-about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.4.8
+about=Processing tools for a suggested dam hazard class and for the rasters a class is read from. damit:classify reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Other tools import a HEC-RAS plan or a DSS-WISE Lite package, classify a folder of dams, report class probability over an ensemble (a no-breach run is its own outcome), and record review, model-gate, series, portfolio, creep and form-fill results. A review flag never lowers a class. Output of classify: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
+version=0.4.9
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -17,6 +17,11 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.4.9 - 2026-11-23
+      * Catalog tools. New Processing tools, each calling the Catalog engine or a raster import, not a state rule set: damit:rasimport (HEC-RAS plan HDF to depth, velocity, arrival and water surface), damit:dsswise (DSS-WISE Lite package to the same rasters), damit:batch (one Catalog class per dam JSON), damit:ensemble (class probability; a no-breach run is its own outcome and every probability is over all runs; the governing class is the highest breach-run class), damit:submittal, damit:reviewpackage, damit:checklist, damit:reproduce (the published class is the higher of the saved class and the recompute), damit:markreviewed (a review mark; class fields are not written or lowered), damit:modelgate (raster checks, not a class), damit:series, damit:portfolio (shows the higher stored class when reports disagree), damit:creep, damit:quickcreep, damit:formfill (the engineer's template only; no built-in state form).
+      * CHANGES COMPUTED RESULTS when damit:rasimport or damit:dsswise is run: those tools write new rasters. They do not classify. damit:reproduce can publish a higher class than the saved one and never a lower one. No other new tool changes a class.
+      * P95 velocity is a review flag only (velocity_p95_review) on a structure whose depth-velocity zone would differ at the 95th-percentile velocity of its wet cells. The suggested class stays on the cell velocities. No class change for damit:classify.
+      * Not ported: state rule compare, a state 911 package, state chart sign-off.
     0.4.8 - 2026-11-20
       * Reports are written whole or not at all (audit 2026-11-19, from damit #134): damit_hazard_report.md / .html / .json go to a temp file unique per writer, are fsynced and then replace the old report, so a classify killed mid-write no longer leaves a torn report. No number changes.
     0.4.7 - 2026-11-20

@@ -17,8 +17,7 @@ its own (see *Where the thresholds come from*).
 It does **not** run a breach or flood model. The rasters come from a run made elsewhere; the
 scenario ID (S1–S7) records which run they are.
 
-* Processing provider `damit`, algorithm **`damit:classify`** (shared with the other DamIT
-  plugins: whichever loads first registers the provider, the others add their algorithms).
+* Processing provider `damit`. `damit:classify` suggests a class. Since 0.4.9 the same provider also has Catalog tools: `rasimport`, `dsswise`, `batch`, `ensemble`, `submittal`, `reviewpackage`, `checklist`, `reproduce`, `markreviewed`, `modelgate`, `series`, `portfolio`, `creep`, `quickcreep` and `formfill`. A P95 velocity difference is a review flag only. `markreviewed` and `reproduce` never publish a lower class. None of these tools is a state rule set.
 * Menu **DamIT ▸ DamIT Hazard…** opens the window.
 * Based on DamSafety_Hazard (DWR_Plugins at `e12f35d`): the structure sampling
   (`sampling/fastsample.py`) and the TM-11 houses / mobile homes curves (`data/tm11_charts.json`,

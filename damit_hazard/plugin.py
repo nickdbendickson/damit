@@ -14,15 +14,12 @@ class Plugin(object):
         self.dialog = None
 
     def initProcessing(self):
-        from .provider import Provider
+        from .provider import Provider, add_algorithms
         reg = QgsApplication.processingRegistry()
         if reg.providerById("damit") is not None:
-            # another DamIT plugin registered the shared provider id first: add our algorithm
+            # another DamIT plugin registered the shared provider id first: add our algorithms
             # to it instead of a second provider of the same id
-            from .algorithms.classify import Classify
-            prov = reg.providerById("damit")
-            if prov.algorithm("classify") is None:
-                prov.addAlgorithm(Classify())
+            add_algorithms(reg.providerById("damit"))
             return
         self.provider = Provider()
         reg.addProvider(self.provider)

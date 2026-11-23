@@ -1460,6 +1460,14 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None, 
     for f in flags.items:
         for rid in f["receptors"]:
             flag_rec.setdefault(rid, []).append(f["code"])
+    # P95 velocity is a review flag only. It is applied after the class is chosen and it
+    # is not a hit, so suggested_class stays on the cell velocities.
+    from . import velocity_hinge
+    p95 = velocity_hinge.review(runs, charts, cat)
+    for item in p95:
+        flags.add(INFO, "velocity_p95_review", item["message"], receptor=item.get("id"),
+                  scenario=item.get("scenario"))
+        flag_rec.setdefault(item.get("id"), []).append("velocity_p95_review")
     result.update({
         "suggested_class": cls, "suggested_label": cfg["labels"].get(cls, C.GENERIC_LABELS[cls]),
         "generic_label": C.GENERIC_LABELS[cls], "rule_class": rule_cls,
@@ -1475,5 +1483,6 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None, 
         "nodata_sampling": [{"scenario": r.get("scenario"), "label": r.get("label"),
                              **(r["nodata_sampling"])}
                             for r in runs if r.get("nodata_sampling")],
+        "velocity_p95_review": p95,
     })
     return result
