@@ -45,7 +45,7 @@ FINE_NAME = "elev_fine.npy"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # the runner's defaults (AnugaSettings, rundam / engine parameters): the numbers a breach run uses
-DEFAULTS = dict(cell_m=10.0, buffer_m=0.0, yieldstep_s=300.0, manning_n=0.06, algorithm="DE0",
+DEFAULTS = dict(cell_m=10.0, buffer_m=0.0, yieldstep_s=300.0, manning_n=0.05, algorithm="DE0",
                 edge_bc="outflow", threads=1, gmsh_timeout_s=600.0, extra_h=6.0)
 ALGORITHMS = ("DE0", "DE1", "DE2")
 EDGE_BCS = ("outflow", "transmissive")

@@ -61,7 +61,7 @@ class Settings(unittest.TestCase):
     def test_defaults_are_the_runners(self):
         s = AR.check_settings({})
         self.assertEqual((s["cell_m"], s["manning_n"], s["algorithm"], s["edge_bc"], s["yieldstep_s"], s["gmsh_timeout_s"]),
-                         (10.0, 0.06, "DE0", "outflow", 300.0, 600.0))
+                         (10.0, 0.05, "DE0", "outflow", 300.0, 600.0))
         self.assertEqual(gm.default_sizes()["max_area_m2"], 20000.0)       # the mesher's own, untouched
 
     def test_bad_values_name_the_key(self):

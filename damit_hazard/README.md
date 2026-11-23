@@ -170,6 +170,16 @@ sizes, citations) and `damit_hazard_receptors.gpkg` (one layer per input layer; 
 `src_fid`, `kind`, `type`, `class`, `label`, `adv_class`, `methods`, `depth_ft`, `vel_fps`,
 `dv_ft2s`, `rise_ft`, `flags`, `sampling`; 0.4.0 adds `occtype`, `suggested_type`, `struct_key`, `is_911`, `reviewed_habitable`, `habitable_status`, `habitable_basis` and the `usa_*` check fields), styled by class.
 
+### Evaluation cache (0.5.0)
+
+`damit:classify` also writes `QA/_evaluation_cache.bin` in the output folder: the sampled receptors
+from this run, so the next QGIS session can skip raster sampling when the rasters, receptor layers
+and sampling settings and this plugin version still match and the file is under 7 days old.
+Habitability reviews, the habitable rule, the USA Structures check and the rail-trains lookup are
+applied again after a cache hit. Dates in the state are stored as ISO text. A miss or a cache that
+cannot be kept (an unsupported object, a state over 1 GiB unpacked) never fails the run; classify
+just samples again. There is no `offline_pack` setting.
+
 ### Depth-velocity chart of the habitable structures (0.3.0, rule changed in 0.4.0)
 
 Every classify run also writes `damit_hazard_dv_habitable.png` and `damit_hazard_dv_habitable.csv` (the

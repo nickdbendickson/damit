@@ -624,7 +624,7 @@ class PMPGrids(unittest.TestCase):
             m = json.load(fh)
         self.assertEqual(m["launched"], {"anuga": False, "gmsh_mesher": False, "result": None})
         self.assertEqual((m["settings"]["algorithm"], m["settings"]["edge_bc"], m["settings"]["manning_n"]),
-                         ("DE0", "outflow", 0.06))
+                         ("DE0", "outflow", 0.05))
         self.assertAlmostEqual(m["rain"]["depth_mm"], 2.0e-7 * 3599.5 * 1000, places=3)
         from damit_pmp import anugarain as AR
         self.assertEqual(m["runner_shared_sha256"], AR.runner_sources())

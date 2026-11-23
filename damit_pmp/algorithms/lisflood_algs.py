@@ -48,7 +48,7 @@ class LisfloodRain(_Base):
             "'Model Terrain (LISFLOOD).tif' and, in local coordinates, rain.dem.asc), rain.bci with FREE (outflow) "
             "domain edges, rain.rain (mm/hr from the *_anuga_rate.csv of damit_pmp:raingrid, the same breakpoints the "
             "ANUGA job interpolates) and rain.par with the runner's keywords: the solver (ACC, the local-inertial CPU "
-            "solver, by default), simulation time, mass-balance interval, Manning n 0.06, outputs (max depth, mass "
+            "solver, by default), simulation time, mass-balance interval, Manning n 0.05, outputs (max depth, mass "
             "balance) and an optional discharge gauge across the line GAUGE_A - GAUGE_B. The runner's own lisflood.py, "
             "data_conventions.py, grid.py and units.py are verbatim, sha-pinned copies (runner_shared); the breach "
             "inflow and the arrival-time patch keywords are left out (a rain run has no breach).\n\n"
@@ -89,7 +89,7 @@ class LisfloodRain(_Base):
                                          defaultValue=0.0, minValue=0.0))
         add(QgsProcessingParameterEnum("SOLVER", "Solver (ACC = CPU default; FV2 / MWDG2 need a CUDA build)",
                                        list(LR.SOLVER_CHOICES), defaultValue=0))
-        add(QgsProcessingParameterNumber("MANNING_N", "Manning n (runner default 0.06)", DOUBLE,
+        add(QgsProcessingParameterNumber("MANNING_N", "Manning n (runner default 0.05)", DOUBLE,
                                          defaultValue=LR.DEFAULTS["manning_n"], minValue=0.0001, maxValue=1.0))
         add(QgsProcessingParameterPoint("GAUGE_A", "Discharge section, first end (with GAUGE_B: LISFLOOD-FP records the "
                                         "flow through this section, e.g. just below a dam; it is run along the nearest grid "

@@ -25,6 +25,7 @@ from .. import _deps  # noqa: F401
 from .. import atlas14 as A
 from .. import gisgrid as G
 from .. import rainexport as R
+from .. import green_ampt as GA
 from .. import storm as S
 from .. import temporal as T
 from damit_core.lib import http, settings
@@ -76,17 +77,34 @@ class _Base(QgsProcessingAlgorithm):
                                              "median curve)", INTEGER, defaultValue=T.DEFAULT_PERCENT, minValue=10, maxValue=90),
                 QgsProcessingParameterNumber("TDA", "Atlas 14 temporal distribution area (0 = find it from the point; Volume 8 "
                                              "areas 1 - 4)", INTEGER, defaultValue=0, minValue=0, maxValue=4),
+                QgsProcessingParameterEnum("LOSS_METHOD", "Loss method",
+                                           ["Initial + constant", "Green-Ampt"], defaultValue=0),
                 QgsProcessingParameterNumber("INITIAL_LOSS", "Initial loss (rain absorbed before any runoff; 0 = none)", DOUBLE,
                                              defaultValue=0.0, minValue=0.0),
-                QgsProcessingParameterNumber("CONSTANT_LOSS", "Constant loss rate after the initial loss (per hour; 0 = none)",
+                QgsProcessingParameterNumber("CONSTANT_LOSS", "Constant loss rate after the initial loss (per hour; 0 = none; "
+                                             "not used with Green-Ampt)",
                                              DOUBLE, defaultValue=0.0, minValue=0.0),
                 QgsProcessingParameterEnum("LOSS_UNITS", "Loss units (initial loss in in or mm; constant loss in in/hr or mm/hr)",
                                            S.UNITS, defaultValue=0),
+                QgsProcessingParameterEnum("GA_TEXTURE", "Green-Ampt soil texture (Custom uses the three values below)",
+                                           GA.TEXTURE_LABELS, defaultValue=0),
+                QgsProcessingParameterNumber("GA_KS_IN_HR", "Green-Ampt Ks (in/hr; Custom texture only)", DOUBLE,
+                                             defaultValue=0.15, minValue=0.0),
+                QgsProcessingParameterNumber("GA_SUCTION_IN", "Green-Ampt wetting-front suction (in; Custom texture only)",
+                                             DOUBLE, defaultValue=6.0, minValue=0.0),
+                QgsProcessingParameterNumber("GA_DEFICIT", "Green-Ampt moisture deficit θs − θi (Custom texture only)",
+                                             DOUBLE, defaultValue=0.30, minValue=0.0, maxValue=1.0),
+                QgsProcessingParameterNumber("GA_INITIAL_SAT", "Green-Ampt initial effective saturation (0 = dry, 1 = saturated; "
+                                             "texture presets)", DOUBLE, defaultValue=0.0, minValue=0.0, maxValue=1.0),
+                QgsProcessingParameterNumber("GA_IMPERVIOUS_PCT", "Green-Ampt percent impervious (sheds all its rain)", DOUBLE,
+                                             defaultValue=0.0, minValue=0.0, maxValue=100.0),
                 QgsProcessingParameterFile("CACHE_DIR", "Atlas 14 temporal-distribution download cache folder (empty = DamIT "
                                            "pfds_cache setting or next to the output)", behavior=FOLDER, optional=True),
                 QgsProcessingParameterBoolean("OFFLINE", "Offline (cached temporal files only)", defaultValue=False)]
         for d in defs:
-            if flag is not None and d.name() in ("QUARTILE", "PERCENT", "TDA", "CACHE_DIR", "OFFLINE"):
+            if flag is not None and d.name() in ("QUARTILE", "PERCENT", "TDA", "CACHE_DIR", "OFFLINE",
+                                                 "GA_TEXTURE", "GA_KS_IN_HR", "GA_SUCTION_IN", "GA_DEFICIT",
+                                                 "GA_INITIAL_SAT", "GA_IMPERVIOUS_PCT"):
                 d.setFlags(d.flags() | flag)
             self.addParameter(d)
 
@@ -127,13 +145,54 @@ class _Base(QgsProcessingAlgorithm):
             raise QgsProcessingException(str(e))
         return rows, pattern, rec, meta
 
+    def _loss_method(self, P, context):
+        """0 = initial + constant (default, including older saved models), 1 = Green-Ampt."""
+        try:
+            return int(self.parameterAsEnum(P, "LOSS_METHOD", context))
+        except Exception:
+            return 0
+
+    def _green_ampt_params(self, P, context):
+        tex = self.parameterAsEnum(P, "GA_TEXTURE", context)
+        sat = self.parameterAsDouble(P, "GA_INITIAL_SAT", context)
+        try:
+            if tex <= 0:
+                return GA.resolve_params(ks_in_hr=self.parameterAsDouble(P, "GA_KS_IN_HR", context),
+                                         suction_in=self.parameterAsDouble(P, "GA_SUCTION_IN", context),
+                                         moisture_deficit=self.parameterAsDouble(P, "GA_DEFICIT", context))
+            return GA.resolve_params(texture=GA.GA_TEXTURE_NAMES[tex - 1], initial_saturation=sat)
+        except GA.GreenAmptError as e:
+            raise QgsProcessingException(str(e))
+
     def _loss_table(self, P, context, rows, unit):
-        """(table [(t_end, gross, loss, excess)] or None, meta dict, summary dict) for INITIAL_LOSS / CONSTANT_LOSS."""
+        """(table [(t_end, gross, loss, excess)] or None, meta dict, summary dict)."""
+        method = self._loss_method(P, context)
         ia = self.parameterAsDouble(P, "INITIAL_LOSS", context)
         cl = self.parameterAsDouble(P, "CONSTANT_LOSS", context)
+        lu = S.UNITS[self.parameterAsEnum(P, "LOSS_UNITS", context)]
+        if method == 1:
+            ks, psi, dth, texture, status = self._green_ampt_params(P, context)
+            ia_u = S.to_unit(ia, lu, unit)
+            imp = self.parameterAsDouble(P, "GA_IMPERVIOUS_PCT", context)
+            try:
+                table, info = GA.apply_to_rows(rows, ks, psi, dth, initial=ia_u,
+                                               impervious_pct=imp, unit=unit)
+            except (GA.GreenAmptError, A.Atlas14Error) as e:
+                raise QgsProcessingException(str(e))
+            summ = S.loss_summary(table, unit)
+            summ.update({"method": "Green-Ampt (Mein & Larson 1973; Chow, Maidment & Mays 1988 sec. 4.4)",
+                         "ga_texture": texture, "ga_ks_in_hr": round(ks, 6), "ga_suction_in": round(psi, 6),
+                         "ga_moisture_deficit": round(dth, 6), "ga_impervious_pct": imp,
+                         "initial_loss_{}".format(unit): round(ia_u, 4),
+                         "ga_ponded": bool(info.get("ga_ponded"))})
+            if status:
+                summ["loss_param_status"] = status
+            meta = {"loss_method": "green_ampt", "loss_texture": texture}
+            if status:
+                meta["loss_param_status"] = status
+            return table, meta, summ
         if ia <= 0 and cl <= 0:
             return None, {}, None
-        lu = S.UNITS[self.parameterAsEnum(P, "LOSS_UNITS", context)]
         ia_u, cl_u = S.to_unit(ia, lu, unit), S.to_unit(cl, lu, unit)
         try:
             table = S.apply_losses(rows, ia_u, cl_u)
@@ -340,8 +399,10 @@ class Hyetograph(_Base):
                 "the NOAA Atlas 14 temporal distribution (Volume 8 quartile curves from the HDSC files, 6-, 12-, 24- or 96-hour "
                 "storms; area found from the point; first to fourth quartile or all cases; 90% - 10% of occurrence) and NRCS "
                 "Type I / IA / II / III (24-hour storms): these only spread the Atlas 14 depth in time, NOAA Atlas 14 stays the "
-                "only depth source, and a storm duration a pattern has no curve for stops with a message. INITIAL_LOSS and "
-                "CONSTANT_LOSS (0 = none) add loss and excess columns. Feed the CSV to damit_pmp:raingrid for LISFLOOD-FP / ANUGA "
+                "only depth source, and a storm duration a pattern has no curve for stops with a message. LOSS_METHOD is "
+                "initial + constant (INITIAL_LOSS and CONSTANT_LOSS, 0 = none) or Green-Ampt (texture table or custom Ks, suction "
+                "and moisture deficit; optional initial loss and percent impervious). A loss method adds loss and excess columns. "
+                "Feed the CSV to damit_pmp:raingrid for LISFLOOD-FP / ANUGA "
                 "rain-on-grid files. " + NOTE)
 
     def initAlgorithm(self, config=None):  # noqa: N802
@@ -800,24 +861,14 @@ class RainGrid(_Base):
             "Atlas 14 JSON {} ({}-year, {})".format(os.path.basename(js), years, storm_label), meta, st
 
     def _loss_blocks(self, P, context, blocks):
-        """Apply INITIAL_LOSS / CONSTANT_LOSS to gross mm blocks -> (excess blocks or None, summary, meta)."""
-        ia = self.parameterAsDouble(P, "INITIAL_LOSS", context)
-        cl = self.parameterAsDouble(P, "CONSTANT_LOSS", context)
-        if ia <= 0 and cl <= 0:
-            return None, None
-        lu = S.UNITS[self.parameterAsEnum(P, "LOSS_UNITS", context)]
-        ia_mm, cl_mm = S.to_unit(ia, lu, "mm"), S.to_unit(cl, lu, "mm")
+        """Apply the chosen loss method to gross mm blocks -> (excess blocks or None, summary)."""
         rows, c = [], 0.0
         for t0, t1, d in blocks:
             c += d
             rows.append((t1, d, c))
-        try:
-            table = S.apply_losses(rows, ia_mm, cl_mm)
-        except A.Atlas14Error as e:
-            raise QgsProcessingException(str(e))
-        summ = S.loss_summary(table, "mm")
-        summ.update({"initial_loss_mm": round(ia_mm, 4), "constant_loss_mm_per_hr": round(cl_mm, 4),
-                     "method": "initial loss, then constant loss rate per time step (initial-and-constant loss)"})
+        table, _meta, summ = self._loss_table(P, context, rows, "mm")
+        if table is None:
+            return None, None
         return [(b[0], b[1], r[3]) for b, r in zip(blocks, table)], summ
 
     def _target_depth(self, P, context):
