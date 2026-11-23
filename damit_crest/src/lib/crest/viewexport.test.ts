@@ -78,7 +78,7 @@ describe("view export layout", () => {
 
   it("header: dam, date and the key results from the analysis", () => {
     const h = viewHeader(meta);
-    assert.equal(h.title, "DamIT Crest — Flood view");
+    assert.equal(h.title, "DamIT Desk — Flood view");
     assert.ok(h.dam.startsWith(`${dam.name} (ND00199)`));
     assert.match(h.dam, /saved 2026-10-30 10:27/);
     assert.match(h.results, /Peak discharge \(routed\) [\d,]+ cfs · Flooded area [\d,]+ ac · Max depth [\d.]+ ft/);

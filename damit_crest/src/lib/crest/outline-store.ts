@@ -74,7 +74,7 @@ export async function loadOutlines(): Promise<Map<string, OutlineCache>> {
   if (!keys.ok || !vals.ok) {
     const error = !keys.ok ? keys.error : !vals.ok ? vals.error : "";
     // Node and a locked-down browser land here on every load; say so once, quietly, and run without saved layers.
-    if (!/not available/.test(error)) console.warn(`DamIT Crest: the saved inundation layers could not be read (${error}).`);
+    if (!/not available/.test(error)) console.warn(`DamIT Desk: the saved inundation layers could not be read (${error}).`);
     return out;
   }
   const k = keys.value ?? [];
@@ -108,14 +108,14 @@ function setFailure(id: string, error: string | null) {
 /** Write a dam's layer. Resolves false, logs a warning and records the error (outlineSaveError) when it was NOT saved. */
 export async function saveOutline(id: string, cache: OutlineCache): Promise<boolean> {
   const r = await tx("readwrite", (s) => s.put(cache, id));
-  if (!r.ok) console.warn(`DamIT Crest: the inundation layer of ${id} was not saved (${r.error}). It stays on the desk for this visit only.`);
+  if (!r.ok) console.warn(`DamIT Desk: the inundation layer of ${id} was not saved (${r.error}). It stays on the desk for this visit only.`);
   setFailure(id, r.ok ? null : r.error);
   return r.ok;
 }
 
 export async function deleteOutline(id: string): Promise<boolean> {
   const r = await tx("readwrite", (s) => s.delete(id));
-  if (!r.ok) console.warn(`DamIT Crest: the saved inundation layer of ${id} could not be removed (${r.error}).`);
+  if (!r.ok) console.warn(`DamIT Desk: the saved inundation layer of ${id} could not be removed (${r.error}).`);
   setFailure(id, null);
   return r.ok;
 }

@@ -25,12 +25,19 @@ import {
   routedVolumes,
 } from "@/lib/crest/dashboard";
 import { num } from "@/lib/crest/format";
+import { hazardStatus } from "@/lib/crest/classify-receptors";
+import { structureCounts } from "@/lib/crest/paper";
 import { outlineState } from "@/lib/crest/outline";
 import { results } from "@/lib/crest/results-client";
 import { receptorPoints, SOURCE_LABEL } from "@/lib/crest/results";
 import { runKey, useResults } from "@/lib/crest/results-store";
 import type { Analysis, DamRecord, ResultSource } from "@/lib/crest/types";
 import type { DashPoint } from "./DashboardMap";
+import { ClassifyReceptorsPanel } from "./ClassifyReceptors";
+import { useClassifyAlg } from "./use-classify-alg";
+import { useClassifyReceptors } from "./use-classify-receptors";
+import { classColor } from "@/lib/crest/classify-list";
+import { useLegendOpen } from "@/lib/crest/legend-open";
 import type { Overlay } from "./ResultsMap";
 import { useAnalysisOfRecord, useStripOfRecord } from "./results-flow";
 import { layerOfRecord, RUNNER_SOURCE } from "@/lib/crest/layer-of-record";
@@ -124,6 +131,24 @@ export function Dashboard({ dam, result: deskResult }: { dam: DamRecord; result:
     [placed],
   );
 
+  // The real receptors damit:classify judged, as small dots by class (the table below lists them with names).
+  const judged = useClassifyReceptors(dam);
+  const classifyAlg = useClassifyAlg(dam.hazardResult);
+  const classifyPoints = useMemo<DashPoint[]>(
+    () =>
+      (judged.list?.receptors ?? [])
+        .filter((r) => r.at)
+        .map((r) => ({
+          id: r.rid,
+          name: r.name,
+          lon: r.at![0],
+          lat: r.at![1],
+          color: classColor(r.ordinal),
+          label: `${r.name}: ${r.label || "wet, no hit"}${r.depthFt != null ? ` · ${r.depthFt} ft` : ""} (${classifyAlg})`,
+        })),
+    [judged.list, classifyAlg],
+  );
+
   // Compare with a Runner run: the imported LISFLOOD-FP (else DSS-WISE) max depth, when loaded in this session.
   const runs = useResults((s) => s.runs);
   const preferred: ResultSource[] = dam.resultsOfRecord
@@ -166,7 +191,7 @@ export function Dashboard({ dam, result: deskResult }: { dam: DamRecord; result:
       <header className="dash-header">
         <span className="dash-brand">
           <img src={damitWordmark} alt="DaMiT" height={28} width={103} className="dash-wordmark" />
-          Crest
+          Desk
         </span>
         <span className="chip">
           <b>Scenario:</b> Sunny-day breach · {dam.name}
@@ -194,6 +219,7 @@ export function Dashboard({ dam, result: deskResult }: { dam: DamRecord; result:
               <DashboardMap
                 depth={layers.depth ? depth : null}
                 points={layers.structures ? points : []}
+                classify={layers.classify ? classifyPoints : []}
                 arrival={layers.arrival ? arrival : []}
                 hillshade={layers.hillshade}
                 overlays={layers.runnerOverlay ? overlay.overlays : []}
@@ -213,8 +239,9 @@ export function Dashboard({ dam, result: deskResult }: { dam: DamRecord; result:
 
       <div className="dash-bottom">
         <HydrographPane series={result.breach.series} />
-        <KpiStack result={result} />
+        <KpiStack dam={dam} result={result} />
         <ImpactsTable receptors={searchReceptors(result.flood.receptors, q)} gated={gated} />
+        <ClassifyReceptorsPanel dam={dam} result={deskResult} where="dashboard" />
       </div>
 
       <StatusBar source={source} modeled={ref != null} flags={flags} critical={critical} acked={acked} onAck={() => setAcked(true)} />
@@ -236,6 +263,7 @@ function LayerRail({
   overlayError?: string;
   method: string;
 }) {
+  const [legendOpen, toggleLegend] = useLegendOpen("dashboard-depth");
   return (
     <aside className="dash-layers" aria-label="Layers">
       <h5>LAYERS</h5>
@@ -271,13 +299,19 @@ function LayerRail({
       ) : null}
       {layers.depth ? (
         <>
-          <h5>MAX DEPTH (FT)</h5>
-          {[...DEPTH_BANDS].reverse().map((b) => (
-            <p key={b.id} className="legend-row">
-              <span style={{ background: b.color }} /> {b.label}
-            </p>
-          ))}
-          <p className="mini">
+          <h5>
+            <button type="button" className="legend-toggle" aria-expanded={legendOpen} onClick={toggleLegend} data-testid="dash-legend-collapse">
+              MAX DEPTH (FT)
+            </button>
+          </h5>
+          {legendOpen
+            ? [...DEPTH_BANDS].reverse().map((b) => (
+                <p key={b.id} className="legend-row">
+                  <span style={{ background: b.color }} /> {b.label}
+                </p>
+              ))
+            : null}
+          <p className="mini" hidden={!legendOpen}>
             {method === "runner" || method === "model"
               ? "Imported model run of record (max depth, cells merged to 60 m) where its rasters are loaded; otherwise the terrain layer for comparison."
               : method === "strip-legacy"
@@ -314,7 +348,7 @@ function HydrographPane({ series }: { series: Analysis["breach"]["series"] }) {
   const d = series
     .map((p, i) => `${i ? "L" : "M"}${x(p.tHr).toFixed(1)},${y(p.qCfs).toFixed(1)}`)
     .join(" ");
-  const right = x(pk.tHr) > W - 160;
+  const right = x(pk.tHr) > W - 200;
   const text = `Peak ${num(pk.qCfs, 0)} cfs @ ${num(pk.tHr, 2)} hr`;
   return (
     <div className="pane" data-testid="dash-hydrograph">
@@ -325,29 +359,29 @@ function HydrographPane({ series }: { series: Analysis["breach"]["series"] }) {
         role="img"
         aria-label={`Breach hydrograph. ${text}`}
       >
-        <line x1={L} y1={y(0)} x2={W - R} y2={y(0)} stroke={crest.border} />
-        <line x1={L} y1={T} x2={L} y2={y(0)} stroke={crest.border} />
+        <line x1={L} y1={y(0)} x2={W - R} y2={y(0)} stroke="var(--border)" />
+        <line x1={L} y1={T} x2={L} y2={y(0)} stroke="var(--border)" />
         <path
           d={`${d} L${x(series[series.length - 1].tHr)},${y(0)} L${x(0)},${y(0)} Z`}
-          fill={crest.teal}
+          fill="var(--teal)"
           opacity="0.12"
         />
-        <path d={d} fill="none" stroke={crest.teal} strokeWidth="2" />
-        <circle cx={x(pk.tHr)} cy={y(pk.qCfs)} r="4.5" fill={crest.red} />
+        <path d={d} fill="none" stroke="var(--teal)" strokeWidth="2" />
+        <circle cx={x(pk.tHr)} cy={y(pk.qCfs)} r="4.5" fill="var(--red)" />
         <text
           x={x(pk.tHr) + (right ? -8 : 8)}
           y={y(pk.qCfs) + 4}
-          fontSize="11"
-          fill={crest.ink}
+          fontSize="13"
+          fill="var(--ink)"
           textAnchor={right ? "end" : "start"}
           data-testid="dash-peak"
         >
           {text}
         </text>
-        <text x={W - R} y={H - 4} fontSize="10" fill={crest.muted} textAnchor="end">
+        <text x={W - R} y={H - 4} fontSize="12" fill="var(--muted)" textAnchor="end">
           hours after breach (0–{num(tMax, 1)})
         </text>
-        <text x={4} y={T + 8} fontSize="10" fill={crest.muted}>
+        <text x={4} y={T + 8} fontSize="12" fill="var(--muted)">
           cfs
         </text>
       </svg>
@@ -355,8 +389,13 @@ function HydrographPane({ series }: { series: Analysis["breach"]["series"] }) {
   );
 }
 
-function KpiStack({ result }: { result: Analysis }) {
-  const wet = result.flood.receptors.filter((r) => r.flooded).length;
+function KpiStack({ dam, result }: { dam: DamRecord; result: Analysis }) {
+  // Two counts, each named by its source: the desk's own receptors (the table beside) and, once damit:classify has run
+  // for these receptors, the real structures it judged.
+  const current = hazardStatus(dam, result).state === "current" ? dam.hazardResult : null;
+  const counts = structureCounts(result, current);
+  const classifyAlg = useClassifyAlg(dam.hazardResult);
+  const n = (v: number) => v.toLocaleString("en-US");
   const cards = [
     {
       l: "Peak discharge",
@@ -364,7 +403,10 @@ function KpiStack({ result }: { result: Analysis }) {
       warn: result.screen.level === "High",
     },
     { l: "Max depth", v: `${num(result.flood.maxDepthFt, 1)} ft`, warn: false },
-    { l: "Structures flooded", v: `${wet} of ${result.flood.receptors.length}`, warn: false },
+    { l: "Desk receptors flooded (911 / mapped)", v: `${counts.desk.wet} of ${counts.desk.total}`, warn: false },
+    ...(counts.classify
+      ? [{ l: `Structures wet (${classifyAlg})`, v: counts.classify.wet == null ? `${n(counts.classify.total)} checked` : `${n(counts.classify.wet)} of ${n(counts.classify.total)}`, warn: false }]
+      : []),
     { l: "Inundated area", v: `${num(result.flood.acres, 0)} ac`, warn: false },
   ];
   return (
@@ -422,9 +464,9 @@ function ImpactsTable({ receptors, gated }: { receptors: Receptor[]; gated: bool
   };
   return (
     <div className="pane dash-impacts" data-testid="dash-impacts">
-      <h4>Structure impacts</h4>
+      <h4>Structure impacts: desk receptors (911 / mapped)</h4>
       <div className="overflow-x-auto">
-        <table className="dash-table">
+        <table className="dash-table sticky-first">
           <thead>
             <tr>
               {COLS.map((c) => (

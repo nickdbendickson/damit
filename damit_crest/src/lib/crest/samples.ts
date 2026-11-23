@@ -144,7 +144,7 @@ export const SAMPLE_DAMS: DamRecord[] = [
     drainageMi2: 13.7,
     statedDatum: "NAVD88",
     datumNote:
-      "Crest converted from NGVD29 1070.0 ft (DWR Dams file; +1.09 ft VERTCON at the site); do not shift again.",
+      "Crest converted from NGVD29 1070.0 ft (state dam inventory; +1.09 ft VERTCON at the site); do not shift again.",
     demCrestFt: 1071.09,
     classOfRecord: "ND MEDIUM (NID hazard Significant)",
     sampleNote:
@@ -243,11 +243,33 @@ export function blankDam(): DamRecord {
     storageAcFt: 200,
     drainageMi2: 4,
     statedDatum: "Local",
-    demCrestFt: 1550,
+    // No DEM crest until it is read off the terrain or typed: a made-up 1550 tied the local crest with an invented
+    // 1450 ft offset. Blank holds the screen at Review ("No DEM tie") until the crest is tied.
+    demCrestFt: Number.NaN,
     // Piping by default (Nick, 2026-11-05): the Runner's and the ND Dam Safety screening default.
     failureMode: "piping",
     method: "froehlich",
     engine: "lisflood",
     receptors: valley("new"),
+  };
+}
+
+/**
+ * "+ New" on the dam list (Absaraka desk test 2026-11-21): a record with nothing filled in. blankDam's placeholder
+ * height, length, crest, streambed, storage and drainage (20 ft, 800 ft, 100, 82, 200 ac-ft, 4 mi²) made a dam that
+ * did not exist yet read Record and Breach complete with a 7,217 cfs peak. They are blank here, so the rail lists
+ * them as missing until the NID fill or the user enters them; no placeholder receptors either.
+ */
+export function emptyDam(): DamRecord {
+  return {
+    ...blankDam(),
+    name: "New dam",
+    heightFt: Number.NaN,
+    lengthFt: Number.NaN,
+    crestFt: Number.NaN,
+    streambedFt: Number.NaN,
+    storageAcFt: Number.NaN,
+    drainageMi2: Number.NaN,
+    receptors: [],
   };
 }

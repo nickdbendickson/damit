@@ -21,6 +21,7 @@
  * Crest is a SCREENING tool: a batch answers "which of these need a Runner run first", and a row's "open in desk"
  * hands the derived record to the desk for a closer look.
  */
+import { isNetworkFailure } from "./batch-job.ts";
 import { csvCell } from "./csv.ts";
 import { bundleAgeLine, deskBundles } from "./data-provenance.ts";
 import { analyze, ENGINE_VERSION } from "./engine.ts";
@@ -30,7 +31,7 @@ import { makeInundationPool, type InundationPool } from "./inundation-client.ts"
 import { fetchNd911, nd911AutoPatch, nd911State } from "./nd911.ts";
 import { lookupPads } from "./nd911-pads.ts";
 import { heightFor, prefillPatch, storageFor, type NidData } from "./nid-dams.ts";
-import { demRequest, demSourceLabel, fetchDem, lookupArea, outlineInputs, outlineState, traceChannel, type DemGrid, type DemRequest } from "./outline.ts";
+import { currentTerrain, demRequest, demSourceLabel, fetchDem, lookupArea, outlineInputs, outlineState, stampTerrain, traceChannel, type DemGrid, type DemRequest, type TerrainInfo } from "./outline.ts";
 import { withoutOutline } from "./outline-store.ts";
 import { blankDam } from "./samples.ts";
 import { applyDefaults } from "./settings.ts";
@@ -41,9 +42,23 @@ import { CREST_VERSION } from "./version.ts";
 
 // ---------------------------------------------------------------- the structure list
 
-/** The one kind of structure a batch lists: an NID main dam. (No state dam-safety, dugout or other inventory.) */
-export type StructureKind = "nid";
-export const KIND_LABEL: Record<StructureKind, string> = { nid: "NID dam" };
+/**
+ * What a listed structure is: an NID main dam ("nid", the only kind in the US profile), or, in the North Dakota profile
+ * only (nd-structures.ts, profile.ts), a state dam not in the NID ("dam"), a dugout, or an unknown structure.
+ */
+export type StructureKind = "nid" | "dam" | "dugout" | "unknown";
+export const KIND_LABEL: Record<StructureKind, string> = { nid: "NID dam", dam: "DWR dam", dugout: "DWR dugout", unknown: "DWR unknown structure" };
+
+/**
+ * A state inventory layered on the NID list (the North Dakota profile: nd-structures.ts ndInventory). Absent = the NID
+ * path, unchanged: structureRecord and the crest read from the terrain.
+ */
+export type InventoryHooks = {
+  /** The record for a structure, elevations blank; null = structureRecord (the NID path). */
+  record?: (s: Structure, id: string) => DamRecord | null;
+  /** The record with the inventory's own crest and streambed (NAVD 88) filled in, or null to read them from the terrain. */
+  crest?: (s: Structure, dam: DamRecord, asOf: string) => DamRecord | null;
+};
 
 export type Structure = {
   /** The NID ID (ND00199). */
@@ -250,8 +265,9 @@ function cellsWithin(g: DemGrid, lon: number, lat: number, rM: number): Cell[] {
   return out;
 }
 
-/** Where the crest came from: the 3DEP service, or a local DEM (batch command line, --dem). */
-export type CrestFrom = "3DEP" | "local DEM";
+/** Where the crest came from: the 3DEP service, a local DEM (batch command line, --dem), or (North Dakota profile) the
+ *  state inventory's NAVD 88 elevations (InventoryHooks.crest). */
+export type CrestFrom = "3DEP" | "local DEM" | "DWR";
 export type Derived = { crestFt: number; crestFrom: CrestFrom; bearingDeg: number; u: [number, number] };
 
 /** Crest (highest cell near the point, ft) and downstream unit vector (toward the lowest cell within 500 m). */
@@ -335,7 +351,8 @@ export function deriveRecord(
   s: Structure,
   g: DemGrid,
   nd?: Pick<NidData, "byNid" | "nidSource">,
-  demLabel: CrestFrom = "3DEP",
+  demLabel: Exclude<CrestFrom, "DWR"> = "3DEP",
+  inventory?: InventoryHooks,
 ): { ok: true; dam: DamRecord; derived: Derived } | { ok: false; reason: string } {
   const miss = missingData(s);
   if (miss) return { ok: false, reason: miss };
@@ -344,28 +361,35 @@ export function deriveRecord(
   const d = deriveFromDem(g, lon, lat);
   if (!d) return { ok: false, reason: "No 3DEP terrain at the structure's point." };
   const asOf = new Date().toISOString().slice(0, 10);
-  let dam = structureRecord(s, nd);
-  const crestFrom: CrestFrom = demLabel;
-  const p = (field: string, value: number): Provenance => ({
-    src: "DEM",
-    field,
-    value,
-    asOf,
-    note: `batch: highest ${demLabel} cell within ${CREST_SNAP_M} m of the inventory point; streambed = crest - height`,
-  });
-  dam = {
-    ...dam,
-    crestFt: d.crestFt,
-    streambedFt: Math.round((d.crestFt - dam.heightFt) * 100) / 100,
-    statedDatum: "NAVD88",
-    datumOffsetFt: undefined,
-    provenance: { ...dam.provenance, crestFt: p(`crest (${demLabel}, batch)`, d.crestFt), streambedFt: p("streambed (crest - H, batch)", d.crestFt - dam.heightFt) },
-  };
+  let dam = inventory?.record?.(s, `batch-${s.id.toLowerCase()}`) ?? structureRecord(s, nd);
+  // Crest: the state inventory's NAVD 88 elevations where it offers them (North Dakota profile), else the terrain.
+  const fromInventory = inventory?.crest?.(s, dam, asOf) ?? null;
+  let crestFrom: CrestFrom = demLabel;
+  if (fromInventory) {
+    dam = fromInventory;
+    crestFrom = "DWR";
+  } else {
+    const p = (field: string, value: number): Provenance => ({
+      src: "DEM",
+      field,
+      value,
+      asOf,
+      note: `batch: highest ${demLabel} cell within ${CREST_SNAP_M} m of the inventory point; streambed = crest - height`,
+    });
+    dam = {
+      ...dam,
+      crestFt: d.crestFt,
+      streambedFt: Math.round((d.crestFt - dam.heightFt) * 100) / 100,
+      statedDatum: "NAVD88",
+      datumOffsetFt: undefined,
+      provenance: { ...dam.provenance, crestFt: p(`crest (${demLabel}, batch)`, d.crestFt), streambedFt: p("streambed (crest - H, batch)", d.crestFt - dam.heightFt) },
+    };
+  }
   dam.demCrestFt = d.crestFt;
   const len = Number.isFinite(dam.lengthFt) && dam.lengthFt > 0 ? dam.lengthFt : 600;
   dam.geometry = synthGeometry(lon, lat, d.u, len);
   const bearingDeg = Math.round((((Math.atan2(d.u[0], d.u[1]) * 180) / Math.PI + 360) % 360) * 10) / 10;
-  dam.sampleNote = `Batch record (auto-derived ${asOf}): crest from ${demLabel} at the NID point ${dam.crestFt.toFixed(1)} ft, streambed ${dam.streambedFt.toFixed(1)} ft, downstream bearing ${bearingDeg}° from the ${demLabel} downhill, dam line synthesized. A stand-in for a surveyed record: check the point, the crest and the direction before relying on it.`;
+  dam.sampleNote = `Batch record (auto-derived ${asOf}): crest ${crestFrom === "DWR" ? "from DWR (NAVD 88)" : `from ${demLabel} at the NID point`} ${dam.crestFt.toFixed(1)} ft, streambed ${dam.streambedFt.toFixed(1)} ft, downstream bearing ${bearingDeg}° from the ${demLabel} downhill, dam line synthesized. A stand-in for a surveyed record: check the point, the crest and the direction before relying on it.`;
   return { ok: true, dam, derived: { crestFt: d.crestFt, crestFrom, bearingDeg, u: d.u } };
 }
 
@@ -460,7 +484,9 @@ export type BatchDeps = {
    */
   nearCellM?: number;
   /** "local DEM" when fetchDem reads a local raster; labels the crest source. */
-  demLabel?: CrestFrom;
+  demLabel?: Exclude<CrestFrom, "DWR">;
+  /** The North Dakota profile's state inventory (nd-structures.ts ndInventory); absent = the NID path. */
+  inventory?: InventoryHooks;
   /**
    * Applied to each derived record before it is analysed: the shared defaults (settings.ts applyDefaults), so a batch
    * starts every structure from the same starting pool, failure mode, breach equation and Manning's n as a new record
@@ -525,7 +551,7 @@ export async function runStructure(s: Structure, deps: BatchDeps = {}): Promise<
     // The desktop's local DEM (dem-source.ts) answers fetchDem when no fetch is passed: read it at 2 m, label it.
     const local = !deps.fetchDem && demSourceLabel() !== "3DEP";
     const near = await dem(nearRequest(s.lon!, s.lat!, 0.6, deps.nearCellM ?? (local ? 2 : 10)));
-    const rec = deriveRecord(s, near, deps.nd, deps.demLabel ?? (local ? "local DEM" : "3DEP"));
+    const rec = deriveRecord(s, near, deps.nd, deps.demLabel ?? (local ? "local DEM" : "3DEP"), deps.inventory);
     if (!rec.ok) return { row: emptyRow(s, "needs-data", rec.reason, secs()), dam: null };
     let dam = deps.prepare ? deps.prepare(rec.dam) : rec.dam;
     // Second pass: aim the synthesized line down the traced channel (aimAlongChannel).
@@ -541,7 +567,8 @@ export async function runStructure(s: Structure, deps: BatchDeps = {}): Promise<
     const built = deps.build
       ? await deps.build(dam, result, { onStatus })
       : await buildInundationReach(dam, result, { fetch: dem, yieldFn: deps.yieldFn, onStatus, ...(deps.flowlines !== undefined ? { flowlines: deps.flowlines } : {}) });
-    if (built.ok) dam = { ...dam, outline: built.cache };
+    // Stamped with the local DEM when one is in use (labels and credits name it), not with 3DEP.
+    if (built.ok) dam = { ...dam, outline: deps.fetchDem ? built.cache : stampTerrain(built.cache) };
 
     // 911 points inside the layer (or the strip when no layer could be built), added as receptors like a picked dam.
     const strip = floodStrip(dam, result).strip;
@@ -622,7 +649,55 @@ export type BatchOptions = BatchDeps & {
    * takes one worker for its build and gives it back; `concurrency` is then the pool's size.
    */
   pool?: InundationPool | null;
+  /**
+   * Waits before a structure whose run could not reach a service (3DEP "Failed to fetch", a 5xx) is run again, before
+   * its row is kept as failed. Default DAM_RETRY_MS; [] for none.
+   */
+  retryWaitsMs?: number[];
 };
+
+/**
+ * Fresh install test 2026-11-21: one dam's 3DEP fetch failed once ("Failed to fetch") and its row stayed failed until
+ * Resume was pressed by hand. A structure that failed only because a service could not be reached (isNetworkFailure)
+ * is now run again after these waits; only then is its row kept as failed (and counted toward the batch's pause, which
+ * still handles a service that is really down).
+ */
+export const DAM_RETRY_MS = [5_000, 15_000];
+
+/** Resolves true after `ms`, or false at once when `signal` aborts first. */
+function waitOrAbort(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(ok);
+    };
+    const onAbort = () => done(false);
+    const timer = setTimeout(() => done(true), ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** runStructure, run again after DAM_RETRY_MS waits while it fails only because a service could not be reached. */
+export async function runStructureWithRetry(
+  s: Structure,
+  deps: BatchDeps,
+  waits: number[] = DAM_RETRY_MS,
+  signal?: AbortSignal,
+): Promise<{ row: BatchRow; dam: DamRecord | null }> {
+  let out = await runStructure(s, deps);
+  let tries = 1;
+  for (const ms of waits) {
+    if (!isNetworkFailure(out.row) || signal?.aborted) break;
+    deps.onStatus?.(`${s.id}: a service could not be reached (${out.row.reason}); trying again in ${Math.round(ms / 1000)} s…`);
+    if (!(await waitOrAbort(ms, signal))) break;
+    out = await runStructure(s, deps);
+    tries++;
+  }
+  if (tries > 1 && isNetworkFailure(out.row)) out.row = { ...out.row, reason: `${out.row.reason} (tried ${tries} times)` };
+  return out;
+}
 
 /** Run a list, `concurrency` at a time, in list order; stops taking new work once `signal` aborts. */
 export async function runBatch(list: Structure[], opts: BatchOptions = {}): Promise<BatchRow[]> {
@@ -649,7 +724,7 @@ export async function runBatch(list: Structure[], opts: BatchOptions = {}): Prom
   const worker = async () => {
     while (next < todo.length && !opts.signal?.aborted) {
       const s = todo[next++];
-      const { row, dam } = await runStructure(s, deps);
+      const { row, dam } = await runStructureWithRetry(s, deps, opts.retryWaitsMs ?? DAM_RETRY_MS, opts.signal);
       if (opts.signal?.aborted && row.status === "failed" && /cancelled/.test(row.reason ?? "")) break;
       rows.push(row);
       done++;
@@ -724,6 +799,11 @@ export function insertRow(sorted: BatchRow[], row: BatchRow): BatchRow[] {
 
 export const BATCH_DISCLAIMER = "Screening estimate — not an official hazard classification. Batch records are auto-derived from the inventories and 3DEP.";
 
+/** BATCH_DISCLAIMER naming the terrain in use (a local DEM chosen in the desk, else 3DEP). */
+export function batchDisclaimer(t: TerrainInfo = currentTerrain()): string {
+  return t.local ? BATCH_DISCLAIMER.replace("and 3DEP.", `and the ${t.label}.`) : BATCH_DISCLAIMER;
+}
+
 export const BATCH_CSV_HEAD = [
   "id",
   "kind",
@@ -768,6 +848,11 @@ export function batchCsvMeta(d: { nd: Pick<NidData, "nidSource"> & { state?: str
  * The worklist CSV. Comment rows first ("# ..."): the disclaimer, the Crest build and engine versions that made the
  * rows, and the age of each inventory bundle given in `meta`; then the header and one line per row.
  */
+/** The batch CSV's file name: damit-desk-batch-<UTC date>.csv (it was crest-batch-<date>.csv before 2026-11-21). */
+export function batchCsvName(now = new Date()): string {
+  return `damit-desk-batch-${now.toISOString().slice(0, 10)}.csv`;
+}
+
 export function batchCsv(rows: BatchRow[], meta: BatchCsvMeta = {}): string {
   const now = meta.now ?? new Date();
   const ages = deskBundles({ nidFetchedUtc: meta.nidFetchedUtc, state: meta.state })
@@ -775,7 +860,7 @@ export function batchCsv(rows: BatchRow[], meta: BatchCsvMeta = {}): string {
     .filter((l): l is string => l != null);
   const head = [
     `# ${BATCH_DISCLAIMER}`,
-    `# DamIT Crest ${CREST_VERSION}; ${ENGINE_VERSION}. Written ${now.toISOString().slice(0, 10)}.`,
+    `# DamIT Desk ${CREST_VERSION}; ${ENGINE_VERSION}. Written ${now.toISOString().slice(0, 10)}.`,
     ...ages.map((l) => `# ${l}`),
   ];
   const lines = sortRows(rows).map((r) =>

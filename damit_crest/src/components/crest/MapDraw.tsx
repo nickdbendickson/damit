@@ -13,9 +13,10 @@ import { basemaps } from "@/lib/crest/basemap";
 import { DEPTH_BANDS, FLOOD_STRIP_DISCLAIMER, type FloodStrip } from "@/lib/crest/floodstrip";
 import { initialView, ND_CENTER } from "@/lib/crest/mapview";
 import { ND911_ATTRIBUTION_SHORT, type Nd911Point, type Nd911Row } from "@/lib/crest/nd911";
-import { DEM_ATTRIBUTION_SHORT, OUTLINE_LABEL, type TerrainOutline } from "@/lib/crest/outline";
+import { OUTLINE_LABEL, terrainInfo, type TerrainOutline } from "@/lib/crest/outline";
 import { PLSS_ATTRIBUTION_SHORT, type PlssRow } from "@/lib/crest/plss";
 import type { DamGeometry, GeoJSONFeature } from "@/lib/crest/types";
+import { useLegendOpen } from "@/lib/crest/legend-open";
 
 const LAYERS = basemaps(import.meta.env);
 
@@ -240,7 +241,6 @@ function FloodStripLayer({ strip, on, dashed }: { strip: FloodStrip | null | und
             },
     });
     return () => mounted.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` stands for the strip's content
   }, [map, key, on, dashed]);
   return null;
 }
@@ -270,7 +270,8 @@ function OutlineLayer({ outline, on }: { outline: TerrainOutline | null | undefi
     const extent = fc.extent;
     const mounted = mountFloodLayer(map, fc, {
       pane: OUTLINE_PANE,
-      attribution: DEM_ATTRIBUTION_SHORT,
+      // The terrain the layer was built on (a local DEM or 3DEP; stampTerrain), not always 3DEP.
+      attribution: terrainInfo(fc.properties?.dem_source).short,
       style: (f) => {
         const color = (f?.properties as { color?: string } | undefined)?.color ?? "#2a7fbf";
         return { stroke: !extent, color, weight: 0.8, opacity: 0.9, fill: true, fillColor: color, fillOpacity: 0.55 };
@@ -283,7 +284,6 @@ function OutlineLayer({ outline, on }: { outline: TerrainOutline | null | undefi
       edge?.remove();
       open?.remove();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` stands for the outline's content
   }, [map, key, on]);
   return null;
 }
@@ -431,6 +431,7 @@ function StripLegend({
 }) {
   const showOutline = !!outline && outlineOn;
   const used = new Set((showOutline ? outline : strip)?.features.map((f) => f.properties.band) ?? []);
+  const [open, toggle] = useLegendOpen("workflow-map");
   return (
     <div
       data-testid="flood-strip-legend"
@@ -451,7 +452,10 @@ function StripLegend({
         color: "#1f2a30",
       }}
     >
-      {strip ? (
+      <button type="button" className="legend-toggle" aria-expanded={open} onClick={toggle} data-testid="legend-collapse" style={{ marginBottom: open ? 4 : 0 }}>
+        Legend
+      </button>
+      {!open ? null : strip ? (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <LegendToggle on={on} setOn={setOn} label="Show the flood strip">
@@ -477,7 +481,7 @@ function StripLegend({
                 </LegendToggle>
               </div>
               <div data-testid="outline-legend-note" style={{ marginTop: 2, color: "#5c5a52" }}>
-                {OUTLINE_LABEL}; {outline.properties.outline_area_ac.toFixed(0)} ac.
+                {outline.properties.disclaimer || OUTLINE_LABEL}; {Math.round(outline.properties.outline_area_ac).toLocaleString("en-US")} ac in the depth bands (≥ 0.1 ft).
               </div>
             </>
           ) : (

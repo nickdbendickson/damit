@@ -68,8 +68,17 @@ export function bundleAgeLine(b: BundleInfo, now: Date): string | null {
 /** How to refresh an NID extract: the picker downloads the state again through the desktop server. */
 export const NID_REFRESH = "\"Download latest\" in the NID picker";
 
-/** The NID extract in use (nid-dams.ts NidData): one entry, labelled with its state when known. */
-export function deskBundles(src: { nidFetchedUtc?: string | null; state?: string | null }): BundleInfo[] {
-  if (src.nidFetchedUtc === undefined) return [];
-  return [{ label: src.state ? `NID inventory (${src.state})` : "NID inventory", pulledUtc: src.nidFetchedUtc, refresh: NID_REFRESH }];
+/** How to refresh the DWR dam values (North Dakota profile, nd-dams.ts): rebuild the bundle from DWR's Dams layer. */
+export const DWR_REFRESH = "npm run data:nd-dams-dwr";
+
+/**
+ * The inventories in use: the NID extract (nid-dams.ts NidData, labelled with its state when known) and, in the
+ * North Dakota profile, the DWR dam values joined to it (nd-dams.ts NdData dwrSource).
+ */
+export function deskBundles(src: { nidFetchedUtc?: string | null; state?: string | null; dwrPulledUtc?: string | null }): BundleInfo[] {
+  const out: BundleInfo[] = [];
+  if (src.nidFetchedUtc !== undefined)
+    out.push({ label: src.state ? `NID inventory (${src.state})` : "NID inventory", pulledUtc: src.nidFetchedUtc, refresh: NID_REFRESH });
+  if (src.dwrPulledUtc !== undefined) out.push({ label: "DWR dam values", pulledUtc: src.dwrPulledUtc, refresh: DWR_REFRESH });
+  return out;
 }

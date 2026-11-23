@@ -8,6 +8,8 @@
  * engine.ts and warnings.ts only. This one reads both copies and compares them.
  *
  * Crest lives in nickdbendickson/DWR_Plugins under dwr_crest/ (it was the nickdbendickson/crest repo until 2026-11-19).
+ * DamIT Desk (nickdbendickson/damit-desk, app/scripts/) runs the same check as the damit side: its app/ is damit_crest
+ * re-synced (2026-11-20), so its engine must match Crest's dwr_crest/ the same way, through the same allow list.
  * The same script lives in both repos (DWR_Plugins: dwr_crest/scripts/, damit: damit_crest/scripts/); it finds which repo it is in
  * and reads the other copy from:
  *   --other <dir>     a checkout of the other repo (its root: DWR_Plugins or damit). CI checks it out with actions/checkout.
@@ -17,7 +19,9 @@
  *   node scripts/check-engine-sync.mjs [--other ../damit] [--ref main]      (run from dwr_crest/ or damit_crest/)
  *
  * Exit 0 when every file matches; 1 on a difference that is not allowed, a missing file, or a stale allow entry
- * (one whose line is no longer in the file, so the list cannot rot).
+ * (one whose line is no longer in the file, so the list cannot rot). A `pending` entry in engine-sync-allow.json
+ * skips a differing file (CI stays green while a paired DWR_Plugins PR is still open); a pending file that already
+ * matches is reported as OK.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -26,7 +30,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Repo layout: where src/lib/crest sits, from each repo's root. */
-export const LIB = { crest: "dwr_crest/src/lib/crest", damit: "damit_crest/src/lib/crest" };
+export const LIB = { crest: "dwr_crest/src/lib/crest", damit: "damit_crest/src/lib/crest", desk: "app/src/lib/crest" };
 export const GITHUB = { crest: "nickdbendickson/DWR_Plugins", damit: "nickdbendickson/damit" };
 
 export function loadAllowList(path = join(__dirname, "engine-sync-allow.json")) {
@@ -67,9 +71,12 @@ export function compareFile(file, crestText, damitText, allow) {
   return { ok: problems.length === 0, problems };
 }
 
-/** Which repo is this script in? crest has it under dwr_crest/ (DWR_Plugins); damit has it under damit_crest/. */
+/** Which repo is this script in? crest has it under dwr_crest/ (DWR_Plugins); damit has it under damit_crest/;
+ * damit-desk under app/ (next to app/desktop/damit_desktop). The desk is compared as the damit side. */
 export function selfRepo(dir = __dirname) {
-  return /damit_crest[\\/]scripts$/.test(dir) ? "damit" : "crest";
+  if (/damit_crest[\\/]scripts$/.test(dir)) return "damit";
+  if (/(^|[\\/])app[\\/]scripts$/.test(dir) && existsSync(join(dir, "..", "desktop", "damit_desktop"))) return "desk";
+  return "crest";
 }
 
 async function readOther(other, file, { otherDir, ref }) {
@@ -91,9 +98,10 @@ function arg(name) {
 
 export async function main() {
   const self = selfRepo();
-  const other = self === "crest" ? "damit" : "crest";
+  const other = self === "crest" ? "damit" : "crest"; // damit and the desk both compare with crest
   const root = resolve(__dirname, "../..");
-  const { files, allow } = loadAllowList();
+  const { files, allow, pending = [] } = loadAllowList();
+  const pendingWhy = new Map((pending || []).map((p) => [p.file, p.why || ""]));
   const otherDir = arg("--other");
   const ref = arg("--ref") ?? "main";
   console.log(
@@ -112,7 +120,9 @@ export async function main() {
     const [crestText, damitText] = self === "crest" ? [selfText, otherText] : [otherText, selfText];
     const res = compareFile(file, crestText, damitText, allow);
     if (res.ok) console.log(`OK: ${file}`);
-    else {
+    else if (pendingWhy.has(file)) {
+      console.log(`PENDING: ${file} differs; skipped until the paired DWR_Plugins change lands. ${pendingWhy.get(file)}`);
+    } else {
       bad++;
       for (const p of res.problems) console.error(`DIFF: ${p}`);
     }

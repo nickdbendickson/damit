@@ -142,7 +142,9 @@ class AdapterTests(unittest.TestCase):
                 nid_rule.candidates = orig
 
     def test_the_desktop_build_ships_catalogs_file(self):
-        spec = (HERE.parent / "damit_crest.spec").read_text(encoding="utf-8")
+        # damit-desk packages as damit_desk.spec; this monorepo copy keeps damit_crest.spec.
+        spec_path = next(p for p in (HERE.parent / "damit_crest.spec", HERE.parent / "damit_desk.spec") if p.is_file())
+        spec = spec_path.read_text(encoding="utf-8")
         self.assertIn('("../../damit_catalog/handoff.py", "damit_catalog")', spec)
         self.assertIn('"damit_desktop.nid_rule"', spec)
         self.assertTrue((HERE.parent / "../../damit_catalog/handoff.py").resolve().is_file())

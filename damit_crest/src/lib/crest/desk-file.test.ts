@@ -51,7 +51,7 @@ describe("desk file", () => {
   });
 
   it("names the file by local date", () => {
-    assert.equal(deskFileName(new Date(2026, 10, 3)), "damit-crest-desk-2026-11-03.json");
+    assert.equal(deskFileName(new Date(2026, 10, 3)), "damit-desk-2026-11-03.json");
   });
 
   it("refuses what it cannot read, with a reason, and never throws", () => {
@@ -73,7 +73,7 @@ describe("desk file", () => {
     const newer = openDeskFile(
       JSON.stringify({ format: DESK_FILE_FORMAT, formatVersion: 99, dams: [SAMPLE_DAMS[0]] }),
     );
-    assert.ok(!newer.ok && /newer DamIT Crest/.test(newer.reason));
+    assert.ok(!newer.ok && /newer DamIT Desk/.test(newer.reason));
   });
 
   it("rebuilds each record field by field: wrong types are dropped with a note, unknown keys are not kept", () => {
@@ -226,7 +226,7 @@ describe("merging an opened file into the desk", () => {
   });
 });
 
-describe("DamIT Crest's own record fields and files", () => {
+describe("DamIT Desk's own record fields and files", () => {
   const HAZARD = {
     suggestedClass: "High",
     ordinal: "3",
@@ -296,5 +296,27 @@ describe("DamIT Crest's own record fields and files", () => {
     assert.equal(d.county, "Cass");
     assert.equal(d.isNew, true);
     assert.ok(r.notes.some((n) => /engineering inputs only/.test(n)));
+  });
+});
+
+describe("the desk file names the DamIT Desk build (fresh install test 2026-11-21)", () => {
+  it("writes deskVersion, not crestVersion", () => {
+    const j = JSON.parse(deskFileText(SAMPLE_DAMS.slice(0, 1), SAMPLE_DAMS[0].id));
+    assert.equal(typeof j.deskVersion, "string");
+    assert.ok(j.deskVersion.length > 0);
+    assert.equal("crestVersion" in j, false);
+    assert.equal(j.format, DESK_FILE_FORMAT, "the format id is unchanged, so older desks still open new files");
+    const r = ok(openDeskFile(JSON.stringify(j)));
+    assert.equal(r.deskVersion, j.deskVersion);
+  });
+
+  it("still reads the build from a file saved before the rename (crestVersion)", () => {
+    const j = JSON.parse(deskFileText(SAMPLE_DAMS.slice(0, 1), SAMPLE_DAMS[0].id));
+    delete j.deskVersion;
+    j.crestVersion = "0.1.2+e6a09ab";
+    const r = ok(openDeskFile(JSON.stringify(j)));
+    assert.equal(r.kind, "desk");
+    assert.equal(r.deskVersion, "0.1.2+e6a09ab");
+    assert.equal(r.dams.length, 1);
   });
 });

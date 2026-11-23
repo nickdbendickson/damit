@@ -73,6 +73,19 @@ describe("classifyFile", () => {
   });
 });
 
+describe("classifyFile: the DamIT Runner's outputs/ folder", () => {
+  it("takes arr_hr.tif as arrival (the hint says so) and wsemax_ft.tif as WSE", () => {
+    const roles = ["outputs/hmax_ft.tif", "outputs/vmax_fps.tif", "outputs/arr_hr.tif", "outputs/wsemax_ft.tif"].map((f) => {
+      const r = classifyFile(f);
+      return r.kind === "grid" ? [r.variable, r.srcUnit, r.factor] : r.kind;
+    });
+    assert.deepEqual(roles, [["depth", "ft", 1], ["velocity", "ft/s", 1], ["arrival", "h", 1], ["wse", "ft", 1]]);
+    // .maxtm is the time of the maximum, not the arrival
+    const t = classifyFile("res.maxtm");
+    assert.ok(t.kind === "grid" && t.variable === "tmax");
+  });
+});
+
 describe("parseAsciiGrid", () => {
   it("reads corners and centres, nodata, and flags an ungeoreferenced header", () => {
     const g = parseAsciiGrid("NCOLS 2\nNROWS 2\nXLLCENTER 105\nYLLCENTER 205\nCELLSIZE 10\nNODATA_VALUE -9999\n1 2\n-9999 4\n");

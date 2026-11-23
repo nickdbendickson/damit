@@ -571,3 +571,24 @@ export function nidHazardLine(h: NidHazard | undefined): string | null {
 
 export const NID_ATTRIBUTION_FALLBACK =
   "Dam inventory data: U.S. Army Corps of Engineers, National Inventory of Dams (nid.sec.usace.army.mil).";
+
+/** The NID ID a record is filed under (its work folder dams/<NID>), upper case, or "" when it has none. */
+export function recordNid(d: Pick<DamRecord, "nid" | "nidId">): string {
+  return String(d.nidId || d.nid || "").trim().toUpperCase();
+}
+
+/**
+ * Other records on the desk with this NID ID (Absaraka desk test 2026-11-21: a second ND00199 record was allowed
+ * with no warning, and both write the hand-off to the same work folder, dams/ND00199).
+ */
+export function duplicateNidRecords(dams: readonly DamRecord[], nid: string, exceptId?: string): DamRecord[] {
+  const want = String(nid || "").trim().toUpperCase();
+  if (!want) return [];
+  return dams.filter((d) => d.id !== exceptId && recordNid(d) === want);
+}
+
+/** The warning shown before a fill would make a second record with the same NID ID. */
+export function duplicateNidText(nid: string, other: Pick<DamRecord, "name">): string {
+  const id = String(nid).trim().toUpperCase();
+  return `${id} is already on this desk as “${other.name}”. Two records with one NID ID share the work folder dams/${id}, so their hand-off files overwrite each other. Open the existing record instead, or tick “Keep both” to make a second one anyway.`;
+}

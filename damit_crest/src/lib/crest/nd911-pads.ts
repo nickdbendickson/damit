@@ -200,7 +200,7 @@ export async function lookupPads(
       g = await fetch(demRequest(io.inputs, 10, 1500));
     } catch (e) {
       failure = { error: e instanceof Error ? e.message : String(e) };
-      console.warn(`DamIT Crest: the terrain for the 911 pads of ${dam.nid || dam.id} could not be read (${failure.error}); pads estimated.`);
+      console.warn(`DamIT Desk: the terrain for the 911 pads of ${dam.nid || dam.id} could not be read (${failure.error}); pads estimated.`);
     }
   } else failure = { error: io.reason };
   return applyPads(dam.receptors, computePads(points, g, f, failure));

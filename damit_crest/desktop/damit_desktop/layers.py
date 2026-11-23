@@ -50,9 +50,25 @@ def _env_folder(name: str) -> str | None:
     return None
 
 
+ND_CONFIG_KEY = "ndsuite/data_folder"
+
+
 def find_data_folder_with_source() -> tuple[str | None, str]:
-    """(folder, where it came from): DAMIT_DATA, else damit/data_folder in ~/.damit/config.json."""
+    """(folder, where it came from): DAMIT_DATA, else damit/data_folder in ~/.damit/config.json.
+
+    In the North Dakota profile (profile.py) the ND offline pack's folder comes first, as in the DWR suite and the
+    old dwr_crest desk: NDSUITE_DATA, else ndsuite/data_folder in ~/.ndsuite/config.json. (dwr_crest also read the
+    QGIS setting DamSafety Setup saves; set NDSUITE_DATA when only that one is set.)"""
+    from damit_desktop import profile as desk_profile
+
     home = Path.home()
+    if desk_profile.is_nd():
+        for found, where in (
+            (_env_folder("NDSUITE_DATA"), "NDSUITE_DATA"),
+            (_config_folder(home / ".ndsuite" / "config.json", ND_CONFIG_KEY), "~/.ndsuite/config.json"),
+        ):
+            if found:
+                return found, where
     for found, where in (
         (_env_folder("DAMIT_DATA"), "DAMIT_DATA"),
         (_config_folder(home / ".damit" / "config.json", CONFIG_KEY), "~/.damit/config.json"),
@@ -245,7 +261,7 @@ def _save_url(url: str, dest: Path, timeout: float, fetch) -> None:
     if fetch is not None:
         fetch(url, dest)
         return
-    request = urllib.request.Request(url, headers={"User-Agent": "DamIT-Crest-desktop"})
+    request = urllib.request.Request(url, headers={"User-Agent": "DamIT-Desk"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read(80_000_000 + 1)

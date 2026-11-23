@@ -21,7 +21,7 @@ describe("CREST_VERSION", () => {
     assert.ok(CREST_VERSION.startsWith(`${PACKAGE_VERSION}+`));
     // Nothing defines __CREST_VERSION__ under node --test: the fallback is "+local".
     assert.equal(CREST_VERSION, `${PACKAGE_VERSION}+local`);
-    assert.equal(CREST_VERSION_LABEL, `DamIT Crest ${CREST_VERSION}`);
+    assert.equal(CREST_VERSION_LABEL, `DamIT Desk ${CREST_VERSION}`);
   });
 
   it("ENGINE_VERSION is the engine's dated method version, separate from the build", () => {
@@ -46,7 +46,7 @@ describe("the exports carry both versions", () => {
 
   it("flood strip KML: in the description and the extended data", () => {
     const k = exportFloodStripKml(strip);
-    assert.ok(k.includes(`Engine: ${ENGINE_VERSION}. Written by DamIT Crest ${CREST_VERSION}.`));
+    assert.ok(k.includes(`Engine: ${ENGINE_VERSION}. Written by DamIT Desk ${CREST_VERSION}.`));
     assert.ok(k.includes(`<Data name="crest_version"><value>${CREST_VERSION}</value></Data>`));
   });
 
@@ -59,7 +59,7 @@ describe("the exports carry both versions", () => {
 
   it("batch CSV: a comment row before the header", () => {
     const lines = batchCsv([], { now: new Date("2026-11-07T12:00:00Z") }).split("\n");
-    assert.equal(lines[1], `# DamIT Crest ${CREST_VERSION}; ${ENGINE_VERSION}. Written 2026-11-07.`);
+    assert.equal(lines[1], `# DamIT Desk ${CREST_VERSION}; ${ENGINE_VERSION}. Written 2026-11-07.`);
     assert.match(lines[2], /^id,kind,/);
   });
 });

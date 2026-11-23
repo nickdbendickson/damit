@@ -25,6 +25,7 @@ import {
   type SharedValues,
 } from "@/lib/crest/settings";
 import { saveSettings, useSettings } from "@/lib/crest/settings-store";
+import { PROFILE_LABEL, isProfile, useProfile, type DeskProfile } from "@/lib/crest/profile";
 
 const btn = "inline-flex h-10 items-center rounded-sm border border-line bg-paper px-3 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-50";
 const box = "mt-1 h-11 w-full rounded-sm border bg-paper px-3 text-ink";
@@ -86,7 +87,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          The starting values every dam tool reads: DamIT Crest and the DamIT plugins. A new record or run starts from them, and each
+          The starting values every dam tool reads: DamIT Desk and the DamIT plugins. A new record or run starts from them, and each
           record can still be changed on its Breach step. Records you already have keep their own values.{" "}
           {where === "file" ? (
             <span data-testid="settings-where">
@@ -189,8 +190,44 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             {note}
           </p>
         ) : null}
+        <ProfileChoice />
       </div>
     </section>
+  );
+}
+
+/**
+ * Which inventories the Record step fills a dam from (profile.ts). Applies at once and is kept in this browser or window;
+ * it is not a shared default, so it is not in defaults.json and the plugins never read it.
+ */
+function ProfileChoice() {
+  const profile = useProfile((s) => s.profile);
+  const setProfile = useProfile((s) => s.setProfile);
+  return (
+    <div className="mt-6 border-t border-line pt-4">
+      <label className="block max-w-md text-sm">
+        <span className="text-muted">Dam inventory profile</span>
+        <select
+          data-testid="setting-profile"
+          value={profile}
+          onChange={(e) => {
+            if (isProfile(e.target.value)) setProfile(e.target.value as DeskProfile);
+          }}
+          className={`${box} border-line`}
+        >
+          {(Object.keys(PROFILE_LABEL) as DeskProfile[]).map((p) => (
+            <option key={p} value={p}>
+              {PROFILE_LABEL[p]}
+            </option>
+          ))}
+        </select>
+        <span className="mt-1 block text-xs text-muted">
+          North Dakota adds the ND Department of Water Resources' dam values (height, NAVD 88 elevations after you confirm, areas,
+          dugouts for reference) to the dam picker. It changes only what a record can be filled from: not the flood engine, the
+          classification presets or a saved record. Applies at once; kept on this computer, not in the shared defaults file.
+        </span>
+      </label>
+    </div>
   );
 }
 

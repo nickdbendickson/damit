@@ -61,7 +61,7 @@ export function loadNidState(code: string, opts: LoadStateOptions = {}): Promise
       res = await f(`/api/nid/state?state=${state}${opts.refresh ? "&refresh=1" : ""}`, { headers: crestApiHeaders() });
     } catch {
       throw new Error(
-        `The ${stateName(state)} NID extract needs the DamIT Crest desktop server (python run.py), which downloads it from the NID.`,
+        `The ${stateName(state)} NID extract needs the DamIT Desk server (bin/damit-desk), which downloads it from the NID.`,
       );
     }
     const body = (await res.json().catch(() => null)) as (NidBundle & { error?: string }) | null;

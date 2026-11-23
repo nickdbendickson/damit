@@ -19,7 +19,7 @@ export const crest = {
   bg: "#F5F5F0",
   panel: "#FFFFFF",
   ink: "#1F2933",
-  muted: "#6B7280",
+  muted: "#5B6270",
   border: "#E5E7EB",
   red: "#B91C1C",
   redBg: "#FEE2E2",
@@ -67,7 +67,7 @@ export function dashMethod(outline: OutlineState, record: ResultsOfRecord | null
 }
 
 export const METHOD_LABEL: Record<DashMethod, string> = {
-  runner: "Layer of record: ND Breach Runner run (LISFLOOD-FP)",
+  runner: "Layer of record: DamIT Runner run (LISFLOOD-FP)",
   model: "Layer of record: imported model run",
   routed: "Fast layer (terrain method): routed flood",
   outline: "Fast layer (terrain method): terrain outline",
@@ -116,7 +116,7 @@ export function dashboardFlags(
     out.push({
       key: "runner-needed",
       sev: "critical",
-      text: `Large flood, no Runner run: ${Math.round(rec.releasedAcFt).toLocaleString("en-US")} ac-ft released, and the fast layer can badly under-predict a flood this size (about 0.10× of the modeled area on DWR-2801). Run it in the ND Breach Runner and import the run on Results.`,
+      text: `Large flood, no Runner run: ${Math.round(rec.releasedAcFt).toLocaleString("en-US")} ac-ft released, and the fast layer can badly under-predict a flood this size (about 0.10× of the modeled area on DWR-2801). Run it in the DamIT Runner and import the run on Results.`,
     });
   if (opts.volume) {
     const sev = flagSeverity({
@@ -286,12 +286,13 @@ export function boundsOf(fc: FloodStrip | null): Bounds | null {
   return Number.isFinite(w) ? { west: w, south: s, east: e, north: n } : null;
 }
 
-export type LayerKey = "depth" | "arrival" | "structures" | "hillshade" | "runnerOverlay";
+export type LayerKey = "depth" | "arrival" | "structures" | "classify" | "hillshade" | "runnerOverlay";
 
 export const LAYER_DEFS: [Exclude<LayerKey, "runnerOverlay">, string][] = [
   ["depth", "Max depth"],
   ["arrival", "Arrival time"],
   ["structures", "Structures"],
+  ["classify", "Classify receptors"],
   ["hillshade", "Hillshade"],
 ];
 
@@ -299,6 +300,7 @@ export const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
   depth: true,
   arrival: false,
   structures: true,
+  classify: true,
   hillshade: false,
   runnerOverlay: false,
 };

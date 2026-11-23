@@ -1,7 +1,8 @@
 // The shared defaults file (settings.ts), the starting pool (engine.ts startingPool) and per-record Manning's n.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { analyze } from "./engine.ts";
 import { exportDamJson, generateLisfloodPackage } from "./export.ts";
@@ -43,8 +44,14 @@ describe("shared defaults file", () => {
     assert.equal(SUITE_VALUES.manning_n, DEFAULT_ROUGHNESS.nFloodplain, "the shared n is Crest's built-in floodplain n");
   });
 
-  it("the suite values and choices are the ones DamIT Core ships (damit_core, same repository)", () => {
-    const core = new URL("../../../../damit_core/", import.meta.url);
+  // DamIT Desk lives in its own repository: DamIT Core comes from a damit checkout named by DAMIT_REPO (CI checks one
+  // out), or a damit_core/ folder next to app/ (the old damit/damit_crest layout). Without one this check is skipped.
+  const coreDir = (() => {
+    const cands = [process.env.DAMIT_REPO ? pathToFileURL(`${process.env.DAMIT_REPO.replace(/[\\/]+$/, "")}/damit_core/`) : null, new URL("../../../../damit_core/", import.meta.url)];
+    return cands.find((u) => u !== null && existsSync(new URL("data/defaults.json", u))) ?? null;
+  })();
+  it("the suite values and choices are the ones DamIT Core ships (damit_core, from a damit checkout)", { skip: coreDir ? false : "no damit checkout (set DAMIT_REPO)" }, () => {
+    const core = coreDir as URL;
     const shipped = JSON.parse(readFileSync(new URL("data/defaults.json", core), "utf8"));
     assert.equal(shipped.format, DEFAULTS_FORMAT);
     assert.equal(shipped.format_version, DEFAULTS_FORMAT_VERSION);
@@ -149,17 +156,17 @@ describe("a new record starts from the shared defaults", () => {
     assert.equal(back.method, "froehlich");
   });
 
-  it("an equation Crest does not have starts on Froehlich (2008) and says so", () => {
+  it("an equation the desk does not have starts on Froehlich (2008) and says so", () => {
     for (const m of ["froehlich1995", "vtg1990"]) {
       const r = recordDefaults({ ...SUITE_VALUES, breach_method: m });
       assert.equal(r.method, "froehlich");
-      assert.match(r.notes.join(" "), /Crest does not have/);
+      assert.match(r.notes.join(" "), /DamIT Desk does not have/);
     }
     // Absaraka audit: an NRCS TR-60 default is never turned into the desk's height-multiple width
     for (const m of ["tr60", "tr60_curvilinear"]) {
       const r = recordDefaults({ ...SUITE_VALUES, breach_method: m });
       assert.equal(r.method, "froehlich");
-      assert.match(r.notes.join(" "), /TR-60 .*Crest does not have/);
+      assert.match(r.notes.join(" "), /TR-60 .*does not have/);
     }
     assert.deepEqual(recordDefaults(SUITE_VALUES).notes, []);
   });
@@ -194,8 +201,9 @@ describe("starting pool", () => {
     const a = analyze(dwr2801({ startPool: "elevation", startPoolFt: 1066.09 }));
     assert.equal(a.breach.startPool, "elevation");
     assert.ok(Math.abs(a.breach.headFt - 22.5) < 1e-9);
-    // A local (0-300 ft) record: the typed value moves with the record's offset.
-    const local = { ...blankDam(), startPool: "elevation" as const, startPoolFt: 95 };
+    // A local (0-300 ft) record tied to a 1550 ft DEM crest: the typed value moves with the record's offset.
+    // (A new desk record starts with no DEM crest, so the tie is set here.)
+    const local = { ...blankDam(), demCrestFt: 1550, startPool: "elevation" as const, startPoolFt: 95 };
     const b = analyze(local);
     assert.equal(b.breach.startPool, "elevation");
     assert.ok(Math.abs(b.breach.startPoolNavdFt - (95 + 1550 - 100)) < 1e-9, String(b.breach.startPoolNavdFt));

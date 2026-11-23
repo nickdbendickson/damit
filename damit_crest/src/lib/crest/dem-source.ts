@@ -5,10 +5,15 @@
  * Desktop app only. The window's Python side remembers the chosen file (crest-settings.json "dem_path") and answers
  * GET /api/dem?bbox=w,s,e,n&w=&h=&cell= with a gdalwarp window of it, the same float32 grid 3DEP returns
  * (desktop/damit_desktop/localdem.py). Once a DEM is chosen, outline.ts fetchDem reads from it everywhere: the
- * inundation layer, the batch screen, the breach point, the crest read at a new dam's point. A browser cannot read a
- * file on the user's drive by path, so the web desk stays on 3DEP (the batch command line takes --dem <vrt>).
+ * inundation layer, the batch screen, the breach point, the crest read at a new dam's point.
+ *
+ * In a browser page served by the desk (Linux, or no native window) there is no bridge, so the same three calls go to
+ * the desk server (browser_io.py): GET /api/dem/choice, POST /api/dem/choose after the desk's own file chooser
+ * (server-picker.ts), POST /api/dem/clear. A page with no desk server cannot read a file by path and stays on 3DEP
+ * (the batch command line takes --dem <vrt>).
  */
 import { parseBsq, setDemOverride, type DemGrid, type DemRequest } from "./outline.ts";
+import { getServer, hasDeskServer, pickOnServer, postServer } from "./server-picker.ts";
 import { desktopToken } from "./desktop-server.ts";
 
 type DemReply = { path?: string | null; gdalwarp?: string | null; cancelled?: boolean; error?: string };
@@ -25,10 +30,28 @@ export type DemState =
   | { kind: "3dep"; gdalwarp: boolean }
   | { kind: "local"; path: string; gdalwarp: boolean };
 
+/** The same three calls through the desk server, for a browser page (no pywebview bridge). */
+const SERVER_DEM_API: DemApi = {
+  get_dem: () => getServer<DemReply>("/api/dem/choice"),
+  pick_dem: async () => {
+    const current = await getServer<DemReply>("/api/dem/choice").catch(() => ({}) as DemReply);
+    const start = current.path ? current.path.replace(/[\\/][^\\/]*$/, "") : null;
+    const path = await pickOnServer({ mode: "dem", title: "Choose the DEM file", start });
+    if (!path) return { cancelled: true };
+    try {
+      return await postServer<DemReply>("/api/dem/choose", { path });
+    } catch (e) {
+      return { error: (e as Error).message };
+    }
+  },
+  clear_dem: () => postServer<DemReply>("/api/dem/clear", {}),
+};
+
 function demApi(): DemApi | undefined {
   if (typeof window === "undefined") return undefined;
   const api = (window as unknown as { pywebview?: { api?: Partial<DemApi> } }).pywebview?.api;
-  return api && typeof api.get_dem === "function" && typeof api.pick_dem === "function" && typeof api.clear_dem === "function" ? (api as DemApi) : undefined;
+  if (api && typeof api.get_dem === "function" && typeof api.pick_dem === "function" && typeof api.clear_dem === "function") return api as DemApi;
+  return hasDeskServer() ? SERVER_DEM_API : undefined;
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;

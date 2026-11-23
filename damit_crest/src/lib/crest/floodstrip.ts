@@ -381,7 +381,7 @@ export function exportFloodStripKml(strip: FloodStrip, extra: string[] = [], pla
       ? `Terrain outline: ${p.strip_area_ac.toFixed(1)} ac (engine wet area ${p.engine_wet_area_ac.toFixed(1)} ac), desk max depth ${p.max_depth_ft.toFixed(2)} ft.`
       : `Schematic desk valley: max depth ${p.max_depth_ft.toFixed(2)} ft, wet strip ${p.wet_reach_km.toFixed(2)} km, ${p.strip_area_ac.toFixed(1)} ac${p.clipped_to_aoi ? ", clipped to the drawn area" : ""}.`,
     p.direction,
-    `Engine: ${p.engine_version}. Written by DamIT Crest ${p.crest_version}.`,
+    `Engine: ${p.engine_version}. Written by DamIT Desk ${p.crest_version}.`,
     ...extra,
   ].join("\n");
   const coords = (ring: number[][]) => ring.map(([lon, lat]) => `${lon},${lat}`).join(" ");

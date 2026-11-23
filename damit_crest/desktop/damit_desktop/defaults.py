@@ -1,4 +1,4 @@
-"""Your shared defaults file, for the DamIT Crest desktop window.
+"""Your shared defaults file, for the DamIT Desk window.
 
 The dam tools share one defaults file format ("dam-defaults", DamIT Core `damit_core/lib/shared_defaults.py`):
 the suite ships its values, and YOUR file holds only the keys you changed. The desk (src/lib/crest/settings.ts)

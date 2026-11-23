@@ -1,7 +1,9 @@
 // The cross-repo engine sync check (scripts/check-engine-sync.mjs): allow-listed line pairs pass, any other
 // difference fails with its line number, and an allow entry whose line has gone is reported so the list cannot rot.
 import assert from "node:assert/strict";
+import { dirname } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { compareFile, loadAllowList, selfRepo } from "./check-engine-sync.mjs";
 
@@ -54,5 +56,11 @@ describe("engine sync compare", () => {
     for (const a of list) assert.ok(a.why, `allow entry in ${a.file} has no reason`);
     assert.equal(selfRepo("/x/DWR_Plugins/dwr_crest/scripts"), "crest");
     assert.equal(selfRepo("/x/damit/damit_crest/scripts"), "damit");
+    assert.equal(selfRepo(dirname(fileURLToPath(import.meta.url))), "damit", "this checkout is damit_crest");
+    const pending = loadAllowList().pending || [];
+    for (const p of pending) {
+      assert.ok(p.file && p.why, "pending engine-sync entry needs a file and a reason");
+      assert.ok(files.includes(p.file), p.file);
+    }
   });
 });

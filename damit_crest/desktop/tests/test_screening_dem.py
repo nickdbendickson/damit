@@ -1,5 +1,4 @@
-"""The screening DEM and the partial (time-limited) screening, 2026-11-20 (Absaraka, ND00199). Same tests as
-DamIT Desk (damit-desk PR #2), plus DamIT Screener 0.3.7's partial flag on a chain that finishes OK.
+"""The screening DEM and the partial (time-limited) screening, 2026-11-20 (Absaraka, ND00199).
 
 The Report step's DEM went to the screener as TERRAIN but not into damit_settings.json, so every larger clip of the
 screening flood downloaded USGS 3DEP afresh until the time limit; and a time-limited flood failed the whole chain with
@@ -52,7 +51,7 @@ class ScreeningDemTests(Base):
     def test_the_dem_chosen_in_the_desk_is_used_when_the_field_is_empty(self):
         dem = self.root / "chosen.tif"
         dem.write_bytes(b"x")
-        settings_file = self.root / "app-settings.json"
+        settings_file = self.root / "desk-settings.json"
         localdem.write_dem_path(settings_file, str(dem))
         saved = qr.DESK_SETTINGS_FILE
         qr.DESK_SETTINGS_FILE = settings_file
@@ -98,8 +97,8 @@ class PartialScreeningTests(Base):
         self.assertNotIn("The screening chain failed", text)
 
     def test_screener_0_3_7_partial_flag_on_a_chain_that_finishes_ok(self):
-        # DamIT Screener 0.3.7 no longer fails the chain for a time-limited flood: it exits OK and marks the engine2d
-        # step and the package gap partial=true. The app must still show the PARTIAL warning, not a plain "finished".
+        # DamIT Screener 0.3.7 (damit #146) no longer fails the chain for a time-limited flood: it exits OK and marks
+        # the engine2d step and the package gap partial=true. The desk must still show the PARTIAL warning (amber box).
         with mock.patch.dict(os.environ, {"FAKE_CHAIN": "partial-ok"}):
             result = qr.run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log)
         self.assertTrue(result["ok"], self.lines)
@@ -108,10 +107,26 @@ class PartialScreeningTests(Base):
         self.assertTrue(result["flood"]["timedOut"])
         self.assertEqual(result["screening"]["suggested_label"], "Medium")
         self.assertIn("PARTIAL SCREENING", result["warning"])
+        self.assertIn("5,190.8 ac", result["warning"])
         text = "\n".join(self.lines)
         self.assertIn("The screener marked the flood PARTIAL (time limit) and finished the chain", text)
         self.assertNotIn("FAIL_ON_ERROR", text)
+        self.assertNotIn("Screening chain finished.", self.lines, "not a plain finish")
         self.assertIn("finished with a PARTIAL (preliminary) result", text)
+
+    def test_screener_0_3_7_partial_without_a_class(self):
+        with mock.patch.dict(os.environ, {"FAKE_CHAIN": "partial-ok-noclass"}):
+            result = qr.run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(result["ok"], self.lines)
+        self.assertTrue(result["partial"])
+        self.assertIsNone(result["screening"].get("suggested_label"))
+        self.assertIn("no preliminary class", result["warning"])
+        self.assertIn("Also a gap in the suggest step", "\n".join(self.lines))
+
+    def test_the_old_screener_still_names_fail_on_error(self):
+        with mock.patch.dict(os.environ, {"FAKE_CHAIN": "partial"}):
+            qr.run_screening(DAM, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertIn("FAIL_ON_ERROR, DamIT Screener 0.3.5-0.3.6", "\n".join(self.lines))
 
     def test_a_finished_flood_is_not_partial(self):
         with mock.patch.dict(os.environ, {"FAKE_PACKAGE": "1"}):

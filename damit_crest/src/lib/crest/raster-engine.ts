@@ -139,7 +139,7 @@ function readRunDam(text: string): { dam: RunDam | null; notes: string[] } {
         version = `${s.tool ?? "Runner"} ${s.version ?? ""}`.trim();
         const cut = s.result.cut_off as { reason?: string; detail?: string } | undefined;
         if (cut?.detail) notes.push(`Run cut-off (${cut.reason ?? "?"}): ${cut.detail}`);
-        if (finalModel) notes.push(`Runner final model: ${finalModel}; DamIT Crest imports the LISFLOOD-FP rasters for this column.`);
+        if (finalModel) notes.push(`Runner final model: ${finalModel}; DamIT Desk imports the LISFLOOD-FP rasters for this column.`);
       }
       if (s.step === "classified" && s.result?.nd_class)
         notes.push(

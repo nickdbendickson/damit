@@ -17,7 +17,8 @@ type Collection = FloodStrip | TerrainOutline;
 /**
  * A stable key for a collection, so an equal layer re-derived as a new object is not redrawn: the trace version and
  * the dam id, areas and vertex count of its bands (the terrain outline carries trace_version; the strip carries its
- * reach and area). Cheap: no coordinates are read beyond their count.
+ * reach and area), and the terrain it was built on (a layer re-stamped from 3DEP to a local DEM keeps its bands but
+ * must redraw with the new attribution). Cheap: no coordinates are read beyond their count.
  */
 export function layerKey(fc: Collection): string {
   const p = fc.properties as Record<string, unknown>;
@@ -26,7 +27,7 @@ export function layerKey(fc: Collection): string {
     const n = g.type === "Polygon" ? g.coordinates.reduce((s, r) => s + r.length, 0) : g.coordinates.reduce((s, poly) => s + poly.reduce((t, r) => t + r.length, 0), 0);
     return `${f.properties.band}:${f.properties.area_ac}:${n}`;
   });
-  return [p.kind, p.dam_id, p.trace_version ?? "", p.strip_area_ac ?? "", p.wet_reach_km ?? "", p.outline_area_ac ?? "", ...bands].join("|");
+  return [p.kind, p.dam_id, p.trace_version ?? "", p.strip_area_ac ?? "", p.wet_reach_km ?? "", p.outline_area_ac ?? "", p.dem_source ?? "", ...bands].join("|");
 }
 
 const renderers = new WeakMap<L.Map, Map<string, L.Canvas>>();

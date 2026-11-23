@@ -80,7 +80,7 @@ export function utf16Hex(s: string): string {
   return hex;
 }
 
-export function buildPdf(pages: PdfPage[], size = LETTER_LANDSCAPE, title = "DamIT Crest"): Uint8Array {
+export function buildPdf(pages: PdfPage[], size = LETTER_LANDSCAPE, title = "DamIT Desk"): Uint8Array {
   if (pages.length === 0) throw new Error("a PDF needs at least one page");
   const chunks: Uint8Array[] = [];
   const offsets: number[] = [];
@@ -111,7 +111,7 @@ export function buildPdf(pages: PdfPage[], size = LETTER_LANDSCAPE, title = "Dam
   obj(2, () => str(`<< /Type /Pages /Count ${plan.length} /Kids [${plan.map((x) => `${x.page} 0 R`).join(" ")}] >>`));
   obj(3, () => str("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"));
   obj(4, () => str("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"));
-  obj(5, () => str(`<< /Title <${utf16Hex(title)}> /Producer (DamIT Crest) >>`));
+  obj(5, () => str(`<< /Title <${utf16Hex(title)}> /Producer (DamIT Desk) >>`));
 
   for (const { p, page, contents, images } of plan) {
     const xobjects = images.map((n, i) => `/Im${i} ${n} 0 R`).join(" ");

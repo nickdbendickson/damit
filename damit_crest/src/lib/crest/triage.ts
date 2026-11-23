@@ -113,7 +113,7 @@ export function extentLine(e: ExtentSensitivity): string {
  * The triage call for one dam from the analysis of record and its saved inundation layer. An imported model run that
  * is the record settles it. Otherwise, in order:
  *   needs-runner  a large flood (the flood-size gate), an extent the routed layer could not finish (the reach
- *                 stopped with water still at the terrain's edge), or anything flooded in DamIT Crest's screen
+ *                 stopped with water still at the terrain's edge), or anything flooded in the desk's screen
  *                 (something is at stake, and a class with something at stake rests on a model run, not a screen)
  *   uncertain     nothing flooded, but the call is not safe to make: medium or low confidence, a volume out of band, a
  *                 flood that ends in a closed basin (the footprint is trusted, but a culvert the DEM can't see would
@@ -133,7 +133,7 @@ export function triageDam(dam: DamRecord, result: Analysis, outline: OutlineStat
 
   if (dam.resultsOfRecord)
     return done("trivial", "high", null, [
-      `An imported ${dam.resultsOfRecord.label} run is the layer of record; there is nothing left for DamIT Crest to triage on this dam.`,
+      `An imported ${dam.resultsOfRecord.label} run is the layer of record; there is nothing left for the desk to triage on this dam.`,
     ]);
 
   const releasedAcFt = result.breach.volumeAcFt;
@@ -155,7 +155,7 @@ export function triageDam(dam: DamRecord, result: Analysis, outline: OutlineStat
   else soft.push(extentLine(ext));
 
   if (ready?.routed?.reach?.incomplete)
-    hard.push(`The flood runs past the terrain DamIT Crest could build (${ac(ready.routed.reach.strandedAcFt)} ac-ft still travelling at the edge): the footprint is incomplete downstream.`);
+    hard.push(`The flood runs past the terrain the desk could build (${ac(ready.routed.reach.strandedAcFt)} ac-ft still travelling at the edge): the footprint is incomplete downstream.`);
   if (ext) {
     if (ext.basis === "routed-probe" && ext.reachedEdge) {
       confidence = worse(confidence, "medium");
@@ -170,7 +170,7 @@ export function triageDam(dam: DamRecord, result: Analysis, outline: OutlineStat
   }
   const basin = !!ext?.stoppedInBasin;
   if (basin)
-    soft.push("The flood ends in a closed basin: if a road or rail fill closes it, a culvert or bridge the DEM doesn't show would let the water on (both DamIT Crest and the Runner treat the fill as a dam).");
+    soft.push("The flood ends in a closed basin: if a road or rail fill closes it, a culvert or bridge the DEM doesn't show would let the water on (both the desk and the Runner treat the fill as a dam).");
   if (Number.isFinite(releasedAcFt) && releasedAcFt <= THIN_SHEET_RELEASE_ACFT)
     soft.push(`Tiny release (${releasedAcFt.toFixed(1)} ac-ft): the flood is a thin sheet, so use the footprint for "is anything in reach" and not its depths.`);
   if (hard.length) confidence = "low";
@@ -178,18 +178,18 @@ export function triageDam(dam: DamRecord, result: Analysis, outline: OutlineStat
   const decisive: string[] = [];
   if (large) decisive.push(`Large flood: ${ac(releasedAcFt)} ac-ft released (≥ ${GATE_VOLUME_ACFT}), where the fast layers can badly under-predict.`);
   decisive.push(...hard);
-  if (flooded) decisive.push(`${plural(flooded, "structure or receptor is", "structures or receptors are")} flooded in DamIT Crest's screen: something is at stake, so the class should rest on a model run.`);
+  if (flooded) decisive.push(`${plural(flooded, "structure or receptor is", "structures or receptors are")} flooded in the desk's screen: something is at stake, so the class should rest on a model run.`);
   if (decisive.length) return done("needs-runner", confidence, shift, [...decisive, ...soft]);
 
   if (unresolved) soft.push(`${plural(unresolved, "receptor lies", "receptors lie")} past the desk reach and could not be screened.`);
   if (confidence !== "high" || unresolved || !ext || basin)
     return done("uncertain", confidence, shift, [
       confidence === "high" && basin && !unresolved
-        ? "Nothing is flooded in DamIT Crest's screen and the footprint holds up, but it ends at a closed basin a hidden culvert could drain: check it before calling the dam trivial."
-        : "Nothing is flooded in DamIT Crest's screen, but the footprint is not robust enough to call the dam trivial.",
+        ? "Nothing is flooded in the desk's screen and the footprint holds up, but it ends at a closed basin a hidden culvert could drain: check it before calling the dam trivial."
+        : "Nothing is flooded in the desk's screen, but the footprint is not robust enough to call the dam trivial.",
       ...soft,
     ]);
-  return done("trivial", confidence, shift, ["Nothing is flooded in DamIT Crest's screen, on a complete footprint that holds up to a foot of depth error.", ...soft]);
+  return done("trivial", confidence, shift, ["Nothing is flooded in the desk's screen, on a complete footprint that holds up to a foot of depth error.", ...soft]);
 }
 
 /** Order for sorting a list: what needs a Runner first, then what is uncertain, then what is trivial. */

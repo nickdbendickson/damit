@@ -1,7 +1,7 @@
 /**
  * The shared defaults file: the suite-wide starting values every dam tool reads (DamIT Core 0.3.0
- * `damit_core/lib/shared_defaults.py`, DamSafety Core 1.2.0 `damsuite/shared_defaults.py`, and DamIT Crest here). One
- * file format, so the file a plugin reads opens in DamIT Crest and the other way round:
+ * `damit_core/lib/shared_defaults.py`, DamSafety Core 1.2.0 `damsuite/shared_defaults.py`, and DamIT Desk here). One
+ * file format, so the file a plugin reads opens in DamIT Desk and the other way round:
  *
  *   {"format": "dam-defaults", "format_version": 1, "name": "...", "note": "...", "values": {key: value}}
  *
@@ -53,7 +53,7 @@ export const SCHEMA: Record<SharedKey, Spec> = {
       ["max_storage", "Maximum storage"],
     ],
     help: "The volume the breach equations take for a PMF or flood-inflow breach.",
-    crest: "Not used by Crest (a sunny-day screen). Kept in the file for the Runner.",
+    crest: "Not used by the desk (a sunny-day screen). Kept in the file for the Runner.",
   },
   failure_mode: {
     kind: "choice",
@@ -77,7 +77,7 @@ export const SCHEMA: Record<SharedKey, Spec> = {
       ["tr60_curvilinear", "NRCS TR-60, curvilinear hydrograph"],
     ],
     help: "The breach parameter equation a new run starts with.",
-    crest: "Crest has Froehlich (2008), MacDonald and a TR-60 width. Another choice starts new records on Froehlich (2008).",
+    crest: "The desk has Froehlich (2008), MacDonald and a TR-60 width. Another choice starts new records on Froehlich (2008).",
   },
   manning_n: {
     kind: "number",
@@ -144,7 +144,7 @@ export function readDefaultsFile(text: string, fileName = DEFAULTS_FILE_NAME): R
     return { ok: false, reason: `${fileName} is not a defaults file (format ${JSON.stringify(d.format)}, expected "${DEFAULTS_FORMAT}").` };
   if (d.format == null && !("values" in d)) return { ok: false, reason: `${fileName} is not a defaults file (no "format" and no "values").` };
   if (typeof d.format_version === "number" && Number.isInteger(d.format_version) && d.format_version > DEFAULTS_FORMAT_VERSION)
-    return { ok: false, reason: `${fileName} was written in defaults format ${d.format_version} by a newer tool; this Crest reads format ${DEFAULTS_FORMAT_VERSION}. Update Crest.` };
+    return { ok: false, reason: `${fileName} was written in defaults format ${d.format_version} by a newer tool; this desk reads format ${DEFAULTS_FORMAT_VERSION}. Update DamIT Desk.` };
   const out: SharedValues = {};
   const problems: string[] = [];
   for (const [k, v] of Object.entries(values as Record<string, unknown>)) {
@@ -202,7 +202,7 @@ export function defaultsFileText(yours: SharedValues, now = new Date()): string 
         format: DEFAULTS_FORMAT,
         format_version: DEFAULTS_FORMAT_VERSION,
         name: "Your defaults",
-        note: "Your changes to the suite defaults. A key not listed here follows the suite file. Edit by hand or in DamIT Crest (Settings).",
+        note: "Your changes to the suite defaults. A key not listed here follows the suite file. Edit by hand or in DamIT Desk (Settings).",
         saved,
         values: keep,
       },
@@ -233,15 +233,15 @@ export function recordDefaults(values: Required<SharedValues>): RecordDefaults {
   const shared = String(values.breach_method);
   let method = METHOD_FROM_SHARED[shared];
   if (shared === "tr60" || shared === "tr60_curvilinear") {
-    // Absaraka audit: the suite's TR-60 is the NRCS peak (1,100·Br^1.35); Crest's height-multiple width is a different,
-    // screening opening, so a TR-60 default is not turned into it.
+    // Absaraka audit: the suite's TR-60 is the NRCS peak (1,100·Br^1.35); the desk's height-multiple width is a
+    // different, screening opening, so a TR-60 default is not turned into it.
     method = "froehlich";
     notes.push(
-      "The shared defaults ask for an NRCS TR-60 hydrograph, which Crest does not have (its height-multiple width is a screening opening, not the NRCS peak). New records start on Froehlich (2008).",
+      "The shared defaults ask for an NRCS TR-60 hydrograph, which DamIT Desk does not have (its height-multiple width is a screening opening, not the NRCS peak). New records start on Froehlich (2008).",
     );
   } else if (!method) {
     method = "froehlich";
-    notes.push(`The shared defaults ask for ${labelOf("breach_method", shared)}, which Crest does not have. New records start on Froehlich (2008).`);
+    notes.push(`The shared defaults ask for ${labelOf("breach_method", shared)}, which DamIT Desk does not have. New records start on Froehlich (2008).`);
   }
   return {
     startPool: POOL_FROM_SHARED[String(values.sunny_day_start_pool)] ?? "top",
@@ -304,7 +304,7 @@ export function assumptions(dam: DamRecord, shared: Shared, version: string, use
   }
   const notes: string[] = [];
   const nCh = roughnessOf(dam.roughness).nChannel;
-  if (nCh !== DEFAULT_ROUGHNESS.nChannel) notes.push(`Channel Manning's n ${nCh} (Crest built-in ${DEFAULT_ROUGHNESS.nChannel}).`);
+  if (nCh !== DEFAULT_ROUGHNESS.nChannel) notes.push(`Channel Manning's n ${nCh} (desk built-in ${DEFAULT_ROUGHNESS.nChannel}).`);
   if (used.sunny_day_start_pool === "entered_elevation") notes.push("The breach starts at an elevation entered on the record (starting_pool_ft).");
   return {
     used,

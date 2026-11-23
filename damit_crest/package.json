@@ -1,6 +1,6 @@
 {
   "name": "damit-crest",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "description": "DamIT Crest: the DamIT desktop desk (pywebview) for dam breach screening, flood views and hand-off to the DamIT QGIS plugins. Adapted from Crest.",
   "private": true,
   "sideEffects": false,
@@ -26,9 +26,11 @@
     "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test 'src/lib/crest/*.test.ts'",
     "test:desktop": "python3 desktop/tests/run_tests.py",
     "typecheck": "tsc --noEmit",
+    "check:engine": "node scripts/check-engine-sync.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "data:nid": "node scripts/build-nid-dams.mjs",
+    "data:nd-dams-dwr": "node scripts/build-nd-dams-dwr.mjs",
     "batch:dams": "node --experimental-strip-types scripts/batch-dams.mjs",
     "validate:crest": "node --experimental-strip-types scripts/validate-crest.mjs"
   },

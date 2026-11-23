@@ -10,10 +10,11 @@ import {
   paperFlags,
   paperRows,
   receptorCsv,
+  receptorMetrics,
   stampClass,
 } from "./paper.ts";
 import { SAMPLE_DAMS } from "./samples.ts";
-import type { Analysis } from "./types.ts";
+import type { Analysis, HazardResult } from "./types.ts";
 
 const dam = SAMPLE_DAMS.find((d) => d.nid === "ND00199")!;
 const result = analyze(dam);
@@ -26,7 +27,7 @@ describe("Style 3 paper report", () => {
     );
     assert.match(
       PAPER_NOTICE,
-      /^This is a screening-level estimate produced by DamIT Crest\. It is not an official hazard classification by any state or federal agency\./,
+      /^This is a screening-level estimate produced by DamIT Desk\. It is not an official hazard classification by any state or federal agency\./,
     );
     assert.match(PAPER_NOTICE, /full hydraulic study \(Runner \/ LISFLOOD-FP\) results\.$/);
   });
@@ -91,5 +92,33 @@ describe("Style 3 paper report", () => {
     assert.equal(stampClass("Medium"), "medium");
     assert.equal(stampClass("Low"), "low");
     assert.equal(stampClass("Review"), "none");
+  });
+
+  it("counts damit:classify's real receptors in the table, not the desk's list", () => {
+    const hazard = {
+      suggestedClass: "High", ordinal: "3", classifiedAt: "", choiceKey: "", receptorKey: "", choiceText: "",
+      layers: { STRUCTURES: 1666, ROADS: 263, RAIL: 34 },
+      impacted: { STRUCTURES: 228, ROADS: 2, RAIL: 4 },
+      wetStructures: 229,
+      layerSources: { STRUCTURES: "USACE NSI (online)", ROADS: "FHWA HPMS (online)" },
+    } as HazardResult;
+    const rows = receptorMetrics(result, hazard);
+    assert.deepEqual(rows.map((r) => [r.metric, r.value]), [
+      ["Structures affected", "229 of 1,666 wet"],
+      ["Road segments impacted", "2 of 263"],
+      ["Rail segments impacted", "4 of 34"],
+    ]);
+    assert.match(rows[0]!.note, /real structures from USACE NSI \(online\)/);
+    assert.ok(!rows.some((r) => /mapped/.test(r.value)));
+    // An older result without the counts says how many were checked, never a desk count.
+    const old = receptorMetrics(result, { ...hazard, impacted: undefined, wetStructures: undefined });
+    assert.equal(old[0]!.value, "1,666 checked");
+  });
+
+  it("says the desk's own receptors when damit:classify has not run", () => {
+    const [row] = receptorMetrics(result, null);
+    const wet = result.flood.receptors.filter((r) => r.flooded).length;
+    assert.equal(row!.value, `${wet} of ${result.flood.receptors.length} desk receptors`);
+    assert.match(row!.note, /run Classify/);
   });
 });

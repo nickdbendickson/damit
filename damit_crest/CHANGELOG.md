@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-23 (0.1.6: refresh from DamIT Desk)
+
+- **This folder is refreshed from [DamIT Desk 0.1.6](https://github.com/nickdbendickson/damit-desk) (`a0e588b`).**
+  Packaging for the damit monorepo is unchanged: `desktop/damit_crest.ico`, `desktop/damit_crest.spec` (the packaged
+  app is still named DamIT Crest), `desktop/build_mac.sh` and the `python3 run.py` install path. The live desktop app
+  remains damit-desk; this is a kept-in-place snapshot.
+- **US and North Dakota profiles** (Desk 0.1.4 / #12), including ND inventory, values and hand-off, and the ND
+  profile reading `ndhazard:classify` receptor layers (Desk #14).
+- **Absaraka desk-test fixes** (Desk #8 / #9): local-DEM terrain labels on the Flood panel, legend, map credit and
+  inspector (`outline.ts`: `terrainInfo`, `stampTerrain`, `layerLabel`); real classify receptors; hand-off auto-fill;
+  a needs-ruling flag; map attribution follows a re-stamped terrain layer.
+- **Classify sends real structures, roads and rail** in the flood area (data folder, else NSI / HPMS / national rail).
+  An unchecked layer makes the class incomplete. Rail is High only with a trains-per-day CSV.
+- **Other Desk 0.1.5–0.1.6 work included:** height-multiple width is not handed off as NRCS TR-60 (Desk #11);
+  cancel and time limits on plugin jobs; browser file I/O for Linux; per-profile launchers stay in the damit-desk
+  repo (their tests are skipped here); desk lint cleanup (Desk #15).
+- **Engine sync:** `outline.ts` now matches Desk, so it is temporarily listed as `pending` in
+  `scripts/engine-sync-allow.json` until the paired DWR_Plugins `dwr_crest/outline.ts` update is on main. The other
+  engine files still match `dwr_crest` (allow-listed `engine.ts` / `warnings.ts` wording aside).
+- The committed desktop web bundle is rebuilt from this tree (`npm run build:desktop`).
+
 ## 2026-11-22 (desk TR-60 is not handed off as NRCS TR-60)
 
 - **The desk's "TR-60 width" is now "Height-multiple width (2H piping, 3H overtopping; screening)", and the flood-model

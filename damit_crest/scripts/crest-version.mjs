@@ -36,7 +36,13 @@ export function gitShortSha(root = ROOT) {
   }
 }
 
-/** "<version>+<sha>" or "<version>+local". */
-export function crestVersion(root = ROOT) {
-  return `${packageVersion(root)}+${gitShortSha(root) ?? "local"}`;
+/**
+ * "<version>+<sha>" or "<version>+local". DAMIT_BUILD_SHA (7+ hex digits, or "local") stands in for HEAD's SHA: the
+ * committed bundle carries the SHA of the commit it was built on, so CI rebuilds with that SHA to check the rest of
+ * the bundle is what src/ builds (DamIT Desk, 2026-11-20).
+ */
+export function crestVersion(root = ROOT, env = process.env) {
+  const pinned = String(env.DAMIT_BUILD_SHA ?? "").trim();
+  const sha = /^([0-9a-f]{7,40}|local)$/.test(pinned) ? pinned : gitShortSha(root);
+  return `${packageVersion(root)}+${sha ?? "local"}`;
 }

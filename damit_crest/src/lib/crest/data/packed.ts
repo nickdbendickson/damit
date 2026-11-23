@@ -4,5 +4,5 @@
  * swaps it (vite.desktop.config.ts packedDataPlugin) for a module whose default export holds each bundle packed, and
  * leaves the JSON modules themselves out of the single file.
  */
-const packed: Partial<Record<"nid_example", string>> = {};
+const packed: Partial<Record<"nid_example" | "nd_dams_dwr" | "nd_structures", string>> = {};
 export default packed;
