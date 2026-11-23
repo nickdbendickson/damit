@@ -93,7 +93,7 @@ class SearchSkips(unittest.TestCase):
         with open(os.path.join(HERE, "..", "vor.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("sq = strip_naming(q, named_spans + named_docs(db, q, spans=True)[2])", src)
-        self.assertIn("idx.search(sq, k=min(4, k), per_doc=4, keep=set(named))", src)
+        self.assertIn("first += idx.search(sq, k=each, per_doc=each, keep={d})", src)
         self.assertIn("named_docs(db, question, spans=True)", src)
 
 
@@ -275,10 +275,71 @@ class ThirdReview(_DbCase):
     def test_long_input_is_quick(self):
         import time
         t = time.time()
-        vor.named_docs(self.db, ("Abc, " * 3000) + "x")
-        vor.named_docs(self.db, ("word " * 3000) + "(2010")
-        vor.is_contents(". " * 5000 + "1")
-        self.assertLess(time.time() - t, 2.0)
+        vor.named_docs(self.db, ("Abc, " * 9000) + "x (2010)")       # unbounded look-back: about 10 s here
+        vor.named_docs(self.db, ("word " * 9000) + "(2010")
+        vor.is_contents(". " * 15000 + "1")
+        self.assertLess(time.time() - t, 0.5)
+
+
+class FourthReview(_DbCase):
+    """Cases from the fourth independent review of 1.4.4."""
+    def test_agency_and_junk_author_fields_still_read_the_cover(self):
+        for junk in ("Federal Emergency Management Agency", "U.S. Department of Homeland Security, FEMA",
+                     "US Army Corps of Engineers", "U.S. Bureau of Reclamation", "Colorado State University",
+                     "Windows User", "Microsoft Office User", "Valued Customer"):
+            self.db.execute("UPDATE docs SET authors = ? WHERE id = 58", (junk,))
+            self.assertEqual(self.ids(Q), [58], junk)
+            self.assertEqual(self.ids("What did Pierce et al. (2010) find about length?"), [58], junk)
+        for person in ("Wahl, T. L.", "Tony L. Wahl", "Wahl T."):
+            self.db.execute("UPDATE docs SET authors = ? WHERE id = 58", (person,))
+            self.assertEqual(self.ids(Q), [], person)
+
+    def test_a_citation_opening_the_question_keeps_its_first_author(self):
+        self.db.execute("DELETE FROM chunks WHERE doc_id = 58")
+        self.add_doc(93, "Thornton, C. I.; Abt, S. R.", "2010", "", [])
+        self.assertEqual(self.ids("Pierce, Thornton and Abt (2010) found what relationship?"), [])
+        self.add_doc(94, "Cook, K. R.; Hunt, S. L.", "2005", "", [])
+        self.assertEqual(self.ids("Hanson, Cook and Hunt (2005) measured what coefficient?"), [])
+        self.assertEqual(self.ids("Plainly, Froehlich (2008) says what?"), [61])     # one word and one name
+
+    def test_ordinary_words_are_not_part_of_the_citation(self):
+        spans = vor.named_docs(self.db, "How do the USBR equation and Froehlich (2008) differ for breach width?",
+                               spans=True)[2]
+        self.assertEqual(spans, ["Froehlich (2008)"])
+        q = "For breach width, side slopes and failure time, Froehlich (2008) recommends what?"
+        self.assertIn("failure time", vor.strip_naming(q, vor.named_docs(self.db, q, spans=True)[2]))
+        self.assertEqual(self.ids("In Oklahoma, piping and Froehlich (2008) found what?"), [61])
+
+    def test_loose_names_in_the_search_terms_go_too(self):
+        spans = vor.named_docs(self.db, Q, spans=True)[2]
+        for terms in ("Pierce Thornton Abt 2010", "Pierce et al. 2010"):
+            left = vor.strip_naming(Q + " " + terms + " peak breach outflow", spans)
+            self.assertNotIn("Pierce", left)
+            self.assertNotIn("2010", left)
+            self.assertIn("peak breach outflow", left)
+
+    def test_numbered_data_sheets_and_checklists_are_not_contents(self):
+        sheet = vor.chunk_page("PERTINENT DATA\n1. Drainage area, square miles .......... 230\n"
+                               "2. Height of dam above streambed, feet .......... 110\n3. Crest width, feet .......... 30\n"
+                               "4. Crest length, feet .......... 1450\n5. Spillway crest elevation, feet .......... 5420\n"
+                               "The data above are taken from the 1962 design report and the 1988 survey.")
+        self.assertEqual([vor.is_contents(c) for c in sheet], [False])
+        self.assertFalse(vor.is_contents("Item Condition Rating 1. Crest settlement .......... 2 2. Upstream slope "
+                                         "erosion .......... 3 3. Seepage at toe .......... 1 4. Spillway concrete .......... 2"))
+
+    def test_every_piece_of_a_long_contents_page(self):
+        names = ["Introduction", "Background", "Site Description", "Geology", "Hydrology", "Hydraulics", "Embankment",
+                 "Foundation", "Seepage Analysis", "Stability Analysis", "Spillway", "Outlet Works", "Instrumentation",
+                 "Inspection History", "Deficiencies", "Alternatives", "Cost Estimates", "Recommendations",
+                 "Conclusions", "References", "Glossary", "Acknowledgments", "Appendix Data", "Appendix Photos",
+                 "Appendix Calculations", "Appendix Drawings", "Appendix Correspondence", "Appendix Hydrographs",
+                 "Appendix Boring Logs", "Appendix Laboratory Tests"]
+        page = "Table of Contents\n" + "".join("%s .................... %d\n" % (n, 3 * i + 1) for i, n in enumerate(names))
+        chunks = vor.chunk_page(page)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual([vor.is_contents(c) for c in chunks], [True] * len(chunks))
+        self.assertTrue(vor.is_contents("iii Contents Preface ....... 1 Introduction ....... 2 Methods ....... 5 "
+                                        "Results ....... 9"))
 
 
 if __name__ == "__main__":

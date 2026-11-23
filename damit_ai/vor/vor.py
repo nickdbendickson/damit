@@ -55,9 +55,10 @@
 #   year reads that document first (the year must match; the names must be its authors, or, when it has no
 #   author metadata, all on its first three pages, or 'X et al.' written there as an author; one all-capitals
 #   agency may be its organisation if that picks out one or two documents); inside a named document the
-#   search leaves out the words that named it (a citation that named nothing stays); a named
-#   document gives up to 4 passages; and every search skips a passage repeating one already taken and puts
-#   contents pages (numbered dot-leader entries or a contents heading) last.
+#   search leaves out the words that named it, also loose in the planner's search terms (a citation that
+#   named nothing stays); the named documents share 4 passages (two papers: two each); and every search
+#   skips a passage repeating one already taken and puts contents pages last (dot-leader entries whose page
+#   numbers run in order, or under a contents heading; a numbered data sheet is not one).
 # 1.4.3 (2026-11-22, the 1.4.2 call records): the D15F question's model call read all 8 passages (3,444
 #   prompt tokens) and replied exactly '{"findings": [], "not_covered": []}', with the answer page among them.
 #   An empty list of findings is now asked once more, passages in reverse order and a nudge to read each
@@ -571,8 +572,9 @@ _NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bul
 
 _PAGE_NO = r"(?:[A-Z]-\d+|\d+(?:[-–]\d+)?|[ivxlc]+)\b"
 _LEADER = re.compile(r"(?:\.\s?){6,}\s*" + _PAGE_NO, re.I)
-_CONTENTS_HEAD = re.compile(r"^\W*(?:table\s+of\s+)?contents\b|\b(?:table\s+of\s+contents|list\s+of\s+(?:figures|tables|"
-                            r"plates|illustrations|appendices))\b", re.I)
+_CONTENTS_HEAD = re.compile(r"^\W*(?:(?:[ivxlc]+|\d+)\W+)?(?:table\s+of\s+)?contents\b|\bcontents\s+(?:\(continued\)|page)\b"
+                            r"|\b(?:table\s+of\s+contents|list\s+of\s+(?:figures|tables|plates|illustrations|appendices))\b",
+                            re.I)
 _CONTENTS_ENTRY = re.compile(r"^\s*(?:(?:figure|fig\.|table|chapter|section|appendix|plate|part)\s+[\dA-Z]"
                              r"|\d+(?:[.-]\d+)*\.?\s+[A-Za-z]|[IVX]+\.\s+[A-Za-z])", re.I)
 
@@ -580,17 +582,36 @@ _CONTENTS_ENTRY = re.compile(r"^\s*(?:(?:figure|fig\.|table|chapter|section|appe
 def is_contents(txt):
     """A table-of-contents or list-of-figures passage: three or more dot-leader entries ending in a page number
     ('Figure 10 Comparison ........ 31', '1.1 Purpose ........ 1-1'), under a contents heading (a passage that
-    starts 'Contents', or 'Table of Contents' / 'List of Figures' anywhere) or themselves numbered entries
-    ('Figure 10', '3.2 Breach', '1. Introduction', 'Chapter 4'). Stored passages have no line breaks
-    (chunk_page joins them), so this counts entries, not lines. A data sheet ('Crest width, feet ........ 30',
-    'Reservoir contents, acre-feet ........ 5000') is not a contents page."""
+    starts 'Contents', or 'Table of Contents' / 'List of Figures' anywhere) or, with page numbers that never
+    go down, numbered entries ('Figure 10', '3.2 Breach', '1. Introduction', 'Chapter 4') or nothing but short
+    entries (the later pieces of a long contents page). Stored passages have no line breaks (chunk_page joins
+    them), so this counts entries, not lines. A data sheet ('1. Crest width, feet ........ 30', 'Reservoir
+    contents, acre-feet ........ 5000') is not a contents page: its numbers do not run in order."""
     t = txt or ""
-    if len(_LEADER.findall(t)) < 3:
+    pages = [m.group(0) for m in _LEADER.finditer(t)]
+    if len(pages) < 3:
         return False
     if _CONTENTS_HEAD.search(t):
         return True
+    if not _ascending(pages):          # a contents page's numbers run 1, 3, 7 ...; a data sheet's 230, 110, 30
+        return False
     entries = [e for e in _LEADER.split(t) if e.strip()]
-    return sum(1 for e in entries if _CONTENTS_ENTRY.search(e)) >= 3
+    if sum(1 for e in entries if _CONTENTS_ENTRY.search(e)) >= 3:
+        return True
+    # the later pieces of a long unnumbered contents page: almost nothing but short worded entries
+    worded = [e for e in entries if len(e) <= 100 and len(re.findall(r"[A-Za-z]", e)) >= 3]
+    return len(pages) >= 5 and sum(len(e) for e in worded) >= 0.7 * sum(len(e) for e in entries)
+
+
+def _ascending(leaders):
+    """Page numbers after the dot leaders never go down ('1-1', '1-4', '2-1' as chapter, page; roman skipped)."""
+    keys = []
+    for ld in leaders:
+        n = re.search(_PAGE_NO + r"\s*$", ld, re.I).group(0).strip()
+        if re.fullmatch(r"[ivxlc]+", n, re.I):
+            continue
+        keys.append(tuple(int(x) if x.isdigit() else ord(x.upper()) for x in re.findall(r"\d+|[A-Za-z]", n)))
+    return all(a <= b for a, b in zip(keys, keys[1:]))
 
 
 def text_key(doc_id, txt):
@@ -599,20 +620,23 @@ def text_key(doc_id, txt):
     return (doc_id, hashlib.sha1(squash(txt).encode()).hexdigest()) if squash(txt) else None
 
 
-# A name: any letters (accents, Polish, Turkish ...), apostrophe or hyphen. Capitalisation is checked in code.
-_SURNAME = r"[^\W\d_](?:[^\W\d_]|['\-])*"
+# A name: a word not starting lower case, of any letters (accents, Polish, Turkish ...), apostrophe or hyphen.
+_SURNAME = r"(?![a-z\u00df-\u00f6\u00f8-\u00ff])[^\W\d_](?:[^\W\d_]|['\-])*"
 _YEAR = r"(?:19|20)\d\d[a-z]?"
 _YEARS = r"%s(?:\s*,\s*(?:%s|[a-z]\b))*(?:\s*,\s*pp?\.\s*\d+(?:\s*[-–]\s*\d+)?)?" % (_YEAR, _YEAR)
 _NAMES = r"%s(?:\s*,\s*%s)*(?:\s*,?\s+(?:and|&)\s+%s)?(?:\s+et\s+al\.?)?(?:'s)?" % (_SURNAME, _SURNAME, _SURNAME)
 _AUTHOR_YEAR = re.compile(r"(?<![^\W\d_])(%s)\s*\(\s*(%s)\s*\)" % (_NAMES, _YEARS))
 _YEAR_PAREN = re.compile(r"\(\s*(?:%s)\s*\)" % _YEARS)
-_CITE_PART = re.compile(r"^\s*(?:(?:e\.g\.|i\.e\.|see\s+also|see|cf\.|after|from)\s*,?\s*)?(%s)\s*,?\s+(%s)\s*$"
-                        % (_NAMES, _YEARS), re.I)
+_CITE_PART = re.compile(r"^\s*(?:(?i:e\.g\.|i\.e\.|see\s+also|see|cf\.|after|from)\s*,?\s*)?(%s)\s*,?\s+(%s)\s*$"
+                        % (_NAMES, _YEARS))     # no re.I: it would let a name start lower case
 NOT_SURNAMES = set("""however also in on at for from the a an and or but what which when where why how does did do is are
 was were according see under per by with dam dams safety program programs report reports table figure equation
 section chapter appendix bureau guidelines guideline manual technical federal state national association
 department agency board committee center institute university survey service corps engineers reclamation
-usbr usace fema nrcs usgs asdso ferc hec tr td""".split())
+usbr usace fema nrcs usgs asdso ferc hec tr td similarly briefly thus then now so next likewise finally additionally
+specifically here there conversely alternatively meanwhile previously later earlier originally notably interestingly
+overall again still instead otherwise accordingly consequently therefore hence moreover furthermore nevertheless
+nonetheless first second third lastly today historically traditionally recently generally typically""".split())
 ORG_MAX_DOCS = 2       # 'ASDSO (2015)' names a document only when it picks out one or two
 
 
@@ -664,7 +688,18 @@ def _as_author(name, text):
                      % (n, n), text or "") is not None
 
 
-_PERSON = re.compile(r"[A-Z][a-z]+,\s*[A-Z]\.|[A-Z]\.\s*[A-Z][a-z]+|[A-Z][a-z]+\s+(?:[A-Z]\.\s*)?[A-Z][a-z]+")
+_PERSON = re.compile(r"[A-Z][a-z]+,\s*[A-Z]\.|[A-Z]\.\s*[A-Z][a-z]+|[A-Z][a-z]+\s+(?:[A-Z]\.\s*)*[A-Z][a-z]+"
+                     r"|[A-Z][a-z]+\s+[A-Z]\.")
+_NOT_PERSON = re.compile(r"\b(?:department|bureau|corps|agency|university|engineers?|reclamation|user|customer|"
+                         r"administrator|administration|service|survey|office|commission|institute|association|"
+                         r"council|district|county|state|states|inc|llc|company|authority|laboratory|division|"
+                         r"management|federal|national|security|interior|army|owner|author|unknown|default)\b", re.I)
+
+
+def _names_people(authors):
+    """An author field that names people ('Wahl, T. L.', 'Tony Wahl'), not an agency or PDF junk ('Federal
+    Emergency Management Agency', 'U.S. Army Corps of Engineers', 'Microsoft Office User')."""
+    return _PERSON.search(authors) is not None and _NOT_PERSON.search(authors) is None
 
 
 def _docs_for(db, names, etal, years):
@@ -680,7 +715,7 @@ def _docs_for(db, names, etal, years):
     for did, title, path, authors, org in rows:
         a = (authors or "").strip()
         ok = bool(a) and all(_has(n, a) for n in names)
-        others = bool(a) and _PERSON.search(a) is not None and not any(_has(n, a) for n in names)
+        others = bool(a) and _names_people(a) and not any(_has(n, a) for n in names)
         if not ok and not others and (len(names) >= 2 or etal):
             front = " ".join(t for (t,) in db.execute(
                 "SELECT txt FROM chunks WHERE doc_id = ? AND page <= 3", (did,)).fetchall())
@@ -697,8 +732,8 @@ def _docs_for(db, names, etal, years):
 def _author_year_docs(db, question):
     """1.4.4: documents the question names by author and year ('Pierce, Thornton and Abt (2010)'), as
     (id, label, matched text). Words that are not names ('However', 'Dam') are left out. A citation that
-    opens a sentence with 'Word, Name (year)' ('Similarly, Froehlich (2008)') is tried without its first
-    word when it matches nothing; co-authors are never dropped otherwise. An agency on the NOT_SURNAMES
+    opens a sentence as 'Word, Name (year)' is tried without its first word when it matches nothing (common
+    openers such as 'Similarly' are on the list); co-authors are never dropped. An agency on the NOT_SURNAMES
     list ('USBR (1982)') is matched against the organisation."""
     out = []
     for text, group, years, opens in _citations(question):
@@ -713,10 +748,9 @@ def _author_year_docs(db, question):
         if not names:
             continue
         found = _docs_for(db, names, etal, years)
-        two = re.search(r"\s(?:and|&)\s", group) is not None
-        if (not found and opens and len(names) >= 2 and names[0] == raw[0]
-                and re.match(r"\s*%s\s*," % re.escape(names[0]), group) and (len(names) >= 3 or not two)):
-            found = _docs_for(db, names[1:], etal, years)
+        if (not found and opens and len(names) == 2 and not etal and names[0] == raw[0]
+                and re.fullmatch(r"\s*%s\s*,\s*%s(?:'s)?\s*" % (re.escape(names[0]), re.escape(names[1])), group)):
+            found = _docs_for(db, names[1:], etal, years)         # as in: Plainly, Froehlich (2008)
         for did, title, path in found:
             out.append((did, "%d  %s" % (did, (title or path)[:80]), text))
     return out
@@ -733,6 +767,16 @@ def strip_naming(question, spans=None):
         spans = [c[0] for c in _citations(q)] + [m.group(0) for m in _NAMED.finditer(q)]
     for sp in sorted(set(spans), key=len, reverse=True):
         q = re.sub(re.escape(sp), " ", q, flags=re.I)
+    # the same names and years left loose, as in the planner's search terms ('Pierce Thornton Abt 2010')
+    words = set()
+    for sp in spans:
+        if _AUTHOR_YEAR.search(sp) or _CITE_PART.match(sp):
+            words.update(n for n in _cited_names(sp) if len(n) >= 3 and n.lower() not in NOT_SURNAMES)
+            words.update(re.findall(r"(?:19|20)\d\d", sp))
+    for w in sorted(words, key=len, reverse=True):
+        q = re.sub(r"(?<![^\W_])%s(?:'s)?(?:[a-z]\b)?(?![^\W_])" % re.escape(w), " ", q, flags=re.I)
+    if words:
+        q = re.sub(r"\bet\s+al\b\.?", " ", q)
     q = re.sub(r"\(\s*[;,]?\s*\)", " ", q)
     q = re.sub(r"\s+", " ", q).strip()
     left = [t for t in re.findall(r"[A-Za-z]{3,}", q) if t.lower() not in STOP]
@@ -2194,7 +2238,11 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
             # 1.4.4: inside the named documents, search without the naming words, and read up to 4 passages
             # (the words that name a document are found again in each sub-question, which plan() rewords)
             sq = strip_naming(q, named_spans + named_docs(db, q, spans=True)[2])
-            hits = merge_hits(idx.search(sq, k=min(4, k), per_doc=4, keep=set(named)), hits, k)
+            each = max(1, min(4, k) // len(named))            # two named papers: two places each
+            first = []
+            for d in named:
+                first += idx.search(sq, k=each, per_doc=each, keep={d})
+            hits = merge_hits(first, hits, k)
         log.append((s, hits))
         say("[%d/%d] reading %d passages for: %s" % (i, len(subs), len(hits), textwrap_short(s, 90)))
         extract(ev, s, hits)
