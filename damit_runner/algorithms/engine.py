@@ -315,8 +315,8 @@ def qa_maps_param(alg, parameters, context):
 DAM_POINT_CHECK_MODES = ("off", "warn", "move")
 DAM_POINT_CHECK_LABELS = (
     "Off (use the dam point as given, as before 3.20.11)",
-    "Warn only (check it; never move it) - the default",
-    "Move clear cases (use the embankment found; otherwise warn)")
+    "Warn only (check it; never move it)",
+    "Move clear cases (use the embankment found; otherwise warn) - the default")
 DAM_POINT_CHECK_TIP = (
     "When there is no dam line, crest line, breach inflow point or top of dam, the dam point is "
     "checked against the reservoir and embankment on the DEM (LiDAR, 5 m or finer). When the "
@@ -324,11 +324,13 @@ DAM_POINT_CHECK_TIP = (
     "would land in the pond) and the embankment is unambiguous (flat water, one pond, the "
     "right height and length, no neighbouring dam), the embankment is used as the dam line and "
     "the run says so first in its warnings; otherwise the point is kept and a REVIEW warning "
-    "says why. The other dams of a batch (or a cascade) are its neighbours; a single dam has "
-    "none, and the report says the neighbour check was not made. Warn only (the default) never "
-    "moves: its REVIEW warning says where the embankment is and whether Move would use it. Off "
-    "is as before 3.20.11. The environment variable NDBREACH_DAM_POINT_CHECK (off / warn / "
-    "move) wins over this.")
+    "says why. A point on the embankment but 10 m or more from the centre of the line found "
+    "moves along to that centre under the same checks (3.20.13). The other dams of a batch (or "
+    "a cascade) are its neighbours; a single dam has none, and the report says the neighbour "
+    "check was not made. Move is the default (3.20.13; DamSafety's hold-out of 43 dams had 2 "
+    "wrong moves, both a side dike of the same pond). Warn only never moves: its REVIEW warning "
+    "says where the embankment is and whether Move would use it. Off is as before 3.20.11. The "
+    "environment variable NDBREACH_DAM_POINT_CHECK (off / warn / move) wins over this.")
 
 
 def _batch_points(feats, id_field, to_dem, height_field=None):

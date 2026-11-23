@@ -430,9 +430,10 @@ class RunSettings:
         # point (damsuite.midcrest) when the dam has no crest_line_xy. Not in as_dict
         self.midcrest_line = None
         # 3.20.11: the dam point checked on the DEM before it is used (core/dam_point_check.py):
-        # "warn" (the default: never moves; a REVIEW warning says where the embankment is and
-        # whether "move" would use it), "move" (a clear misplacement uses the embankment found
-        # as the dam line, every gate must pass, else a warning) or "off" (as 3.20.10).
+        # "move" (the default since 3.20.13: a clear misplacement uses the embankment found
+        # as the dam line, every gate must pass, else a warning; a point on the embankment but
+        # off its centre moves along to the centre), "warn" (never moves; a REVIEW warning says
+        # where the embankment is and whether "move" would use it) or "off" (as 3.20.10).
         # NDBREACH_DAM_POINT_CHECK wins over this (_dam_point_mode). Never in the run key.
         self.dam_point_check = dpc.DEFAULT_MODE
         # the other inventory dams near this one [(id, (x, y)[, height ft])] and the other dams' crest lines
@@ -1409,6 +1410,17 @@ def fixed_clock_spreading_warning(sim_hr, reason=""):
                 float(sim_hr), " - {}".format(reason) if reason else ""))
 
 
+def add_crest_raised_warning(warnings, nraise, how):
+    """3.20.13: add the 'Crest raised' warning once per run, not once per LISFLOOD-FP pass (the
+    old check looked for 'crest raised' in lower case and so never matched its own warning).
+    Returns True when the warning was added."""
+    if not nraise or any(str(w).lower().startswith("crest raised") for w in warnings):
+        return False
+    warnings.append("Crest raised to the top of dam in the model grid "
+                    "({} cells, {}). The source DEM is unchanged.".format(nraise, how))
+    return True
+
+
 def latest_arrival_lower_bound(iterations, t_ref_hr=0.0):
     """v3.20.9 review: (flag, clock_hr, note) for the LAST LISFLOOD-FP pass. When some of its
     wet area was still first wet in the last 10% of the clock - the spread rule judged it not
@@ -1706,6 +1718,14 @@ def _dpc_compute(dam, st, dam_xy, terrain_src, cs, mode, native, npool=_UNSET):
             if outcome == "move":
                 outcome = "moved"
                 moved_xy = ver["_xy"]
+        elif dec.get("centre_snap"):
+            # 3.20.13 C1: a point on the embankment stays where it is when V fails (a note)
+            outcome = "kept"
+            dec["kept_why"] = "on the embankment ({:.0f} m from its centre; not moved there: " \
+                "{})".format(dec.get("centre_m") or 0.0, ver.get("why", "") or dpc.GATE_TEXT["V"])
+            dec["gates_failed"].append(("V", "{}: {}".format(dpc.GATE_TEXT["V"],
+                                                             ver.get("why", ""))))
+            dec["triggers"] = []
         else:
             outcome = "review"
             dec["warn"] = True
@@ -2351,6 +2371,8 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     mc_rec = None
     mc_why = "no mid-crest (proposed dam)"
     if not getattr(st, "proposed", None):
+        # DamIT: DamSafety 3.20.13's DWR dam line of a batch dam (core/dwr_lines.py, the ND DWR
+        # pack) is not ported; a dam line comes from DAM_LINES, a crest line or the dam point check
         # 3.20.11: the dam point checked on the DEM first (a clear misplacement gives the dam
         # line the rest of this block and the run follow, as a DAM_LINES line)
         dam_xy = _dam_point_check(dam, st, dam_xy, inflow_xy, raw_terrain, cs, report,
@@ -2990,10 +3012,8 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
                 nraise += lfmod.raise_crest(
                     dem, dam_xy, inflow_xy, top_m,
                     length_m=(dam.crest_length_ft or 400.0) * FT, line_xy=_ln)
-            if nraise and "crest raised" not in " ".join(warnings):
-                how = "along the dam line" if getattr(dam, "crest_line_xy", None) else "at the crest point"
-                warnings.append("Crest raised to the top of dam in the model grid "
-                                "({} cells, {}). The source DEM is unchanged.".format(nraise, how))
+            how = "along the dam line" if getattr(dam, "crest_line_xy", None) else "at the crest point"
+            if add_crest_raised_warning(warnings, nraise, how):
                 log(warnings[-1])
         marker = os.path.join(wd, lfmod.STABILITY_MARKER)
         if not stability["on"] and os.path.exists(marker):
@@ -4614,9 +4634,14 @@ def _check_inflow_site(report, st, dam, dam_xy, inflow_xy, path, downstream, fro
     if not chk["ok"]:
         msg = ("{}: the breach inflow point ({:.1f}, {:.1f}) and the flow trace disagree on "
                "the downstream side: {}. The dam point or the downstream side is probably "
-               "wrong; give the inflow point (just below the dam) or the DWR dam line "
-               "(DAM_LINES).".format(terrain.SIDE_PROBLEM, inflow_xy[0], inflow_xy[1],
-                                     "; ".join(chk["problems"])))
+               "wrong; give the inflow point (just below the dam){}.".format(
+                   terrain.SIDE_PROBLEM, inflow_xy[0], inflow_xy[1], "; ".join(chk["problems"]),
+                   # 3.20.13: a dam line is already given (DAM_LINES, a crest line
+                   # or the line the dam point check found): check it rather than ask for one
+                   " or check the dam line ({})".format(
+                       getattr(dam, "_crest_line_source", None) or "the dam line given")
+                   if getattr(dam, "crest_line_xy", None) else
+                   " or the DWR dam line (DAM_LINES)"))
         warnings.insert(0, msg)
         log(msg)
     if chk.get("far"):

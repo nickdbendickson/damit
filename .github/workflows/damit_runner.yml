@@ -51,7 +51,7 @@ jobs:
       - name: Install scipy (the DamSafety terrain tests below use scipy.ndimage, as QGIS's Python does)
         run: pip install scipy
       - name: Run the DamSafety terrain tests that need scipy (inflow pick, dam point check)
-        run: PYTHONPATH=. python3 -m unittest damit_runner.tests.test_inflow_depth damit_runner.tests.test_dam_point_check damit_runner.tests.test_inflow_side -v
+        run: PYTHONPATH=. python3 -m unittest damit_runner.tests.test_inflow_depth damit_runner.tests.test_dam_point_check damit_runner.tests.test_inflow_side damit_runner.tests.test_dam_line_centre -v
 
   no-damsuite:
     name: Zero damsuite imports
