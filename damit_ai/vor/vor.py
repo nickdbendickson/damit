@@ -571,7 +571,7 @@ _NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bul
 
 
 _PAGE_NO = r"(?:[A-Z]-\d+|\d+(?:[-–]\d+)?|[ivxlc]+)\b"
-_LEADER = re.compile(r"(?:\.\s?){6,}\s*" + _PAGE_NO, re.I)
+_LEADER = re.compile(r"(?:\.\s?){6,}\s*" + _PAGE_NO + r"(?![.,]\d)", re.I)     # not '1,240' or '1.3'
 _CONTENTS_HEAD = re.compile(r"^\W*(?:(?:[ivxlc]+|\d+)\W+)?(?:table\s+of\s+)?contents\b|\bcontents\s+(?:\(continued\)|page)\b"
                             r"|\b(?:table\s+of\s+contents|list\s+of\s+(?:figures|tables|plates|illustrations|appendices))\b",
                             re.I)
@@ -610,7 +610,8 @@ def _ascending(leaders):
         n = re.search(_PAGE_NO + r"\s*$", ld, re.I).group(0).strip()
         if re.fullmatch(r"[ivxlc]+", n, re.I):
             continue
-        keys.append(tuple(int(x) if x.isdigit() else ord(x.upper()) for x in re.findall(r"\d+|[A-Za-z]", n)))
+        keys.append(tuple(int(x) if x.isdigit() else 10 ** 6 + ord(x.upper())      # 'A-1' after page 79
+                          for x in re.findall(r"\d+|[A-Za-z]", n)))
     return all(a <= b for a, b in zip(keys, keys[1:]))
 
 
@@ -708,13 +709,18 @@ def _docs_for(db, names, etal, years):
     first author (Pierce et al. (2010) is filed under FEMA with none), so unless it names other people, the
     first three pages count too: two or more names all there, or one with 'et al.' written there as an
     author ('M. W. Pierce'). A single all-capitals name ('USSD', 'ICOLD') may instead be the document's
-    organisation, if that picks out no more than ORG_MAX_DOCS documents."""
+    organisation (or the whole of a non-person author field), if that picks out no more than ORG_MAX_DOCS
+    documents."""
     rows = db.execute("SELECT id, title, path, authors, org FROM docs WHERE substr(trim(CAST(year AS TEXT)), 1, 4) IN (%s)"
                       % ",".join("?" * len(years)), years).fetchall()
     hits, org_hits = [], []
+    agency = len(names) == 1 and names[0].isupper() and len(names[0]) >= 3
     for did, title, path, authors, org in rows:
         a = (authors or "").strip()
         ok = bool(a) and all(_has(n, a) for n in names)
+        if ok and agency and not _names_people(a):      # 'FEMA (2013)' and an author field 'FEMA': as organisation
+            org_hits.append((did, title, path))
+            continue
         others = bool(a) and _names_people(a) and not any(_has(n, a) for n in names)
         if not ok and not others and (len(names) >= 2 or etal):
             front = " ".join(t for (t,) in db.execute(
@@ -722,7 +728,7 @@ def _docs_for(db, names, etal, years):
             ok = all(_has(n, front) for n in names) if len(names) >= 2 else _as_author(names[0], front)
         if ok:
             hits.append((did, title, path))
-        elif len(names) == 1 and names[0].isupper() and len(names[0]) >= 3 and _has(names[0], org):
+        elif agency and _has(names[0], org):
             org_hits.append((did, title, path))
     if not hits and len(org_hits) <= ORG_MAX_DOCS:
         hits = org_hits
@@ -2242,7 +2248,7 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
             first = []
             for d in named:
                 first += idx.search(sq, k=each, per_doc=each, keep={d})
-            hits = merge_hits(first, hits, k)
+            hits = merge_hits(first[:min(4, k)], hits, k)
         log.append((s, hits))
         say("[%d/%d] reading %d passages for: %s" % (i, len(subs), len(hits), textwrap_short(s, 90)))
         extract(ev, s, hits)

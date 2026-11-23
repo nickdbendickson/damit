@@ -94,6 +94,7 @@ class SearchSkips(unittest.TestCase):
             src = f.read()
         self.assertIn("sq = strip_naming(q, named_spans + named_docs(db, q, spans=True)[2])", src)
         self.assertIn("first += idx.search(sq, k=each, per_doc=each, keep={d})", src)
+        self.assertIn("hits = merge_hits(first[:min(4, k)], hits, k)", src)
         self.assertIn("named_docs(db, question, spans=True)", src)
 
 
@@ -340,6 +341,29 @@ class FourthReview(_DbCase):
         self.assertEqual([vor.is_contents(c) for c in chunks], [True] * len(chunks))
         self.assertTrue(vor.is_contents("iii Contents Preface ....... 1 Introduction ....... 2 Methods ....... 5 "
                                         "Results ....... 9"))
+
+
+class FifthReview(_DbCase):
+    """Cases from the fifth independent review of 1.4.4."""
+    def test_an_agency_in_the_author_field_is_capped_like_an_organisation(self):
+        for d in range(1, 6):
+            self.add_doc(100 + d, "FEMA", "2013", "FEMA", [])
+        self.assertEqual(self.ids("What does FEMA (2013) say about the inflow design flood?"), [])
+        self.db.execute("DELETE FROM docs WHERE id > 102")
+        self.assertEqual(self.ids("What does FEMA (2013) say about the inflow design flood?"), [101, 102])
+
+    def test_values_with_commas_or_decimals_are_not_page_numbers(self):
+        for page in ("Reservoir storage allocation\nDead storage, acre-feet .......... 1,240\nInactive storage .......... 5,300\n"
+                     "Active conservation storage .......... 41,800\nJoint use .......... 62,000\n"
+                     "Total capacity .......... 110,340\nMaximum water surface capacity .......... 128,900\n",
+                     "Minimum required factors of safety\nEnd of construction .......... 1.3\nSteady seepage .......... 1.5\n"
+                     "Surcharge pool .......... 1.4\nRapid drawdown .......... 1.3\nPseudostatic .......... 1.0\n"):
+            self.assertEqual([vor.is_contents(c) for c in vor.chunk_page(page + "Values from the 1988 design memorandum.")],
+                             [False])
+
+    def test_appendix_pages_follow_high_page_numbers(self):
+        self.assertTrue(vor.is_contents("7.3 Results ........ 77 References ........ 79 Appendix A Breach Database "
+                                        "........ A-1 Appendix B Photos ........ B-1"))
 
 
 if __name__ == "__main__":
