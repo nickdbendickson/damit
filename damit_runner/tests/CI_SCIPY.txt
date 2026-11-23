@@ -4,3 +4,4 @@ test_inflow_depth  # scipy.ndimage in the inflow-depth pick
 test_dam_point_check  # scipy.ndimage in the dam-point terrain check
 test_inflow_side  # scipy.ndimage on the breach-inflow side
 test_dam_line_centre  # scipy.ndimage in the dam-line centre snap
+test_dem_hole_fill  # scipy.ndimage in the DEM hole fill (dem_refill.fill_interior_holes)

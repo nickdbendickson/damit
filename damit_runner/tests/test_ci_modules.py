@@ -16,6 +16,7 @@ SCIPY = (
     "test_dam_point_check",
     "test_inflow_side",
     "test_dam_line_centre",
+    "test_dem_hole_fill",
 )
 
 
