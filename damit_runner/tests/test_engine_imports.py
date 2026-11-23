@@ -153,5 +153,51 @@ class CoreModules(unittest.TestCase):
         self.assertTrue(hasattr(workflow, "VERSION"))
 
 
+class SmokeSkipsInProcessEngines(unittest.TestCase):
+    """0.8.1, port of DamSafety Runner 3.51.0 (DWR_Plugins #473): the pre-run LISFLOOD 1-second
+    check started the GPU engine's core/metalflood/engine.py as a program (PermissionError, the
+    run stopped in seconds). In-process engines (built-in, GPU, GPU with sub-grid channels) are
+    skipped without starting anything; a real LISFLOOD-FP path is still checked."""
+
+    def setUp(self):
+        self._env = os.environ.pop("ND_DAM_PRE_RUN_SMOKE", None)
+
+    def tearDown(self):
+        if self._env is not None:
+            os.environ["ND_DAM_PRE_RUN_SMOKE"] = self._env
+
+    def test_in_process_engines_are_skipped_without_a_program(self):
+        import subprocess
+        from unittest import mock
+        from damit_runner.core import lisflood as lf
+        from damit_runner.core import solve_gate as sg
+        engines = [lf.BUILTIN_EXE, lf.GPU_EXE, lf.GPU_SGC_EXE, lf.resolve_exe("gpu")]
+        with mock.patch.object(subprocess, "run", side_effect=AssertionError("started a program")):
+            for exe in engines:
+                self.assertTrue(lf.is_inprocess(exe), exe)
+                self.assertTrue(sg.is_inprocess_engine(exe), exe)
+                hit = sg.lisflood_smoke(exe)
+                self.assertEqual(hit["status"], "ok", (exe, hit))
+                self.assertIn("inside this process", hit["detail"])
+
+    def test_a_real_program_and_a_stray_py_are_still_checked(self):
+        import shutil
+        import tempfile
+        from damit_runner.core import solve_gate as sg
+        d = tempfile.mkdtemp(prefix="damit_smk_")
+        try:
+            self.assertFalse(sg.is_inprocess_engine(""))
+            self.assertFalse(sg.is_inprocess_engine("/usr/bin/lisflood"))
+            stray = os.path.join(d, "engine.py")          # same name, not this plugin's file
+            with open(stray, "w") as fh:
+                fh.write("print('x')\n")
+            self.assertFalse(sg.is_inprocess_engine(stray))
+            miss = sg.lisflood_smoke(os.path.join(d, "no_such_lisflood"))
+            self.assertEqual(miss["status"], "fail")
+            self.assertIn("not found", miss["detail"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

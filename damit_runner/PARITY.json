@@ -438,8 +438,9 @@
    "note": "Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (method sweep runs XZ piping) ported ahead of synced_to."
   },
   "damit_runner/core/solve_gate.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/solve_gate.py"
+   "diff": "5b51ec6f51047681a143801023505b6f5b48ab6427ef566003c0345b000350a0",
+   "from": "DamSafety_Runner/core/solve_gate.py",
+   "note": "Ported ahead of synced_to from DWR_Plugins #473 (Runner 3.51.0, fix 1): lisflood_smoke skips in-process engines (is_inprocess_engine). The file is byte-identical to the #473 version."
   },
   "damit_runner/core/stoprule.py": {
    "diff": "",
