@@ -324,11 +324,14 @@ DAM_POINT_CHECK_TIP = (
     "would land in the pond) and the embankment is unambiguous (flat water, one pond, the "
     "right height and length, no neighbouring dam), the embankment is used as the dam line and "
     "the run says so first in its warnings; otherwise the point is kept and a REVIEW warning "
-    "says why. The other dams of a batch (or a cascade) are its neighbours; a single dam has "
-    "none, and the report says the neighbour check was not made. Warn only (the default) never "
-    "moves: its REVIEW warning says where the embankment is and whether Move would use it. Off "
-    "is as before 3.20.11. The environment variable NDBREACH_DAM_POINT_CHECK (off / warn / "
-    "move) wins over this.")
+    "says why. A point on the embankment but 10 m or more from the centre of the line found "
+    "moves along to that centre under the same checks (3.20.13). The other dams of a batch (or "
+    "a cascade) are its neighbours; a single dam has none, and the report says the neighbour "
+    "check was not made. Warn only (the default in DamIT) never moves: its REVIEW warning says "
+    "where the embankment is and whether Move would use it. DamSafety moves by default (its "
+    "hold-out of 43 North Dakota dams had 2 wrong moves); DamIT keeps Warn until the check is "
+    "validated on NID dams elsewhere. Off is as before 3.20.11. The "
+    "environment variable NDBREACH_DAM_POINT_CHECK (off / warn / move) wins over this.")
 
 
 def _batch_points(feats, id_field, to_dem, height_field=None):

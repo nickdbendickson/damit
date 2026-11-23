@@ -145,7 +145,8 @@ def _full_run(fn, xy, preview_first=False, **st_kw):
 # ------------------------------------------------------------------------- the module ------
 @test
 def dpc_modes_and_the_environment_switch():
-    # 2026-11-17: the default is warn (the hold-out left one move 30 m off its dam line)
+    # 2026-11-17: the default is warn (the hold-out left one move 30 m off its dam line).
+    # DamIT: DamSafety 3.20.13 made move the default; DamIT keeps warn (not validated outside ND)
     assert dpc.DEFAULT_MODE == "warn" == workflow.RunSettings().dam_point_check
     assert dpc.normalize_mode(None) == "warn" and dpc.normalize_mode("") == "warn"
     assert dpc.normalize_mode(True) == "move" and dpc.normalize_mode(False) == "off"
