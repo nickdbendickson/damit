@@ -178,13 +178,8 @@ class BasinCharacteristicsFromGolden(unittest.TestCase):
 
 
 class GeometryGuards(unittest.TestCase):
-    def test_dem_covers_basin_accepts_and_refuses(self):
-        covers, msg = ss.dem_covers_basin((-98.0, 46.5, -96.5, 47.5), (-97.4, 46.9, -97.3, 47.0))
-        self.assertTrue(covers)
-        self.assertIn("covers", msg)
-        covers, msg = ss.dem_covers_basin((-97.0, 46.5, -96.5, 47.0), (-97.4, 46.9, -97.3, 47.0))
-        self.assertFalse(covers)
-        self.assertIn("does not cover", msg)
+    # dem_covers_basin was removed as unused in the 2026-11-19 dead-code sweep (1df0f5b); nothing in
+    # DamIT or DamSafety calls it, so its test went too (repo audit 2026-11-23, finding 2).
 
     def test_pmf_inflow_volume_identity(self):
         # 1 inch over 1 sq mi = 53.33 acre-ft (the module's own identity)

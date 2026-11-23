@@ -106,7 +106,7 @@ def _true_hole_mod():
 TH = _true_hole_mod()
 TRUE_HOLE_MAX_CELLS = TH.TRUE_HOLE_MAX_CELLS
 TRUE_HOLE_CONNECTIVITY = TH.TRUE_HOLE_CONNECTIVITY
-true_hole_mask_from_array = TH.true_hole_mask_from_array
+# true_hole_mask_from_array is defined below (with the max_cells=None default), not imported here
 
 
 PAM_OPTION = "GDAL_PAM_ENABLED"
