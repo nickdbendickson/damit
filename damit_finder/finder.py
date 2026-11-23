@@ -42,7 +42,7 @@ from .core import water as wt
 
 WORK_EPSG = 5070                     # CONUS Albers equal area: metres, areas true
 FT, AF_M3, AC_M2 = 0.3048, 1233.4818375, 4046.8564224
-VERSION = "0.7.2"
+VERSION = "0.7.3"
 
 
 # ------------------------------------------------------------------------------------- GDAL --
@@ -3233,9 +3233,42 @@ def _marks_of(src):
     return out
 
 
+def _apply_relearn_guard(model, rows, opts, extra, positive_words, model_out, log):
+    """Do not adopt a relearn that loses to the shipped model. Never rewrite that shipped file."""
+    from . import brand
+    from .core import score as sc
+    shipped_rel = getattr(brand, "DEFAULT_MODEL", None) or ""
+    here = os.path.dirname(os.path.abspath(__file__))
+    shipped_path = os.path.join(here, shipped_rel) if shipped_rel else ""
+    if not shipped_path or not os.path.isfile(shipped_path):
+        model["held_out_adoption"] = {"rule": sc.RELEARN_RULE, "adopted": None, "regions": [],
+                                      "reason": "no shipped model to compare"}
+        sc.save(model, model_out)
+        log("relearn not compared: no shipped model; the new model was kept")
+        return model
+    shipped = sc.load(shipped_path)
+
+    def train_fn(fold_rows):
+        kw = {k: v for k, v in opts.items() if k != "extra"}
+        kept_marks = sc.extras_for_rows(extra, fold_rows)
+        if kept_marks:
+            kw["extra"] = kept_marks
+        return sc.train(fold_rows, positive_words, **kw)
+
+    kept = sc.guard_relearn(model, rows, train_fn, shipped, positive_words)
+    adopted = (kept.get("held_out_adoption") or {}).get("adopted")
+    same = os.path.normcase(os.path.abspath(model_out)) == os.path.normcase(os.path.abspath(shipped_path))
+    if adopted is False and same:
+        log("relearn not adopted: the shipped model file was left unchanged")
+        return kept
+    sc.save(kept, model_out)
+    log("relearn {}: the comparison is in the model JSON".format("adopted" if adopted else "not adopted"))
+    return kept
+
+
 @_records_run("score")
 def run_score(fills, out_gpkg, positive_words=("dam",), model_in=None, model_out=None, folds=5,
-              kind="v1", marks=None, marks_weight=20.0, log=print):
+              kind="v1", marks=None, marks_weight=20.0, log=print, guard=False):
     """Learn a fill score from the fills already on a dam list (core/score.py) and score every
     fill. `fills`: one or more 'embankments' layers (runs over different areas). With model_in
     (a model JSON), score with it instead of learning. kind: 'v1' (the 11 measurements),
@@ -3246,6 +3279,9 @@ def run_score(fills, out_gpkg, positive_words=("dam",), model_in=None, model_out
     (an unsure one as half a dam, half not; a mark replaces the fill's own listed / unlisted
     label; with trees the marks join every bag at that weight); learn them per region (a prairie
     model, a breaks model), not statewide.
+    guard: when learning, adopt the new model only if its mean ranked AUC on held-out regions is
+    at least the shipped model's. Off unless asked, so scoring with a given model is unchanged.
+    The check does not replace the shipped file.
     Writes 'scored_fills' and the model JSON (model_out, default beside the GeoPackage). Returns
     {'rows', 'model', 'auc', 'cv_auc', ...}."""
     from .core import score as sc
@@ -3316,9 +3352,13 @@ def run_score(fills, out_gpkg, positive_words=("dam",), model_in=None, model_out
             cv = sc.ranked_auc(out[ok], y[ok])
         model["cv_auc"] = None if not np.isfinite(cv) else round(cv, 3)
         model_out = model_out or os.path.splitext(out_gpkg)[0] + "_score_model.json"
-        sc.save(model, model_out)
+        trained_listed, trained_other = model["n_listed"], model["n_other"]
+        if guard:
+            model = _apply_relearn_guard(model, rows, opts, extra, positive_words, model_out, log)
+        else:
+            sc.save(model, model_out)
         log("score model: {} listed dam(s) against {} other fill(s); cross-validated AUC {} -> {}".format(
-            model["n_listed"], model["n_other"], "n/a" if not np.isfinite(cv) else "{:.2f}".format(cv), model_out))
+            trained_listed, trained_other, "n/a" if not np.isfinite(cv) else "{:.2f}".format(cv), model_out))
     det = sc.score_detail(model, rows)
     s_all = np.array([v for v, _w in det])
     auc = sc.ranked_auc(s_all[ok], y[ok])

@@ -2232,5 +2232,162 @@ class Dataset(unittest.TestCase):
             self.assertEqual(sorted(r["label"] for r in ds.load(d3) if r["reviewer"] == rv_), ["no", "yes"])
 
 
+def _separated_row(region, dam):
+    """A fill whose measurements either look like a listed dam or do not. No noise, so a logistic
+    trained the right way round ranks them, and one trained on flipped labels does not."""
+    return {
+        "status": "listed" if dam else "new",
+        "known_layer": "state dams" if dam else "",
+        "region": region,
+        "height_ft": 40.0 if dam else 2.0,
+        "crest_height_ft": 42.0 if dam else 3.0,
+        "head_ft": 12.0 if dam else 0.2,
+        "valley_drop_ft": 0.5,
+        "storage_af": 80.0 if dam else 0.2,
+        "area_ac": 5.0 if dam else 0.05,
+        "length_ft": 200.0 if dam else 900.0,
+        "pool": "yes" if dam else "no",
+        "on_road": "no" if dam else "yes",
+        "open_pool": "no",
+        "spillway": "beside" if dam else "over",
+        "ridge_len_ft": 40.0 if dam else 800.0,
+    }
+
+
+def _region_rows():
+    rows = []
+    for region in ("east", "west", "south"):
+        for i in range(36):
+            rows.append(_separated_row(region, i < 12))
+    return rows
+
+
+def _flip_labels(rows):
+    out = []
+    for r in rows:
+        c = dict(r)
+        if c.get("status") == "listed":
+            c["status"], c["known_layer"] = "new", ""
+        else:
+            c["status"], c["known_layer"] = "listed", "state dams"
+        out.append(c)
+    return out
+
+
+class RelearnGuard(unittest.TestCase):
+    """A relearn is kept only when held-out regions rank at least as well as the shipped model.
+    Logistic only: the shipped tree file is not trained and not rewritten."""
+
+    def test_region_name_and_marks_in_the_fold(self):
+        self.assertEqual(sc.region_of_row({"region": "east", "county": "other"}), "east")
+        self.assertEqual(sc.region_of_row({"held_out_region": "west"}), "west")
+        self.assertEqual(sc.region_of_row({"county": "south"}), "south")
+        self.assertEqual(sc.region_of_row({"relief_ft": 10.0}), "flat")
+        self.assertEqual(sc.region_of_row({"region": "  ", "relief_ft": 200.0}), "cut")
+        self.assertEqual(sc.region_of_row({}), "")
+        a, b = {"id": 1}, {"id": 2}
+        extra = [(a, 1.0, 3.0), (b, 0.0, 4.0)]
+        self.assertEqual([id(e[0]) for e in sc.extras_for_rows(extra, [b])], [id(b)])
+        self.assertEqual(sc.extras_for_rows(None, [a]), [])
+
+    def test_a_flipped_relearn_is_not_adopted_and_the_shipped_weights_stay(self):
+        rows = _region_rows()
+        shipped = sc.train(rows)
+        flipped = sc.train(_flip_labels(rows))
+        flipped["cv_auc"] = 0.11
+
+        def flip_train(fold_rows):
+            return sc.train(_flip_labels(fold_rows))
+
+        out = sc.guard_relearn(flipped, rows, flip_train, shipped)
+        adoption = out["held_out_adoption"]
+        self.assertFalse(adoption["adopted"])
+        self.assertLess(adoption["mean_challenger_auc"], adoption["mean_shipped_auc"])
+        self.assertEqual(out["weights"], shipped["weights"])
+        self.assertNotIn("cv_auc", out)
+        self.assertEqual(adoption["refused_cv_auc"], 0.11)
+        self.assertNotIn("held_out_adoption", shipped)
+        self.assertNotIn("held_out_adoption", flipped)
+        self.assertIn("does not replace the shipped file", adoption["rule"])
+        import json
+        json.loads(json.dumps(adoption))
+        self.assertGreater(adoption["n_compared"], 1)
+
+    def test_a_real_relearn_replaces_a_worse_shipped_model(self):
+        rows = _region_rows()
+        shipped = sc.train(_flip_labels(rows))
+        full = sc.train(rows)
+        full["cv_auc"] = 0.91
+        out = sc.guard_relearn(full, rows, sc.train, shipped)
+        self.assertIs(out, full)
+        self.assertTrue(out["held_out_adoption"]["adopted"])
+        self.assertEqual(out["cv_auc"], 0.91)
+        self.assertGreater(out["held_out_adoption"]["mean_challenger_auc"],
+                           out["held_out_adoption"]["mean_shipped_auc"])
+        self.assertNotIn("held_out_adoption", shipped)
+
+    def test_one_named_region_is_not_adopted(self):
+        rows = [_separated_row("only", i < 12) for i in range(36)]
+        rows.append(_separated_row("", True))          # no region name: not a second region
+        rows[-1]["region"] = ""
+        shipped = sc.train(rows)
+        full = sc.train(rows)
+        full["cv_auc"] = 0.2
+
+        def boom(_fold):
+            raise AssertionError("one named region must not be trained")
+
+        out = sc.guard_relearn(full, rows, boom, shipped)
+        self.assertFalse(out["held_out_adoption"]["adopted"])
+        self.assertIn("fewer than 2", out["held_out_adoption"]["reason"])
+        self.assertEqual(out["weights"], shipped["weights"])
+        self.assertNotIn("cv_auc", out)
+        self.assertEqual(out["held_out_adoption"]["refused_cv_auc"], 0.2)
+
+    def test_no_comparable_region_is_not_adopted(self):
+        rows = [_separated_row("east", True) for _ in range(8)]
+        rows += [_separated_row("west", False) for _ in range(8)]
+        shipped = sc.train(_region_rows())
+        full = {"cv_auc": 0.3, "weights": [0.0]}
+        out = sc.guard_relearn(full, rows, sc.train, shipped)
+        self.assertFalse(out["held_out_adoption"]["adopted"])
+        self.assertEqual(out["held_out_adoption"]["reason"], "no comparable region")
+        self.assertEqual(out["weights"], shipped["weights"])
+        self.assertTrue(all(r.get("skipped") for r in out["held_out_adoption"]["regions"]))
+
+    def test_a_held_out_mark_is_not_in_that_fold(self):
+        rows = _region_rows()
+        marked = next(r for r in rows if r["region"] == "east")
+        other = next(r for r in rows if r["region"] == "west")
+        extra = [(marked, 1.0, 5.0), (other, 0.0, 5.0)]
+        seen = []
+
+        def train_fn(fold_rows):
+            seen.append(sc.extras_for_rows(extra, fold_rows))
+            return sc.train(fold_rows)
+
+        shipped = sc.train(rows)
+        full = sc.train(rows)
+        full["cv_auc"] = 0.5
+        sc.guard_relearn(full, rows, train_fn, shipped)
+        east_out = [m for m in seen if id(marked) not in {id(e[0]) for e in m}]
+        self.assertEqual(len(east_out), 1)
+        self.assertEqual([id(e[0]) for e in east_out[0]], [id(other)])
+
+    def test_the_shipped_model_file_is_not_rewritten(self):
+        import hashlib
+        import re
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(here, "brand.py"), encoding="utf-8") as fh:
+            rel = re.search(r'^DEFAULT_MODEL = "([^"]+)"', fh.read(), re.M).group(1)
+        path = os.path.join(here, *rel.split("/"))
+        with open(path, "rb") as fh:
+            before = hashlib.sha256(fh.read()).hexdigest()
+        self.test_a_flipped_relearn_is_not_adopted_and_the_shipped_weights_stay()
+        with open(path, "rb") as fh:
+            after = hashlib.sha256(fh.read()).hexdigest()
+        self.assertEqual(before, after)
+
+
 if __name__ == "__main__":
     unittest.main()

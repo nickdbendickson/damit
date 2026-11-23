@@ -739,10 +739,12 @@ class ScoreFills(_Base):
         words = [w.strip() for w in (self.parameterAsString(params, "WORDS", context) or "dam").split(",")
                  if w.strip()]
         try:
+            model_file = self.parameterAsFile(params, "MODEL", context) or None
             res = finder.run_score(layers, out, positive_words=words or ["dam"],
-                                   model_in=self.parameterAsFile(params, "MODEL", context) or None,
+                                   model_in=model_file,
                                    kind=finder.SCORE_KINDS[self.parameterAsEnum(params, "KIND", context)],
                                    marks=self.parameterAsFile(params, "MARKS", context) or None,
+                                   guard=not model_file,
                                    log=self._log(feedback))
         except RuntimeError as e:
             raise QgsProcessingException(str(e))

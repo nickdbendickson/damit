@@ -32,7 +32,12 @@ FINDER 0.5 (version 2 models; version 1 models still score):
     trees of core/challenger.py on the same features and clean positives, in the same model
     file. Adopted for Finder 0.5 because it beat the logistic in 6 of the 7 held-out regions on
     the statewide tiles (the rule set beforehand: at least 5 of 7).
+
+FINDER 0.7.3: a relearned model is kept only when its mean ranked AUC on held-out regions is at
+least the shipped model's. The comparison is written on the model (held_out_adoption). The check
+does not replace the shipped file. Scoring with a model you give is unchanged.
 """
+import copy
 import json
 import math
 
@@ -496,3 +501,102 @@ def ranked_auc(scores, y):
         return float("nan")
     gt = (pos[:, None] > neg[None, :]).sum() + 0.5 * (pos[:, None] == neg[None, :]).sum()
     return float(gt) / (len(pos) * len(neg))
+
+
+# A relearned model is not adopted unless this holds. The check never writes the shipped file.
+RELEARN_RULE = (
+    "A relearned model is not adopted unless its mean ranked AUC on held-out regions is at least "
+    "the shipped model's. This check does not replace the shipped file.")
+_ADOPT_EPS = 1e-12
+
+
+def region_of_row(row):
+    """Held-out name of a fill: region, else held_out_region, else county, else its terrain group."""
+    for key in ("region", "held_out_region", "county"):
+        v = row.get(key)
+        if v is None:
+            continue
+        name = str(v).strip()
+        if name:
+            return name
+    return terrain_group(row) or ""
+
+
+def extras_for_rows(extra, rows):
+    """Trusted marks whose row object is in this fold (identity). A mark on a held-out row stays out."""
+    ids = {id(r) for r in rows}
+    return [e for e in (extra or []) if e and id(e[0]) in ids]
+
+
+def _auc_num(v):
+    if v is None or not math.isfinite(float(v)):
+        return None
+    return round(float(v), 6)
+
+
+def _refuse_relearn(full_model, shipped, comparison):
+    """The shipped weights, plus the comparison. The refused model's own cv_auc is not kept."""
+    comparison["adopted"] = False
+    if isinstance(full_model, dict) and "cv_auc" in full_model:
+        comparison["refused_cv_auc"] = full_model.get("cv_auc")
+    kept = copy.deepcopy(shipped)
+    kept["held_out_adoption"] = comparison
+    return kept
+
+
+def guard_relearn(full_model, rows, train, shipped, positive_words=("dam",)):
+    """Keep full_model only when a leave-one-region-out relearn ranks at least as well as shipped.
+
+    train(rest) learns from every row except one named region. That fold model and the shipped
+    model are both scored on the held-out rows (ranked AUC). Adopt only when the mean over regions
+    both can score is at least the shipped mean. Fewer than two named regions, or no region both
+    can score, is not an adoption. The returned model carries held_out_adoption. This check does
+    not replace the shipped file.
+    """
+    grouped = {}
+    for r in rows:
+        name = region_of_row(r)
+        if name:
+            grouped.setdefault(name, []).append(r)
+    comparison = {"rule": RELEARN_RULE, "regions": [], "adopted": False, "reason": ""}
+    if len(grouped) < 2:
+        comparison["reason"] = "fewer than 2 named regions"
+        return _refuse_relearn(full_model, shipped, comparison)
+    challenger, shipped_aucs, details = [], [], []
+    for name in sorted(grouped):
+        held = grouped[name]
+        rest = [r for r in rows if region_of_row(r) != name]
+        y = labels(held, positive_words)
+        if not (np.any(y > 0) and np.any(y == 0)):
+            details.append({"region": name, "n": len(held), "challenger_auc": None, "shipped_auc": None,
+                            "skipped": "held-out rows are not both classes"})
+            continue
+        try:
+            fold_model = train(rest)
+        except (ValueError, RuntimeError) as e:
+            details.append({"region": name, "n": len(held), "challenger_auc": None, "shipped_auc": None,
+                            "skipped": str(e)})
+            continue
+        c_auc = ranked_auc(score(fold_model, held), y)
+        s_auc = ranked_auc(score(shipped, held), y)
+        details.append({"region": name, "n": len(held), "challenger_auc": _auc_num(c_auc),
+                        "shipped_auc": _auc_num(s_auc)})
+        if math.isfinite(c_auc) and math.isfinite(s_auc):
+            challenger.append(float(c_auc))
+            shipped_aucs.append(float(s_auc))
+    comparison["regions"] = details
+    if not challenger:
+        comparison["reason"] = "no comparable region"
+        return _refuse_relearn(full_model, shipped, comparison)
+    mean_c = sum(challenger) / len(challenger)
+    mean_s = sum(shipped_aucs) / len(shipped_aucs)
+    comparison["mean_challenger_auc"] = round(mean_c, 6)
+    comparison["mean_shipped_auc"] = round(mean_s, 6)
+    comparison["n_compared"] = len(challenger)
+    if mean_c + _ADOPT_EPS >= mean_s:
+        comparison["adopted"] = True
+        comparison["reason"] = "mean held-out ranked AUC is at least the shipped model's"
+        full_model["held_out_adoption"] = comparison
+        return full_model
+    comparison["reason"] = "mean held-out ranked AUC is below the shipped model's"
+    return _refuse_relearn(full_model, shipped, comparison)

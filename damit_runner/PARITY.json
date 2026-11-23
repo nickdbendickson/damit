@@ -67,8 +67,9 @@
    "from": "DamSafety_Finder/core/ridges.py"
   },
   "damit_finder/core/score.py": {
-   "diff": "",
-   "from": "DamSafety_Finder/core/score.py"
+   "diff": "b90ca28445a6ee8e9d200610541f405d2c6031908deef31797d79f53092fdacd",
+   "from": "DamSafety_Finder/core/score.py",
+   "note": "B4: a relearned model is not adopted unless its mean ranked AUC on held-out regions is at least the shipped model's. The comparison is recorded on the model. This check does not replace the shipped file."
   },
   "damit_finder/core/storage.py": {
    "diff": "",
@@ -87,21 +88,23 @@
    "from": "DamSafety_Finder/core/water.py"
   },
   "damit_finder/finder.py": {
-   "diff": "3c19e6845b77a66ba5466f28b329513f1baba7408365d7b3e257d1d5ebf629dc",
+   "diff": "e93889e28422d77bd54ab7d5cfe45ef3d747ea09adcd4c4d2140c3229cd7a042",
    "from": "DamSafety_Finder/finder.py",
-   "note": "DamIT-only edit from damit #149 (GDAL handles released in check_dem_unit / warp_dem / write_hillshade; no number change), recorded in Runner 0.7.8."
+   "note": "DamIT-only edit from damit #149 (GDAL handles released in check_dem_unit / warp_dem / write_hillshade; no number change), recorded in Runner 0.7.8. B4: the score tool can refuse a relearned model that loses to the shipped model on held-out regions. Default scoring is unchanged."
   },
   "damit_finder/plugin.py": {
-   "diff": "",
-   "from": "DamSafety_Finder/plugin.py"
+   "diff": "c4ea25f74d43aa7da39802439a93636f0e4093e158075a83f4eeceebce337d83",
+   "from": "DamSafety_Finder/plugin.py",
+   "note": "B4: the score tool checks a relearned model against the shipped model on held-out regions before adopting it. Scoring with a given model is unchanged."
   },
   "damit_finder/tests/__init__.py": {
    "diff": "",
    "from": "DamSafety_Finder/tests/__init__.py"
   },
   "damit_finder/tests/test_core.py": {
-   "diff": "",
-   "from": "DamSafety_Finder/tests/test_core.py"
+   "diff": "8ad2f290c0ee958d5b0a72a3619b8bda0807a9b96ae0cc1a89fc343d0d9bc74e",
+   "from": "DamSafety_Finder/tests/test_core.py",
+   "note": "B4: a worse relearn is not adopted and the shipped weights stay. The shipped model file is not trained or rewritten. No QGIS."
   },
   "damit_finder/tests/test_finder.py": {
    "diff": "",
