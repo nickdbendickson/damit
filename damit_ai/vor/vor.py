@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vor.py v1.4.5 — local research assistant for dam-safety, dam-design and
+# vor.py v1.4.6 — local research assistant for dam-safety, dam-design and
 # flood-hazard publications. Runs on your Mac against Ollama; nothing leaves the machine.
 #
 # This is a RESEARCH ASSISTANT. Every statement it writes must be checked against
@@ -49,6 +49,9 @@
 #   OLLAMA_URL           http://127.0.0.1:11434
 #
 # 1.0.1: reads library.csv in every sub-folder of the library (fetch_asdso.py writes one per folder).
+# 1.4.6 (2026-11-23): a scanned original that an older version indexed under ~/DamResearch (before the
+#   library was renamed ~/Vor) is dropped by `vor ingest` when its OCR copy is the document. It matched no
+#   path, so it stayed "no longer has a file" in `vor doctor` and "file gone" in `vor tables` for good.
 # 1.4.5 (2026-11-23): `vor` on its own (or `vor help`) prints the short command list, and `vor WORDS` is
 #   `vor ask WORDS` (a first word that is not a command is a question). A new install with nothing in the
 #   library and no index is a WATCH in `vor doctor`, not a PROBLEM: nothing is missing yet. A PROBLEM is
@@ -116,7 +119,7 @@ import urllib.request, urllib.error, unicodedata
 from array import array
 from datetime import datetime, timedelta
 
-VERSION = "1.4.5"
+VERSION = "1.4.6"
 
 
 def _home():
@@ -1439,6 +1442,14 @@ def cmd_ingest(a):
                         delete_doc(db, by_path.pop(path)[0])
                         db.commit()
                         known.pop(h, None)
+                    elif h in known and known[h][0] is not None and not os.path.exists(known[h][1]):
+                        # 1.4.6: the same original indexed under a path that is gone (the library
+                        # was ~/DamResearch before 2026-11-13): no path matches it, so drop it by
+                        # its content, or it stays "no longer has a file" for good
+                        old_id, old_path = known.pop(h)
+                        delete_doc(db, old_id)
+                        by_path.pop(old_path, None)
+                        db.commit()
                     replaced += 1
                     continue
                 was = copy_from.get(_lib_rel(path))

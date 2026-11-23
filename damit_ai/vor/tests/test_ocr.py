@@ -169,6 +169,22 @@ class OcrThenIngestTest(Base):
         self.assertEqual(sorted(self.docs()), [os.path.join("_ocr", "scan.ocr.pdf"),
                                                os.path.join("reports", "plain.pdf")])
 
+    def test_an_original_indexed_under_the_old_folder_name_is_dropped(self):
+        """vor <= 1.3.0 indexed the original again under ~/DamResearch; the folder was then renamed
+        ~/Vor. That record's path no longer exists and matches no file by path, so the step above
+        never dropped it: it stayed "no longer has a file" and `vor tables` said "file gone"."""
+        self.ocr()
+        db = self.vor.connect()
+        old = os.path.join(self.tmp, "DamResearch", "library", "reports", "scan.pdf")
+        self.vor.ingest_one(db, self.scan, self.vor.sha1_of(self.scan), None, 1, 1)
+        db.execute("UPDATE docs SET path=? WHERE path=?", (old, self.scan))
+        db.commit()
+        db.close()
+        self.assertEqual(len(self.docs()), 3)                             # the old-name record is there
+        self.ingest()
+        self.assertEqual(sorted(self.docs()), [os.path.join("_ocr", "scan.ocr.pdf"),
+                                               os.path.join("reports", "plain.pdf")])
+
     def test_a_copy_made_before_the_record_existed_is_adopted(self):
         self.ocr()
         os.remove(os.path.join(self.lib, "_ocr", "ocr_sources.json"))
