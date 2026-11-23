@@ -185,6 +185,36 @@ class OcrThenIngestTest(Base):
         self.assertEqual(sorted(self.docs()), [os.path.join("_ocr", "scan.ocr.pdf"),
                                                os.path.join("reports", "plain.pdf")])
 
+    def test_an_old_name_original_with_no_file_anywhere_is_dropped_when_its_copy_is_indexed(self):
+        """Only the OCR copy came across to ~/Vor; the original is in no folder any more."""
+        self.ocr()
+        db = self.vor.connect()
+        old = os.path.join(self.tmp, "DamResearch", "library", "reports", "scan.pdf")
+        self.vor.ingest_one(db, self.scan, self.vor.sha1_of(self.scan), None, 1, 1)
+        db.execute("UPDATE docs SET path=? WHERE path=?", (old, self.scan))
+        db.commit()
+        db.close()
+        os.remove(self.scan)
+        self.assertEqual(len(self.docs()), 3)
+        self.ingest()
+        self.assertEqual(sorted(self.docs()), [os.path.join("_ocr", "scan.ocr.pdf"),
+                                               os.path.join("reports", "plain.pdf")])
+
+    def test_a_gone_original_whose_copy_is_not_indexed_is_kept(self):
+        """No indexed copy: the entry is the only text Vor has, so it stays (still answered from)."""
+        self.ocr()
+        db = self.vor.connect()
+        old = os.path.join(self.tmp, "DamResearch", "library", "reports", "scan.pdf")
+        self.vor.ingest_one(db, self.scan, self.vor.sha1_of(self.scan), None, 1, 1)
+        db.execute("UPDATE docs SET path=? WHERE path=?", (old, self.scan))
+        db.execute("DELETE FROM docs WHERE path LIKE ?", ("%scan.ocr.pdf",))
+        db.commit()
+        db.close()
+        os.remove(self.scan)
+        os.remove(os.path.join(self.lib, "_ocr", "scan.ocr.pdf"))
+        self.ingest()
+        self.assertIn(os.path.relpath(old, self.lib), self.docs())
+
     def test_a_copy_made_before_the_record_existed_is_adopted(self):
         self.ocr()
         os.remove(os.path.join(self.lib, "_ocr", "ocr_sources.json"))
