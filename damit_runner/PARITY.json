@@ -449,8 +449,9 @@
    "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 07ab314c (S7 crossing_barriers)."
   },
   "damit_runner/core/terrain.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/terrain.py"
+   "diff": "775d37dc6ddf05a897662cd77c96b3f374f72d98749b2ef181cac71e313252e1",
+   "from": "DamSafety_Runner/core/terrain.py",
+   "note": "Ported ahead of synced_to from DWR_Plugins facc89fe (#382, Runner 3.20.8): INFLOW_DEEP_FACTOR / INFLOW_DEEP."
   },
   "damit_runner/core/units.py": {
    "diff": "2e9d39beb135656b18f121981424401d80c90c6ffa21ee6896ee713275438d32",
@@ -473,9 +474,9 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "ca39c1e2018ca484a2010fc3587e4dc0870e29673f77ecc1eb1ceb4e0366acdf",
+   "diff": "42c1e1f2f555438326364561fc37a50651c5107ee1cf414c318446d0a017d471",
    "from": "DamSafety_Runner/core/workflow.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to"
+   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins facc89fe (#382, Runner 3.20.8): _inflow_depth_check."
   },
   "damit_runner/flood/breach.py": {
    "diff": "34ecff47b05f68842068a6b6c8fdb19b024a44d76543d1dba41ee83373db1b8c",

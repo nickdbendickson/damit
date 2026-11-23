@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.8.2: DamSafety #382 - CHECK THE INFLOW DEPTH warning when the automatic breach inflow is more than 1.3 x H below the top of dam (warning only, no number change).
 0.8.1: DamSafety #473 fix 1 - the pre-run LISFLOOD 1-second check skips the in-process engines (built-in, GPU, GPU-SGC) instead of starting engine.py as a program; no run or number change.
 0.8.0: the GPU engine with sub-grid channels (gpu-sgc) as a further engine choice; default unchanged
 0.7.16: metadata.txt percent signs escaped for QGIS (no code change)
@@ -85,7 +86,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"
