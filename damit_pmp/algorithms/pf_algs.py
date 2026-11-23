@@ -24,6 +24,7 @@ from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, Qgs
 from .. import _deps  # noqa: F401
 from .. import atlas14 as A
 from .. import gisgrid as G
+from .. import green_ampt as GA
 from .. import rainexport as R
 from .. import storm as S
 from .. import temporal as T
@@ -82,11 +83,28 @@ class _Base(QgsProcessingAlgorithm):
                                              DOUBLE, defaultValue=0.0, minValue=0.0),
                 QgsProcessingParameterEnum("LOSS_UNITS", "Loss units (initial loss in in or mm; constant loss in in/hr or mm/hr)",
                                            S.UNITS, defaultValue=0),
+                QgsProcessingParameterBoolean("GREEN_AMPT", "Green-Ampt loss instead of initial and constant "
+                                             "(off: the loss above is unchanged; on: excess rain uses Green-Ampt)",
+                                             defaultValue=False),
+                QgsProcessingParameterEnum("GA_TEXTURE", "Green-Ampt soil texture (Custom = the three values below)",
+                                           ["Custom"] + [n.title() for n in GA.GA_TEXTURE_NAMES], defaultValue=0),
+                QgsProcessingParameterNumber("GA_KS_IN_HR", "Green-Ampt Ks, inches per hour (Custom only)",
+                                             DOUBLE, defaultValue=0.1, minValue=0.0),
+                QgsProcessingParameterNumber("GA_SUCTION_IN", "Green-Ampt wetting-front suction, inches (Custom only)",
+                                             DOUBLE, defaultValue=4.0, minValue=0.0),
+                QgsProcessingParameterNumber("GA_DEFICIT", "Green-Ampt moisture deficit, fraction (Custom only)",
+                                             DOUBLE, defaultValue=0.3, minValue=0.0),
+                QgsProcessingParameterNumber("GA_INITIAL_SAT", "Green-Ampt initial saturation 0-1 (texture only)",
+                                             DOUBLE, defaultValue=0.0, minValue=0.0, maxValue=1.0),
+                QgsProcessingParameterNumber("GA_IMPERVIOUS", "Green-Ampt percent impervious",
+                                             DOUBLE, defaultValue=0.0, minValue=0.0, maxValue=100.0),
                 QgsProcessingParameterFile("CACHE_DIR", "Atlas 14 temporal-distribution download cache folder (empty = DamIT "
                                            "pfds_cache setting or next to the output)", behavior=FOLDER, optional=True),
                 QgsProcessingParameterBoolean("OFFLINE", "Offline (cached temporal files only)", defaultValue=False)]
         for d in defs:
-            if flag is not None and d.name() in ("QUARTILE", "PERCENT", "TDA", "CACHE_DIR", "OFFLINE"):
+            if flag is not None and d.name() in ("QUARTILE", "PERCENT", "TDA", "CACHE_DIR", "OFFLINE",
+                                                "GREEN_AMPT", "GA_TEXTURE", "GA_KS_IN_HR", "GA_SUCTION_IN",
+                                                "GA_DEFICIT", "GA_INITIAL_SAT", "GA_IMPERVIOUS"):
                 d.setFlags(d.flags() | flag)
             self.addParameter(d)
 
@@ -128,7 +146,18 @@ class _Base(QgsProcessingAlgorithm):
         return rows, pattern, rec, meta
 
     def _loss_table(self, P, context, rows, unit):
-        """(table [(t_end, gross, loss, excess)] or None, meta dict, summary dict) for INITIAL_LOSS / CONSTANT_LOSS."""
+        """(table [(t_end, gross, loss, excess)] or None, meta dict, summary dict).
+
+        GREEN_AMPT off (the default): initial and constant loss, and a run with both at 0 is unchanged.
+        GREEN_AMPT on: excess from Green-Ampt. That is the only path whose depths move.
+        """
+        use_ga = False
+        try:
+            use_ga = bool(self.parameterAsBool(P, "GREEN_AMPT", context))
+        except Exception:
+            use_ga = False
+        if use_ga:
+            return self._green_ampt_table(P, context, rows, unit)
         ia = self.parameterAsDouble(P, "INITIAL_LOSS", context)
         cl = self.parameterAsDouble(P, "CONSTANT_LOSS", context)
         if ia <= 0 and cl <= 0:
@@ -143,6 +172,46 @@ class _Base(QgsProcessingAlgorithm):
         summ.update({"initial_loss_{}".format(unit): round(ia_u, 4), "constant_loss_{}_per_hr".format(unit): round(cl_u, 4),
                      "method": "initial loss, then constant loss rate per time step (initial-and-constant loss)"})
         meta = {"loss_initial_" + unit: "{:g}".format(round(ia_u, 4)), "loss_constant_{}_hr".format(unit): "{:g}".format(round(cl_u, 4))}
+        return table, meta, summ
+
+    def _green_ampt_table(self, P, context, rows, unit):
+        if not rows:
+            return None, {}, None
+        to_in = 1.0 if unit == "in" else 1.0 / S.MM_PER_IN
+        times = [0.0] + [r[0] for r in rows]
+        steps = [times[i + 1] - times[i] for i in range(len(rows))]
+        if any(abs(s - steps[0]) > 1e-6 for s in steps):
+            raise QgsProcessingException("Green-Ampt needs equal time steps")
+        dt_hr = steps[0] / 60.0
+        precip_in = [float(r[1]) * to_in for r in rows]
+        tex = self.parameterAsEnum(P, "GA_TEXTURE", context)
+        ia = self.parameterAsDouble(P, "INITIAL_LOSS", context)
+        lu = S.UNITS[self.parameterAsEnum(P, "LOSS_UNITS", context)]
+        initial_in = S.to_unit(ia, lu, "in")
+        try:
+            if tex > 0:
+                ex, info = GA.apply_storm(precip_in, dt_hr, texture=GA.GA_TEXTURE_NAMES[tex - 1],
+                                          initial_saturation=self.parameterAsDouble(P, "GA_INITIAL_SAT", context),
+                                          initial_in=initial_in,
+                                          impervious_pct=self.parameterAsDouble(P, "GA_IMPERVIOUS", context))
+            else:
+                ex, info = GA.apply_storm(precip_in, dt_hr,
+                                          ks_in_hr=self.parameterAsDouble(P, "GA_KS_IN_HR", context),
+                                          suction_in=self.parameterAsDouble(P, "GA_SUCTION_IN", context),
+                                          moisture_deficit=self.parameterAsDouble(P, "GA_DEFICIT", context),
+                                          initial_in=initial_in,
+                                          impervious_pct=self.parameterAsDouble(P, "GA_IMPERVIOUS", context))
+        except GA.GreenAmptError as e:
+            raise QgsProcessingException(str(e))
+        table = []
+        for row, ex_in in zip(rows, ex):
+            excess = float(ex_in) / to_in
+            gross = float(row[1])
+            table.append((row[0], round(gross, 4), round(gross - excess, 4), round(excess, 4)))
+        summ = S.loss_summary(table, unit)
+        summ.update({"method": "Green-Ampt", "texture": info.get("loss_texture"),
+                     "param_status": info.get("loss_param_status", "custom values")})
+        meta = {"loss_method": "green_ampt", "loss_texture": info.get("loss_texture") or "custom"}
         return table, meta, summ
 
     def _pfds_params(self):

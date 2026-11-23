@@ -64,7 +64,7 @@ def _finder_version():
 
 
 FINDER_VERSION = _finder_version()
-PMP_VERSION = "0.4.10"          # DamIT PMP 0.4.10: metadata % escaped; 0.4.9: feet DEMs in watershed; 0.4.8: no process-wide GDAL exception switch; 0.4.7: temporal.py zip extract re-synced with DamSafety PMP; 0.4.6 (0.4.5): the Atlas 14 core shared byte-identical with DamSafety PMP (the others: Data 0.2.1, Core 0.3.1)
+PMP_VERSION = "0.4.11"          # DamIT PMP 0.4.11: optional Green-Ampt loss (off by default); 0.4.10: metadata % escaped; 0.4.9: feet DEMs in watershed
 DATA_VERSION = "0.2.2"          # DamIT Data 0.2.2: HPMS lower-case field names, GeoJSON paging; 0.2.1: an update that cannot replace an open folder says so
 HAZARDLITE_VERSION = "0.2.2"     # DamIT Hazard Lite 0.2.2: atomic result writes; 0.2.1: no process-wide gdal.UseExceptions() at import
 CORE_VERSION = "0.3.3"          # DamIT Core 0.3.3: shipped manning_n 0.05; 0.3.2: from_runner_method records Xu & Zhang runs; 0.3.1: http download_file closes its temp file and the HTTPError on a failed request

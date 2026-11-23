@@ -28,7 +28,7 @@ nice -n 19 $PY damit_hazard/tests/run_tests.py
 echo "== DamIT Core, Setup, Data, Hazard Lite, PMP: pure Python ($PY)"
 export DAMIT_SETTINGS="$SCRATCH/damit_settings.json"
 nice -n 19 $PY -m unittest -v damit_core.tests.test_core damit_setup.tests.test_setup damit_data.tests.test_data damit_data.tests.test_providers \
-    damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 tests.test_metadata_suite
+    damit_hazardlite.tests.test_engine damit_pmp.tests.test_atlas14 damit_pmp.tests.test_green_ampt tests.test_metadata_suite
 echo "== real QGIS, offscreen, scratch profile $QGIS_CUSTOM_CONFIG_PATH ($QPY)"
 nice -n 19 $QPY -m unittest -v tests.test_qgis_integration
 nice -n 19 $QPY damit_hazard/tests/run_tests.py qgis
