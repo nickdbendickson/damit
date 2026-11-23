@@ -601,8 +601,8 @@ def find_docs(db, key):
     return ids, labels
 
 
-_NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bulletin|Circular)[\s_-]*"
-                    r"(\d+(?:[.-]\d+)*)", re.I)
+_SERIES_WORDS = r"FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bulletin|Circular"
+_NAMED = re.compile(r"\b(%s)[\s_-]*(\d+(?:[.-]\d+)*)" % _SERIES_WORDS, re.I)
 
 
 _PAGE_NO = r"(?:[A-Z]-\d+|\d+(?:[-–]\d+)?|[ivxlc]+)\b"
@@ -834,12 +834,13 @@ def named_docs(db, question, spans=False, by_doc=False):
     1.4.9: by_doc=True returns {id: [the question's words that named it]}, only where those words name that one
     document plainly (see _plainly_named); the model is then told the passage is from the named publication."""
     q = _plain(question)
-    want = [(m.group(0), m.group(1), m.group(2)) for m in _NAMED.finditer(q)]
+    want = [(m.group(0), m.group(1), m.group(2), (re.match(r"[A-Za-z](?![A-Za-z])", q[m.end():]) or [""])[0])
+            for m in _NAMED.finditer(q)]                      # 1.4.9: the edition letter of '17C' too
     ids, labels, used = [], [], []
     strong = {}                                     # the question's words -> documents they name plainly
     if want or _citations(q):
         rows = db.execute("SELECT id, title, path, number, org FROM docs").fetchall() if want else []
-        for text, pfx, num in want:
+        for text, pfx, num, sfx in want:
             tight = squash(pfx + num)
             for r in rows:
                 raw = " ".join(x or "" for x in (os.path.basename(r[2] or ""), r[1], r[3], r[4]))
@@ -849,8 +850,8 @@ def named_docs(db, question, spans=False, by_doc=False):
                     ok = bool(re.search(r"(?<![\d.])%s(?![\d])" % re.escape(num), raw)) and squash(pfx) in sq
                 if ok:
                     used.append(text)
-                    if _plainly_named(text, pfx, num, raw):
-                        strong.setdefault(text, set()).add(r[0])
+                    if _plainly_named(text, pfx, num, raw, sfx):
+                        strong.setdefault(text + sfx, set()).add(r[0])
                     if r[0] not in ids:
                         ids.append(r[0])
                         labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
@@ -871,22 +872,35 @@ def named_docs(db, question, spans=False, by_doc=False):
     return ids[:6], labels[:6]
 
 
-def _plainly_named(text, pfx, num, raw):
+_SERIES = re.compile(r"(?<![A-Za-z0-9])(%s)[\s_.-]*$" % _SERIES_WORDS, re.I)   # a series prefix just before
+
+
+def _plainly_named(text, pfx, num, raw, sfx=""):
     """1.4.9: does 'FEMA P-946' / 'WSP 2339' in the question name this document plainly, and not by a loose match
-    (named_docs' own test only reorders the reading)? The independent review of 1.4.9 found loose matches that
+    (named_docs' own test only reorders the reading)? Two independent reviews of 1.4.9 found loose matches that
     would have been labelled as the named publication: 'P-94' in 'P-946', 'HDS-5' in 'HDS-51', 'Bulletin 17'
-    (B) in 'Bulletin 17C', 'p 10' (a page) in 'P-1025', 'FEMA 2013' (a year) in two FEMA documents.
-    The number must stand on its own in the file name, title or number (no digit or letter after it), and
-    neither a year nor a one-letter prefix written apart from its number counts."""
-    if re.fullmatch(r"(?:19|20)\d\d", num):
-        return False
-    if len(pfx) == 1 and (pfx.islower() or re.search(r"\s", text)):
-        return False
+    in 'Bulletin 17C' (and 17C in the 1976 'Bulletin 17'), 'p 10' (a page) in 'P-1025', 'FEMA 2013' (a year) in
+    two FEMA documents, 'ER 1110-2-1806' in 'EM_1110-2-1806.pdf' ('er' in 'Engineering').
+    The number, with the question's edition letter if it has one (sfx, '17C'), must stand on its own in the file
+    name, title or number, after the prefix as a word of its own, and not after another series' prefix."""
+    digits = re.sub(r"\D", "", num)
+    spaced = re.search(r"\s", text) is not None
+    if re.fullmatch(r"(?:19|20)\d\d", num) and pfx.upper() in ("FEMA", "HEC") and spaced:
+        return False                                  # 'FEMA 2013': a year, not FEMA P-2013
+    if len(pfx) == 1 and spaced and (pfx.islower() or len(digits) <= 2):
+        return False                                  # 'p 10', 'P 35': a page
     numpat = r"[._\s-]?".join(re.escape(g) for g in re.split(r"[.-]", num))
-    if re.search(r"(?<![A-Za-z0-9])%s[\s_.-]*%s(?![0-9A-Za-z])" % (re.escape(pfx), numpat), raw, re.I):
+    numpat += (r"[\s_-]?%s" % re.escape(sfx)) if sfx else ""
+    end = r"(?![0-9A-Za-z])"
+    if re.search(r"(?<![A-Za-z0-9])%s[\s_.-]*%s%s" % (re.escape(pfx), numpat, end), raw, re.I):
         return True
-    return (len(re.sub(r"\D", "", num)) >= 3 and squash(pfx) in squash(raw)
-            and re.search(r"(?<![A-Za-z0-9.])%s(?![0-9A-Za-z])" % numpat, raw) is not None)
+    if len(digits) < 3 or not re.search(r"(?<![A-Za-z0-9])%s(?![A-Za-z])" % re.escape(pfx), raw, re.I):
+        return False
+    for m in re.finditer(r"(?<![A-Za-z0-9.])%s%s" % (numpat, end), raw, re.I):
+        other = _SERIES.search(raw[:m.start()])
+        if not other or other.group(1).lower() == pfx.lower():
+            return True                               # 'FEMA ... 333_04.pdf', not 'EM_1110-2-1806' for ER
+    return False
 
 
 def merge_hits(first, rest, k):
@@ -1920,7 +1934,7 @@ def norm(s):
     return re.sub(r"\s+", " ", s).strip(" .,;:")
 
 
-_LEADERS = re.compile(r"(?: ?(?:_|\.(?!\d)) ?){3,}")
+_LEADERS = re.compile(r"\.{3,}(?=\d)|(?: ?(?:_|\.(?!\d)) ?){3,}")   # 'finish.........0.013', 'Sand ....... .025'
 
 
 def _no_leaders(s):
@@ -1934,7 +1948,7 @@ def quote_check(quote, source_txt):
     q, t = _no_leaders(norm(quote)), _no_leaders(norm(source_txt))
     if len(q) < 12:
         return "too short"
-    if q in t:
+    if re.search(r"(?<!\d)%s(?!\d)" % re.escape(q), t):     # 1.4.9: 'was 0.01' is not exact inside 'was 0.015'
         return "exact"
     sm = difflib.SequenceMatcher(None, q, t, autojunk=False)
     m = sum(b.size for b in sm.get_matching_blocks() if b.size >= 4)
@@ -1950,7 +1964,7 @@ def quote_check(quote, source_txt):
     return "not found"
 
 
-NUM = re.compile(r"(?<![\w.])\.?\d+(?:[.,]\d+)*")
+NUM = re.compile(r"(?<!\d)(?<!\d[.,])\.?\d+(?:[.,]\d+)*")     # 1.4.9: Q100, D_15, HMR51 read too
 
 
 def nums(s):

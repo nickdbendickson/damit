@@ -483,8 +483,6 @@ def pick_set(args, request, saved):
 def paths_for(args, set_name, saved):
     """dams / out / dem / id_field / dem_units: the flags, else the last ones used for this set."""
     have = dict(saved.get(set_name) or {})
-    if getattr(args, "no_screen", False):
-        have.pop("screen_work", None)               # --no-screen: Screening left out, and the folder forgotten
     for k in ("dams", "out", "dem", "id_field", "dem_units", "screen_work"):
         v = getattr(args, k, "") or ""
         if v and k in ("dams", "out", "dem", "screen_work"):
@@ -493,9 +491,9 @@ def paths_for(args, set_name, saved):
             v = os.path.abspath(os.path.expanduser(path)) + bar + rest
         if v:
             have[k] = v
-    if set_name != "dwr":
-        have.pop("screen_work", None)               # only the DamSafety chain has a Screening step
-    return have
+    if set_name != "dwr" or getattr(args, "no_screen", False):
+        have.pop("screen_work", None)               # --no-screen wins (as in damchain) and forgets the folder;
+    return have                                     # only the DamSafety chain has a Screening step
 
 
 def check_paths(set_name, p, ids, layer_ids, words=""):

@@ -568,6 +568,16 @@ class DwrScreeningTest(Case):
         self.assertEqual(code, 0, said)
         self.assertIn("--no-screen", self.calls[1])
 
+    def test_no_screen_wins_over_screen_work(self):
+        work = os.path.join(self.tmp, "screen")
+        os.makedirs(work)
+        code, said = self.dwr(["--no-screen", "--screen-work", work])
+        self.assertEqual(code, 0, said)
+        self.assertIn("--no-screen", self.calls[1])
+        self.assertNotIn("--screen-work", self.calls[1])
+        with open(HR.SAVED) as fh:
+            self.assertNotIn("screen_work", json.load(fh).get("dwr", {}))
+
     def test_screening_flags_with_the_damit_set_are_noted_and_not_saved(self):
         work = os.path.join(self.tmp, "screen")
         os.makedirs(work)

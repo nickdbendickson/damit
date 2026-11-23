@@ -217,6 +217,44 @@ class Plainly(unittest.TestCase):
         self.assertEqual(vor.named_docs(self.db, "What inflow design flood does FEMA P-94 recommend?")[0], [1, 2])
 
 
+class PlainlyRound2(unittest.TestCase):
+    """The second independent review of 1.4.9."""
+    DOCS = [(1, "Engineering and Design: Earthquake Design and Evaluation", "/l/EM_1110-2-1806.pdf", "", "USACE"),
+            (2, "Guidelines for Determining Flood Flow Frequency", "/l/Bulletin 17C.pdf", "", "USGS"),
+            (3, "Guidelines for Determining Flood Flow Frequency (1976)", "/l/Bulletin 17.pdf", "", "WRC"),
+            (4, "Example Application Guide", "/x/fema_p-2006.pdf", "", "FEMA"),
+            (5, "Inundation Mapping", "/lib/FEMA Federal Guidelines InundatnMap P946.pdf", "", "FEMA"),
+            (6, "Water Supply Paper", "/x/wsp_2006.pdf", "", "USGS")]
+
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(vor.SCHEMA)
+        self.db.executemany("INSERT INTO docs (id, title, path, number, org) VALUES (?,?,?,?,?)", self.DOCS)
+
+    def tearDown(self):
+        self.db.close()
+
+    def named(self, q):
+        return vor.named_docs(self.db, q, by_doc=True)
+
+    def test_another_series_with_the_same_number(self):
+        self.assertEqual(self.named("What does ER 1110-2-1806 require?"), {})
+        self.assertEqual(self.named("What does EM 1110-2-1806 require?"), {1: ["EM 1110-2-1806"]})
+
+    def test_the_edition_letter_in_the_question(self):
+        self.assertEqual(self.named("What does Bulletin 17C say about skew?"), {2: ["Bulletin 17C"]})
+        self.assertEqual(self.named("What does Bulletin 17B say about skew?"), {})
+        self.assertEqual(self.named("What did Bulletin 17 say?"), {3: ["Bulletin 17"]})
+
+    def test_a_report_number_that_looks_like_a_year(self):
+        self.assertEqual(list(self.named("What does FEMA P-2006 say about retrofit?")), [4])
+        self.assertEqual(list(self.named("What does WSP 2006 say?")), [6])
+
+    def test_lower_case_and_spaced_forms(self):
+        self.assertEqual(list(self.named("what does fema p-946 say about inundation?")), [5])
+        self.assertEqual(list(self.named("what does FEMA P 946 say about inundation?")), [5])
+
+
 class Checks(unittest.TestCase):
     PAGE = "Table 1\nConcrete ....... _ 0.012-0.018 0.011\nRock cut ....... .025\nSand ....... .3 .017"
 
@@ -224,6 +262,18 @@ class Checks(unittest.TestCase):
         for q in ("Concrete 0.012-0.018 0.011", "Concrete ....... _ 0.012-0.018 0.011", "Rock cut .025",
                   "Sand .3 .017"):
             self.assertEqual(vor.quote_check(q, self.PAGE), "exact", q)
+
+    def test_leaders_touching_the_number(self):
+        page = "Concrete, trowel finish.........0.013 for lined channels"
+        self.assertEqual(vor.quote_check("Concrete, trowel finish 0.013 for lined channels", page), "exact")
+        self.assertEqual(vor.quote_check("Concrete, trowel finish 0.015 for lined channels", page), "numbers differ")
+
+    def test_numbers_after_letters_and_inside_a_longer_number(self):
+        page = "ranges 1.0...2.0 for the Q100 peak and D_15 filters; roughness was 0.015 at the reach"
+        self.assertEqual(vor.quote_check("ranges 1.0...2.5 for the Q100 peak", page), "numbers differ")
+        self.assertEqual(vor.quote_check("ranges 1.0...2.0 for the Q500 peak", page), "numbers differ")
+        self.assertNotEqual(vor.quote_check("roughness was 0.01 at the reach", page), "exact")
+        self.assertEqual(vor.numbers_outside("the Q500 peak", "the Q100 peak", page), ["500"])
 
     def test_a_changed_number_without_a_leading_zero_is_caught(self):
         self.assertEqual(vor.quote_check("Sand .3 .018", self.PAGE), "numbers differ")
