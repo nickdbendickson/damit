@@ -31,6 +31,7 @@ TOOLS = [
     (os.path.join(HERE, "run_digest.py"), "heim-digest", "the deterministic run checks and the verdict (no model)"),
     (os.path.join(HERE, "heim_watch.py"), "heim-watch", "run the digest at each pass end and at run end"),
     (os.path.join(HERE, "run_results.py"), "heim runs  /  heim-runs", "dam-breach run results in a database: exact depth, velocity, arrival, peak flow"),
+    (os.path.join(HERE, "heim_run.py"), "heim run", "draft a damchain run from plain English: checked, shown, run only when you type y"),
     (os.path.join(HERE, "ai_ui.py"), "ai", "one local page (127.0.0.1 only) for asking Heim, Vor and the run results"),
     (os.path.join(HERE, "ai_doctor.py"), "ai-doctor", "both assistants' checks in one go, one summary line each"),
     (os.path.join(HERE, "ai_score.py"), "ai-score", "run both answer tests and keep a dated score history"),

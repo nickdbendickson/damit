@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-# rag_query.py v2.7 — query the RAG store, streaming output (stdlib only; numpy if present)
+# rag_query.py v2.8 — query the RAG store, streaming output (stdlib only; numpy if present)
 #
 #   rag_query.py "question"            one question, answered from the indexed documents
 #   rag_query.py -c standards "..."    from one collection
 #   rag_query.py --chat                a conversation: every question is looked up first
 #   rag_query.py runs ...              the run results database (run_results.py: heim runs)
 #
+# v2.8: `heim run "..."` drafts a damchain run (heim_run.py beside this file): it shows the
+#   command and runs nothing until you type y. "run ...?" (ending in ?) is still a question.
 # v2.7: at most PER_FILE (3) of the passages handed to the model come from one file, while other
 #   files have matches left. The first real-model test of v2.6 (2026-11-22) filled 7 of 10 places
 #   for the sunny-day question with ALGORITHM-HELP-DAMIT.md, a long generated page that mentions
@@ -509,6 +511,7 @@ The commands you will use (the rest: heim --help, heim runs --help, vor --help):
 
   heim "question"            ask about the suite's code, tools and known behaviours (cited)
   heim chat                  a conversation; drag a file or a run folder in to add it
+  heim run "run 2801 at 5 m"  draft a damchain run: shown, checked, run only when you type y
   heim runs add FOLDER       read finished runs, then:  heim runs show 2801 | at 2801 "Main St" |
                              compare 2801 | ask "how deep at County Road 26 for 2801?"
   vor ask "question"         an answer from your library of publications, every quote checked
@@ -577,9 +580,14 @@ def command_word(argv):
     flags, `chat` only alone, and `add` only when every word after it is a file or folder that
     exists (or there is none, which gets the usage line). "add a culvert to the run?" is a
     question; "doctor" on its own is not one."""
-    if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "help"):
+    if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "run", "help"):
         return None
     word, rest = argv[0], argv[1:]
+    if word == "run":
+        # v2.8: `heim run "..."` drafts a damchain run; "run times for ANUGA?" stays a question
+        if not rest or rest[0].startswith("-") or not " ".join(rest).rstrip().endswith("?"):
+            return ("heimrun", rest)
+        return None
     if word == "help" and not rest:
         print(HELP)
         sys.exit(0)
@@ -602,19 +610,25 @@ def command_word(argv):
 
 def main():
     word = command_word(sys.argv[1:])
-    if word and word[0] in ("index", "runs"):
+    if word and word[0] in ("index", "runs", "heimrun"):
         tool = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "rag_index.py" if word[0] == "index" else "run_results.py")
+                            {"index": "rag_index.py", "runs": "run_results.py", "heimrun": "heim_run.py"}[word[0]])
         if not os.path.exists(tool):
             sys.exit("ERROR: %s is missing; re-run the Heim installer" % tool)
         sys.stdout.flush()
+        if os.name == "nt":
+            # Windows has no real exec: os.execv starts a new process, ends this one (the console
+            # prompt comes back under `heim run`'s y question) and does not quote the arguments
+            import subprocess
+            sys.exit(subprocess.call([sys.executable, tool] + word[1]))   # nosec B603
         os.execv(sys.executable, [sys.executable, tool] + word[1])
     if word:
         sys.argv[1:] = word[1]
     ap = argparse.ArgumentParser(description="Ask Heim a question, answered from the indexed documents.",
                                  epilog="Also: heim doctor (is Heim reading what you think it is), "
                                         "heim add FILE ... (index a file), heim chat (a conversation), "
-                                        "heim runs ... (dam-breach run results: heim runs --help).")
+                                        "heim runs ... (dam-breach run results: heim runs --help), "
+                                        "heim run \"...\" (draft a damchain run: heim run --help).")
     ap.add_argument("-c", "--collection", default="all",
                     help="read one collection only (default: all of them)")
     ap.add_argument("-k", "--top-k", type=int, default=TOP_K, help="passages handed to the model per question")
