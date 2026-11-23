@@ -1,0 +1,6 @@
+# These run only in the step after scipy is installed. The tests call terrain
+# code that imports scipy.ndimage (the numpy-only step does not have scipy).
+test_inflow_depth  # scipy.ndimage in the inflow-depth pick
+test_dam_point_check  # scipy.ndimage in the dam-point terrain check
+test_inflow_side  # scipy.ndimage on the breach-inflow side
+test_dam_line_centre  # scipy.ndimage in the dam-line centre snap
