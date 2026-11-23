@@ -88,7 +88,7 @@ def _damit_report(folder, dem_path):
     files["DEM"] = dem
     settings["input_files"] = files
     settings.setdefault("cell_size_m", report.get("record_cell_m") or params.get("cell_m") or 10.0)
-    settings.setdefault("manning_n", params.get("manning") or 0.06)
+    settings.setdefault("manning_n", params.get("manning") or 0.05)
     inflow = (report.get("inflow_point") or {}).get("xy") or (report.get("inflow") or {}).get("xy")
     if inflow and not settings.get("breach_xy"):
         settings["breach_xy"] = list(inflow)
