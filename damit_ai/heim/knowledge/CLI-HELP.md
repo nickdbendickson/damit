@@ -140,7 +140,7 @@ Index folders (text+PDFs) into a named collection.
 
 ---
 
-## rag_query.py 2.6
+## rag_query.py 2.7
 
 Installed command: `heim  /  heim-query  /  heim-chat (with --chat)`. Ask Heim a question, or hold a conversation, answered from the index.
 

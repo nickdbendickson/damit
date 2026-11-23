@@ -1232,13 +1232,18 @@ SCRIPT_EOF_RAG_INDEX
 
   cat > "$LOCAL_AI/rag_query.py" << 'SCRIPT_EOF_RAG_QUERY'
 #!/usr/bin/env python3
-# rag_query.py v2.6 — query the RAG store, streaming output (stdlib only; numpy if present)
+# rag_query.py v2.7 — query the RAG store, streaming output (stdlib only; numpy if present)
 #
 #   rag_query.py "question"            one question, answered from the indexed documents
 #   rag_query.py -c standards "..."    from one collection
 #   rag_query.py --chat                a conversation: every question is looked up first
 #   rag_query.py runs ...              the run results database (run_results.py: heim runs)
 #
+# v2.7: at most PER_FILE (3) of the passages handed to the model come from one file, while other
+#   files have matches left. The first real-model test of v2.6 (2026-11-22) filled 7 of 10 places
+#   for the sunny-day question with ALGORITHM-HELP-DAMIT.md, a long generated page that mentions
+#   every DamIT word, and KNOWN-BEHAVIOURS.md (where the rule is written) was squeezed out.
+#   HEIM_PER_FILE=0 turns the limit off.
 # v2.6: search by meaning AND by exact words, fused by rank (as Vor does). A name such as
 #   ndbreach.rundam, STABILITY_RETRY_PCT or a function name is found by its word even where
 #   prose about the same topic is closer in meaning. Vectors stored as bytes (rag_index 2.9)
@@ -1281,6 +1286,7 @@ NUM_CTX = int(os.environ.get("HEIM_NUM_CTX", "16384"))
 TOP_K = 10
 POOL = 60                 # candidates taken from each of the two searches before fusing
 RRF_K = 60                # reciprocal-rank fusion constant (as Vor)
+PER_FILE = int(os.environ.get("HEIM_PER_FILE", "3"))   # most passages from one file (0 = no limit)
 FTS = "chunks_fts"
 STOP = set("""a an and are as at be by can could did do does for from has have how if in into is it its
 of on or should than that the their there these this those to was were what when where which who why
@@ -1458,7 +1464,8 @@ class Store(object):
         for lst in (by_meaning, by_words):
             for rank, i in enumerate(lst):
                 fused[i] = fused.get(i, 0.0) + 1.0 / (RRF_K + rank)
-        order = sorted(fused, key=lambda i: (-fused[i], -best[i]))[:top_k]
+        order = spread(sorted(fused, key=lambda i: (-fused[i], -best[i])),
+                       lambda i: tuple(self.rows[i][:2]), top_k, PER_FILE)
         return [(float(best[i]),) + tuple(self.rows[i]) for i in order]
 
     def lexical(self, queries, n):
@@ -1487,6 +1494,28 @@ class Store(object):
         finally:
             db.close()
         return [self.pos[r[0]] for r in got if r[0] in self.pos]
+
+
+def spread(order, key, top_k, per_file):
+    """The first top_k of `order` with at most per_file from any one key (a file), keeping the
+    order; places nobody else can fill go back to the skipped ones, so a question that only one
+    file answers still gets top_k passages. per_file 0 or less = the first top_k."""
+    if per_file <= 0:
+        return order[:top_k]
+    took, skipped, n = [], [], {}
+    for i in order:
+        if len(took) >= top_k:
+            break
+        k = key(i)
+        if n.get(k, 0) < per_file:
+            n[k] = n.get(k, 0) + 1
+            took.append(i)
+        else:
+            skipped.append(i)
+    if len(took) < top_k:
+        took += skipped[:top_k - len(took)]
+        took.sort(key=order.index)
+    return took
 
 
 def unpack_vec(v):
