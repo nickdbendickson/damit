@@ -527,8 +527,13 @@ if ($DoHeim -or $DoVor) {
   if ($Sandbox) { $ai.Prefix = $Sandbox }
   if ($OllamaPort) { $ai.OllamaPort = $OllamaPort }
   $env:Path = "$CondaBase\Scripts;$CondaBase\condabin;$env:Path"
-  try { & (Join-Path $Here 'damit_ai\install-local-ai-windows.ps1') @ai }
+  # the AI installer ends with `exit 0`, and a stop inside it is caught by its own trap and ends it with
+  # `exit 1` (which ends only that script here): read its exit code, not only a thrown error
+  $global:LASTEXITCODE = 0
+  try { & (Join-Path $Here 'damit_ai\install-local-ai-windows.ps1') @ai
+        if ($LASTEXITCODE -ne 0) { $AiOk = $false; Warn "local AI setup stopped (exit $LASTEXITCODE; see its ERROR above). The plugin sets are installed anyway. Re-run: damit_ai\install-local-ai-windows.ps1" } }
   catch { $AiOk = $false; Warn "local AI setup failed ($_); the plugin sets are installed anyway. Re-run: damit_ai\install-local-ai-windows.ps1" }
+  $global:LASTEXITCODE = 0
 }
 
 # ---------------------------------------------------------------------------

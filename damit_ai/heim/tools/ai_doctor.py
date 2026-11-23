@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ai_doctor.py 1.0.0 - both local assistants' checks in one go (the `ai-doctor` command).
+"""ai_doctor.py 1.1.0 - both local assistants' checks in one go (the `ai-doctor` command).
 
     ai-doctor              Heim's doctor, then Vor's, then one summary line for each
     ai-doctor --library    without Ollama (the indexes and folders only)
@@ -9,6 +9,11 @@ places to look. This runs both as they are (nothing is re-implemented, so the tw
 from it), shows their output, and ends with a line per assistant: OK, WATCH (something to look
 at) or PROBLEM (it answers from less than you think). Exit code 1 when either has a PROBLEM.
 An assistant that is not installed is said to be so, not counted as a problem.
+
+1.1.0: two more lines at the end. "Versions" names the version of each tool installed here (send it
+with a question about them), and "damchain" says whether the plugins can be run from a Terminal on
+this computer (conda, the ndqgis environment, qgis_process). The damchain line never changes the
+exit code: the assistants work without QGIS.
 """
 import argparse
 import os
@@ -28,6 +33,79 @@ def vor_command():
     py = os.environ.get("VOR_PYTHON") or next(
         (p for p in (os.path.join(d, "python"), os.path.join(d, "python.exe")) if os.path.isfile(p)), sys.executable)
     return [py, tool]
+
+
+TOOLS = (("heim", "rag_query.py"), ("heim-index", "rag_index.py"), ("heim run", "heim_run.py"),
+         ("damchain", "dam_chain.py"), ("heim runs", "run_results.py"), ("heim-watch", "heim_watch.py"),
+         ("ai", "ai_ui.py"), ("ai-doctor", "ai_doctor.py"))
+
+
+def tool_version(path):
+    """The version a tool states in its first lines (`v2.9` in the header or VERSION = "1.1.0"), or None."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(6000)
+    except OSError:
+        return None
+    m = re.search(r'^VERSION\s*=\s*["\']([\d.]+)["\']', head, re.M) or \
+        re.search(r"^(?:#|\"\"\")\s*\S+\.py\s+v?(\d+(?:\.\d+)+)\b", head, re.M)
+    return m.group(1) if m else None
+
+
+def versions():
+    """'heim 2.9, heim run 1.1.0, ...' for the tools installed beside this file, and Vor."""
+    out = []
+    for name, f in TOOLS:
+        v = tool_version(os.path.join(HERE, f))
+        if v:
+            out.append("%s %s" % (name, v))
+    vc = vor_command()
+    if vc:
+        v = tool_version(vc[1])
+        if v:
+            out.append("vor %s" % v)
+    return ", ".join(out) or "none found"
+
+
+def damchain_status():
+    """(ready, text): can damchain run the plugins here? Looks only; starts nothing but `conda info`."""
+    src = os.path.join(HERE, "dam_chain.py")
+    if not os.path.isfile(src):
+        return False, "not installed"
+    import importlib.util
+    try:
+        spec = importlib.util.spec_from_file_location("dam_chain_for_doctor", src)
+        dc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dc)
+        conda = dc.conda_exe()
+    except SystemExit:
+        if os.name == "nt":
+            return False, ("no conda on PATH here; run damchain from the Miniforge Prompt, where conda works "
+                           "(only needed for damchain)")
+        return False, "no conda found, so the plugins cannot be run from a Terminal here (only needed for damchain)"
+    except Exception as e:  # noqa: BLE001 - an older or broken copy: say so
+        return False, "could not be checked (%s)" % e
+    try:
+        prefix = dc.env_prefix(conda, "ndqgis")
+    except SystemExit:
+        return False, "conda is here, but no 'ndqgis' environment (QGIS): run the suite installer first"
+    except OSError as e:
+        return False, "conda could not be asked (%s)" % e
+    qp = dc.find_qgis_process(prefix)
+    if not os.path.isfile(qp) and os.name == "nt":
+        # a Windows conda env keeps it as Library\bin\qgis_process-qgis.bat (or .exe)
+        lib = os.path.join(prefix, "Library", "bin")
+        try:
+            hits = sorted(f for f in os.listdir(lib) if f.lower().startswith("qgis_process"))
+        except OSError:
+            hits = []
+        if not hits:
+            return False, ("the 'ndqgis' environment has no qgis_process in %s; damchain needs it on the "
+                           "environment's PATH" % lib)
+        qp = os.path.join(lib, hits[0])
+    if not os.path.isfile(qp):
+        return False, "the 'ndqgis' environment has no qgis_process in its bin folder (%s)" % prefix
+    return True, "ready: qgis_process in %s. Next: damchain setup, then damchain plugins --set damit" % prefix
 
 
 def run(name, cmd):
@@ -78,6 +156,9 @@ def main(argv=None):
         print("  %-5s %s" % (name, {"OK": "OK", "WATCH": "WATCH: something to look at, above",
                                      "PROBLEM": "PROBLEM: it answers from less than you think; the fix is above"}.get(v, v)))
         worst = max(worst, {"PROBLEM": 2, "WATCH": 1}.get(v, 0))
+    _ready, text = damchain_status()
+    print("  damchain: %s" % text)
+    print("  versions: %s" % versions())
     return 1 if worst == 2 else 0
 
 

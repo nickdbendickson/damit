@@ -940,7 +940,7 @@ def lower_priority(nice):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Heim as a DamIT run watcher: the code sets the verdict, Heim explains.")
+    ap = argparse.ArgumentParser(prog="heim-watch", description="Heim as a DamIT run watcher: the code sets the verdict, Heim explains.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p):

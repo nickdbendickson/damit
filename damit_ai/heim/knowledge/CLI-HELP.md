@@ -9,20 +9,20 @@ shell block can change it on a given machine. `~` stands for the user's home fol
 
 ---
 
-## dam_chain.py 1.5.3
+## dam_chain.py 1.6.1
 
 Installed command: `damchain`. Run the plugin chains headless; also `damchain vor ...` and `damchain audit ...`.
 
 ### `dam_chain.py`
 
-Run the ND and DamSafety dam plugins headless. `vor ...` runs the literature assistant (`research` is an alias); `audit ...` the local repo audit (audit --help).
+Run the ND, DamSafety and DamIT dam plugins headless. `vor ...` runs the literature assistant (`research` is an alias); `audit ...` the local repo audit (audit --help).
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
 | `--env` | ENV | `ndqgis` | conda env with QGIS (default ndqgis) |
 | `--qgis-process` | QGIS_PROCESS |  | path to qgis_process (default: found in the env) |
 | `--threads` | THREADS | `1` |  |
-| `--lisflood` | LISFLOOD | `~/dam-suite/bin/lisflood` | LISFLOOD-FP binary (missing = the plugins' own choice / built-in engine) |
+| `--lisflood` | LISFLOOD |  | LISFLOOD-FP binary (nd/dwr sets: default ~/dam-suite/bin/lisflood; damit set: passed only when given, and may be builtin, gpu or gpu-sgc) |
 | `--dry-run` |  |  | print the commands, run nothing |
 | `--quiet` |  |  | don't stream each step's progress lines to the terminal (the full log is still written) |
 
@@ -32,12 +32,13 @@ Run the ND and DamSafety dam plugins headless. `vor ...` runs the literature ass
 |---|---|---|---|
 | `--nd-profile` | ND_PROFILE |  |  |
 | `--dwr-profile` | DWR_PROFILE |  |  |
+| `--damit-profile` | DAMIT_PROFILE |  |  |
 
 #### `dam_chain.py plugins`
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
-| `--set` | one of `nd`, `dwr` |  |  **(required)** |
+| `--set` | one of `nd`, `dwr`, `damit` |  |  **(required)** |
 | `--selftest` |  |  |  |
 | `--log-dir` | LOG_DIR | `~/local-ai/reports` |  |
 
@@ -45,7 +46,7 @@ Run the ND and DamSafety dam plugins headless. `vor ...` runs the literature ass
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
-| `--set` | one of `nd`, `dwr` |  |  **(required)** |
+| `--set` | one of `nd`, `dwr`, `damit` |  |  **(required)** |
 | `--profile` | PROFILE |  |  |
 
 #### `dam_chain.py pack`
@@ -54,7 +55,7 @@ build/refresh the offline data pack into the data folder (opens the Updater)
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
-| `--set` | one of `nd`, `dwr` | `nd` |  |
+| `--set` | one of `nd`, `dwr`, `damit` | `nd` |  |
 | `--data-folder` | DATA_FOLDER |  | where the pack is built (default ~/ND_Suite_Data) |
 | `--profile` | PROFILE |  |  |
 | `--print-only` |  |  | print the steps, do not open QGIS |
@@ -65,7 +66,7 @@ open the Crest desk wired to one plugin set
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
-| `--set` | one of `nd`, `dwr` |  |  **(required)** |
+| `--set` | one of `nd`, `dwr`, `damit` |  |  **(required)** |
 | `--work` | WORK |  | Crest work folder (default ~/CrestDams/<set>) |
 | `--data-folder` | DATA_FOLDER |  | ND offline pack / suite data folder (NDSUITE_DATA) |
 | `--crest-dir` | CREST_DIR | `~/local-ai/crest-desktop` | the crest-desktop folder (default ~/local-ai/crest-desktop) |
@@ -83,7 +84,7 @@ open the Crest desk wired to one plugin set
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
-| `--set` | one of `nd`, `dwr` |  |  **(required)** |
+| `--set` | one of `nd`, `dwr`, `damit` |  |  **(required)** |
 | `--ids` | IDS |  | comma separated dam ids |
 | `--ids-csv` | IDS_CSV |  | CSV with a dam_id column |
 | `--no-screen` |  |  |  |
@@ -107,19 +108,23 @@ open the Crest desk wired to one plugin set
 | `--id-field` | ID_FIELD |  | dam id field of the layer |
 | `--out` | OUT |  | output folder, one folder per dam |
 | `--dem` | DEM |  | DEM or VRT covering every dam |
+| `--cell` | CELL |  | model cell size, metres (the Runner's CELL) |
+| `--solver` | one of `default`, `acc`, `fv2`, `mwdg2` |  | LISFLOOD-FP solver (the Runner's SOLVER) |
+| `--manning` | MANNING |  | Manning's n (the Runner's MANNING) |
+| `--workers` | WORKERS | `1` | damit: dams run side by side (WORKERS) |
 | `--screen-work` | SCREEN_WORK |  | Screening work folder (statewide run + data package) |
 | `--hec` | one of `run`, `wait`, `skip` | `skip` | HEC-RAS 2D stage (default skip: it cannot run on a Mac) |
 | `--anuga` |  |  | LISFLOOD-FP then ANUGA |
 | `--stop-after` | one of `end`, `screening`, `runner` | `end` |  |
 | `--settings-file` | SETTINGS_FILE |  |  |
 | `--overrides-csv` | OVERRIDES_CSV |  |  |
-| `--check-only` |  |  | preflight only |
+| `--check-only` |  |  | preflight only (damit: the checks, nothing run) |
 | `--dem-units` | one of `detect`, `feet`, `us-feet`, `meters` |  | the Runner's DEM elevation units (needed when the DEM records none, e.g. a VRT) |
-| `--runner-param` | RUNNER_PARAM |  | KEY=VALUE for the Runner (ndbreach:batch) |
+| `--runner-param` | RUNNER_PARAM |  | KEY=VALUE for the Runner (ndbreach:batch / damit_run:batch); names are checked |
 
 ---
 
-## rag_index.py 2.9
+## rag_index.py 2.9.1
 
 Installed command: `heim-index  (and heim-add = --add)`. Build Heim's document index.
 
@@ -140,7 +145,7 @@ Index folders (text+PDFs) into a named collection.
 
 ---
 
-## rag_query.py 2.7
+## rag_query.py 2.9
 
 Installed command: `heim  /  heim-query  /  heim-chat (with --chat)`. Ask Heim a question, or hold a conversation, answered from the index.
 
@@ -376,6 +381,28 @@ take a dam's runs out of the database
 
 ---
 
+## heim_run.py 1.1.0
+
+Installed command: `heim run`. Draft a damchain run from plain English: checked, shown, run only when you type y.
+
+### `heim_run.py`
+
+Heim drafts a damchain run from plain English. It only fills in dam ids, cell size, solver, Manning's n and redo; this code checks each one against your words and your dams layer, shows the command, and runs nothing until you type y.
+
+| Argument | Value | Default | Meaning |
+|---|---|---|---|
+| `request` | [REQUEST ...] |  | what to run, e.g. "run 2801 and 4031 at 5 m with FV2" |
+| `--set` | one of `damit`, `dwr` |  | plugin set (remembered) |
+| `--dams` | DAMS |  | dams points layer (remembered per set) |
+| `--out` | OUT |  | output folder, one folder per dam (remembered per set) |
+| `--dem` | DEM |  | DEM or VRT covering the dams (remembered per set) |
+| `--id-field` | ID_FIELD |  | dam id field of the layer (remembered per set) |
+| `--dem-units` | one of `detect`, `feet`, `us-feet`, `meters` |  | the DEM's elevation units (remembered per set) |
+| `--show` |  |  | show the command only; never run |
+| `--version` |  |  | show program's version number and exit |
+
+---
+
 ## ai_ui.py
 
 Installed command: `ai`. One local page (127.0.0.1 only) for asking Heim, Vor and the run results.
@@ -550,7 +577,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.4.4
+## vor.py 1.4.5
 
 Installed command: `vor`. The literature assistant.
 
