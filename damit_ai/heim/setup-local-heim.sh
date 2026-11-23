@@ -31,8 +31,10 @@
 #   - serve.log kept; PDF support is optional in the final checks.
 #   - Adds suite_check.py: runs the plugin tests, Breach Runner and crest
 #     in your conda envs and has the model explain failures.
-#   - Adds dam_chain.py: runs both plugin sets headless (self-tests, and
-#     Screening -> Runner -> Hazard for a list of dams).
+#   - Adds dam_chain.py: runs the plugin sets headless (self-tests, and
+#     Screening -> Runner -> Hazard for a list of dams; DamIT Runner batches).
+#   - Adds heim_run.py: `heim run "..."` drafts a damchain run, shows it, and
+#     runs it only when you type y.
 #
 # Managed Mac with Cortex XDR: an unsigned binary run from your home folder can
 # still be flagged. Ask IT first; do not try to get around it.
@@ -404,10 +406,12 @@ say "Step 6/10 — Python tools (written to ~/local-ai)"
 if [[ $REWRITE_SCRIPTS -eq 1 ]]; then
   cat > "$LOCAL_AI/rag_index.py" << 'SCRIPT_EOF_RAG_INDEX'
 #!/usr/bin/env python3
-# rag_index.py v2.9 — multi-collection RAG indexer (stdlib only)
+# rag_index.py v2.9.1 — multi-collection RAG indexer (stdlib only)
 # Atomic rebuilds via a hidden per-collection stage; auto-migrates v1 DBs;
 # PDF backends: pdftotext -> pymupdf -> pypdf -> skip.
 #
+# v2.9.1: messages name the installed commands (heim-index, not rag_index.py), and the doctor's
+#   "Ollama is not reachable" line says how to start it on this computer.
 # v2.9: vectors are stored as float32 bytes, not JSON text, and an exact-word index
 #   (SQLite FTS5, table chunks_fts) sits beside them. A JSON vector is ~16 KB of text, so a
 #   124,000-passage index held about 2 GB of it, and every `heim` question parsed all of it
@@ -473,6 +477,19 @@ _detected = [False]
 _pdftotext = [False]
 _pm = [None]
 _pp = [None]
+
+
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
 
 
 def _detect():
@@ -916,7 +933,7 @@ def add_files(paths):
         p = os.path.abspath(os.path.expanduser(p))
         name = os.path.basename(p)
         if os.path.isdir(p):
-            print("  folder, not added: %s\n    index a folder where it is: rag_index.py -c <name> %s" % (p, p))
+            print("  folder, not added: %s\n    index a folder where it is: heim-index -c <name> %s" % (p, p))
             continue
         if not os.path.isfile(p):
             print("  not found: %s" % p)
@@ -1154,7 +1171,7 @@ def doctor_checks(ollama=True):
                 else:
                     add("PROBLEM", "model %s is missing from Ollama: re-run the installer" % m_)
         except Exception as e:
-            add("PROBLEM", "Ollama is not reachable at %s (%s). Start it: heim-start" % (base, e))
+            add("PROBLEM", "Ollama is not reachable at %s (%s). To start it, %s" % (base, e, start_hint()))
     return out
 
 
@@ -1174,7 +1191,7 @@ def doctor(ollama=True):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Index folders (text+PDFs) into a named collection.")
+    ap = argparse.ArgumentParser(prog="heim-index", description="Index folders (text+PDFs) into a named collection.")
     ap.add_argument("-c", "--collection", default=None)
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--list-collections", action="store_true")
@@ -1209,8 +1226,8 @@ def main():
         list_collections()
         return
     if not args.paths:
-        sys.exit("usage: rag_index.py [-c NAME] <folder> ...\n  rag_index.py --add <file> ...\n"
-                 "  rag_index.py --list-collections")
+        sys.exit("usage: heim-index [-c NAME] <folder> ...\n  heim-add <file> ...\n"
+                 "  heim-index --list-collections")
     if args.add:
         if args.collection not in (None, ADDED):
             sys.exit("ERROR: --add always uses the collection '%s'; to index a folder into "
@@ -1232,13 +1249,20 @@ SCRIPT_EOF_RAG_INDEX
 
   cat > "$LOCAL_AI/rag_query.py" << 'SCRIPT_EOF_RAG_QUERY'
 #!/usr/bin/env python3
-# rag_query.py v2.7 — query the RAG store, streaming output (stdlib only; numpy if present)
+# rag_query.py v2.9 — query the RAG store, streaming output (stdlib only; numpy if present)
 #
 #   rag_query.py "question"            one question, answered from the indexed documents
 #   rag_query.py -c standards "..."    from one collection
 #   rag_query.py --chat                a conversation: every question is looked up first
 #   rag_query.py runs ...              the run results database (run_results.py: heim runs)
 #
+# v2.9: `heim` on its own (or `heim help`) prints the short command list instead of "no question
+#   given". When Ollama is not running, a model is missing or Ollama sends an error, the answer is one
+#   plain line that says what to do (ollama_problem), not a Python traceback; HEIM_DEBUG=1 shows the
+#   traceback. `heim run add FOLDER` / `heim run show 2801` (run_results words after `run`) say
+#   "did you mean heim runs ...". The usage lines name the installed commands (heim, heim-index).
+# v2.8: `heim run "..."` drafts a damchain run (heim_run.py beside this file): it shows the
+#   command and runs nothing until you type y. "run ...?" (ending in ?) is still a question.
 # v2.7: at most PER_FILE (3) of the passages handed to the model come from one file, while other
 #   files have matches left. The first real-model test of v2.6 (2026-11-22) filled 7 of 10 places
 #   for the sunny-day question with ALGORITHM-HELP-DAMIT.md, a long generated page that mentions
@@ -1362,6 +1386,61 @@ def ensure_ollama(base, log=print):
         time.sleep(0.5)
     log("Ollama did not answer within 30 s; see %s" % logf)
     return False
+
+
+def start_hint():
+    """How to start Ollama on this computer (heim-start exists only on a Mac install; the Linux installer
+    unpacks Ollama into ~/local-ai/ollama/bin, which is not on PATH)."""
+    if sys.platform == "darwin":
+        return "run heim-start in a Terminal tab of its own, or open the Ollama app"
+    if os.name == "nt":
+        return "open Ollama from the Start menu, or run  ollama serve  in another window"
+    own = os.path.join(os.path.expanduser("~"), "local-ai", "ollama", "bin", "ollama")
+    if os.path.isfile(own):
+        return "run  %s serve  in another terminal window" % own
+    return "run  ollama serve  in another terminal window"
+
+
+def ollama_problem(e, base=None):
+    """One plain line for a failed call to Ollama, or None when `e` is not one (then the traceback is a
+    real bug and is shown). The same function is in rag_query.py and run_results.py (a test keeps them
+    identical)."""
+    import socket
+    base = base or BASE
+    if type(e).__name__ == "OllamaError":
+        return "Ollama stopped with an error: %s" % " ".join(str(e).split())[:300]
+    if isinstance(e, urllib.error.HTTPError):
+        body = getattr(e, "heim_body", None)     # read once: a second call finds the stream empty
+        if body is None:
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 - the body is only for the message
+                body = ""
+            try:
+                e.heim_body = body
+            except AttributeError:
+                pass
+        try:
+            body = json.loads(body).get("error") or body
+        except (ValueError, AttributeError):
+            pass
+        m = re.search(r"model\s+['\"]?([^'\"\s]+)['\"]?\s+not\s+found", body, re.I)
+        if e.code == 404 or m:
+            name = m.group(1) if m else "the model this asks for"
+            if name.split(":")[0] in ("heim", "vor"):
+                fix = "the installer makes it: run the installer again (it keeps what is there)"
+            else:
+                fix = ("run the installer again (it fetches what is missing), or:  ollama pull %s" % name
+                       if m else "run the installer again")
+            return "Ollama has no model %s; %s. (ollama list shows what it has.)" % (name, fix)
+        return "Ollama answered with an error (HTTP %s): %s" % (e.code, " ".join(str(body).split())[:300])
+    if isinstance(e, (socket.timeout, TimeoutError)) or (
+            isinstance(e, urllib.error.URLError) and isinstance(e.reason, (socket.timeout, TimeoutError))):
+        return ("Ollama took too long to answer at %s. The model may still be loading or too big for this "
+                "computer: try again, or re-run the installer with --small (Windows: -Small)." % base)
+    if isinstance(e, urllib.error.URLError) or (isinstance(e, ConnectionError) and not isinstance(e, BrokenPipeError)):
+        return "Ollama is not answering at %s. To start it, %s; then try again." % (base, start_hint())
+    return None
 
 
 class Store(object):
@@ -1529,10 +1608,11 @@ def unpack_vec(v):
 
 def retrieve(q, coll, top_k):
     if not os.path.exists(DB):
-        sys.exit("No index at %s — run rag_index.py first." % DB)
+        sys.exit("No index at %s. Index the knowledge pack: heim-index -c heim_knowledge <folder> "
+                 "(the installer does this; ai-doctor checks it)." % DB)
     store = Store(coll)
     if not store.rows:
-        h = (" Collection '%s' empty — index it: rag_index.py -c %s <folder>" % (coll, coll)) if coll != "all" else ""
+        h = (" Collection '%s' empty — index it: heim-index -c %s <folder>" % (coll, coll)) if coll != "all" else ""
         sys.exit("Index is empty.%s" % h)
     slow_note(store)
     return store.search([q], top_k)
@@ -1551,6 +1631,10 @@ def chat_payload(prompt, stream, think=True):
     if think:
         p["think"] = True
     return p
+
+
+class OllamaError(RuntimeError):
+    """An error Ollama sent inside an answer (an out-of-memory, a model that failed to load)."""
 
 
 def stream_answer(prompt, think=True):
@@ -1577,7 +1661,7 @@ def stream_answer(prompt, think=True):
             except json.JSONDecodeError:
                 continue
             if ch.get("error"):
-                raise RuntimeError(ch["error"])
+                raise OllamaError(ch["error"])
             msg = ch.get("message") or {}
             if msg.get("thinking") and not thinking_shown:
                 sys.stdout.write("(thinking…)\n")
@@ -1619,7 +1703,7 @@ def answer(prompt):
         print("\n[interrupted]")
         return None
     except Exception as e:
-        print("[stream failed (%s) — non-streaming fallback]" % e)
+        print("[the streamed answer failed (%s); trying once without streaming]" % (ollama_problem(e) or e))
         out = post(BASE + "/api/chat", chat_payload(prompt, False, think=False))
         ans = (out.get("message") or {}).get("content") or ""
         print(ans)
@@ -1718,7 +1802,7 @@ def chat(coll, top_k, ask=input):
         try:
             hits = store.search([q] + ([earlier[0] + "\n" + q] if earlier else []), top_k)
         except Exception as e:
-            print("could not look that up: %s\n(is Ollama running? heim-start)" % e)
+            print("could not look that up: %s" % (ollama_problem(e) or e))
             continue
         if hits:
             print("Looked up %d passages:" % len(hits))
@@ -1730,7 +1814,14 @@ def chat(coll, top_k, ask=input):
             prompt = q if not earlier else ("Earlier question: %s\nEarlier answer: %s\n\nQuestion: %s"
                                             % (earlier[0], earlier[1][:1200], q))
         print("-" * 70)
-        ans = answer(prompt)
+        try:
+            ans = answer(prompt)
+        except Exception as e:  # noqa: BLE001 - Ollama down mid-chat: say so, keep the chat
+            msg = ollama_problem(e)
+            if msg is None:
+                raise
+            print(msg)
+            continue
         if ans is None:
             continue
         if ans.strip():
@@ -1742,6 +1833,7 @@ The commands you will use (the rest: heim --help, heim runs --help, vor --help):
 
   heim "question"            ask about the suite's code, tools and known behaviours (cited)
   heim chat                  a conversation; drag a file or a run folder in to add it
+  heim run "run 2801 at 5 m"  draft a damchain run: shown, checked, run only when you type y
   heim runs add FOLDER       read finished runs, then:  heim runs show 2801 | at 2801 "Main St" |
                              compare 2801 | ask "how deep at County Road 26 for 2801?"
   vor ask "question"         an answer from your library of publications, every quote checked
@@ -1750,7 +1842,7 @@ The commands you will use (the rest: heim --help, heim runs --help, vor --help):
   ai                         all of the above on one page in your browser (this computer only)
   ai-score                   run both answer tests and keep a dated score history
 
-Ollama is started for you when it is not running (heim-start still works).
+Ollama is started for you when it is not running.
 More: heim add FILE, heim doctor, heim-digest / heim-watch (run watcher), damchain, heim-index.
 """
 
@@ -1810,9 +1902,21 @@ def command_word(argv):
     flags, `chat` only alone, and `add` only when every word after it is a file or folder that
     exists (or there is none, which gets the usage line). "add a culvert to the run?" is a
     question; "doctor" on its own is not one."""
-    if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "help"):
+    if not argv or argv[0] not in ("doctor", "add", "chat", "runs", "run", "help"):
         return None
     word, rest = argv[0], argv[1:]
+    if (word == "run" and rest and rest[0].split()[:1] and rest[0].split()[0].lower() in RUNS_WORDS
+            and not " ".join(rest).rstrip().endswith("?")):
+        # v2.9: `heim run add FOLDER` is `heim runs add FOLDER` with a letter missing ("run ... ?" is
+        # still a question, below). The words are split, so `heim run "show 2801"` gives `heim runs show 2801`.
+        words = rest[0].split() + rest[1:]
+        sys.exit("Did you mean:  heim runs %s\n(heim runs reads finished runs and answers from them; heim run "
+                 "\"...\" drafts a new model run)" % " ".join(_shell_quote(w) for w in words))
+    if word == "run":
+        # v2.8: `heim run "..."` drafts a damchain run; "run times for ANUGA?" stays a question
+        if not rest or rest[0].startswith("-") or not " ".join(rest).rstrip().endswith("?"):
+            return ("heimrun", rest)
+        return None
     if word == "help" and not rest:
         print(HELP)
         sys.exit(0)
@@ -1833,21 +1937,56 @@ def command_word(argv):
     return None
 
 
+def _shell_quote(w):
+    """A word quoted for the shell the user types in: cmd.exe and PowerShell take "...", not '...'."""
+    if os.name == "nt":
+        return w if re.fullmatch(r"[\w@%+=:,./\\-]+", w) else '"%s"' % w.replace('"', '')
+    return shlex.quote(w)
+
+
+# words of `heim runs` (run_results.py) that never start a run request: `heim run add ...` gets "did you
+# mean". ("at" is left out: "run at 5 m ..." is a run request, and heim run refuses it with its reason.)
+RUNS_WORDS = ("add", "list", "show", "hydrograph", "compare", "ask", "sql", "schema", "forget")
+
+
 def main():
+    """v2.9: an Ollama that is not running, a missing model or an error from Ollama is one plain line,
+    not a traceback (HEIM_DEBUG=1 shows the traceback)."""
+    try:
+        _main()
+    except KeyboardInterrupt:
+        print("\n[interrupted]")
+        sys.exit(130)
+    except Exception as e:  # noqa: BLE001 - only Ollama failures are turned into a line
+        msg = ollama_problem(e)
+        if msg is None or os.environ.get("HEIM_DEBUG") == "1":
+            raise
+        sys.stdout.flush()
+        print("heim: " + msg, file=sys.stderr)
+        sys.exit(1)
+
+
+def _main():
     word = command_word(sys.argv[1:])
-    if word and word[0] in ("index", "runs"):
+    if word and word[0] in ("index", "runs", "heimrun"):
         tool = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "rag_index.py" if word[0] == "index" else "run_results.py")
+                            {"index": "rag_index.py", "runs": "run_results.py", "heimrun": "heim_run.py"}[word[0]])
         if not os.path.exists(tool):
             sys.exit("ERROR: %s is missing; re-run the Heim installer" % tool)
         sys.stdout.flush()
+        if os.name == "nt":
+            # Windows has no real exec: os.execv starts a new process, ends this one (the console
+            # prompt comes back under `heim run`'s y question) and does not quote the arguments
+            import subprocess
+            sys.exit(subprocess.call([sys.executable, tool] + word[1]))   # nosec B603
         os.execv(sys.executable, [sys.executable, tool] + word[1])
     if word:
         sys.argv[1:] = word[1]
-    ap = argparse.ArgumentParser(description="Ask Heim a question, answered from the indexed documents.",
+    ap = argparse.ArgumentParser(prog="heim", description="Ask Heim a question, answered from the indexed documents.",
                                  epilog="Also: heim doctor (is Heim reading what you think it is), "
                                         "heim add FILE ... (index a file), heim chat (a conversation), "
-                                        "heim runs ... (dam-breach run results: heim runs --help).")
+                                        "heim runs ... (dam-breach run results: heim runs --help), "
+                                        "heim run \"...\" (draft a damchain run: heim run --help).")
     ap.add_argument("-c", "--collection", default="all",
                     help="read one collection only (default: all of them)")
     ap.add_argument("-k", "--top-k", type=int, default=TOP_K, help="passages handed to the model per question")
@@ -1862,7 +2001,8 @@ def main():
         return
     q = " ".join(args.question).strip()
     if not q:
-        sys.exit("no question given")
+        print(HELP)            # v2.9: `heim` on its own: the short list, not "no question given"
+        return
     dams = run_question(q)
     if dams:
         answer_from_runs(q, dams)
@@ -2661,13 +2801,13 @@ SCRIPT_EOF_SUITE
 
   cat > "$LOCAL_AI/dam_chain.py" << 'SCRIPT_EOF_CHAIN'
 #!/usr/bin/env python3
-# dam_chain.py v1.5.3 — run both dam-plugin sets headless from Terminal (macOS, conda), stdlib only.
+# dam_chain.py v1.6.1 — run the dam-plugin sets headless from Terminal (conda), stdlib only.
 #
 #   dam_chain.py setup                       one-time: batch profiles that point at your QGIS
-#                                            profiles "nd" and "damsafety", plugins enabled
-#   dam_chain.py plugins --set nd|dwr        load every plugin of the set, check the chain's
+#                                            profiles "nd", "damsafety" and "damit", plugins enabled
+#   dam_chain.py plugins --set nd|dwr|damit  load every plugin of the set, check the chain's
 #                                            algorithms are there, run the self-tests
-#   dam_chain.py open --set nd|dwr           open QGIS (GUI) with that set's profile
+#   dam_chain.py open --set nd|dwr|damit     open QGIS (GUI) with that set's profile
 #   dam_chain.py seed --dams-folder D --csv dams.csv
 #                                            make <D>/<dam_id>/dam.json for each row (never overwrites)
 #   dam_chain.py run --set nd  --dams-folder D --ids DWR-2801,DWR-4031
@@ -2684,6 +2824,16 @@ SCRIPT_EOF_SUITE
 #   dam_chain.py run --set dwr --dams LAYER --ids 2801,4031 --out D --dem DEM --screen-work W
 #                                            the DamSafety Runner's own list chain
 #                                            (ndbreach:chainbatch: Screening -> Runner -> Hazard)
+#   dam_chain.py run --set damit --dams LAYER --ids A,B --out D --dem DEM [--cell 5 --solver fv2]
+#                                            DamIT Runner breach runs for a dams layer
+#                                            (damit_run:batch; DamIT Hazard has no batch classifier
+#                                            yet). Checks first: files, the dam ids in the layer,
+#                                            and every option name against the installed Runner.
+#   --cell / --solver / --manning / --runner-param KEY=VALUE (and, for the damit set, --param) are
+#   checked against the Runner's own parameter list (qgis_process help) before anything runs; an
+#   enum takes its option text (--runner-param SCENARIO=sunny) or its number; text that fits two
+#   options is refused. --check-only runs only those checks. The damit set passes --lisflood only
+#   when you give it (a binary, or builtin / gpu / gpu-sgc); otherwise the Runner's setting is used.
 #   dam_chain.py vor ask|research|search|ingest|chat|list ...
 #                                            the literature research assistant (vor, a
 #                                            separate model and library from heim); same as typing
@@ -2697,13 +2847,25 @@ SCRIPT_EOF_SUITE
 #                                            set's plugins, in ~/CrestDams/<set>
 #
 # Every run goes through qgis_process in the conda env (ndqgis), with the set's own QGIS
-# profile, so ND and DamSafety never load together (they share Processing ids).
+# profile, so ND, DamSafety and DamIT never load together (they share Processing ids).
+# v1.6.0 (2026-11-23): the DamIT set (--set damit, profile "damit"), the QGIS profiles folder
+# of Linux and Windows as well as macOS, and option names checked before a run.
+# v1.6.1: a wrong path is said before conda or QGIS is looked for; after a run, each dam's result
+# folder and the `heim runs add` line that reads them into Heim.
 # --dry-run prints the commands without running them. Logs: <dams folder>/_chain_logs/.
 import os, sys, re, csv, json, time, shutil, argparse, subprocess, threading, urllib.request, urllib.error
 from datetime import datetime
 
-QGIS_PROFILES = os.path.expanduser(os.environ.get("DAMCHAIN_QGIS_PROFILES",
-                                   "~/Library/Application Support/QGIS/QGIS3/profiles"))
+def _default_profiles():
+    """Where QGIS keeps its profiles on this computer (the installers use the same folders)."""
+    if sys.platform == "darwin":
+        return "~/Library/Application Support/QGIS/QGIS3/profiles"
+    if os.name == "nt":
+        return os.path.join(os.environ.get("APPDATA", "~"), "QGIS", "QGIS3", "profiles")
+    return "~/.local/share/QGIS/QGIS3/profiles"
+
+
+QGIS_PROFILES = os.path.expanduser(os.environ.get("DAMCHAIN_QGIS_PROFILES", _default_profiles()))
 BATCH_ROOT = os.path.expanduser(os.environ.get("DAMCHAIN_BATCH_ROOT", "~/local-ai/qgis-batch"))
 CREST_DIR = os.path.expanduser(os.environ.get("DAMCHAIN_CREST_DIR", "~/local-ai/crest-desktop"))
 
@@ -2723,7 +2885,20 @@ SETS = {
                         "DamSafety_PMP"],
             "needs": ["ndbreach:chainbatch", "nddam:runchain", "ndbreach:batch",
                       "ndhazard:classify", "ndbreach:selftest", "nddam:selftest"]},
+    # v1.6.0: DamIT (the national suite). No self-test tools: `plugins --selftest` runs damit_run:check.
+    "damit": {"profile": "damit", "runner": "damit_runner",
+              "plugins": ["damit_core", "damit_catalog", "damit_setup", "damit_data", "damit_screener",
+                          "damit_runner", "damit_hazard", "damit_hazardlite", "damit_pmp", "damit_finder"],
+              "needs": ["damit_run:batch", "damit_run:rundam", "damit_run:check", "damit_run:checkhandoff",
+                        "damit_screen:preflight", "damit_screen:runchain", "damit:classify"]},
 }
+# The Runner tool whose options --cell / --solver / --manning / --runner-param set, per set.
+RUNNER_ALG = {"dwr": "ndbreach:batch", "damit": "damit_run:batch"}
+SOLVER_WORDS = ("default", "acc", "fv2", "mwdg2")
+# --lisflood may name the DamIT Runner's in-process engines instead of a binary (damit_runner/core/lisflood.py)
+DAMIT_ENGINE_WORDS = ("builtin", "built-in", "built in", "internal", "gpu", "metal", "gpu engine", "metalflood",
+                      "gpu-sgc", "metal-sgc", "sgc", "boann-sgc", "gpu sgc", "subgrid channels",
+                      "sub-grid channels")
 DWR_HEC = {"run": 0, "wait": 1, "skip": 2}
 DWR_STOP = {"end": 0, "screening": 1, "runner": 2}
 DEM_UNITS = {"detect": 0, "feet": 1, "us-feet": 2, "meters": 3}
@@ -2791,6 +2966,19 @@ class QP:
         if not self.dry:
             self._pick_anuga()
         lis = os.path.expanduser(args.lisflood or "")
+        if set_name == "damit" and not getattr(args, "lisflood_given", True):
+            # The DamIT Runner's own engine setting decides. The suite's binary goes only in
+            # DAMIT_LISFLOOD, which the Runner reads after its saved settings, when it searches for a
+            # build (data_conventions.lisflood_candidates), so a setting chosen in QGIS still wins.
+            # Only for the older ~/nd-dam-suite build, and only when the Runner's own search (its
+            # DAMSUITE_PREFIX or ~/dam-suite bin, then PATH) would find nothing ahead of it.
+            sp = self.env.get("DAMSUITE_PREFIX", "").strip()
+            ahead = [os.path.join(r, "bin", x) for r in (sp, os.path.expanduser("~/dam-suite")) if r
+                     for x in ("lisflood", "lisflood.exe")]
+            if lis and os.path.isfile(lis) and not any(os.path.isfile(x) for x in ahead) \
+                    and not shutil.which("lisflood", path=self.env.get("PATH")):
+                self.env.setdefault("DAMIT_LISFLOOD", lis)
+            lis = ""
         if lis and os.path.isfile(lis):
             # Also read by tools that get no EXE parameter (DamSafety Screening's self-test before 0.18.5).
             self.env["NDBREACH_LISFLOOD"] = lis
@@ -2927,6 +3115,14 @@ def _q(s):
     return s if re.fullmatch(r"[\w@%+=:,./-]+", s) else "'" + s.replace("'", "'\\''") + "'"
 
 
+def _paste(s):
+    """A path for a line the user copies into THEIR shell: double quotes on Windows (cmd and
+    PowerShell both read them), _q's single quotes elsewhere. _q stays for the POSIX wrappers."""
+    if os.name == "nt":
+        return subprocess.list2cmdline([str(s)])
+    return _q(s)
+
+
 def _heim_chat(prompt, timeout=1800):
     """Ask the local Ollama model once; return its text (thinking stripped). Raises on transport error."""
     payload = {"model": HEIM_MODEL, "messages": [{"role": "user", "content": prompt}],
@@ -3033,7 +3229,7 @@ def write_atomic(path, text):
 def cmd_setup(args):
     """~/local-ai/qgis-batch/<set>/profiles/default -> your real QGIS profile, plugins enabled."""
     for set_name, spec in SETS.items():
-        prof = getattr(args, "%s_profile" % set_name) or spec["profile"]
+        prof = getattr(args, "%s_profile" % set_name, "") or spec["profile"]
         real = os.path.join(QGIS_PROFILES, prof)
         link_dir = os.path.join(BATCH_ROOT, set_name, "profiles")
         link = os.path.join(link_dir, "default")
@@ -3048,10 +3244,20 @@ def cmd_setup(args):
         os.symlink(real, link)
         print("%s: batch profile -> %s" % (set_name, real))
         qp = QP(args, set_name)
+        failed = []
         for p in spec["plugins"]:
             if os.path.isdir(os.path.join(real, "python", "plugins", p)):
-                qp.plain("plugins", "enable", p)
-        print("   plugins enabled for qgis_process")
+                rc, out = qp.plain("plugins", "enable", p)
+                # rc 1 also means "already enabled" or "no Processing provider" (damit_core); only a
+                # qgis_process that could not start at all (126/127, a crash) is a failure here
+                if rc not in (0, 1) and not args.dry_run:
+                    failed.append(p)
+        if failed:
+            print("   ! qgis_process could not start to enable %s. Is QGIS installed in the conda "
+                  "environment '%s'?" % (", ".join(failed), args.env))
+        else:
+            print("   plugins enabled for qgis_process; `dam_chain.py plugins --set %s` checks the tools"
+                  % set_name)
 
 
 def cmd_plugins(args):
@@ -3069,13 +3275,32 @@ def cmd_plugins(args):
                     have.add(alg)
         for alg in spec["needs"]:
             print("  %-4s %s" % ("ok" if alg in have else "MISSING", alg))
-        providers = sorted({a.split(":")[0] for a in have if a.split(":")[0].startswith("nd")})
+        providers = sorted({a.split(":")[0] for a in have
+                            if a.split(":")[0].startswith(("nd", "damit"))})
         print("  providers loaded: %s" % ", ".join(providers))
         missing = [a for a in spec["needs"] if a not in have]
         if missing:
             print("  -> run `dam_chain.py setup`, and check the plugins are installed in profile '%s'"
                   % spec["profile"])
-    if args.selftest:
+    if args.selftest and args.set == "damit":
+        # DamIT has no self-test tools; damit_run:check runs LISFLOOD-FP on a tiny channel and imports ANUGA.
+        logs = os.path.join(os.path.expanduser(args.log_dir), "selftest_%s_%s" % (args.set, _stamp()))
+        # checks the engine the DamIT Runner is set to use, unless --lisflood names another
+        lis = os.path.expanduser(args.lisflood or "") if getattr(args, "lisflood_given", True) else ""
+        p = {}
+        if os.path.isfile(lis) or lis.strip().lower() in DAMIT_ENGINE_WORDS:
+            p["LISFLOOD_EXE"] = lis
+        if qp.anuga_py:
+            p["ANUGA_PYTHON"] = qp.anuga_py
+        ok, res, err = qp.run("damit_run:check", p, os.path.join(logs, "damit_run_check.log"), timeout=1800)
+        result = res.get("RESULT") or ""
+        # the check finishes (exit 0) even when LISFLOOD-FP is missing; its lines say OK or PROBLEM
+        ok = ok and bool(result) and not any(ln.startswith("PROBLEM") for ln in result.splitlines())
+        if not args.dry_run:
+            print("  %-4s %s  %s" % ("PASS" if ok else "FAIL", "damit_run:check", result or err))
+        if not args.dry_run:
+            print("  logs: %s" % logs)
+    elif args.selftest:
         logs = os.path.join(os.path.expanduser(args.log_dir), "selftest_%s_%s" % (args.set, _stamp()))
         lis = os.path.expanduser(args.lisflood)
         # ND Screening takes the step-7 cell in feet (CELL_FT), DamSafety Screening in metres (CELL).
@@ -3315,7 +3540,10 @@ def run_dwr(args):
     p.update(parse_kv(args.param))
     # Per-tool settings (e.g. the Runner's DEM units) reach chainbatch only through the
     # settings file or an overrides CSV; write the overrides CSV for the listed dams.
-    tool_kv = {"ndbreach.batch.%s" % k: v for k, v in parse_kv(args.runner_param).items()}
+    runner_kv = runner_settings(args)
+    if runner_kv and not args.dry_run:
+        runner_kv = check_runner_params(QP(args, "dwr"), RUNNER_ALG["dwr"], runner_kv)
+    tool_kv = {"ndbreach.batch.%s" % k: v for k, v in runner_kv.items()}
     tool_kv.update({"ndhazard.classify.%s" % k: v for k, v in parse_kv(args.classify_param).items()})
     if args.dem_units:
         tool_kv["ndbreach.batch.DEM_Z"] = DEM_UNITS[args.dem_units]
@@ -3353,9 +3581,324 @@ def run_dwr(args):
     print("log: %s" % log)
     if res.get("SUMMARY"):
         print("summary: %s" % res["SUMMARY"])
+    if ok and not args.check_only:
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(p["OUT_FOLDER"]))
     if not ok and getattr(args, "triage", False):
         triage_failure("DamSafety chain", err or counts, log, os.path.dirname(log))
     sys.exit(0 if ok else 1)
+
+
+def runner_settings(args):
+    """--runner-param KEY=VALUE plus the named options (--cell, --solver, --manning), which win."""
+    kv = parse_kv(getattr(args, "runner_param", None))
+    if getattr(args, "cell", None) is not None:
+        kv["CELL"] = _num_text(args.cell)
+    if getattr(args, "manning", None) is not None:
+        kv["MANNING"] = _num_text(args.manning)
+    if getattr(args, "solver", ""):
+        kv["SOLVER"] = args.solver
+    return kv
+
+
+def _num_text(x):
+    return ("%.6f" % x).rstrip("0").rstrip(".") if isinstance(x, float) else str(x)
+
+
+def tool_params(qp, alg):
+    """{name: definition} of a Processing tool, from `qgis_process --json help` (QGIS 3.22+).
+    None when it cannot be read (an older QGIS, or the tool is not installed)."""
+    rc, out = qp.plain("--json", "help", alg)
+    if rc != 0:
+        return None
+    m = re.search(r"^\{", out or "", re.M)          # warnings may come first
+    if not m:
+        return None
+    try:
+        return json.loads(out[m.start():]).get("parameters") or None
+    except ValueError:
+        try:                                          # anything after the JSON block
+            return json.JSONDecoder().raw_decode(out[m.start():])[0].get("parameters") or None
+        except ValueError:
+            return None
+
+
+def enum_value(name, value, options):
+    """An enum option given by its number or by its text ('fv2' -> the 'FV2 ...' option's number).
+    Returns (number text, None) or (None, the reason)."""
+    opts = {str(k): str(v) for k, v in (options or {}).items()}
+    v = str(value).strip()
+    if v in opts:
+        return v, None
+    low = v.lower()
+    exact = [k for k, t in opts.items() if t.lower() == low]
+    if len(exact) == 1:
+        return exact[0], None
+    # the start of an option's text ('sunny' -> 'Sunny day: ...'), then a whole word anywhere in it
+    # ('fv2' -> 'FV2 (finite volume)'); text that fits more than one option is refused, never guessed
+    # A value with a digit (fv2, dg2) is a code: only the start of an option counts, so 'dg2' is not
+    # read as the 'MWDG2 (... DG2 ...)' option the Runner offers instead of DG2.
+    anywhere = [] if re.search(r"\d", low) and not re.search(r"\s", low) else [k for k, t in opts.items()
+                                                  if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(low),
+                                                               t.lower())]
+    for hits in ([k for k, t in opts.items() if re.match(r"%s(?![a-z0-9])" % re.escape(low), t.lower())],
+                 anywhere):
+        if len(hits) == 1:
+            return hits[0], None
+        if len(hits) > 1:
+            break
+    return None, "%s=%s is not one of its options: %s" % (
+        name, value, "; ".join("%s = %s" % (k, t) for k, t in sorted(opts.items(), key=lambda x: int(x[0]))))
+
+
+def check_runner_params(qp, alg, kv):
+    """v1.6.0: every KEY must be a real parameter of the Runner tool, and an enum's text is turned
+    into its number. A wrong name is refused here, before anything runs: the tool itself would
+    ignore it and the run would quietly use the default. Exits with the reasons."""
+    defs = tool_params(qp, alg)
+    if defs is None:
+        sys.exit("cannot read the options of %s (qgis_process --json help %s failed): is the set "
+                 "installed and `dam_chain.py setup` done? Nothing was run." % (alg, alg))
+    out, bad = {}, []
+    for k, v in kv.items():
+        d = defs.get(k)
+        if d is None:
+            near = [n for n in defs if k.lower() in n.lower() or n.lower() in k.lower()]
+            bad.append("%s is not an option of %s%s" % (k, alg, (" (did you mean %s?)" % ", ".join(sorted(near)[:4]))
+                                                       if near else ""))
+            continue
+        opts = d.get("available_options")
+        if opts:
+            n, why = enum_value(k, v, opts)
+            if why:
+                bad.append(why)
+                continue
+            out[k] = n
+        else:
+            out[k] = v
+    if bad:
+        sys.exit("Not run:\n  " + "\n  ".join(bad))
+    return out
+
+
+def layer_ids(path, field=""):
+    """The dam ids in a dams layer, stdlib only: a GeoPackage (first feature table, or
+    'file.gpkg|layername=x') or a CSV. Returns (field, set of ids), or (None, None) when the
+    format cannot be read here (the Runner still reads it)."""
+    src, _, rest = path.partition("|")
+    key, _, layer = rest.partition("=")
+    if rest and key.strip().lower() != "layername":
+        return None, None              # e.g. |layerid=1: OGR's order is not read here; the Runner reads it
+    src = os.path.expanduser(src)
+    ext = os.path.splitext(src)[1].lower()
+    try:
+        if ext == ".gpkg":
+            import sqlite3
+            con = sqlite3.connect("file:%s?mode=ro&immutable=1" % src.replace("?", "%3f"), uri=True)
+            try:
+                tables = [r[0] for r in con.execute(
+                    "SELECT table_name FROM gpkg_contents WHERE data_type = 'features'")]
+                if layer:
+                    table = next((t for t in tables if t.lower() == layer.strip().lower()), "")
+                else:
+                    table = tables[0] if len(tables) == 1 else ""      # several layers: name one
+                if not table:
+                    return None, None
+                cols = [r[1] for r in con.execute('PRAGMA table_info("%s")' % table.replace('"', '""'))]
+                col = _id_field(cols, field)
+                if not col:
+                    return None, None
+                vals = {str(r[0]).strip() for r in con.execute('SELECT "%s" FROM "%s"' % (
+                    col.replace('"', '""'), table.replace('"', '""'))) if r[0] is not None}
+                return col, vals
+            finally:
+                con.close()
+        if ext == ".csv":
+            with open(src, newline="", encoding="utf-8-sig") as fh:
+                rows = list(csv.DictReader(fh))
+            col = _id_field(list(rows[0].keys()) if rows else [], field)
+            if not col:
+                return None, None
+            return col, {(r.get(col) or "").strip() for r in rows if (r.get(col) or "").strip()}
+    except Exception:        # noqa: BLE001 - an unreadable layer is reported, not fatal here
+        return None, None
+    return None, None
+
+
+# The DamIT Runner's own id-field names, in its order (damit_runner/core/data_conventions.py
+# FIELD_SYNONYMS["F_ID"]), matched the way it matches them (letters and digits only, any case), so
+# the ids checked here are the ids the Runner reads. run_damit passes the field it found as F_ID.
+ID_FIELD_SYNONYMS = ("nationalid", "nidid", "nid_id", "damid", "dam_id", "ndid", "structureid", "id",
+                     "damnumber", "damno", "swcid", "nidfedid")
+
+
+def _norm_field(s):
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
+def _id_field(cols, field):
+    norm = {}
+    for c in cols:
+        norm.setdefault(_norm_field(c), c)
+    if field:
+        for c in cols:
+            if c.lower() == str(field).lower():
+                return c
+        return norm.get(_norm_field(field))
+    for s in ID_FIELD_SYNONYMS:
+        if _norm_field(s) in norm:
+            return norm[_norm_field(s)]
+    for s in ID_FIELD_SYNONYMS:                    # a name that contains one (e.g. 'NIDID_2024')
+        ns = _norm_field(s)
+        if len(ns) >= 5:
+            cand = [c for k, c in norm.items() if ns in k]
+            if cand:
+                return sorted(cand, key=len)[0]
+    return None
+
+
+def damit_preflight(args, ids):
+    """v1.6.0: what would make a DamIT batch fail or run the wrong dams, checked in a second.
+    Returns a list of problems (empty = go)."""
+    bad = []
+    dams = os.path.expanduser((args.dams or "").partition("|")[0])
+    if not args.dams:
+        bad.append("--dams is missing (the dams points layer)")
+    elif not os.path.exists(dams):
+        bad.append("the dams layer is not there: %s" % dams)
+    if not args.out:
+        bad.append("--out is missing (the folder the runs are written to)")
+    else:
+        parent = os.path.dirname(os.path.abspath(os.path.expanduser(args.out))) or "."
+        if not os.path.isdir(parent):
+            bad.append("the folder above --out does not exist: %s" % parent)
+    if not args.dem:
+        bad.append("--dem is missing (DEM or VRT covering every dam; DamIT batch needs one)")
+    elif not os.path.exists(os.path.expanduser(args.dem)):
+        bad.append("the DEM is not there: %s" % os.path.expanduser(args.dem))
+    args._id_col = None
+    if args.dams and os.path.exists(dams):
+        col, have = layer_ids(args.dams, args.id_field)
+        args._id_col = col
+        if have is None:
+            if ids:
+                print("  note: cannot read the dam ids of %s here; the Runner will match them" % args.dams)
+        else:
+            missing = [i for i in ids if i not in have]
+            if missing:
+                low = {h.lower(): h for h in have}
+                bad.append("not in the dams layer (field %s): %s" % (col, ", ".join(
+                    i + (" (did you mean %s?)" % low[i.lower()] if i.lower() in low else "") for i in missing)))
+    return bad
+
+
+def run_damit(args):
+    """v1.6.0: DamIT Runner breach runs for a dams layer (damit_run:batch), one folder per dam
+    under --out. Classification is not part of it: DamIT Hazard has no batch classifier yet."""
+    ids = read_ids(args)
+    bad = damit_preflight(args, ids)
+    if bad:
+        # v1.6.1: a wrong path is said before anything looks for conda or QGIS
+        print("preflight: %d error(s)" % len(bad))
+        for b in bad:
+            print("  ERROR  " + b)
+        sys.exit(1)
+    qp = QP(args, "damit")
+    # --param goes through the same name check as --runner-param here: the DamIT Runner is the one tool
+    runner_kv = dict(parse_kv(args.param), **runner_settings(args))
+    if not bad and not args.dry_run:
+        runner_kv = check_runner_params(qp, RUNNER_ALG["damit"], runner_kv)
+    elif runner_kv and args.dry_run:
+        print("  note: --dry-run does not check option names or turn option text into numbers")
+    print("preflight: %d error(s)" % len(bad))
+    for b in bad:
+        print("  ERROR  " + b)
+    if bad:
+        sys.exit(1)
+    out = os.path.abspath(os.path.expanduser(args.out))
+    p = {"DAMS": os.path.expanduser(args.dams), "DEM": os.path.expanduser(args.dem), "DAMS_FOLDER": out,
+         "SKIP_DONE": str(not args.redo).lower(), "CLASSIFY": "false", "THREADS": args.threads,
+         "WORKERS": max(1, args.workers)}
+    if args.dem_units:
+        p["DEM_Z"] = DEM_UNITS[args.dem_units]
+    if args.id_field or getattr(args, "_id_col", None):
+        p["F_ID"] = getattr(args, "_id_col", None) or args.id_field   # the field the ids were checked in
+    if ids:
+        p["ONLY_IDS"] = ",".join(ids)
+        if args.workers > 1:
+            print("  note: with --ids the Runner runs one dam after another (ONLY_IDS uses one worker)")
+    # Only a --lisflood you typed is passed on; otherwise the DamIT Runner uses its own setting (and
+    # finds ~/dam-suite/bin/lisflood itself when nothing is set), so an engine chosen in QGIS stays chosen.
+    lis = os.path.expanduser(args.lisflood or "") if getattr(args, "lisflood_given", True) else ""
+    if lis:
+        if os.path.isfile(lis) or lis.strip().lower() in DAMIT_ENGINE_WORDS:
+            p["LISFLOOD_EXE"] = lis      # a binary, or the DamIT Runner's own engines by name
+        else:
+            bad.append("--lisflood %s is not a file and not one of the Runner's engines (%s)"
+                       % (lis, "builtin, gpu, gpu-sgc"))
+            print("  ERROR  " + bad[-1])
+            sys.exit(1)
+    if args.anuga:
+        p["TIER"] = 1
+        if qp.anuga_py:
+            p["ANUGA_PYTHON"] = qp.anuga_py
+    p.update(runner_kv)
+    if args.check_only:
+        print("OK  checks passed; nothing was run (--check-only)")
+        return
+    if not args.dry_run and os.path.isfile(qp.qp):
+        qp.env.setdefault("NDBREACH_QGIS_PROCESS", qp.qp)     # the batch's worker processes start qgis_process
+    logs = os.path.join(out, "_chain_logs")
+    log = os.path.join(logs, "damit_batch_%s.log" % _stamp())
+    ok, res, err = qp.run(RUNNER_ALG["damit"], p, log, label="DamIT batch")
+    if args.dry_run:
+        return
+    counts = str(res.get("COUNTS") or "")
+    m = re.search(r"(\d+)\s+failed", counts)
+    if ok and m and int(m.group(1)) > 0:
+        ok = False                     # qgis_process exits 0 when dams fail; the counts say so
+    if ok and not counts:
+        ok, err = False, err or "the Runner reported no counts; see the log"
+    done = sum(int(x) for x in re.findall(r"(\d+)\s+(?:run|failed|skipped|with no breach|flagged)\b", counts))
+    want = len(set(ids))
+    rows = []
+    try:                              # distinct ids in the Runner's summary, when it wrote one
+        with open(res.get("SUMMARY") or "", newline="", encoding="utf-8-sig") as fh:
+            rows = list(csv.DictReader(fh))
+        seen = {(r.get("Dam") or "").strip() for r in rows}
+        done = len(set(ids) & seen) if seen else done
+    except (OSError, ValueError):
+        pass
+    if ok and ids and done < want:
+        # ONLY_IDS that match no dam are skipped by the Runner without a word ("0 run, 0 failed ...")
+        where = p.get("F_ID") or "(its own choice)"
+        ok, err = False, ("none of --ids %s was found by the Runner in field %s" % (",".join(ids), where)
+                          if done == 0 else "the Runner found only %d of the %d --ids (%s) in field %s; see %s"
+                          % (done, want, ",".join(ids), where, "the summary"))
+        err, counts = "%s (%s)" % (err, counts), ""
+    print("%s  %s" % ("OK" if ok else "FAILED", counts or err))
+    print("log: %s" % log)
+    if res.get("SUMMARY"):
+        print("summary: %s" % res["SUMMARY"])
+    print_results(rows, ids, out, ok)
+    if not ok and getattr(args, "triage", False):
+        triage_failure("DamIT batch", err or counts, log, os.path.dirname(log))
+    sys.exit(0 if ok else 1)
+
+
+def print_results(rows, ids, out, ok=True, most=20):
+    """v1.6.1: where each dam's results are, and the one line that reads them into Heim."""
+    want = set(ids)
+    mine = [r for r in rows if not want or (r.get("Dam") or "").strip() in want]
+    if mine:
+        print("results:")
+        for r in mine[:most]:
+            print("  %-14s %-10s %s" % ((r.get("Dam") or "").strip(), (r.get("Status") or "").strip(),
+                                        (r.get("Folder") or "").strip()))
+        if len(mine) > most:
+            print("  ... and %d more (see the summary)" % (len(mine) - most))
+    # no summary rows: offer the folder only when the run itself said OK (a failed run's folder may be empty)
+    if any((r.get("Status") or "").strip() == "done" for r in mine) or (ok and not rows and os.path.isdir(out)):
+        print("Read the results into Heim (then ask about them):  heim runs add %s" % _paste(out))
 
 
 def default_lisflood():
@@ -3467,14 +4010,15 @@ def main():
         vor_passthrough(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "audit":
         audit_passthrough(sys.argv[2:])
-    ap = argparse.ArgumentParser(description="Run the ND and DamSafety dam plugins headless. "
+    ap = argparse.ArgumentParser(prog="damchain", description="Run the ND, DamSafety and DamIT dam plugins headless. "
                                              "`vor ...` runs the literature assistant (`research` is an alias); "
                                              "`audit ...` the local repo audit (audit --help).")
     ap.add_argument("--env", default="ndqgis", help="conda env with QGIS (default ndqgis)")
     ap.add_argument("--qgis-process", default="", help="path to qgis_process (default: found in the env)")
     ap.add_argument("--threads", type=int, default=1)
-    ap.add_argument("--lisflood", default=default_lisflood(),
-                    help="LISFLOOD-FP binary (missing = the plugins' own choice / built-in engine)")
+    ap.add_argument("--lisflood", default=None,
+                    help="LISFLOOD-FP binary (nd/dwr sets: default ~/dam-suite/bin/lisflood; damit set: "
+                         "passed only when given, and may be builtin, gpu or gpu-sgc)")
     ap.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     ap.add_argument("--quiet", action="store_true", help="don't stream each step's progress lines to the terminal (the full log is still written)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -3482,6 +4026,7 @@ def main():
     s = sub.add_parser("setup")
     s.add_argument("--nd-profile", default="")
     s.add_argument("--dwr-profile", default="")
+    s.add_argument("--damit-profile", default="")
 
     s = sub.add_parser("plugins")
     s.add_argument("--set", choices=SETS, required=True)
@@ -3537,11 +4082,15 @@ def main():
     g.add_argument("--breach-param", action="append", help="KEY=VALUE for ndbreach:rundam")
     g.add_argument("--classify-param", action="append", help="KEY=VALUE for ndhazard:classify")
     g.add_argument("--timeout-min", type=int, default=480)
-    g = s.add_argument_group("dwr set (ndbreach:chainbatch)")
+    g = s.add_argument_group("dwr and damit sets (ndbreach:chainbatch / damit_run:batch)")
     g.add_argument("--dams", default="", help="dams points layer")
     g.add_argument("--id-field", default="", help="dam id field of the layer")
     g.add_argument("--out", default="", help="output folder, one folder per dam")
     g.add_argument("--dem", default="", help="DEM or VRT covering every dam")
+    g.add_argument("--cell", type=float, default=None, help="model cell size, metres (the Runner's CELL)")
+    g.add_argument("--solver", choices=SOLVER_WORDS, default="", help="LISFLOOD-FP solver (the Runner's SOLVER)")
+    g.add_argument("--manning", type=float, default=None, help="Manning's n (the Runner's MANNING)")
+    g.add_argument("--workers", type=int, default=1, help="damit: dams run side by side (WORKERS)")
     g.add_argument("--screen-work", default="", help="Screening work folder (statewide run + data package)")
     g.add_argument("--hec", choices=DWR_HEC, default="skip",
                    help="HEC-RAS 2D stage (default skip: it cannot run on a Mac)")
@@ -3549,12 +4098,18 @@ def main():
     g.add_argument("--stop-after", choices=DWR_STOP, default="end")
     g.add_argument("--settings-file", default="")
     g.add_argument("--overrides-csv", default="")
-    g.add_argument("--check-only", action="store_true", help="preflight only")
+    g.add_argument("--check-only", action="store_true", help="preflight only (damit: the checks, nothing run)")
     g.add_argument("--dem-units", choices=DEM_UNITS, default="",
                    help="the Runner's DEM elevation units (needed when the DEM records none, e.g. a VRT)")
-    g.add_argument("--runner-param", action="append", help="KEY=VALUE for the Runner (ndbreach:batch)")
+    g.add_argument("--runner-param", action="append",
+                   help="KEY=VALUE for the Runner (ndbreach:batch / damit_run:batch); names are checked")
 
     args = ap.parse_args()
+    # v1.6.0: remember whether --lisflood was typed (the DamIT set then passes it on; otherwise the
+    # DamIT Runner's own engine setting is used). The ND and DamSafety sets keep the suite default.
+    args.lisflood_given = args.lisflood is not None
+    if args.lisflood is None:
+        args.lisflood = default_lisflood()
     if getattr(args, "heim_model", ""):
         globals()["HEIM_MODEL"] = args.heim_model
     if args.cmd == "setup":
@@ -3573,6 +4128,8 @@ def main():
         if not args.dams_folder:
             sys.exit("--set nd needs --dams-folder")
         run_nd(args)
+    elif args.set == "damit":
+        run_damit(args)
     else:
         run_dwr(args)
 
@@ -4231,16 +4788,16 @@ SCRIPT_EOF_REPOAUDIT
   for f in rag_index rag_query audit_plugin suite_check dam_chain repo_audit; do
     "$HEIM_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
   done
-  ok "rag_index 2.9, rag_query 2.6, audit_plugin 1.3, suite_check 1.0, dam_chain 1.5.3, repo_audit 1.0 written and compiled"
+  ok "rag_index 2.9.1, rag_query 2.9, audit_plugin 1.3, suite_check 1.0, dam_chain 1.6.1, repo_audit 1.0 written and compiled"
   # v3.7/v3.8: the run watcher (deterministic digest + the small explainer) is copied, not generated
-  for f in run_digest heim_watch run_results true_hole ai_doctor ai_ui ai_score; do
+  for f in run_digest heim_watch run_results true_hole ai_doctor ai_ui ai_score heim_run; do
     if [[ -f "${0:A:h}/tools/$f.py" ]]; then
       cp "${0:A:h}/tools/$f.py" "$LOCAL_AI/$f.py" && "$HEIM_PY" -m py_compile "$LOCAL_AI/$f.py" || die "$f.py did not compile"
     else
       warn "tools/$f.py not found next to this script: the run watcher was not installed"
     fi
   done
-  ok "run_digest, heim_watch, run_results, true_hole (heim runs), ai_doctor, ai_ui, ai_score copied and compiled"
+  ok "run_digest, heim_watch, run_results, true_hole (heim runs), ai_doctor, ai_ui, ai_score, heim_run (heim run) copied and compiled"
   # the code-triage eval, like install-local-ai-linux.sh: the scorer plus the question set it
   # reads from ../eval/questions.json. Without both, `python3 ~/local-ai/eval_heim.py` is missing.
   if [[ -f "${0:A:h}/tools/eval_heim.py" ]]; then
@@ -4387,13 +4944,19 @@ if [[ $PASS -eq $TOTAL ]]; then
   printf '\033[1;32mALL %s CHECKS PASSED — fully operational.\033[0m\n' "$TOTAL"
   cat << 'NEXT'
 
-NEXT:
-  source ~/.zshrc                       # then fix ND_REPO etc. in ~/.zshrc if needed
-  heim-start                            # in its own terminal tab
+TRY IT NOW (open a new Terminal window first):
+  heim "what does REFINE_NEAR do?"      the suite's tools and known behaviours, cited
+  ai                                    Heim and Vor on one page in your browser
+  heim help                             the short list of commands
+  ai-doctor                             check everything again any time
+  Vor (the publications) is installed by its own script:  zsh vor/setup-vor.zsh --ocr
+
+FOR DEVELOPERS (set ND_REPO etc. in ~/.zshrc first):
   heim-audit -p "$ND_REPO" --static-only                 # exact checks, seconds
   heim-audit -p "$ND_REPO" --changed origin/main         # model review of what you changed
   heim-test nd --repo "$ND_REPO" --triage                # plugin tests in ndqgis + failure notes
 NEXT
 else
   printf '\033[1;33m%s/%s passed — fix failures, re-run (completed steps auto-skip).\033[0m\n' "$PASS" "$TOTAL"
+  exit 1      # Install-Mac.command and install-all.sh read this: a failed check is not "Done"
 fi
