@@ -52,10 +52,12 @@
 # 1.4.4 (2026-11-22): the Pierce question named its paper as 'Pierce, Thornton and Abt (2010)' and the equation
 #   page (p.35) was never read. Searched inside that paper it ranked 8th, behind the cover (on p.1 and again on
 #   p.2), two contents pages and pages that merely cite 'Pierce (2008)'. Now a question that names authors and a
-#   year reads that document first (the year must match; the names must be its authors, or, two or more of them,
-#   on its first three pages); inside a named document the search leaves out the naming words; a named
+#   year reads that document first (the year must match; the names must be its authors, or, when it has no
+#   author metadata, all on its first three pages, or 'X et al.' written there as an author; one all-capitals
+#   agency may be its organisation if that picks out one or two documents); inside a named document the
+#   search leaves out the words that named it (a citation that named nothing stays); a named
 #   document gives up to 4 passages; and every search skips a passage repeating one already taken and puts
-#   contents pages (dot leaders) last.
+#   contents pages (numbered dot-leader entries or a contents heading) last.
 # 1.4.3 (2026-11-22, the 1.4.2 call records): the D15F question's model call read all 8 passages (3,444
 #   prompt tokens) and replied exactly '{"findings": [], "not_covered": []}', with the answer page among them.
 #   An empty list of findings is now asked once more, passages in reverse order and a nudge to read each
@@ -567,15 +569,28 @@ _NAMED = re.compile(r"\b(FEMA|P|TD|WSP|EM|EP|ER|ETL|HDS|HEC|NEH|TR|DS|AH|REG|Bul
                     r"(\d+(?:[.-]\d+)*)", re.I)
 
 
-_CONTENTS = re.compile(r"(?:\.\s?){6,}\s*(?:[ivxlc]+|\d+)\s*$", re.M | re.I)
-_CONTENTS_WORD = re.compile(r"\b(contents|figure|table|chapter|section|appendix|list of)\b", re.I)
+_PAGE_NO = r"(?:[A-Z]-\d+|\d+(?:[-–]\d+)?|[ivxlc]+)\b"
+_LEADER = re.compile(r"(?:\.\s?){6,}\s*" + _PAGE_NO, re.I)
+_CONTENTS_HEAD = re.compile(r"^\W*(?:table\s+of\s+)?contents\b|\b(?:table\s+of\s+contents|list\s+of\s+(?:figures|tables|"
+                            r"plates|illustrations|appendices))\b", re.I)
+_CONTENTS_ENTRY = re.compile(r"^\s*(?:(?:figure|fig\.|table|chapter|section|appendix|plate|part)\s+[\dA-Z]"
+                             r"|\d+(?:[.-]\d+)*\.?\s+[A-Za-z]|[IVX]+\.\s+[A-Za-z])", re.I)
 
 
 def is_contents(txt):
-    """A table-of-contents or list-of-figures passage: three or more lines ending in dot leaders and a page
-    number ('Figure 10 Comparison ........ 31'), and a contents word somewhere on it."""
+    """A table-of-contents or list-of-figures passage: three or more dot-leader entries ending in a page number
+    ('Figure 10 Comparison ........ 31', '1.1 Purpose ........ 1-1'), under a contents heading (a passage that
+    starts 'Contents', or 'Table of Contents' / 'List of Figures' anywhere) or themselves numbered entries
+    ('Figure 10', '3.2 Breach', '1. Introduction', 'Chapter 4'). Stored passages have no line breaks
+    (chunk_page joins them), so this counts entries, not lines. A data sheet ('Crest width, feet ........ 30',
+    'Reservoir contents, acre-feet ........ 5000') is not a contents page."""
     t = txt or ""
-    return len(_CONTENTS.findall(t)) >= 3 and _CONTENTS_WORD.search(t) is not None
+    if len(_LEADER.findall(t)) < 3:
+        return False
+    if _CONTENTS_HEAD.search(t):
+        return True
+    entries = [e for e in _LEADER.split(t) if e.strip()]
+    return sum(1 for e in entries if _CONTENTS_ENTRY.search(e)) >= 3
 
 
 def text_key(doc_id, txt):
@@ -584,96 +599,178 @@ def text_key(doc_id, txt):
     return (doc_id, hashlib.sha1(squash(txt).encode()).hexdigest()) if squash(txt) else None
 
 
-_SURNAME = r"[A-Z][A-Za-z'\-]+"
-_AUTHOR_YEAR = re.compile(r"\b(%s(?:\s*,\s*%s)*(?:\s*,?\s+(?:and|&)\s+%s)?(?:\s+et\s+al\.?)?)\s*\(\s*((?:19|20)\d\d)[a-z]?\s*\)"
-                          % (_SURNAME, _SURNAME, _SURNAME))
+# A name: any letters (accents, Polish, Turkish ...), apostrophe or hyphen. Capitalisation is checked in code.
+_SURNAME = r"[^\W\d_](?:[^\W\d_]|['\-])*"
+_YEAR = r"(?:19|20)\d\d[a-z]?"
+_YEARS = r"%s(?:\s*,\s*(?:%s|[a-z]\b))*(?:\s*,\s*pp?\.\s*\d+(?:\s*[-–]\s*\d+)?)?" % (_YEAR, _YEAR)
+_NAMES = r"%s(?:\s*,\s*%s)*(?:\s*,?\s+(?:and|&)\s+%s)?(?:\s+et\s+al\.?)?(?:'s)?" % (_SURNAME, _SURNAME, _SURNAME)
+_AUTHOR_YEAR = re.compile(r"(?<![^\W\d_])(%s)\s*\(\s*(%s)\s*\)" % (_NAMES, _YEARS))
+_YEAR_PAREN = re.compile(r"\(\s*(?:%s)\s*\)" % _YEARS)
+_CITE_PART = re.compile(r"^\s*(?:(?:e\.g\.|i\.e\.|see\s+also|see|cf\.|after|from)\s*,?\s*)?(%s)\s*,?\s+(%s)\s*$"
+                        % (_NAMES, _YEARS), re.I)
 NOT_SURNAMES = set("""however also in on at for from the a an and or but what which when where why how does did do is are
 was were according see under per by with dam dams safety program programs report reports table figure equation
 section chapter appendix bureau guidelines guideline manual technical federal state national association
 department agency board committee center institute university survey service corps engineers reclamation
 usbr usace fema nrcs usgs asdso ferc hec tr td""".split())
+ORG_MAX_DOCS = 2       # 'ASDSO (2015)' names a document only when it picks out one or two
 
 
-def _cited_names(group):
-    """Surnames in an 'A, B and C' citation, without possessives or words that are not names."""
-    names = [re.sub(r"'s$", "", n) for n in re.findall(_SURNAME, group)]
-    return [n for n in names if n.lower() not in ("et", "al")]
+def _plain(question):
+    """Curly apostrophes (macOS smart quotes) as straight ones, so "Froehlich’s (2008)" reads as a citation."""
+    return (question or "").replace("’", "'").replace("‘", "'")
 
 
-def _author_year_docs(db, question):
-    """1.4.4: documents the question names by author and year ('Pierce, Thornton and Abt (2010)'). The year
-    must be the document's. One surname must be in its authors field (or be its organisation); two or more
-    may instead all be on its first three pages, and one with 'et al.' may be there written as an author
-    ('M. W. Pierce') (many reports have no author metadata:
-    Pierce et al. (2010) is filed under FEMA). Words that are not names ('However', 'Dam') are left out."""
+def _citations(question):
+    """(matched text, names text, [years], at sentence start) for every author-year citation: 'Pierce et al.
+    (2010)', "Froehlich's (1995a, b)", 'Froehlich (2008, p. 35)', and in parentheses '(Froehlich, 2008)',
+    '(Pierce et al. 2010)', '(e.g., Froehlich, 2008; Wahl, 2004)'."""
+    q = _plain(question)
     out = []
-    for m in _AUTHOR_YEAR.finditer(question or ""):
-        raw = _cited_names(m.group(1))
-        etal = re.search(r"\bet\s+al\b", m.group(1)) is not None
-        names = [n for n in raw if n.lower() not in NOT_SURNAMES]
-        orgs = [n for n in raw if n.lower() in NOT_SURNAMES and n.isupper() and len(n) >= 3]   # 'USBR (1982)'
-        year = m.group(2)
-        if not names and not orgs:
+    for y in _YEAR_PAREN.finditer(q):          # look back at most 200 characters from each '(year)'
+        lo = max(0, y.start() - 200)
+        m = None
+        for m in _AUTHOR_YEAR.finditer(q, lo, y.end()):
+            pass
+        if m is None or m.end() != y.end():
             continue
-        rows = db.execute("SELECT id, title, path, authors, org FROM docs "
-                          "WHERE substr(trim(CAST(year AS TEXT)), 1, 4) = ?", (year,)).fetchall()
-        for did, title, path, authors, org in rows:
-            def has(n, text):
-                return re.search(r"\b%s\b" % re.escape(n), text or "", re.I) is not None
-            if names:
-                ok = all(has(n, authors) for n in names)
-                if not ok and (len(names) >= 2 or etal):
-                    front = " ".join(t for (t,) in db.execute(
-                        "SELECT txt FROM chunks WHERE doc_id = ? AND page <= 3", (did,)).fetchall())
-                    if len(names) >= 2:
-                        ok = all(has(n, front) for n in names)
-                    else:   # one name and 'et al.': written as an author ('M. W. Pierce', 'Pierce, M.')
-                        n = re.escape(names[0])
-                        ok = re.search(r"\b[A-Z]\.\s*(?:[A-Z]\.\s*)*%s\b|\b%s,\s*[A-Z]\." % (n, n), front) is not None
-            else:
-                ok = len(orgs) == 1 and has(orgs[0], org)
-            if ok:
-                out.append((did, "%d  %s" % (did, (title or path)[:80]), m.group(0)))
+        if m.start() == lo and lo > 0 and re.match(r"[^\W\d_]", q[lo - 1]):
+            continue                          # the look-back cut a word in two
+        out.append((m.group(0), m.group(1), [x[:4] for x in re.findall(_YEAR, m.group(2))],
+                    re.search(r"(?:^|[.?!:;]\s)\s*$", q[:m.start()]) is not None))
+    for g in re.finditer(r"\(([^()]{4,300})\)", q):
+        for part in g.group(1).split(";"):
+            m = _CITE_PART.match(part)
+            if m:
+                out.append((part.strip(), m.group(1), [y[:4] for y in re.findall(_YEAR, m.group(2))], False))
     return out
 
 
-def strip_naming(question):
+def _cited_names(group):
+    """Surnames in an 'A, B and C' citation: capitalised words, without possessives."""
+    names = [re.sub(r"'s$", "", n) for n in re.findall(_SURNAME, group)]
+    return [n for n in names if n[:1].isupper()]
+
+
+def _has(name, text):
+    return re.search(r"(?<![^\W\d_])%s(?![^\W\d_])" % re.escape(name), text or "", re.I) is not None
+
+
+def _as_author(name, text):
+    """The name written as an author on a cover: after initials ('M. W. Pierce', 'MICHAEL W. PIERCE') or
+    before them ('Pierce, M.'), in any case."""
+    n = re.escape(name)
+    return re.search(r"(?<![^\W\d_])[A-Z]\.\s*(?:[A-Z]\.\s*)*(?i:%s)(?![^\W\d_])|(?<![^\W\d_])(?i:%s),\s*[A-Z]\."
+                     % (n, n), text or "") is not None
+
+
+_PERSON = re.compile(r"[A-Z][a-z]+,\s*[A-Z]\.|[A-Z]\.\s*[A-Z][a-z]+|[A-Z][a-z]+\s+(?:[A-Z]\.\s*)?[A-Z][a-z]+")
+
+
+def _docs_for(db, names, etal, years):
+    """Documents of one of the years whose authors are these names. Every name must be in the authors field.
+    The PDF's own author field is often empty or junk ('Administrator', 'FEMA', a login), or holds only the
+    first author (Pierce et al. (2010) is filed under FEMA with none), so unless it names other people, the
+    first three pages count too: two or more names all there, or one with 'et al.' written there as an
+    author ('M. W. Pierce'). A single all-capitals name ('USSD', 'ICOLD') may instead be the document's
+    organisation, if that picks out no more than ORG_MAX_DOCS documents."""
+    rows = db.execute("SELECT id, title, path, authors, org FROM docs WHERE substr(trim(CAST(year AS TEXT)), 1, 4) IN (%s)"
+                      % ",".join("?" * len(years)), years).fetchall()
+    hits, org_hits = [], []
+    for did, title, path, authors, org in rows:
+        a = (authors or "").strip()
+        ok = bool(a) and all(_has(n, a) for n in names)
+        others = bool(a) and _PERSON.search(a) is not None and not any(_has(n, a) for n in names)
+        if not ok and not others and (len(names) >= 2 or etal):
+            front = " ".join(t for (t,) in db.execute(
+                "SELECT txt FROM chunks WHERE doc_id = ? AND page <= 3", (did,)).fetchall())
+            ok = all(_has(n, front) for n in names) if len(names) >= 2 else _as_author(names[0], front)
+        if ok:
+            hits.append((did, title, path))
+        elif len(names) == 1 and names[0].isupper() and len(names[0]) >= 3 and _has(names[0], org):
+            org_hits.append((did, title, path))
+    if not hits and len(org_hits) <= ORG_MAX_DOCS:
+        hits = org_hits
+    return hits
+
+
+def _author_year_docs(db, question):
+    """1.4.4: documents the question names by author and year ('Pierce, Thornton and Abt (2010)'), as
+    (id, label, matched text). Words that are not names ('However', 'Dam') are left out. A citation that
+    opens a sentence with 'Word, Name (year)' ('Similarly, Froehlich (2008)') is tried without its first
+    word when it matches nothing; co-authors are never dropped otherwise. An agency on the NOT_SURNAMES
+    list ('USBR (1982)') is matched against the organisation."""
+    out = []
+    for text, group, years, opens in _citations(question):
+        if not years:
+            continue
+        raw = _cited_names(group)
+        etal = re.search(r"\bet\s+al\b", group) is not None
+        names = [n for n in raw if n.lower() not in NOT_SURNAMES]
+        orgs = [n for n in raw if n.lower() in NOT_SURNAMES and n.isupper() and len(n) >= 3]   # 'USBR (1982)'
+        if not names and len(orgs) == 1:
+            names = orgs
+        if not names:
+            continue
+        found = _docs_for(db, names, etal, years)
+        two = re.search(r"\s(?:and|&)\s", group) is not None
+        if (not found and opens and len(names) >= 2 and names[0] == raw[0]
+                and re.match(r"\s*%s\s*," % re.escape(names[0]), group) and (len(names) >= 3 or not two)):
+            found = _docs_for(db, names[1:], etal, years)
+        for did, title, path in found:
+            out.append((did, "%d  %s" % (did, (title or path)[:80]), text))
+    return out
+
+
+def strip_naming(question, spans=None):
     """The question without the words that name a document ('FEMA 333', 'Pierce, Thornton and Abt (2010)'). They
     pick the document; inside it they only match its cover and reference pages, which outranked the page with
-    the answer. Returns the question unchanged when too little would be left."""
-    q = _AUTHOR_YEAR.sub(" ", question or "")
-    q = _NAMED.sub(" ", q)
+    the answer. With spans (named_docs' third value, for THIS question) only the words that did pick a
+    document go: a citation of a paper not in the library ('MacDonald and Langridge-Monopolis (1984)') stays
+    as search words. Returns the question unchanged when too little would be left."""
+    q = _plain(question)
+    if spans is None:
+        spans = [c[0] for c in _citations(q)] + [m.group(0) for m in _NAMED.finditer(q)]
+    for sp in sorted(set(spans), key=len, reverse=True):
+        q = re.sub(re.escape(sp), " ", q, flags=re.I)
+    q = re.sub(r"\(\s*[;,]?\s*\)", " ", q)
     q = re.sub(r"\s+", " ", q).strip()
     left = [t for t in re.findall(r"[A-Za-z]{3,}", q) if t.lower() not in STOP]
     return q if len(left) >= 2 else question
 
 
-def named_docs(db, question):
-    """Documents the question names by report number ('FEMA 333', 'P-946', 'TD-39', 'WSP 2339'), as
-    (ids, labels). The 2026-11-22 real-model test asked four FEMA 333 questions and FEMA 333 was never
-    among the passages read: other FEMA manuals repeat its definitions and outranked it. A match needs
-    the prefix and number together ('p946' in 'FEMA P946.pdf'), or, for a number of 3+ digits, the
-    number on its own as a whole number plus the prefix anywhere ('FEMA ... 333_04.pdf')."""
-    want = [(m.group(1), m.group(2)) for m in _NAMED.finditer(question or "")]
-    if not want and not _AUTHOR_YEAR.search(question or ""):
-        return [], []
-    rows = db.execute("SELECT id, title, path, number, org FROM docs").fetchall()
-    ids, labels = [], []
-    for pfx, num in want:
-        tight = squash(pfx + num)
-        for r in rows:
-            raw = " ".join(x or "" for x in (os.path.basename(r[2] or ""), r[1], r[3], r[4]))
-            sq = squash(raw)
-            ok = tight in sq
-            if not ok and len(re.sub(r"\D", "", num)) >= 3:
-                ok = bool(re.search(r"(?<![\d.])%s(?![\d])" % re.escape(num), raw)) and squash(pfx) in sq
-            if ok and r[0] not in ids:
-                ids.append(r[0])
-                labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
-    for did, label, _ in _author_year_docs(db, question):
-        if did not in ids:
-            ids.append(did)
-            labels.append(label)
+def named_docs(db, question, spans=False):
+    """Documents the question names by report number ('FEMA 333', 'P-946', 'TD-39', 'WSP 2339') or by author
+    and year ('Pierce, Thornton and Abt (2010)'), as (ids, labels), or (ids, labels, matched texts) with
+    spans=True. The 2026-11-22 real-model test asked four FEMA 333 questions and FEMA 333 was never among
+    the passages read: other FEMA manuals repeat its definitions and outranked it. A number match needs the
+    prefix and number together ('p946' in 'FEMA P946.pdf'), or, for a number of 3+ digits, the number on its
+    own as a whole number plus the prefix anywhere ('FEMA ... 333_04.pdf')."""
+    q = _plain(question)
+    want = [(m.group(0), m.group(1), m.group(2)) for m in _NAMED.finditer(q)]
+    ids, labels, used = [], [], []
+    if want or _citations(q):
+        rows = db.execute("SELECT id, title, path, number, org FROM docs").fetchall() if want else []
+        for text, pfx, num in want:
+            tight = squash(pfx + num)
+            for r in rows:
+                raw = " ".join(x or "" for x in (os.path.basename(r[2] or ""), r[1], r[3], r[4]))
+                sq = squash(raw)
+                ok = tight in sq
+                if not ok and len(re.sub(r"\D", "", num)) >= 3:
+                    ok = bool(re.search(r"(?<![\d.])%s(?![\d])" % re.escape(num), raw)) and squash(pfx) in sq
+                if ok:
+                    used.append(text)
+                    if r[0] not in ids:
+                        ids.append(r[0])
+                        labels.append("%d  %s" % (r[0], (r[1] or r[2])[:80]))
+        for did, label, text in _author_year_docs(db, q):
+            used.append(text)
+            if did not in ids:
+                ids.append(did)
+                labels.append(label)
+    if spans:
+        return ids[:6], labels[:6], used
     return ids[:6], labels[:6]
 
 
@@ -2084,9 +2181,9 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
             say("  - " + s)
         if terms:
             say("  search terms: " + "; ".join(terms))
-    named = []
+    named, named_spans = [], []
     if not keep:
-        named, named_labels = named_docs(db, question)
+        named, named_labels, named_spans = named_docs(db, question, spans=True)
         if named:
             say("The question names: " + "; ".join(named_labels) + " (their passages are read first)")
     log = []
@@ -2095,7 +2192,9 @@ def _run_pipeline(db, question, mode, depth, k, out, idx, save, keep, per_doc, s
         hits = idx.search(q, k=k, per_doc=per_doc if per_doc is not None else 3, keep=keep)
         if named:
             # 1.4.4: inside the named documents, search without the naming words, and read up to 4 passages
-            hits = merge_hits(idx.search(strip_naming(q), k=min(4, k), per_doc=4, keep=set(named)), hits, k)
+            # (the words that name a document are found again in each sub-question, which plan() rewords)
+            sq = strip_naming(q, named_spans + named_docs(db, q, spans=True)[2])
+            hits = merge_hits(idx.search(sq, k=min(4, k), per_doc=4, keep=set(named)), hits, k)
         log.append((s, hits))
         say("[%d/%d] reading %d passages for: %s" % (i, len(subs), len(hits), textwrap_short(s, 90)))
         extract(ev, s, hits)

@@ -92,7 +92,9 @@ class SearchSkips(unittest.TestCase):
     def test_pipeline_uses_the_stripped_question_and_four_passages(self):
         with open(os.path.join(HERE, "..", "vor.py"), encoding="utf-8") as f:
             src = f.read()
-        self.assertIn("idx.search(strip_naming(q), k=min(4, k), per_doc=4, keep=set(named))", src)
+        self.assertIn("sq = strip_naming(q, named_spans + named_docs(db, q, spans=True)[2])", src)
+        self.assertIn("idx.search(sq, k=min(4, k), per_doc=4, keep=set(named))", src)
+        self.assertIn("named_docs(db, question, spans=True)", src)
 
 
 class ReviewFixes(unittest.TestCase):
@@ -141,6 +143,142 @@ class ReviewFixes(unittest.TestCase):
         dots = "Step one .......... 2\nStep two .......... 3\nStep three .......... 4\n"
         self.assertFalse(vor.is_contents(dots))                    # no contents word
         self.assertFalse(vor.is_contents("Table 4 shows 1.2, 3.4 and 5.6 for each figure."))
+
+
+class _DbCase(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def tearDown(self):
+        self.db.close()
+
+    def add_doc(self, did, authors, year, org, pages):
+        self.db.execute("INSERT INTO docs (id, title, path, authors, year, org) VALUES (?,?,?,?,?,?)",
+                        (did, "doc %d" % did, "/lib/d%d.pdf" % did, authors, year, org))
+        for i, (page, txt) in enumerate(pages):
+            self.db.execute("INSERT INTO chunks (id, doc_id, page, label, idx, txt, vec) VALUES (?,?,?,'',0,?,x'')",
+                            (did * 100 + i, did, page, txt))
+
+    def ids(self, q):
+        return vor.named_docs(self.db, q)[0]
+
+
+class SecondReview(_DbCase):
+    """Cases from the second independent review of 1.4.4."""
+    def test_cover_pages_only_when_there_is_no_author_metadata(self):
+        self.add_doc(5, "Wahl, T. L.", "2010", "", [(2, "As shown by Pierce, Thornton and Abt (2010), length matters.")])
+        self.add_doc(21, "Smith, J.", "2010", "", [(3, "References. Pierce, M. W. et al. 2010. Peak outflow.")])
+        self.assertEqual(self.ids(Q), [58])
+        self.assertEqual(self.ids("What did Pierce et al. (2010) find about length?"), [58])
+
+    def test_cover_in_capitals(self):
+        self.db.execute("UPDATE chunks SET txt = ? WHERE doc_id = 58 AND page <= 2",
+                        ("PREPARED BY MICHAEL W. PIERCE ET AL. JUNE 2010",))
+        self.assertEqual(self.ids("What did Pierce et al. (2010) find about length?"), [58])
+
+    def test_possessives_and_smart_quotes(self):
+        self.assertEqual(self.ids("What is Pierce et al.'s (2010) equation?"), [58])
+        self.assertEqual(self.ids("What is Pierce et al.\u2019s (2010) equation?"), [58])
+        self.assertEqual(self.ids("What did Froehlich\u2019s (2008) paper recommend?"), [61])
+
+    def test_any_agency_in_capitals_one_or_two_documents_only(self):
+        self.add_doc(7, "", "2015", "USSD", [])
+        self.assertEqual(self.ids("What does USSD (2015) recommend?"), [7])
+        for d in range(80, 89):
+            self.add_doc(d, "", "2015", "ASDSO", [])
+        self.assertEqual(self.ids("What does ASDSO (2015) say about inspections?"), [])
+
+    def test_a_leading_word_before_a_comma_is_dropped(self):
+        self.assertEqual(self.ids("Similarly, Froehlich (2008) recommends what?"), [61])
+        self.assertEqual(self.ids("Briefly, Froehlich (2008) found what?"), [61])
+
+    def test_accents_year_lists_and_parenthetical_citations(self):
+        self.add_doc(8, "Fröhlich, D.", "2008", "", [])
+        self.assertEqual(self.ids("What did Fröhlich (2008) find?"), [8])
+        self.assertEqual(self.ids("Compare Froehlich (1995a, 2008) on breach width."), [61])
+        self.assertEqual(self.ids("What breach width is recommended (Froehlich, 2008)?"), [61])
+
+    def test_a_citation_that_named_nothing_stays_as_search_words(self):
+        self.db.execute("INSERT INTO docs (id, title, path, number, org) VALUES (70, 'Hazard', '/lib/FEMA 333.pdf', '', 'FEMA')")
+        q = "Which breach width equation does FEMA 333 take from MacDonald and Langridge-Monopolis (1984)?"
+        ids, _, spans = vor.named_docs(self.db, q, spans=True)
+        self.assertEqual(ids, [70])
+        left = vor.strip_naming(q, spans)
+        self.assertIn("MacDonald", left)
+        self.assertNotIn("333", left)
+
+    def test_contents_pages_as_the_index_stores_them(self):
+        page = ("TABLE OF CONTENTS\n\nList of Figures\n" + TOC + "Figure 13 Residuals ...................... 34\n"
+                "\nThe report then presents the data and the equations derived from them in some detail.")
+        chunks = vor.chunk_page(page)
+        self.assertTrue(chunks and "\n" not in chunks[0])
+        self.assertTrue(vor.is_contents(chunks[0]))
+        self.assertTrue(vor.is_contents(" ".join(TOC.splitlines())))     # numbered entries, no heading
+
+    def test_a_data_sheet_is_not_a_contents_page(self):
+        sheet = ("Table 1. Pertinent data, Spillway section Height of dam above streambed, feet .................. 110 "
+                 "Crest width, feet .................. 30 Number of spillway gates .................. 6 "
+                 "Gate width, feet .................. 40 Reservoir contents, acre-feet .................. 5000")
+        self.assertFalse(vor.is_contents(sheet))
+
+
+class ThirdReview(_DbCase):
+    """Cases from the third independent review of 1.4.4."""
+
+    def test_a_reworded_sub_question_is_stripped_too(self):
+        sub = "What R2 value did Pierce et al. (2010) report for the embankment length relationship?"
+        ids, _, spans = vor.named_docs(self.db, Q, spans=True)
+        spans = spans + vor.named_docs(self.db, sub, spans=True)[2]
+        self.assertNotIn("Pierce", vor.strip_naming(sub, spans))
+        self.assertNotIn("Pierce", vor.strip_naming("How good was the fit of the Pierce, Thornton, and Abt (2010) curve?",
+                                                    vor.named_docs(self.db, "Pierce, Thornton, and Abt (2010)", spans=True)[2]))
+
+    def test_more_citation_forms(self):
+        for q in ("Breach width (Froehlich, 2008; Wahl, 2004)?", "What breach width does (Froehlich 2008) give?",
+                  "Breach width (e.g., Froehlich, 2008)?", "Compare Froehlich (2008a, b) on breach width.",
+                  "Breach width per Froehlich (2008, p. 35)?"):
+            self.assertEqual(self.ids(q), [61], q)
+        self.assertEqual(self.ids("How good is the fit (Pierce et al. 2010)?"), [58])
+
+    def test_letters_beyond_latin_1(self):
+        self.add_doc(9, "\u015eent\u00fcrk, F.", "1994", "", [])
+        self.add_doc(10, "Miko\u015b, M.", "2011", "", [])
+        self.assertEqual(self.ids("What does \u015eent\u00fcrk (1994) give for spillway aeration?"), [9])
+        self.assertEqual(self.ids("What did Miko\u015b (2011) find?"), [10])
+
+    def test_co_authors_are_not_dropped(self):
+        self.db.execute("DELETE FROM chunks WHERE doc_id = 58")
+        self.add_doc(91, "Abt, S. R.; Johnson, T.", "2010", "", [])
+        self.assertEqual(self.ids(Q), [])
+        self.add_doc(92, "Hunt, S. L.; Temple, D. M.", "2005", "", [])
+        self.assertEqual(self.ids("What erodibility did Hanson, Cook and Hunt (2005) measure?"), [])
+        self.assertEqual(self.ids("In Utah, Froehlich (2008) said what?"), [])          # not a sentence opener
+
+    def test_junk_author_metadata_still_reads_the_cover(self):
+        for junk in ("Administrator", "FEMA", "mpierce", "Michael Pierce"):
+            self.db.execute("UPDATE docs SET authors = ? WHERE id = 58", (junk,))
+            self.assertEqual(self.ids(Q), [58], junk)
+            self.assertEqual(self.ids("What did Pierce et al. (2010) find about length?"), [58], junk)
+
+    def test_more_contents_layouts(self):
+        self.assertTrue(vor.is_contents("1.1 Purpose ................ 1-1 1.2 Scope ................ 1-2 "
+                                        "1.3 Background ................ 1-3 1.4 Organization ................ 1-4"))
+        self.assertTrue(vor.is_contents("Appendix A Glossary ......... A-1 Appendix B References ......... B-1 "
+                                        "Appendix C Data ......... C-1"))
+        self.assertTrue(vor.is_contents("Contents Page Introduction ........ 1 Background ........ 2 "
+                                        "Test Facility ........ 4 Results ........ 12"))
+        self.assertTrue(vor.is_contents("1. Introduction ........ 1 2. Site Description ........ 3 "
+                                        "3. Geology ........ 7 4. Embankment Performance ........ 11"))
+        self.assertFalse(vor.is_contents("Elevation, feet ........ 1450 Surface area, acres ........ 230 "
+                                         "Reservoir contents, acre-feet ........ 5000"))
+
+    def test_long_input_is_quick(self):
+        import time
+        t = time.time()
+        vor.named_docs(self.db, ("Abc, " * 3000) + "x")
+        vor.named_docs(self.db, ("word " * 3000) + "(2010")
+        vor.is_contents(". " * 5000 + "1")
+        self.assertLess(time.time() - t, 2.0)
 
 
 if __name__ == "__main__":
