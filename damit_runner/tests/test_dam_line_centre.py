@@ -13,12 +13,14 @@ from damit_runner.tests._dwr_registry import test
 
 @test
 def dam_point_check_default_move_and_centre_snap():
-    """3.20.13: move is the default; a point on the embankment but off the found line's centre
-    moves along to the centre (C1) in move mode only, when every gate and V pass; a point at
+    """3.20.13 (DamSafety: move is the default; DamIT keeps warn): a point on the embankment but
+    off the found line's centre moves along to the centre (C1) in move mode only, when every gate and V pass; a point at
     the centre stays."""
     from damit_runner.tests import dwr_synthetic_dams as S
     from damit_runner.tests.test_dam_point_check import _survey, _check
-    assert dpc.DEFAULT_MODE == "move" == workflow.RunSettings().dam_point_check
+    # DamIT: the default stays warn (DamSafety 3.20.13: move); C1 and the move are exercised with
+    # mode="move" explicitly below
+    assert dpc.DEFAULT_MODE == "warn" == workflow.RunSettings().dam_point_check
     sv, rp = _survey(S.enclosed, (0.0, 60.0))                 # on the crest, 60 m off centre
     d = dpc.decide(sv, rp, S.H, mode="move")
     assert d["outcome"] == "move" and d.get("centre_snap") and not d["gates_failed"], d

@@ -421,7 +421,7 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 2 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it); 2=Move clear cases (use the embankment found; otherwise warn) - the default |
+| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 1 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it) - the default; 2=Move clear cases (use the embankment found; otherwise warn) |
 | `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |
@@ -567,7 +567,7 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 2 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it); 2=Move clear cases (use the embankment found; otherwise warn) - the default |
+| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 1 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it) - the default; 2=Move clear cases (use the embankment found; otherwise warn) |
 | `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |
@@ -772,7 +772,7 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 2 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it); 2=Move clear cases (use the embankment found; otherwise warn) - the default |
+| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 1 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it) - the default; 2=Move clear cases (use the embankment found; otherwise warn) |
 | `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |
@@ -1101,7 +1101,7 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `CREST_BURN_DEM` | Crest burn: 1 m DEM or VRT (optional) | file | - | optional; advanced |
 | `GRID_REFINE` | Finer grid automatically on over-spread (on by default) | boolean | True | advanced |
 | `GRID_CHECK_CELL` | Finer grid: check run cell (m; 0 = off, 5 = a 5 m check) | number | 0 | advanced |
-| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 2 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it); 2=Move clear cases (use the embankment found; otherwise warn) - the default |
+| `DAM_POINT_CHECK` | Check the dam point on the DEM (move = use the embankment found when the point is clearly off it) | enum | 1 | optional; advanced; options: 0=Off (use the dam point as given, as before 3.20.11); 1=Warn only (check it; never move it) - the default; 2=Move clear cases (use the embankment found; otherwise warn) |
 | `MANNING` | Manning's n (where there is no n raster) | number | 0.05 | - |
 | `MANNING_RASTER` | Manning's n raster (values of n) | raster | - | optional |
 | `NLCD_RASTER` | or an NLCD land-cover raster (class codes; n from the table) | raster | - | optional |

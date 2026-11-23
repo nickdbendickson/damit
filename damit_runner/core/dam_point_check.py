@@ -42,8 +42,11 @@ MODES = ("off", "warn", "move")
 # should be at the center of the embankment in most all cases"): "move" is the default again
 # (the hold-out's 2 wrong moves of 43 were both DWR-2713), and a batch dam with a DWR dam line
 # uses that line instead (core/dwr_lines.py: the check is then skipped, "dam line given").
-# DamIT: dwr_lines (the ND DWR pack) is not ported, so DamIT dams have no such line
-DEFAULT_MODE = "move"
+# DamIT: dwr_lines (the ND DWR pack) is not ported, so DamIT dams have no such line.
+# DamIT keeps "warn" as the default (a deliberate difference from DamSafety 3.20.13, Nick
+# 2026-11-23): the moves were validated on North Dakota dams and LiDAR only, not on NID dams
+# elsewhere. "move" (the setting or NDBREACH_DAM_POINT_CHECK=move) gives DamSafety's behaviour.
+DEFAULT_MODE = "warn"
 ENV = "NDBREACH_DAM_POINT_CHECK"
 
 # --- the search (screen_points.py) -------------------------------------------------------

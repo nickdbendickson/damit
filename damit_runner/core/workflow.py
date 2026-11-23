@@ -430,10 +430,11 @@ class RunSettings:
         # point (damsuite.midcrest) when the dam has no crest_line_xy. Not in as_dict
         self.midcrest_line = None
         # 3.20.11: the dam point checked on the DEM before it is used (core/dam_point_check.py):
-        # "move" (the default since 3.20.13: a clear misplacement uses the embankment found
-        # as the dam line, every gate must pass, else a warning; a point on the embankment but
-        # off its centre moves along to the centre), "warn" (never moves; a REVIEW warning says
-        # where the embankment is and whether "move" would use it) or "off" (as 3.20.10).
+        # "warn" (DamIT's default; DamSafety's since 3.20.13 is "move": never moves; a REVIEW
+        # warning says where the embankment is and whether "move" would use it), "move" (a clear
+        # misplacement uses the embankment found as the dam line, every gate must pass, else a
+        # warning; a point on the embankment but off its centre moves along to the centre) or
+        # "off" (as 3.20.10).
         # NDBREACH_DAM_POINT_CHECK wins over this (_dam_point_mode). Never in the run key.
         self.dam_point_check = dpc.DEFAULT_MODE
         # the other inventory dams near this one [(id, (x, y)[, height ft])] and the other dams' crest lines

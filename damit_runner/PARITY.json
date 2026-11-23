@@ -110,9 +110,9 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "388af9d98f8b686b4bc16378d2f52c674326586acb0433b758687d5f1d6ff0cb",
+   "diff": "1fde1dab0f647719bbab7b44bd261026cd9e8c9fd6a8fbc478289b9c06d580f8",
    "from": "DamSafety_Runner/algorithms.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): DAM_POINT_CHECK labels and tip (move is the default)."
+   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): DAM_POINT_CHECK tip (C1 centre snap). Deliberate DamIT difference: DAM_POINT_CHECK defaults to warn, not DamSafety 3.20.13's move (dam_point_check.DEFAULT_MODE; the moves are not validated outside North Dakota, Nick 2026-11-23)."
   },
   "damit_runner/compat/nodata_sample.py": {
    "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
@@ -477,9 +477,9 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "3321fb4eb5deecfafa957601c4d8d9620734cbf2c7dc7d85a63e48023dca2fe4",
+   "diff": "35efcaf058435612ed0967aa8189b9f6f96b6f3937a908cae98fee73bf382a21",
    "from": "DamSafety_Runner/core/workflow.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins facc89fe (#382, Runner 3.20.8): _inflow_depth_check. Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins 9fa40a96 (#387, Runner 3.20.12): breach inflow side from the reservoir's flat water. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): C1 centre snap, add_crest_raised_warning, the inflow-site message; the DWR dam line hunks are left out."
+   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins facc89fe (#382, Runner 3.20.8): _inflow_depth_check. Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins 9fa40a96 (#387, Runner 3.20.12): breach inflow side from the reservoir's flat water. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): C1 centre snap, add_crest_raised_warning, the inflow-site message; the DWR dam line hunks are left out. Deliberate DamIT difference: DAM_POINT_CHECK defaults to warn, not DamSafety 3.20.13's move (dam_point_check.DEFAULT_MODE; the moves are not validated outside North Dakota, Nick 2026-11-23)."
   },
   "damit_runner/flood/breach.py": {
    "diff": "34ecff47b05f68842068a6b6c8fdb19b024a44d76543d1dba41ee83373db1b8c",
