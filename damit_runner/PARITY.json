@@ -112,9 +112,9 @@
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "d8380432aed6abcdee89e7dd3185860aa224eaae7238f80ef31d64c3d68ed0c0",
+   "diff": "018103af37353811d3806feb03470268384e7471f83d76c9f218424ac5e53b6c",
    "from": "DamSafety_Runner/algorithms.py",
-   "note": "ported from DWR 6816c7f; state dam-line pack not ported; gpu-sgc stays enum index 2"
+   "note": "ported from DWR 6816c7f; gpu-sgc stays enum index 2; FV2 label is experimental (DWR #478 not in this pin); state dam-line pack not ported"
   },
   "damit_runner/compat/nodata_sample.py": {
    "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
@@ -357,9 +357,9 @@
    "note": "ported from DWR 6816c7f"
   },
   "damit_runner/core/metalflood/__init__.py": {
-   "diff": "9a8921904942965dc867761fb78f5b7b5cd7d5e32f7ac2db59e1cb1e97337f75",
+   "diff": "",
    "from": "DamSafety_Runner/core/metalflood/__init__.py",
-   "note": "pre-A2 copy; byte re-vendor from DWR 6816c7f follows"
+   "note": "byte copy of DWR 6816c7f"
   },
   "damit_runner/core/metalflood/__main__.py": {
    "diff": "",
@@ -367,9 +367,9 @@
    "note": "pre-A2 copy; byte re-vendor from DWR 6816c7f follows"
   },
   "damit_runner/core/metalflood/backends.py": {
-   "diff": "cc7296fdde0a01cb55459d5f46a7a288d764802d6faba0f6d607abdedab9440c",
+   "diff": "",
    "from": "DamSafety_Runner/core/metalflood/backends.py",
-   "note": "pre-A2 copy; byte re-vendor from DWR 6816c7f follows"
+   "note": "byte copy of DWR 6816c7f"
   },
   "damit_runner/core/metalflood/bench.py": {
    "diff": "",
@@ -387,9 +387,9 @@
    "note": "pre-A2 copy; byte re-vendor from DWR 6816c7f follows"
   },
   "damit_runner/core/metalflood/engine.py": {
-   "diff": "16e8fd402af8940d7dbbd30e22d000eb964414713e0d94831edfc6c1672eb8ec",
+   "diff": "",
    "from": "DamSafety_Runner/core/metalflood/engine.py",
-   "note": "pre-A2 copy; byte re-vendor from DWR 6816c7f follows"
+   "note": "byte copy of DWR 6816c7f"
   },
   "damit_runner/core/model_terrain.py": {
    "diff": "",

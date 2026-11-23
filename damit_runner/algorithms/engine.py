@@ -86,7 +86,7 @@ FLOOD_ENGINES_TEXT = [
     "Boann, fast (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU)",
     "Boann, sub-grid channels (narrow rivers the grid cannot resolve)",
     "Boann, shock-capturing (HLLC; sharp dam-break fronts and jumps)",
-    "Advanced: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2)",
+    "Experimental: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2; FV2 GPU race not in this copy)",
     "Advanced: Boann, discontinuous Galerkin 2nd order (RKDG2)",
     "Advanced: Boann, sub-grid finite volume (coarse grid; research, can over-pond narrow channels)",
     "Recommended (auto): picks for this computer"]
