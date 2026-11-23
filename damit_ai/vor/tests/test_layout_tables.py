@@ -72,6 +72,7 @@ class Table1Test(Base):
         self.assertIn("Concrete ....... | _ | 0.012-0.018 | 0.011", rows)
         self.assertIn("Coarse sand .... ........ | 1-2 | 0.026-0.035", rows)
         self.assertIn("Sand3 .......... ........ | 0.2 | 0.012", rows)
+        self.assertIn("Boulder ........ ........ | >256 | 0.040-0.070", rows)
 
     def test_one_passage_with_the_caption_and_no_running_text_from_either_column(self):
         cs = self.chunks(10)
@@ -265,6 +266,50 @@ class LayoutCasesTest(Base):
         for text in ("Table 1. Base", "TABLE 3: Values", "Table A-1. Gages", "Table IV. Sites", "TABLE 2"):
             self.assertIsNotNone(self.vor._CAPTION.match(text), text)
 
+    def test_equations_beside_a_left_column_table_stay_out_of_its_rows(self):
+        p = self.page().prose(54, 40, 5).prose(320, 40, 5)
+        p.put(54, 100, "Table 1. Base n values").put(320, 100, "The conveyance is computed from")
+        p.row(114, [(54, "Material"), (150, "Size"), (230, "n")]).put(360, 114, "K = (1.486/n) A R^(2/3)")
+        p.put(540, 114, "(4)")
+        for i, (a, b, c) in enumerate(ROWS):
+            p.row(126 + 12 * i, [(54, a), (150, b), (230, c)])
+        p.put(360, 138, "Q = K S^(1/2)").put(540, 138, "(5)").put(320, 162, "where")
+        p.prose(54, 180, 8).prose(320, 180, 8)
+        rows = [r for t in self.page_tables(p) for r in t]
+        self.assertIn("Material | Size | n", rows)
+        self.assertIn("Boulder | >256 | 0.040", rows)
+        self.assertFalse([r for r in rows if "K S" in r or "where" in r or "(4)" in r], rows)
+
+    def test_a_description_column_that_starts_at_the_column_edge_is_kept(self):
+        p = self.page().prose(54, 40, 5).prose(320, 40, 5)
+        p.put(54, 100, "Table 2. Adjustment values")
+        p.row(114, [(54, "Condition"), (180, "n value"), (320, "Example")])
+        ex = ["compares to the smoothest channel in a bed material",
+              "compares to carefully dredged channels in good shape",
+              "compares to dredged channels with moderate roughness",
+              "badly sloughed or scalloped banks of natural streams"]
+        for i, (a, v) in enumerate([("Smooth", "0.000"), ("Minor", "0.001-0.005"), ("Moderate", "0.006-0.010"),
+                                    ("Severe", "0.011-0.020")]):
+            p.row(126 + 12 * i, [(54, a), (180, v), (320, ex[i])])
+        p.prose(54, 190, 6).prose(320, 190, 6)
+        rows = [r for t in self.page_tables(p) for r in t]
+        self.assertIn("Smooth | 0.000 | " + ex[0], rows)
+
+    def test_a_table_stops_at_the_references(self):
+        p = self.page().put(72, 60, "Table 7. Verified n values")
+        p.row(76, [(72, "Stream"), (250, "Year"), (400, "n")])
+        for i, nm in enumerate(["Big Creek", "Salt Fork", "Deer Creek"]):
+            p.row(88 + 12 * i, [(72, nm), (250, "198%d" % i), (400, "0.03%d" % i)])
+        p.put(72, 140, "REFERENCES CITED")
+        for i in range(3):
+            p.row(156 + 12 * i, [(72, "Barnes, H.H., 196%d" % i), (250, "Roughness"), (400, "p. 1-%d" % (i + 2))])
+        rows = [r for t in self.page_tables(p) for r in t]
+        self.assertIn("Deer Creek | 1982 | 0.032", rows)
+        self.assertFalse([r for r in rows if "Barnes" in r], rows)
+
+    def page_tables(self, p):
+        return [c.split("\n") for c in self.vor.layout_table_chunks(p.words, p.width)]
+
     def test_every_piece_of_a_long_table_repeats_its_column_headings(self):
         p = self.page().put(72, 40, "Table 9. Gage heights")
         p.row(56, [(72, "Gage"), (250, "Year"), (400, "Height (ft)")])
@@ -440,6 +485,10 @@ class IndexSafetyTest(WiringTest):
             self.assertIn(did, ids)
             ids, _ = vor.find_docs(db, str(did))
             self.assertEqual(ids, [did], "an id still names that document only")
+            with self.assertRaises(SystemExit):
+                vor.find_docs(db, "33")                # a short missing id is not a substring search
+            with self.assertRaises(SystemExit):
+                vor.find_docs(db, "233")               # nor is part of a number
         finally:
             db.close()
 

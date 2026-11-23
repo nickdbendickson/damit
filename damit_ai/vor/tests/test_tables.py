@@ -102,7 +102,7 @@ class PdfTest(unittest.TestCase):
             backend = db.execute("SELECT backend FROM docs").fetchone()[0]
         finally:
             db.close()
-        self.assertEqual(backend, "pymupdf+tables")
+        self.assertEqual(backend, self.vor.TABLES_BACKEND)
         self.assertEqual(len(rows), 1)
         self.assertIn("Table 5-6", rows[0][1])
         self.assertIn("| Clean, winding | 0.033 | 0.040 | 0.045 |", rows[0][1])

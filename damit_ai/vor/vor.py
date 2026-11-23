@@ -34,8 +34,8 @@
 #     --per-doc N      passages allowed from any one publication (default 3; with --doc
 #                      the cap is lifted unless you set it, so a long guideline can give
 #                      up all -k passages).
-#   vor tables                 add the PDFs' tables as their own passages (documents indexed
-#                                      before 1.4.0; new ones get them at ingest). Needs PyMuPDF.
+#   vor tables                 add the PDFs' tables as their own passages (documents whose tables
+#                                      were read before 1.4.10; new ones get them at ingest). Needs PyMuPDF.
 #                                      --again: every PDF's tables read again; --doc KEY: one PDF's.
 #   vor ocr                    OCR the scanned PDFs (needs ocrmypdf) and re-ingest them
 #   vor remove DOC             drop a document from the index (file is not touched)
@@ -58,6 +58,10 @@
 #   is long text still counts when it holds values; a full-width table on a two-column page keeps every column;
 #   wrapped and bare 'TABLE 2' captions; skewed scans levelled; side-by-side tables; headings on every piece; a
 #   changed file is never re-read for tables; plain `vor tables` (and doctor) cover tables read by 1.4.0-1.4.9.
+#   Second review: lines regrouped round their middle word (WSP Table 1's Boulder row was split); equations or a
+#   figure beside a left-column table stay out of it; centred captions; tables stop at REFERENCES; sentences that
+#   run on into 'Table 3.' are not captions; year headings repeat; `--doc` falls back only on whole numbers of
+#   3+ digits.
 # 1.4.9 (2026-11-23): the model is told which passages come from the publication the question names. On the
 #   2026-11-23 real-model test Vor read the right pages (WSP 2339 Table 1 p.10, Pierce et al. p.35) but each
 #   passage was labelled only "Arcement (1989) Guide for Selecting..." or "FEMA (2010) Predicting Peak...", so
@@ -592,9 +596,10 @@ def find_docs(db, key):
     for part in [p.strip() for p in str(key).split(",") if p.strip()]:
         if part.isdigit():
             hit = [r for r in rows if r[0] == int(part)]
-            if not hit:                                   # 1.4.10: '2339' with no doc 2339 is a report number
-                hit = [r for r in rows if part in (r[3] or "") or part in os.path.basename(r[2] or "")
-                       or part in (r[1] or "")]
+            if not hit and len(part) >= 3:                # 1.4.10: '2339' with no doc 2339 is a report number
+                num = re.compile(r"(?<!\d)%s(?!\d)" % part)  # a whole number: '233' is not '2339'
+                hit = [r for r in rows if num.search(r[3] or "") or num.search(os.path.basename(r[2] or ""))
+                       or num.search(r[1] or "")]
         else:
             if len(squash(part)) < 2:
                 die("--doc %r is too short to match on; use the id from `vor list`" % part)
@@ -1130,7 +1135,11 @@ def _table_rows(t, words=None, pm=None):
 
 # 1.4.10: a real table number ('Table 1.', 'TABLE 3:', 'Table A-1', 'Table IV', a bare 'TABLE 2' line), not any
 # line that happens to begin with the word ('table was lower ...', 'TABLE OF CONTENTS').
-_CAPTION = re.compile(r"^\s*(?:Table|TABLE)\s+(?:[A-Z]{0,2}-?\d+[A-Za-z]?|[IVXL]+|[A-Z](?=[.:]))(?:[.:\s-]|$)")
+_CAPTION = re.compile(r"^\s*(?:Table|TABLE)\s+(?:[A-Z]{0,3}[.-]?\d+[A-Za-z]?|[IVXL]+|l(?=[.:])|[A-Z](?=[.:]|\s+[A-Z]))"
+                      r"(?:[.:\s-]|$)")
+# 1.4.10: the back matter of a report, where a table that runs to the foot of a page must stop
+_BACK_HEADING = re.compile(r"^\s*(?:SELECTED\s+|LITERATURE\s+)?(?:REFERENCES(?:\s+CITED)?|LITERATURE\s+CITED|BIBLIOGRAPHY)\s*$",
+                           re.I)
 
 
 def _table_caption(words, bbox, pm):
@@ -1196,7 +1205,16 @@ def _word_lines(words):
             lines[-1][1].append(w)
         else:
             lines.append([yc, [w]])
-    return [(yc, sorted(ln, key=lambda w: w[0])) for yc, ln in lines]
+    # a line is seeded by its first word, which may be the other column's, a little higher than this row: each
+    # word then moves to whichever neighbouring line's middle word it sits nearest
+    mids = [sorted((x[1] + x[3]) / 2 - x[0] * s for x in ln)[len(ln) // 2] for _, ln in lines]
+    regrouped = [[] for _ in lines]
+    for i, (_, ln) in enumerate(lines):
+        for w in ln:
+            yc = (w[1] + w[3]) / 2 - w[0] * s
+            j = min((k for k in (i - 1, i, i + 1) if 0 <= k < len(lines)), key=lambda k: abs(yc - mids[k]))
+            regrouped[j].append(w)
+    return [(m, sorted(ln, key=lambda w: w[0])) for m, ln in zip(mids, regrouped) if ln]
 
 
 def _segments(line, gap):
@@ -1235,13 +1253,32 @@ def _column_edges(segd, min_width, page_width):
     return [g[0] for g in groups if len(g) >= 2]
 
 
+_HEAD_NUMBER = re.compile(r"\(\d{1,2}\)|(?:1[89]|20)\d\d(?:[-\u2013]\d\d(?:\d\d)?)?")
+
+
 def _pack_table(caption, rows):
     """A table's rows as passages: the caption and the column headings (the lines above the first row with a
     cell that is only a number) on every piece, and a cell's wrapped lines kept with their row."""
-    h = next((j for j, r in enumerate(rows) if any(_NUMBER_LINE.fullmatch(c.strip()) for c in r.split(" | "))), 0)
+    def num(r, label):
+        return any(_NUMBER_LINE.fullmatch(c.strip()) and not (label and _HEAD_NUMBER.fullmatch(c.strip()))
+                   for c in r.split(" | "))
+    # a heading row of years or column numbers ('1984 | 1985', '(1) | (2)') is not the first row of values
+    h = next((j for j, r in enumerate(rows[:4]) if num(r, True)), None)
+    if h is None:
+        h = next((j for j, r in enumerate(rows) if num(r, False)), 0)
+    # the repeated heading ends at its last line with cells (and that line's wrapped words): section lines
+    # such as 'Sand channels' are printed once, where they stand
+    hl = [j for j in range(h) if " | " in rows[j]]
+    if hl:
+        e = hl[-1] + 1
+        while e < h and re.match(r"^[a-z(]", rows[e]):
+            e += 1
+        h = e
+    if h and len("\n".join(rows[:h])) > CHUNK_MAX // 4:
+        h = 0                             # too long for a heading: those lines are rows, kept in the body
     lead = "Table (rows as printed): %s\n" % caption[:200]
     if h:
-        lead += "\n".join(rows[:h])[:300] + "\n"
+        lead += "\n".join(rows[:h]) + "\n"
     groups = []
     for r in rows[h:]:
         r = r if len(r) <= CHUNK_MAX // 2 else r[:CHUNK_MAX // 2 - 2] + " …"
@@ -1277,11 +1314,20 @@ def layout_table_chunks(words, page_width):
     segd = [(yc, _segments(ln, gap)) for yc, ln in lines]
     edges = _column_edges(segd, col_w, page_width)
     near_edge = lambda x: next((e for e in edges if abs(x - e) <= 0.03 * page_width), None)
+    hs = sorted(w[3] - w[1] for _, ln in lines for w in ln)
+    pitch = 1.6 * hs[len(hs) // 2]
+
+    def goes_on(n, g):
+        # 'Table 3.' that a sentence on the line just above runs on into is running text, not a caption
+        if n == 0 or segd[n][0] - segd[n - 1][0] > pitch or not _is_prose(g, 0):
+            return False
+        return any(abs(p[0][0] - g[0][0]) <= 0.03 * page_width and _is_prose(p, 0)
+                   and not re.search(r"[.:;?!]$", _seg_text(p)) for p in segd[n - 1][1])
     out = []
     for n, (yc, sg) in enumerate(segd):
         # a caption starts its line, or a column, or sits beside another caption: 'Table 1 gives ...' inside
         # a cell is not one
-        caps = [i for i, g in enumerate(sg) if _CAPTION.match(_seg_text(g))
+        caps = [i for i, g in enumerate(sg) if _CAPTION.match(_seg_text(g)) and not goes_on(n, g)
                 and (i == 0 or near_edge(g[0][0]) is not None or _CAPTION.match(_seg_text(sg[0]))
                      or (not edges and g[0][0] > 0.4 * page_width and _is_prose(sg[i - 1], col_w)))]
         for j, cap_i in enumerate(caps):
@@ -1291,13 +1337,34 @@ def layout_table_chunks(words, page_width):
                 lo = cap_seg[0][0] - 2 if j else 0.0
                 hi = sg[caps[j + 1]][0][0] - 2 if j + 1 < len(caps) else hi
             else:
-                if cap_i > 0:
-                    lo = (near_edge(cap_seg[0][0]) or cap_seg[0][0]) - 2      # the table sits in a later column
+                if cap_i > 0:                       # the table sits in a later column
+                    e_l = near_edge(cap_seg[0][0])
+                    if e_l is None:
+                        # no column edge seen: the table starts after the running text beside it, which may be
+                        # left of a centred caption
+                        ends = [sgb[0][-1][2] for _, sgb in segd[n:n + LAYOUT_MAX_LINES]
+                                if len(sgb) > 1 and _is_prose(sgb[0], col_w)]
+                        e_l = min(cap_seg[0][0], max(ends + [sg[cap_i - 1][-1][2]])) + 2
+                    lo = e_l - 2
                 e_r = next((e for e in edges if e > cap_seg[-1][2] + 2), None)
                 if e_r is not None:
                     # bounded on the right only where the next column goes on as running text beside the rows
+                    # (or by nothing laid out in columns: equations, a figure, blank space), not where the
+                    # table's own columns run on across the edge
                     beside = [g for _, sgb in segd[n + 1:n + 9] for g in sgb if g[0][0] >= e_r - 2]
-                    if beside and sum(1 for g in beside if _is_prose(g, col_w)) * 2 >= len(beside):
+                    xs = [g[0][0] for g in beside if not _is_prose(g, col_w)]
+                    tol = 0.02 * page_width
+                    head = next((sgb for _, sgb in segd[n + 1:n + 3] if not _seg_text(sgb[0]).startswith("[")), [])
+                    body = [sgb for _, sgb in segd[n + 2:n + 6]]
+                    crosses = (sum(1 for g in head if g[-1][2] < e_r - 2) >= 2
+                               and any(g[0][0] >= e_r - 2 and not _is_prose(g, 0) and len(g) <= 4 for g in head)
+                               and not any(_is_prose(g, col_w) for g in sg[cap_i + 1:] if g[0][0] >= e_r - 2)
+                               # and the rows go on across the edge, row after row
+                               and sum(1 for b in body if sum(1 for g in b if g[-1][2] < e_r - 2) >= 2
+                                       and any(g[0][0] >= e_r - 2 for g in b)) >= 3)
+                    prose_beside = sum(1 for g in beside if _is_prose(g, col_w)) * 2 >= len(beside)
+                    columns_beside = any(sum(1 for y in xs if abs(y - x) <= tol) >= 3 for x in xs)
+                    if not crosses and (prose_beside or not columns_beside):
                         hi = e_r - 2
             left = cap_seg[0][0]
             caption = _seg_text(cap_seg)
@@ -1315,14 +1382,17 @@ def layout_table_chunks(words, page_width):
                     caption += " " + " ".join(_seg_text(c) for c in cells)
                     continue
                 if (not rows and k == n + 2 and len(cells) == 1 and at_left
-                        and (_is_prose(cells[0], 0) or cap_seg[-1][2] - max(lo, 0.0) >= 0.8 * span)):
+                        and (_is_prose(cells[0], 0)
+                             or (cap_seg[-1][2] - max(lo, 0.0) >= 0.8 * span and first[:1].islower()))):
                     caption += " " + first          # the caption wrapped onto a second line
                     continue
-                if at_left and (_CAPTION.match(first) or re.match(r"^(figure|fig\.)\s+\d", first, re.I)):
+                if at_left and (_CAPTION.match(first) or re.match(r"^(figure|fig\.)\s+\d", first, re.I)
+                                or _BACK_HEADING.match(first)):
                     break
+                values = [_seg_text(c) for c in cells[1:]]
                 if (at_left and not re.match(r"^\d{1,2}$", str(cells[0][0][4])) and _is_prose(cells[0], prose_w)
-                        and not any(re.search(r"\d", _seg_text(c)) for c in cells[1:])):
-                    break                           # running text below the table
+                        and not (values and all(re.search(r"\d", t) and len(t.split()) <= 3 for t in values))):
+                    break                           # running text below the table (a long name with values is a row)
                 rows.append(" | ".join(_seg_text(c) for c in cells))
             if sum(1 for r in rows if " | " in r) < 3 or not any(re.search(r"\d", r) for r in rows):
                 continue
@@ -2942,7 +3012,8 @@ def long_passages(db, limit=PASSAGE_MAX):
 
 
 def cmd_tables(a):
-    """Add table passages to PDFs indexed before 1.4.0 (backend 'pymupdf'), embedding only the tables.
+    """Add table passages to PDFs whose tables were read before 1.4.10 (backend 'pymupdf' or 'pymupdf+tables'),
+    replacing their old table passages and embedding only the tables.
     1.4.2: --check lists passages longer than PASSAGE_MAX; --redo reads the tables of those documents again
     with the 1.4.2 limits (no all-empty columns, no mostly empty grids, no row longer than a passage)."""
     if getattr(a, "check", False):
@@ -3578,7 +3649,7 @@ def main():
     s.add_argument("-k", type=int, default=8)
     add_scope_args(s)
     s.set_defaults(fn=cmd_chat)
-    s = sub.add_parser("tables", help="add the PDFs' tables as their own passages (documents indexed before 1.4.0)")
+    s = sub.add_parser("tables", help="add or re-read the PDFs' tables as their own passages (documents indexed before 1.4.10)")
     s.add_argument("--check", action="store_true", help="list passages too long for Vor to read whole; changes nothing")
     s.add_argument("--redo", action="store_true", help="read the tables again of documents with a passage that is too long")
     s.add_argument("--again", action="store_true",

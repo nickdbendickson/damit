@@ -147,6 +147,7 @@ def main():
     # 1.6: vor 1.4.10 asks again when an answer is cut off at its length limit; counted on its own, as it is
     # not "wrote no answer at first"
     cutoff = [r for r in results if r.get("answer_from") == "model, after cut-off"]
+    still_cut = [r for r in results if r.get("answer_from") == "model" and "cut off" in (r.get("answer_note") or "")]
     by_model = sum(1 for r in scored if r["status"] == "pass" and r.get("answer_from", "model") != "findings")
     wrote = ""
     if second or listed:
@@ -158,6 +159,9 @@ def main():
         wrote = (wrote + " " if wrote else "") + (
             "The model's answer was cut off at its length limit on %d question(s); a second attempt finished it."
             % len(cutoff))
+    if still_cut:
+        wrote = (wrote + " " if wrote else "") + (
+            "On %d question(s) the answer stayed cut off at its length limit and its end is missing." % len(still_cut))
     if wrote:
         say(wrote)
 
@@ -166,7 +170,7 @@ def main():
     with open(stem + ".json", "w", encoding="utf-8") as f:
         json.dump(dict(model=model, when=datetime.now().isoformat(timespec="seconds"), passed=passed,
                        passed_model_written=by_model, second_attempt=len(second), findings_listed=len(listed),
-                       cut_off=len(cutoff),
+                       cut_off=len(cutoff), cut_off_unfinished=len(still_cut),
                        scored=len(scored), minutes=round(total_s / 60, 1), results=results), f, indent=1)
     L = ["# vor answer test: %s" % model, "",
          "%s. **%d / %d passed**, %d skipped, %.1f min." % (datetime.now().strftime("%Y-%m-%d %H:%M"), passed,

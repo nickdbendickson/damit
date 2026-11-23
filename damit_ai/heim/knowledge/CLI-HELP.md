@@ -685,7 +685,7 @@ interactive; '!' prefix = deep research
 
 #### `vor.py tables`
 
-add the PDFs' tables as their own passages (documents indexed before 1.4.0)
+add or re-read the PDFs' tables as their own passages (documents indexed before 1.4.10)
 
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
