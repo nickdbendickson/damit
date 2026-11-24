@@ -486,7 +486,7 @@ class InstallerTextTest(unittest.TestCase):
         self.assertIn('exec > >(trap \'\' INT; exec tee -i -a "$INSTALL_LOG") 2>&1', t)
         self.assertIn("HEIM_SKIP_DISK_CHECK", t)
         self.assertIn("-partial*", t)                                   # a stopped pull's part is not counted twice
-        self.assertIn('! vor_has_index "$RHOME"', t)                     # a copied but unindexed library is indexed
+        self.assertIn('! vor_index_has_passages "$RHOME"', t)             # a copied but unindexed (or empty-index) library is indexed
         self.assertIn("echo 'vor doctor'", t)                            # a Vor-only install is not sent to ai-doctor
         self.assertIn("trap on_exit EXIT", t)
         self.assertIn("not enough free disk space for the models", t)
@@ -520,7 +520,7 @@ class InstallerTextTest(unittest.TestCase):
         self.assertIn("HEIM_SKIP_DISK_CHECK", t)
         self.assertIn("'*-partial*'", t)
         self.assertIn("-not $StartedServer -and -not $Prefix", t)
-        self.assertIn("if ($hasLib -and -not (VorHasIndex $RHome))", t)
+        self.assertIn("if ($hasLib -and -not $hasPassages)", t)             # an empty index is indexed again
         self.assertIn("if ($DoHeim) { 'ai-doctor' } else { 'vor doctor' }", t)
         self.assertIn("Command Prompt:", t)                              # the starter-library line for cmd.exe too
         # a -Prefix sandbox never changes the user's execution policy
