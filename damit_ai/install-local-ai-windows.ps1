@@ -580,10 +580,23 @@ if ($DoVor) {
       $LibEmpty = $false
     }
   }
-  # index the library when it has files and no index yet (also when an earlier run copied it and
-  # its ingest was stopped); a library you already indexed is left to `vor ingest`
+  # index the library when it has files and its index has no passages yet: no index file, or an
+  # empty one (an earlier run copied it and its ingest was stopped before the first document, or
+  # something opened the index before the library was there); a library you already indexed is
+  # left to `vor ingest`
   $hasLib = Get-ChildItem -Path $libDir -Recurse -File -Include '*.pdf','*.md','*.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($hasLib -and -not (VorHasIndex $RHome)) {
+  $hasPassages = $false
+  foreach ($f in @((Join-Path $RHome 'vor.db'), (Join-Path $RHome 'research.db'))) {
+    if (Test-Path $f) {
+      # the SQL goes in as an argument: Windows PowerShell 5.1 drops double quotes inside a native
+      # command's arguments; try/catch because a Python error on stderr stops this script there
+      try { & $PyR -c 'import sqlite3,sys; sys.exit(0 if sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0] else 1)' $f 'SELECT COUNT(*) FROM chunks' 2>$null; $hasPassages = ($LASTEXITCODE -eq 0) }
+      catch { $hasPassages = $false }
+      $global:LASTEXITCODE = 0
+      break
+    }
+  }
+  if ($hasLib -and -not $hasPassages) {
     if (-not $NoModels -and -not $NoIndex) {
       Say "Vor's library: indexing it"
       Ok 'a while for a full library; Ctrl+C is safe, then run: vor ingest'

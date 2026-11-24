@@ -518,10 +518,21 @@ if [[ "$DO_VOR" == 1 && -z "$(find "$RHOME/library" -type f \( -iname '*.pdf' -o
     LIB_EMPTY=0
   fi
 fi
-# index the library when it has files and no index yet (also when an earlier run copied it and its
-# ingest was stopped); a library already indexed is left to `vor ingest`
+# index the library when it has files and its index has no passages yet: no index file, or an empty
+# one (an earlier run copied the library and its ingest was stopped before the first document, or
+# something opened the index before the library was there); a library already indexed is left to
+# `vor ingest`
+vor_index_has_passages() {
+  local f
+  for f in "$1/vor.db" "$1/research.db"; do
+    [[ -f "$f" ]] || continue
+    "$VOR_DIR/python" -c 'import sqlite3,sys; sys.exit(0 if sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0] else 1)' "$f" "SELECT COUNT(*) FROM chunks" 2>/dev/null
+    return
+  done
+  return 1
+}
 if [[ "$DO_VOR" == 1 && -n "$(find "$RHOME/library" -type f \( -iname '*.pdf' -o -iname '*.md' -o -iname '*.txt' \) -print -quit 2>/dev/null || true)" ]] \
-   && ! vor_has_index "$RHOME"; then
+   && ! vor_index_has_passages "$RHOME"; then
   if [[ "$NO_MODELS" == 0 && "$INDEX_KN" == 1 ]]; then
     say "Vor's library: indexing it"
     ok "a while for a full library; Ctrl+C is safe, then run: vor ingest"

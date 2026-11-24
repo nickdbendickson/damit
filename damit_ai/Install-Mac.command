@@ -18,7 +18,18 @@ if (( rc == 0 )); then
     mkdir -p "$lib" && cp -Rn "$off/." "$lib/"
   fi
   vhome="${lib:h}"
-  if has_docs "$lib" && [[ ! -f "$vhome/vor.db" && ! -f "$vhome/research.db" ]]; then
+  # "indexed" means the index holds passages: an index FILE alone can be empty (a stopped first
+  # ingest, or one opened before the library was copied in), and Vor then answers from nothing.
+  indexed() {
+    local f
+    for f in "$vhome/vor.db" "$vhome/research.db"; do
+      [[ -f "$f" ]] || continue
+      "$HOME/local-ai/vor/python" -c 'import sqlite3,sys; sys.exit(0 if sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0] else 1)' "$f" "SELECT COUNT(*) FROM chunks" 2>/dev/null
+      return
+    done
+    return 1
+  }
+  if has_docs "$lib" && ! indexed; then
     echo "== Vor's library: indexing it (a while for a full library; Ctrl+C is safe, then run: vor ingest)"
     VOR_HOME="$vhome" "$HOME/local-ai/vor/python" "$HOME/local-ai/vor/vor.py" ingest \
       || echo "The library index stopped; in a new Terminal window run:  vor ingest"
