@@ -303,7 +303,8 @@ ok "RAM ${RAM_GB} GB -> chat model $CHAT_MODEL (num_ctx $NUM_CTX)"
 # `ollama pull` can fail behind a proxy (the registry's manifest / redirect never completes). Fallback: fetch the model's
 # official GGUF from Hugging Face (curl honours https_proxy; HF_ENDPOINT can point at a mirror), check its sha256, write a
 # Modelfile and `ollama create` the SAME tag, then delete the GGUF (Ollama keeps its own copy).
-# HEIM_GGUF_SPEC="repo file sha256 bytes" overrides the table (another quant, or a mirror's file); HEIM_GGUF_DIR = scratch dir.
+# HEIM_GGUF_SPEC="repo file sha256 bytes" overrides the table (another quant, or a mirror's file); HEIM_GGUF_DIR = where the
+# private scratch folder is made (default $TMPDIR or /tmp); the folder is removed again whether the create works or not.
 hf_gguf_spec(){
   if [[ -n "${HEIM_GGUF_SPEC:-}" ]]; then echo "$HEIM_GGUF_SPEC"; return 0; fi
   case "$1" in
@@ -317,30 +318,34 @@ hf_gguf_spec(){
   esac
 }
 hf_gguf_create(){
-  local tag="$1" spec repo file sha size dir url got avail have
+  local tag="$1" spec repo file sha size base dir gguf url got avail
   spec="$(hf_gguf_spec "$tag")" || { warn "no Hugging Face GGUF is known for $tag (set HEIM_GGUF_SPEC=\"repo file sha256 bytes\")"; return 1; }
   read -r repo file sha size <<< "$spec"
   if [[ "${HEIM_NO_HF_FALLBACK:-0}" == 1 ]]; then warn "HEIM_NO_HF_FALLBACK=1: not downloading $tag from Hugging Face"; return 1; fi
   command -v curl >/dev/null 2>&1 || { warn "curl not found: cannot fetch the GGUF for $tag"; return 1; }
-  dir="${HEIM_GGUF_DIR:-${TMPDIR:-/tmp}/heim-gguf}"; mkdir -p "$dir" || return 1
+  case "$file" in ""|*/*|.|..) warn "bad GGUF file name in the spec for $tag: $file"; return 1 ;; esac
+  # A fresh private folder (mktemp -d: mode 0700, new name) for every download, never a fixed shared path such as
+  # /tmp/heim-gguf: another local user could otherwise plant a file or symlink there between the checks and the use.
+  base="${HEIM_GGUF_DIR:-${TMPDIR:-/tmp}}"; base="${base%/}"; [[ -n "$base" ]] || base=/
+  mkdir -p "$base" 2>/dev/null; [[ -d "$base" ]] || { warn "GGUF scratch folder $base is not a folder"; return 1; }
+  dir="$(mktemp -d "$base/heim-gguf.XXXXXX")" || { warn "could not make a private scratch folder in $base"; return 1; }
+  chmod 700 "$dir" 2>/dev/null; gguf="$dir/$file"
   avail=$(df -Pk "$dir" 2>/dev/null | awk 'NR==2{print $4*1024}')
   if [[ -n "$avail" ]] && (( avail < size + size / 10 )); then
-    warn "not enough free space in $dir for the $((size / 1048576)) MB GGUF (set HEIM_GGUF_DIR to a bigger disk)"; return 1
+    warn "not enough free space in $base for the $((size / 1048576)) MB GGUF (set HEIM_GGUF_DIR to a bigger disk)"; rm -rf "$dir"; return 1
   fi
   url="${HF_ENDPOINT:-https://huggingface.co}/$repo/resolve/main/$file"
-  have=$(wc -c < "$dir/$file" 2>/dev/null || echo 0); have="${have//[[:space:]]/}"
-  if [[ "$have" != "$size" ]]; then
-    ok "ollama pull failed: downloading $file from Hugging Face ($((size / 1048576)) MB)"
-    curl -fL -C - --retry 3 --retry-delay 5 -o "$dir/$file" "$url" || { warn "download failed: $url"; return 1; }
+  ok "ollama pull failed: downloading $file from Hugging Face ($((size / 1048576)) MB)"
+  curl -fL -C - --retry 3 --retry-delay 5 -o "$gguf" "$url" || { warn "download failed: $url"; rm -rf "$dir"; return 1; }
+  if [[ ! -f "$gguf" || -L "$gguf" ]]; then warn "the download of $file is not a plain file: not used"; rm -rf "$dir"; return 1; fi
+  got="$( (sha256sum "$gguf" 2>/dev/null || shasum -a 256 "$gguf") | awk '{print $1}')"
+  if [[ "$got" != "$sha" ]]; then warn "sha256 of $file is $got, expected $sha: not used"; rm -rf "$dir"; return 1; fi
+  { printf 'FROM %s\n' "$gguf"
+    [[ "$tag" == nomic* ]] || printf 'PARAMETER num_ctx 4096\nPARAMETER temperature 0.2\nPARAMETER top_p 0.9\n'; } > "$dir/Modelfile"
+  if ! "$OLLAMA" create "$tag" -f "$dir/Modelfile" >/dev/null; then
+    warn "ollama create $tag failed"; rm -rf "$dir"; return 1
   fi
-  got="$( (sha256sum "$dir/$file" 2>/dev/null || shasum -a 256 "$dir/$file") | awk '{print $1}')"
-  if [[ "$got" != "$sha" ]]; then warn "sha256 of $file is $got, expected $sha: not used"; rm -f "$dir/$file"; return 1; fi
-  { printf 'FROM %s\n' "$dir/$file"
-    [[ "$tag" == nomic* ]] || printf 'PARAMETER num_ctx 4096\nPARAMETER temperature 0.2\nPARAMETER top_p 0.9\n'; } > "$dir/Modelfile.$$"
-  if ! "$OLLAMA" create "$tag" -f "$dir/Modelfile.$$" >/dev/null; then
-    warn "ollama create $tag failed"; rm -f "$dir/Modelfile.$$"; return 1
-  fi
-  rm -f "$dir/$file" "$dir/Modelfile.$$"
+  rm -rf "$dir"
   ok "created $tag from the Hugging Face GGUF"
 }
 # <<< hf_gguf_fallback
