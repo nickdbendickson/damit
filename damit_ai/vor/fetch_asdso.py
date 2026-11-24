@@ -16,7 +16,8 @@
 #                                               # ND REG_05, TM-11, FEMA 333 ...) and dam-design references
 #                                               # (USBR, USACE, NRCS, NOAA HMR, FERC ...)
 #   python3 fetch_asdso.py --catalog hazard     # one group only, or a comma list (hazard | design |
-#                                               # breach | software | consequence | data | hydrology | ponds)
+#                                               # breach | software | consequence | data | hydrology | ponds |
+#                                               # nd | cases)
 #   python3 fetch_asdso.py --catalog --asdso    # catalog and the ASDSO pages in one run
 #   python3 fetch_asdso.py --urls library-urls.txt
 #                                               # write a plain-text list of every catalog source
