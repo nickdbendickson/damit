@@ -1,5 +1,5 @@
 """ai_ui.py 1.2.0, the Local AI app: fix buttons, jobs, the library and its catalog, uploads, updates,
-the one-time launch code and the one-copy app.
+how the window gets its key, and the one-copy app.
 
 Why this exists: on 2026-11-24 a Mac's Vor index was empty for days (189 files never indexed) and the
 fixes, the update, the downloads and the answer test were all Terminal commands. The page now runs
@@ -20,7 +20,7 @@ import unittest
 import urllib.error
 import urllib.request
 import zipfile
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(os.path.dirname(HERE), "tools", "ai_ui.py")
@@ -215,6 +215,15 @@ class AppTest(unittest.TestCase):
         _, text = self.job({"action": "heim-refresh", "name": "engine_docs", "path": self.home})
         self.assertIn("INDEX: -c engine_docs %s" % self.home, text)
 
+    def test_heim_refresh_takes_the_doctors_quoted_folders(self):
+        """rag_index's doctor prints the roots quoted, several for one collection: all are re-indexed."""
+        two = os.path.join(self.tmp, "a b")
+        os.makedirs(two)
+        _, text = self.job({"action": "heim-refresh", "name": "engine_docs", "paths": ["'%s'" % self.home, "'%s'" % two]})
+        self.assertIn("INDEX: -c engine_docs %s %s" % (self.home, two), text)
+        code, _ = self.js("/api/job", {"action": "heim-refresh", "name": "x", "paths": [self.home, "/no/such"]})
+        self.assertEqual(code, 400, "every folder must exist")
+
     def test_score_runs_the_answer_test(self):
         self.assertIn("SCORE: --vor", self.job({"action": "score", "which": "vor"})[1])
         self.assertIn("SCORE: \n", self.job({"action": "score", "which": "both"})[1])
@@ -303,22 +312,35 @@ class AppTest(unittest.TestCase):
         finally:
             c.close()
 
-    def test_the_launch_code_works_once_and_leaves_a_cookie(self):
-        _, d = self.js("/api/launch-code", {})
-        code, h = self.raw_get("/launch?c=" + d["code"])
-        self.assertEqual((code, h["Location"]), (303, "/"))
-        cookie = h["Set-Cookie"]
-        self.assertIn("ai_k=k3y", cookie)
-        self.assertIn("HttpOnly", cookie)
-        self.assertIn("SameSite=Strict", cookie)
-        self.assertEqual(self.raw_get("/launch?c=" + d["code"])[0], 403, "a code works once")
-        self.assertEqual(self.raw_get("/launch?c=made-up")[0], 403)
-        code, page, _ = self.req("/", key=None, headers={"Cookie": "ai_k=k3y"})
+    def test_no_cookie_and_no_launch_code(self):
+        """A review of the first 1.2.0 found that a launch code on the browser's command line let another
+        user of the computer take the key, and a cookie went to every 127.0.0.1 port. Both are gone."""
+        code, page, h = self.req("/", key=None)
         self.assertEqual(code, 200)
         self.assertIn("Local AI", page)
-        self.assertEqual(self.req("/", key=None, headers={"Cookie": "ai_k=wrong"})[0], 403)
-        self.assertEqual(self.req("/api/status", key=None, headers={"Cookie": "ai_k=k3y"})[0], 403,
-                         "the API takes the key from the page, never from the cookie alone")
+        self.assertNotIn("k3y", page)
+        self.assertIsNone(h.get("Set-Cookie"))
+        self.assertEqual(self.req("/api/status", key=None, headers={"Cookie": "ai_k=k3y"})[0], 403)
+        self.assertEqual(self.raw_get("/launch?c=x")[0], 403)
+        self.assertEqual(self.req("/api/launch-code", {})[0], 404)
+
+    def test_hello_proves_the_key_without_sending_it(self):
+        nonce = "n" * 32
+        code, d = self.js("/api/hello?n=" + nonce, key=None)
+        self.assertEqual(code, 200)
+        self.assertEqual(d["proof"], self.ui.hello_proof("k3y", nonce))
+        self.assertNotIn("k3y", json.dumps(d))
+        self.assertEqual(self.req("/api/hello?n=short", key=None)[0], 400)
+
+    def test_quit_waits_for_a_running_job(self):
+        os.environ["FAKE_SLOW"] = "1"
+        self.assertEqual(self.js("/api/job", {"action": "vor-ingest"})[0], 200)
+        code, d = self.js("/api/quit", {})
+        self.assertEqual(code, 409, d)
+        self.stop_jobs()
+        self.assertEqual(self.req("/api/quit", {}, key=None)[0], 403)
+        code, d = self.js("/api/quit", {})
+        self.assertEqual((code, d), (200, {"quitting": True}))
 
     def test_streamed_output_is_http_1_1_chunked(self):
         """1.1.0 sent chunked output under HTTP/1.0, so a browser showed the chunk lengths ("7", "8f")."""
@@ -333,10 +355,36 @@ class AppTest(unittest.TestCase):
         finally:
             c.close()
 
-    def test_an_old_code_does_not_work(self):
-        code = self.ui.Handler.new_code()
-        self.ui.Handler.codes[code] = time.time() - 1
-        self.assertFalse(self.ui.Handler.use_code(code))
+    def test_a_job_that_breaks_still_ends(self):
+        job = self.ui.Job("broken", [("x", None, False)])       # Popen(None) raises TypeError, not OSError
+        job.run()
+        self.assertEqual((job.status, job.code), ("failed", 1))
+        self.assertIsNotNone(job.ended)
+
+    def test_the_update_installer_finds_conda(self):
+        """The icon starts the app with no terminal setup, so conda may not be on PATH: the update job
+        passes CONDA_EXE, which every installer looks for first."""
+        root = os.path.join(self.tmp, "miniforge3")
+        exe = os.path.join(root, "envs", "heim", "bin", "python")
+        write(exe, "")
+        write(os.path.join(root, "bin", "conda"), "")
+        env = self.ui.conda_env(exe)
+        self.assertEqual(env["CONDA_EXE"], os.path.join(root, "bin", "conda"))
+        self.assertTrue(env["PATH"].startswith(os.path.join(root, "bin") + os.pathsep))
+        self.assertEqual(self.ui.conda_env(os.path.join(self.tmp, "nowhere", "bin", "python")), {})
+
+    def test_powershell_switches_come_before_the_script(self):
+        with open(SRC, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn('"powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", p]', src)
+
+    def test_ollama_the_linux_installer_put_in_local_ai(self):
+        if os.name == "nt":
+            self.skipTest("Linux and Mac layout")
+        p = os.path.join(self.tmp, "local-ai", "ollama", "bin", "ollama")
+        write(p, "#!/bin/sh\n")
+        os.chmod(p, 0o755)
+        self.assertEqual(self.ui.ollama_binary(), [p, "serve"])
 
     # ------------------------------------------------------------------ odds and ends
     def test_a_log_is_never_cut_inside_a_character(self):
@@ -364,7 +412,8 @@ class AppTest(unittest.TestCase):
         for fix in ("vor-ingest", "vor-tables", "vor-ocr", "vor-ocr-all", "heim-compact", "start-ollama",
                     "heim-refresh"):
             self.assertIn('"%s"' % fix, page)
-        self.assertIn("setInterval(()=>fetch(\"/api/ping", page)
+        self.assertIn('fetch("/api/ping?k="+KEY)', page)
+        self.assertIn("Local AI has stopped", page)
 
 
 class OneCopyTest(unittest.TestCase):
@@ -421,14 +470,67 @@ class OneCopyTest(unittest.TestCase):
         self.assertEqual(self.ui.read_state()["pid"], st["pid"], "the second click reuses the running copy")
         self.assertEqual(len(self.opened), 2)
         for url in self.opened:
-            self.assertRegex(url, r"^http://127\.0\.0\.1:%d/launch\?c=[\w-]+$" % st["port"])
+            self.assertTrue(url.startswith("file:"), url)
             self.assertNotIn(st["key"], url, "the key itself is never on a command line")
+        page = self.ui.local_ai("ai-ui-open.html")
+        self.assertEqual(oct(os.stat(page).st_mode & 0o777), "0o600", "only this user can read it")
+        with open(page, encoding="utf-8") as fh:
+            self.assertIn("http://127.0.0.1:%d/#k=%s" % (st["port"], st["key"]), fh.read())
         end = time.time() + 20                   # watched by its process, not by pinging it (a ping is a window)
         while self.running(st["pid"]) and time.time() < end:
             time.sleep(0.2)
         self.assertFalse(self.running(st["pid"]), "it stops after its idle time with no window")
         time.sleep(0.3)
         self.assertIsNone(self.ui.read_state(), "and removes its state file")
+
+    def test_two_quick_presses_start_one_copy(self):
+        starts = []
+        real = self.ui.spawn
+        self.ui.spawn = lambda argv, **kw: (starts.append(argv), real(argv, **kw))[1]
+        ts = [threading.Thread(target=self.ui.app_open) for _ in range(3)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(40)
+        self.assertEqual(len([a for a in starts if "--serve-app" in a]), 1, starts)
+        self.assertEqual(len(self.opened), 3)
+        self.assertFalse(os.path.exists(self.ui.local_ai("ai-ui.lock")))
+
+    def test_after_an_update_an_idle_old_copy_makes_way(self):
+        self.assertEqual(self.ui.app_open(), 0)
+        old = self.ui.read_state()
+        self.ui.VERSION = "99.0.0"                    # this icon press is a newer version than the running copy
+        self.assertEqual(self.ui.app_open(), 0)
+        new = self.ui.read_state()
+        self.assertNotEqual(new["pid"], old["pid"])
+        end = time.time() + 10
+        while self.running(old["pid"]) and time.time() < end:
+            time.sleep(0.1)
+        self.assertFalse(self.running(old["pid"]), "the old copy stopped")
+
+    def test_the_key_goes_only_to_a_server_that_proves_it_holds_it(self):
+        """A program that took the port after the app stopped must not be handed the key."""
+        got = []
+
+        class Imposter(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                got.append((self.path, self.headers.get("X-Key")))
+                body = json.dumps({"app": "ai-ui", "proof": "0" * 64, "version": "x"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Imposter)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        self.assertIsNone(self.ui.alive({"port": srv.server_address[1], "key": "secret-key"}))
+        self.assertTrue(got)
+        self.assertFalse([g for g in got if g[1]], "no X-Key was sent")
+        self.assertNotIn("secret-key", json.dumps(got))
 
     def test_a_stale_state_file_starts_a_new_copy(self):
         self.ui.write_state(9, "old-key")           # a copy that was killed: nothing answers on port 9

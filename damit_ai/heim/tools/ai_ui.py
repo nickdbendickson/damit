@@ -43,13 +43,19 @@ needs sudo or admin rights, and nothing beyond Python's standard library.
 Safety: the server binds 127.0.0.1, answers only requests whose Host is that address, and every
 request must carry the random key printed at start (other web pages in your browser cannot run
 commands through it). Commands are fixed argument lists, never a shell. A PDF is served only from
-Vor's library or Heim's index folders. The app opens its window with a one-time code instead of the
-key, so the key is never on a command line; the key then lives in a cookie only this address gets.
+Vor's library or Heim's index folders. The app never puts the key on a command line (where other
+users of this computer could list it): it writes a small page only you can read (~/local-ai/
+ai-ui-open.html) that hands the key to the window in the address's #fragment, which is never sent
+over the network, and the page keeps it for that window only. Before the app trusts a running server
+with the key, the server must prove it holds the key (an HMAC of a fresh random number). No cookie.
 Stdlib only. Ctrl+C stops `ai`.
 """
 import argparse
+import hashlib
+import hmac
 import json
 import os
+import pathlib
 import re
 import secrets
 import shutil
@@ -232,7 +238,7 @@ APP_PORT = int(os.environ.get("AI_UI_PORT") or 8767)      # the app's usual port
 IDLE_SECONDS = float(os.environ.get("AI_UI_IDLE_SECONDS") or 600)   # the app stops this long after its
 #                                 last window closed (never while a job runs)
 JOB_SECONDS = 12 * 3600         # a job (index, download, update) is stopped after this long
-CODE_SECONDS = 120              # a launch code works once, within this long
+LOCK_SECONDS = 30               # a start lock older than this was left by a copy that died
 UPLOAD_MAX = {"library": 500 << 20, "update": 200 << 20}
 LIBRARY_EXT = (".pdf", ".md", ".txt")
 SKIP_DIRS = {"__MACOSX", ".git", "_ocr_tmp", "node_modules"}      # as vor.py's walk
@@ -362,6 +368,10 @@ def ollama_binary():
         for d in (os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama"), local_ai("ollama")):
             if os.path.isfile(os.path.join(d, "ollama.exe")):
                 return [os.path.join(d, "ollama.exe"), "serve"]
+    for p in (local_ai("ollama", "bin", "ollama"), local_ai("bin", "ollama"),
+              os.path.join(HOME, ".local", "bin", "ollama")):
+        if os.name != "nt" and os.path.isfile(p) and os.access(p, os.X_OK):
+            return [p, "serve"]
     found = shutil.which("ollama")
     if found:
         return [found, "serve"]
@@ -483,11 +493,29 @@ class Job(object):
                 "started": self.started, "ended": self.ended, "log": self.log}
 
     def run(self):
-        env = dict(os.environ, PYTHONUNBUFFERED="1", NO_COLOR="1", AI_UI_JOB="1")
+        code = 0
+        try:
+            code = self._run_steps()
+        except Exception as e:  # noqa: BLE001 - a job always ends with a status the page can show
+            code = code or 1
+            try:
+                with open(self.log, "ab") as out:
+                    out.write(("\n[the job stopped: %s]\n" % e).encode("utf-8", "replace"))
+            except OSError:
+                pass
+        finally:
+            self.code, self.ended = code, time.time()
+            self.status = "stopped" if self.stopped else ("failed" if code else "done")
+            prune_job_logs()
+
+    def _run_steps(self):
+        base = dict(os.environ, PYTHONUNBUFFERED="1", NO_COLOR="1", AI_UI_JOB="1")
         code = 0
         with open(self.log, "ab", buffering=0) as out:
             out.write(("%s\n" % self.title).encode("utf-8"))
-            for label, argv, keep_going in self.steps:
+            for step in self.steps:
+                label, argv, keep_going = step[:3]
+                env = dict(base, **(step[3] if len(step) > 3 else {}))
                 if self.stopped:
                     break
                 out.write(("\n== %s\n" % label).encode("utf-8"))
@@ -509,9 +537,7 @@ class Job(object):
                     code = code or rc
                     if not keep_going:
                         break
-        self.code, self.ended = code, time.time()
-        self.status = "stopped" if self.stopped else ("failed" if code else "done")
-        prune_job_logs()
+        return code
 
     def stop(self):
         self.stopped = True
@@ -519,7 +545,9 @@ class Job(object):
         if p and p.poll() is None:
             try:
                 if os.name == "nt":
-                    p.terminate()
+                    # the whole tree: an installer or a download runs programs of its own
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, creationflags=0x08000000, check=False)  # nosec B603 B607
                 else:
                     os.killpg(p.pid, signal.SIGTERM)
             except OSError:
@@ -598,10 +626,29 @@ def installer_argv(folder):
         return ["/bin/zsh", p] if os.path.isfile(p) else None
     if os.name == "nt":
         p = os.path.join(root, "install-local-ai-windows.ps1")
-        return (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", p, "-NonInteractive"]
+        # -NonInteractive is PowerShell's own switch: after -File it would go to the script instead
+        return (["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", p]
                 if os.path.isfile(p) else None)
     p = os.path.join(root, "install-local-ai-linux.sh")
     return ["bash", p] if os.path.isfile(p) else None
+
+
+def conda_env(exe=None):
+    """CONDA_EXE and PATH for an update's installer. The icon starts the app without a terminal's setup,
+    so `conda` is often not on PATH; the installers look for CONDA_EXE first. Found from this Python:
+    <conda>/envs/<name>/bin/python (Windows <conda>\\envs\\<name>\\python.exe), or <conda>/bin/python."""
+    exe = os.path.abspath(exe or sys.executable)
+    d = os.path.dirname(exe)
+    env_dir = d if os.name == "nt" else os.path.dirname(d)
+    roots = [os.path.dirname(os.path.dirname(env_dir))] if os.path.basename(os.path.dirname(env_dir)) == "envs" else []
+    roots.append(env_dir)
+    for root in roots:
+        cands = ((os.path.join(root, "Scripts", "conda.exe"), os.path.join(root, "condabin", "conda.bat"))
+                 if os.name == "nt" else (os.path.join(root, "bin", "conda"), os.path.join(root, "condabin", "conda")))
+        for c in cands:
+            if os.path.isfile(c):
+                return {"CONDA_EXE": c, "PATH": os.path.dirname(c) + os.pathsep + os.environ.get("PATH", "")}
+    return {}
 
 
 def job_plan(action, body):
@@ -622,11 +669,15 @@ def job_plan(action, body):
     if action == "heim-compact":
         return "Compact Heim's index", [("heim-index --compact", [py, tool("rag_index.py"), "--compact"], False)]
     if action == "heim-refresh":
-        name, folder = (body.get("name") or "").strip(), os.path.expanduser((body.get("path") or "").strip())
-        if not NAME_RE.match(name) or not os.path.isdir(folder):
-            raise ValueError("That needs a collection name and a folder that exists.")
+        # the doctor prints the folders quoted ('...'), several when a collection has several roots
+        name = (body.get("name") or "").strip()
+        given = body.get("paths") if isinstance(body.get("paths"), list) else [body.get("path")]
+        folders = [os.path.expanduser(p.strip().strip("'\"").strip()) for p in given[:20] if isinstance(p, str)]
+        if not NAME_RE.match(name) or not folders or not all(f and os.path.isdir(f) for f in folders):
+            raise ValueError("That needs a collection name and folders that exist.")
         return ("Re-index Heim's '%s' collection" % name,
-                [("heim-index -c %s %s" % (name, folder), [py, tool("rag_index.py"), "-c", name, folder], False)])
+                [("heim-index -c %s %s" % (name, " ".join("'%s'" % f for f in folders)),
+                  [py, tool("rag_index.py"), "-c", name] + folders, False)])
     if action == "fetch":
         known = {g["id"] for g in catalog_groups()}
         groups = [g for g in (body.get("groups") or []) if isinstance(g, str) and g in known]
@@ -651,7 +702,7 @@ def job_plan(action, body):
         argv = installer_argv(folder)
         if not argv:
             raise ValueError("That update has no installer for this computer.")
-        return "Install the update in %s" % os.path.basename(folder), [("installer", argv, False)]
+        return "Install the update in %s" % os.path.basename(folder), [("installer", argv, False, conda_env())]
     raise ValueError("Unknown action.")
 
 
@@ -757,9 +808,8 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     key = ""
     port = 0
-    seen = 0.0                  # the last request that carried the key (the app's idle clock)
-    codes = {}                  # one-time launch codes -> expiry
-    codes_lock = threading.Lock()
+    seen = 0.0                  # time.monotonic() of the last request that carried the key (the idle clock;
+    #                             monotonic, so a computer waking from sleep does not count as idle time)
 
     def log_message(self, fmt, *args):      # quiet: the terminal shows only the address
         pass
@@ -769,14 +819,11 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").lower()
         return host in ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
 
-    def _key_ok(self, query, cookie=False):
+    def _key_ok(self, query):
         got = self.headers.get("X-Key") or (query.get("k") or [""])[0]
-        if not got and cookie:
-            m = re.search(r"(?:^|;\s*)ai_k=([A-Za-z0-9_-]+)", self.headers.get("Cookie") or "")
-            got = m.group(1) if m else ""
-        ok = bool(got) and secrets.compare_digest(got, self.key)
+        ok = bool(got) and bool(self.key) and secrets.compare_digest(got, self.key)
         if ok:
-            Handler.seen = time.time()
+            Handler.seen = time.monotonic()
         return ok
 
     def _send(self, code, body, ctype="text/plain; charset=utf-8", headers=()):
@@ -795,22 +842,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj), "application/json")
-
-    @classmethod
-    def new_code(cls):
-        code = secrets.token_urlsafe(18)
-        with cls.codes_lock:
-            now = time.time()
-            for c in [c for c, t in cls.codes.items() if t < now]:
-                del cls.codes[c]
-            cls.codes[code] = now + CODE_SECONDS
-        return code
-
-    @classmethod
-    def use_code(cls, code):
-        with cls.codes_lock:
-            t = cls.codes.pop(code, 0)
-        return t >= time.time()
 
     def _stream(self, who, argv, after=None):
         """Run argv and send its output as it is written (chunked)."""
@@ -860,23 +891,20 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         if not self._host_ok():
             return self._send(403, "wrong host")
-        if u.path == "/launch":
-            # 1.2.0: the app opens its window here with a one-time code, so the key itself is never on a
-            # command line (where other users of this computer could list it); the key goes into a cookie
-            # that only this address receives.
-            if not self.use_code((q.get("c") or [""])[0]):
-                return self._send(403, "This link was already used. Open Local AI again from its icon.")
-            return self._send(303, "", headers=(("Location", "/"),
-                                                ("Set-Cookie", "ai_k=%s; Path=/; HttpOnly; SameSite=Strict" % self.key)))
         if u.path == "/":
-            if not self._key_ok(q, cookie=True):
-                return self._send(403, "Open Local AI from its icon, or the address that `ai` printed (it carries the key).")
-            return self._send(200, PAGE.replace("__KEY__", self.key).replace("__VERSION__", VERSION),
-                              "text/html; charset=utf-8")
+            # the page holds no secret: it takes the key from its own address (#k=... from the app, ?k=...
+            # from the address `ai` prints), keeps it for this window, and sends it with every request
+            return self._send(200, PAGE.replace("__VERSION__", VERSION), "text/html; charset=utf-8")
+        if u.path == "/api/hello":
+            # proof that this server holds the key, without the key being sent: HMAC(key, the caller's nonce)
+            nonce = (q.get("n") or [""])[0]
+            if not (16 <= len(nonce) <= 128) or not self.key:
+                return self._send(400, "bad nonce")
+            return self._json({"app": "ai-ui", "proof": hello_proof(self.key, nonce)})
         if not self._key_ok(q):
             return self._send(403, "missing key")
         if u.path == "/api/ping":
-            return self._json({"app": "ai-ui", "version": VERSION, "pid": os.getpid()})
+            return self._json({"app": "ai-ui", "version": VERSION, "pid": os.getpid(), "busy": bool(running_job())})
         if u.path == "/pdf":
             path = (q.get("path") or [""])[0]
             if not allowed_pdf(path):
@@ -975,8 +1003,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"opened": open_folder(body.get("which") or "")})
             except (ValueError, OSError) as e:
                 return self._json({"error": str(e)}, 400)
-        if u.path == "/api/launch-code":
-            return self._json({"code": self.new_code()})
+        if u.path == "/api/quit":
+            # the icon asks an older copy to make way after an update; never while a job runs
+            busy = running_job()
+            if busy:
+                return self._json({"error": "'%s' is still running." % busy.title}, 409)
+            self._json({"quitting": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return None
         return self._send(404, "not found")
 
     def _upload(self, q):
@@ -1015,6 +1049,16 @@ class Handler(BaseHTTPRequestHandler):
 
 # ------------------------------------------------------------------------------- the app's window
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    # Windows lets two programs share a port with SO_REUSEADDR, so a second copy would not notice the first
+    allow_reuse_address = os.name != "nt"
+
+
+def hello_proof(key, nonce):
+    return hmac.new(key.encode("utf-8"), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def read_state():
     try:
         with open(state_file(), encoding="utf-8") as fh:
@@ -1052,10 +1096,22 @@ def call(st, path, body=None, timeout=3):
 
 
 def alive(st):
+    """The running app's /api/ping ({version, busy, ...}), or None. The key in the state file goes only to a
+    server that first proves it holds that key: a program that took the port after the app stopped gets
+    nothing from us."""
+    if not st:
+        return None
     try:
-        return bool(st) and call(st, "/api/ping").get("app") == "ai-ui"
-    except (OSError, ValueError, TypeError):
-        return False
+        nonce = secrets.token_hex(16)
+        url = "http://127.0.0.1:%d/api/hello?n=%s" % (int(st["port"]), nonce)
+        with urllib.request.urlopen(url, timeout=3) as r:
+            hello = json.loads(r.read().decode("utf-8") or "{}")
+        if not hmac.compare_digest(str(hello.get("proof") or ""), hello_proof(str(st["key"]), nonce)):
+            return None
+        ping = call(st, "/api/ping")
+        return ping if ping.get("app") == "ai-ui" else None
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
 
 
 def browsers():
@@ -1105,28 +1161,88 @@ def server_python():
     return sys.executable
 
 
+def open_page_file(st):
+    """A small page only this user can read that sends the window on to the app with the key in the
+    address's #fragment (which never leaves the browser). Its file:// address is what goes on the
+    browser's command line, so the key never does."""
+    path = local_ai("ai-ui-open.html")
+    url = "http://127.0.0.1:%d/#k=%s" % (int(st["port"]), urllib.parse.quote(str(st["key"]), safe=""))
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write('<!doctype html><meta charset="utf-8"><title>Local AI</title>'
+                 '<script>location.replace(%s)</script>'
+                 '<p style="font:15px sans-serif">Opening Local AI... <a href="%s">open it</a></p>\n'
+                 % (json.dumps(url), url))
+    os.replace(tmp, path)
+    return pathlib.Path(path).resolve().as_uri()
+
+
+def start_lock(wait):
+    """Hold ~/local-ai/ai-ui.lock while one icon press checks for, starts and waits for the server, so
+    two quick presses start one copy. True when held; False when another press held it all along."""
+    lock = local_ai("ai-ui.lock")
+    end = time.monotonic() + wait
+    while True:
+        try:
+            os.close(os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > LOCK_SECONDS:
+                    os.remove(lock)                 # left by a press that died
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() > end:
+                return False
+            time.sleep(0.2)
+
+
+def start_server(wait):
+    """Start the app's server in the background; its state, or None when it did not answer in time."""
+    with open(local_ai("logs", "ai-ui.log"), "ab") as log:
+        spawn([server_python(), os.path.abspath(__file__), "--serve-app"], stdout=log,
+              stderr=subprocess.STDOUT, **popen_kw(detach=True))
+    end = time.monotonic() + wait
+    while time.monotonic() < end:
+        st = read_state()
+        if alive(st):
+            return st
+        time.sleep(0.25)
+    return None
+
+
 def app_open(wait=20):
     """What the Local AI icon runs: open a window on the running app, starting it first when needed.
-    One copy runs at a time; it stops by itself a while after its last window closes."""
-    st = read_state()
-    if not alive(st):
-        os.makedirs(local_ai("logs"), exist_ok=True)
-        with open(local_ai("logs", "ai-ui.log"), "ab") as log:
-            spawn([server_python(), os.path.abspath(__file__), "--serve-app"], stdout=log,
-                  stderr=subprocess.STDOUT, **popen_kw(detach=True))
-        end = time.time() + wait
-        st = None
-        while time.time() < end:
-            st = read_state()
-            if alive(st):
-                break
-            st = None
-            time.sleep(0.25)
-        if not st:
-            print("Local AI did not start; see %s" % local_ai("logs", "ai-ui.log"), file=sys.stderr)
-            return 1
-    url = "http://127.0.0.1:%d/launch?c=%s" % (int(st["port"]), call(st, "/api/launch-code", {})["code"])
-    open_window(url)
+    One copy runs at a time; it stops by itself a while after its last window closes. After an update an
+    older copy that is idle is asked to stop, so the window shows the new version."""
+    os.makedirs(local_ai("logs"), exist_ok=True)
+    held = start_lock(wait + 10)
+    try:
+        st = read_state()
+        ping = alive(st)
+        if ping and ping.get("version") != VERSION and not ping.get("busy"):
+            try:
+                call(st, "/api/quit", {})
+            except (OSError, ValueError):
+                pass
+            end = time.monotonic() + 10
+            while time.monotonic() < end and alive(st):
+                time.sleep(0.25)
+            ping = None
+        if not ping:
+            st = start_server(wait)
+            if not st:
+                print("Local AI did not start; see %s" % local_ai("logs", "ai-ui.log"), file=sys.stderr)
+                return 1
+    finally:
+        if held:
+            try:
+                os.remove(local_ai("ai-ui.lock"))
+            except OSError:
+                pass
+    open_window(open_page_file(st))
     return 0
 
 
@@ -1134,18 +1250,18 @@ def watchdog(httpd):
     """The app stops IDLE_SECONDS after its last window went quiet, unless a job is running."""
     while True:
         time.sleep(min(15.0, IDLE_SECONDS / 4.0))
-        if time.time() - Handler.seen > IDLE_SECONDS and not running_job():
+        if time.monotonic() - Handler.seen > IDLE_SECONDS and not running_job():
             httpd.shutdown()
             return
 
 
 def serve(port=0, open_browser=True, app=False):
     Handler.key = secrets.token_urlsafe(18)
-    Handler.seen = time.time()
+    Handler.seen = time.monotonic()
     try:
-        httpd = ThreadingHTTPServer(("127.0.0.1", APP_PORT if (app and not port) else port), Handler)
+        httpd = Server(("127.0.0.1", APP_PORT if (app and not port) else port), Handler)
     except OSError:
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        httpd = Server(("127.0.0.1", 0), Handler)
     Handler.port = httpd.server_address[1]
     if app:
         write_state(Handler.port, Handler.key)
@@ -1161,6 +1277,9 @@ def serve(port=0, open_browser=True, app=False):
     except KeyboardInterrupt:
         pass
     finally:
+        job = running_job()
+        if job:                                 # Ctrl+C: a job's programs do not carry on unseen
+            job.stop()
         httpd.server_close()
         if app:
             clear_state()
@@ -1208,7 +1327,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border-rad
 .who{color:var(--muted);font-size:13px;margin:6px 0}a{color:var(--accent)}
 .ok{color:var(--ok)}.watch{color:var(--watch)}.bad{color:var(--bad)}.muted{color:var(--muted)}
 pre:empty{display:none}svg{width:100%;height:280px}svg text{fill:var(--muted);font-size:11px}
-#banner{max-width:1040px;margin:12px auto 0;padding:0 16px}#banner:empty{display:none}
+#banner,#offline{max-width:1040px;margin:12px auto 0;padding:0 16px}#banner:empty,#offline:empty{display:none}
 .alert{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-radius:10px;padding:10px 14px;margin-bottom:8px;border:1px solid var(--line);background:var(--panel)}
 .alert.PROBLEM{border-color:var(--bad)}.alert.WATCH{border-color:var(--watch)}
 #job{max-width:1040px;margin:12px auto 0;padding:0 16px;display:none}
@@ -1225,7 +1344,7 @@ th{color:var(--muted);font-weight:600}td.n{text-align:right;white-space:nowrap}
 </style></head><body>
 <header><h1>Local AI</h1><small>Heim and Vor · on this computer only · ai_ui __VERSION__</small>
 <nav><button data-t="ask" class="on">Ask</button><button data-t="library">Library</button><button data-t="runs">Runs</button><button data-t="add">Add</button><button data-t="score">Check answers</button><button data-t="health">Health &amp; update</button></nav></header>
-<div id="banner"></div>
+<div id="offline"></div><div id="banner"></div>
 <div id="job"><div class="card"><div id="jobhead"><b id="jobtitle"></b><span id="jobstate" class="muted"></span>
 <button class="plain" id="jobmore">Show details</button><button class="plain" id="jobstop">Stop</button><button class="plain" id="jobhide">Hide</button></div>
 <div id="joblast"></div><pre id="jobout"></pre></div></div>
@@ -1275,34 +1394,48 @@ th{color:var(--muted);font-weight:600}td.n{text-align:right;white-space:nowrap}
 </section>
 </main>
 <script>
-const KEY="__KEY__";
+// The key comes in this window's address (#k=... from the Local AI icon, ?k=... from the address `ai`
+// printed), is kept for this window only, and is taken out of the address bar.
+const KEY=(()=>{const m=location.hash.match(/[#&]k=([^&]+)/)||location.search.match(/[?&]k=([^&]+)/);let k="";
+  if(m){k=decodeURIComponent(m[1]);try{sessionStorage.setItem("ai_k",k)}catch(e){}history.replaceState(null,"","/")}
+  else{try{k=sessionStorage.getItem("ai_k")||""}catch(e){}}return k})();
+function offline(why){$("offline").innerHTML='<div class="alert PROBLEM"><span><b class="bad">'+esc(why)+'</b></span></div>'}
+function online(){$("offline").innerHTML=""}
+const STOPPED="Local AI has stopped: open it again from its icon (or run ai in a terminal).";
 const $=id=>document.getElementById(id);
 function show(t){document.querySelectorAll("nav button,section").forEach(x=>x.classList.remove("on"));document.querySelector('nav button[data-t="'+t+'"]').classList.add("on");$(t).classList.add("on");
   if(t==="library")loadLibrary();if(t==="score")loadScores();if(t==="health"&&!$("docout").textContent)$("docgo").click()}
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>show(b.dataset.t));
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 async function api(url,body){const o={headers:{"X-Key":KEY}};if(body!==undefined){o.method="POST";o.headers["Content-Type"]="application/json";o.body=JSON.stringify(body)}
-  const r=await fetch(url+(body===undefined?(url.includes("?")?"&":"?")+"k="+KEY:""),o);let d={};try{d=await r.json()}catch(e){}if(!r.ok&&!d.error)d.error="HTTP "+r.status;return d}
+  let r;try{r=await fetch(url+(body===undefined?(url.includes("?")?"&":"?")+"k="+KEY:""),o)}catch(e){offline(STOPPED);return {error:STOPPED,offline:true}}
+  if(r.status===403){offline(STOPPED);return {error:STOPPED,offline:true}}
+  let d={};try{d=await r.json()}catch(e){}if(!r.ok&&!d.error)d.error="HTTP "+r.status;return d}
 function linkify(t){
   let h=esc(t);
   h=h.replace(/file:\/\/([^\s)#"]+\.pdf)(#page=(\d+))?/gi,(m,p,_,n)=>'<a target="_blank" href="/pdf?k='+KEY+'&path='+encodeURIComponent(decodeURIComponent(p))+(n?'#page='+n:'')+'">'+esc(decodeURIComponent(p).split('/').pop())+(n?' p.'+n:'')+'</a>');
   h=h.replace(/\[report\] (\S+\.md)/g,(m,p)=>'<a href="#" data-report="'+esc(p)+'">open the full report</a>');
   h=h.replace(/\b(PROBLEM)\b/g,'<span class="bad">$1</span>').replace(/\b(WATCH)\b/g,'<span class="watch">$1</span>').replace(/^(\s*)(ok|OK)\b/gm,'$1<span class="ok">$2</span>');
   return h}
-// What a doctor line says to run becomes a button that runs it (only the commands listed here).
+// What a doctor line says to run becomes a button that runs it (only the commands listed here). A
+// command quoted in `backticks` is part of a sentence, not something to run, and gets no button.
 function fixify(h){
   const b=(fix,label,extra)=>'<button class="fix" data-fix="'+fix+'"'+(extra||"")+'>'+label+'</button>';
-  h=h.replace(/heim-index -c ([A-Za-z0-9_.-]+) ((?!&lt;)[^\n]*?)\s*$/gm,(m,n,p)=>m+' '+b("heim-refresh","Re-index "+n,' data-name="'+n+'" data-path="'+p.trim()+'"'));
-  h=h.replace(/vor ocr --min-fraction 0/g,m=>m+' '+b("vor-ocr-all","OCR them"));
-  h=h.replace(/vor ocr(?! --)(?!\w)/g,m=>m+' '+b("vor-ocr","OCR"));
-  h=h.replace(/vor ingest(?! --)(?!\w)/g,m=>m+' '+b("vor-ingest","Index"));
-  h=h.replace(/vor tables(?!\w)/g,m=>m+' '+b("vor-tables","Read tables"));
+  const said=(s,off,len)=>s[off-1]!=="`"&&s[off+len]!=="`";
+  // the folders come quoted ('...'), several when a collection has several; older doctors printed one bare
+  h=h.replace(/heim-index -c ([A-Za-z0-9_.-]+) ((?:'[^'\n]+'[ \t]*)+|(?!&lt;)[^'\n]+?)[ \t]*$/gm,(m,n,p)=>{
+    const ps=p.includes("'")?[...p.matchAll(/'([^'\n]+)'/g)].map(x=>x[1]):[p.trim()];
+    return m+' '+b("heim-refresh","Re-index "+n,' data-name="'+n+'" data-paths="'+JSON.stringify(ps).replace(/"/g,"&quot;")+'"')});
+  h=h.replace(/vor ocr((?: --[\w-]+(?: \d+)?)*)(?!\w)/g,(m,o,off,s)=>!said(s,off,m.length)?m:o===""?m+' '+b("vor-ocr","OCR"):o===" --min-fraction 0"?m+' '+b("vor-ocr-all","OCR them"):m);
+  h=h.replace(/vor ingest((?: --[\w-]+)*)(?!\w)/g,(m,o,off,s)=>o===""&&said(s,off,m.length)?m+' '+b("vor-ingest","Index"):m);
+  h=h.replace(/vor tables(?!\w)/g,(m,off,s)=>said(s,off,m.length)?m+' '+b("vor-tables","Read tables"):m);
   h=h.replace(/heim-index --compact/g,m=>m+' '+b("heim-compact","Compact"));
   h=h.replace(/heim-start|ollama serve/g,m=>m+' '+b("start-ollama","Start Ollama"));
   return h}
 async function stream(url,body,out,who,fix){
-  out.textContent="";let text="";
-  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","X-Key":KEY},body:JSON.stringify(body)});
+  out.textContent="";let text="";let r;
+  try{r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","X-Key":KEY},body:JSON.stringify(body)})}catch(e){offline(STOPPED);out.textContent=STOPPED;return}
+  if(r.status===403){offline(STOPPED);out.textContent=STOPPED;return}
   if(who)who.textContent=r.headers.get("X-Answered-By")?("Answered by "+r.headers.get("X-Answered-By")):"";
   const rd=r.body.getReader(),dec=new TextDecoder();
   for(;;){const {value,done}=await rd.read();if(done)break;text+=dec.decode(value,{stream:true});out.innerHTML=fix?fixify(linkify(text)):linkify(text);out.scrollTop=out.scrollHeight}
@@ -1310,28 +1443,28 @@ async function stream(url,body,out,who,fix){
     out.innerHTML=linkify(t.replace(/\]\((file:[^)]+)\)/g," $1"))});
 }
 // ---- jobs: long commands that carry on when the window closes
-let JOB=null,POS=0,TEXT="",TIMER=null;
+let JOB=null,POS=0,TEXT="",TIMER=null,PENDING=false;
 async function startJob(body){const d=await api("/api/job",body);
-  if(d.error){if(d.job){watch(d.job.id)}alert(d.error);return}watch(d.id)}
+  if(d.error){if(d.job){watch(d.job.id)}if(!d.offline)alert(d.error);return}watch(d.id)}
 function watch(id){if(JOB!==id){JOB=id;POS=0;TEXT="";$("jobout").textContent=""}$("job").style.display="block";clearTimeout(TIMER);poll()}
 async function poll(){
-  const d=await api("/api/job?id="+JOB+"&from="+POS);if(d.error){return}
+  const d=await api("/api/job?id="+JOB+"&from="+POS);if(d.error){if(!d.offline)TIMER=setTimeout(poll,5000);return}
   POS=d.next;TEXT=(TEXT+d.text).slice(-200000);$("jobtitle").textContent=d.title;
   const mins=Math.max(0,Math.round(((d.ended||Date.now()/1000)-d.started)/60));
   $("jobstate").innerHTML=d.status==="running"?"working, "+mins+" min":d.status==="done"?'<span class="ok">done</span> after '+mins+" min":'<span class="bad">'+d.status+"</span>"+(d.code?" (exit code "+d.code+")":"");
   const lines=TEXT.trim().split("\n");$("joblast").textContent=lines[lines.length-1]||"";
   $("jobout").innerHTML=linkify(TEXT);$("jobout").scrollTop=$("jobout").scrollHeight;$("jobstop").style.display=d.status==="running"?"":"none";
-  if(d.status==="running"){TIMER=setTimeout(poll,1200)}else{refreshAll();if(d.title.startsWith("Install the update"))$("upinfo").innerHTML=d.status==="done"?'<span class="ok">Updated.</span> Close this window and open Local AI again to use the new version.':'<span class="bad">The installer stopped.</span> Open the details above for what it said.'}}
+  if(d.status==="running"){TIMER=setTimeout(poll,1200)}else{refreshAll();if(PENDING){PENDING=false;startJob({action:"vor-ingest"})}if(d.title.startsWith("Install the update"))$("upinfo").innerHTML=d.status==="done"?'<span class="ok">Updated.</span> Close this window and open Local AI again to use the new version.':'<span class="bad">The installer stopped.</span> Open the details above for what it said.'}}
 $("jobmore").onclick=()=>{$("job").classList.toggle("open");$("jobmore").textContent=$("job").classList.contains("open")?"Hide details":"Show details"};
 $("jobhide").onclick=()=>{$("job").style.display="none"};
 $("jobstop").onclick=async()=>{if(JOB&&confirm("Stop this job? What it finished is kept."))await api("/api/job/stop",{id:JOB})};
 document.addEventListener("click",e=>{const t=e.target;
-  if(t.dataset.fix){e.preventDefault();if(t.dataset.fix==="start-ollama")startOllama();else if(t.dataset.fix==="goto-library")show("library");else startJob({action:t.dataset.fix,name:t.dataset.name,path:t.dataset.path})}
+  if(t.dataset.fix){e.preventDefault();if(t.dataset.fix==="start-ollama")startOllama();else if(t.dataset.fix==="goto-library")show("library");else startJob({action:t.dataset.fix,name:t.dataset.name,paths:t.dataset.paths?JSON.parse(t.dataset.paths):undefined})}
   if(t.dataset.job)startJob({action:t.dataset.job});
   if(t.dataset.score)startJob({action:"score",which:t.dataset.score});
   if(t.dataset.open)api("/api/open",{which:t.dataset.open}).then(d=>{if(d.error)alert(d.error)})});
 // ---- status banner
-async function refreshStatus(){const s=await api("/api/status");
+async function refreshStatus(){const s=await api("/api/status");if(s.offline)return s;
   $("banner").innerHTML=(s.problems||[]).map(p=>'<div class="alert '+p.level+'"><span><b class="'+(p.level==="PROBLEM"?"bad":"watch")+'">'+(p.level==="PROBLEM"?"Needs a fix":"Worth a look")+':</b> '+esc(p.text)+'</span><button class="fix" data-fix="'+p.fix+'">'+esc(p.label)+'</button></div>').join("");
   return s}
 async function startOllama(){$("ollamaout").textContent="Starting Ollama...";const d=await api("/api/start-ollama",{});$("ollamaout").innerHTML=d.ok?'<span class="ok">'+esc(d.text)+'</span>':'<span class="bad">'+esc(d.text)+'</span>';refreshStatus();alertIfOff(d)}
@@ -1339,7 +1472,7 @@ function alertIfOff(d){if(!d.ok&&!$("health").classList.contains("on"))alert(d.t
 function refreshAll(){refreshStatus();if($("library").classList.contains("on"))loadLibrary();if($("score").classList.contains("on"))loadScores()}
 // ---- library
 let DOCS=[];
-async function loadLibrary(){const d=await api("/api/library");
+async function loadLibrary(){const d=await api("/api/library");if(d.offline)return;
   if(!d.vor){$("libstats").textContent="Vor is not installed on this computer.";return}
   const v=d.vor;$("libstats").innerHTML='<span class="stat"><b>'+v.documents+'</b>documents indexed</span><span class="stat"><b>'+v.passages.toLocaleString()+'</b>passages</span><span class="stat"><b>'+v.files+'</b>files in the folder</span><div class="who">'+esc(v.home)+' · Vor '+esc(v.version)+'</div>';
   $("groups").innerHTML=(d.groups||[]).map(g=>'<tr><td><input type="checkbox" value="'+esc(g.id)+'"></td><td><b>'+esc(g.id)+'</b></td><td>'+esc(g.about)+(g.manual?' <span class="muted">('+g.manual+' to get by hand: see READING-LIST)</span>':'')+'</td><td class="n">'+g.have+' of '+g.total+'</td></tr>').join("")||'<tr><td colspan="4" class="muted">The download catalog is not installed here yet: install the latest update.</td></tr>';
@@ -1353,7 +1486,9 @@ async function upload(kind,file){const r=await fetch("/api/upload?kind="+kind+"&
   let d={};try{d=await r.json()}catch(e){d={error:"HTTP "+r.status}}return d}
 async function addFiles(list){const files=[...list];if(!files.length)return;let ok=0,bad=[];
   for(let i=0;i<files.length;i++){$("dropout").textContent="Copying "+(i+1)+" of "+files.length+": "+files[i].name;const d=await upload("library",files[i]);if(d.error)bad.push(files[i].name+": "+d.error);else ok++}
-  $("dropout").innerHTML=ok+" file(s) copied into the library."+(bad.length?' <span class="bad">'+esc(bad.join("; "))+'</span>':"");if(ok)startJob({action:"vor-ingest"})}
+  $("dropout").innerHTML=ok+" file(s) copied into the library."+(bad.length?' <span class="bad">'+esc(bad.join("; "))+'</span>':"");if(!ok)return;
+  // a job already running (another drop, a download): index these when it ends
+  const d=await api("/api/job",{action:"vor-ingest"});if(d.error&&d.job){PENDING=true;watch(d.job.id);$("dropout").innerHTML+=" They are indexed when '"+esc(d.job.title)+"' ends."}else if(d.error){if(!d.offline)alert(d.error)}else watch(d.id)}
 const drop=$("drop");drop.onclick=()=>$("files").click();$("files").onchange=e=>addFiles(e.target.files);
 drop.ondragover=e=>{e.preventDefault();drop.classList.add("over")};drop.ondragleave=()=>drop.classList.remove("over");
 drop.ondrop=e=>{e.preventDefault();drop.classList.remove("over");addFiles(e.dataTransfer.files)};
@@ -1364,7 +1499,7 @@ function md(t){const out=[];let tab=null;
       if(!tab){tab=[];out.push(tab)}tab.push(cells);continue}
     tab=null;if(/^#+\s/.test(line))out.push("<h3>"+esc(line.replace(/^#+\s/,""))+"</h3>");else if(line.trim())out.push("<p>"+esc(line)+"</p>")}
   return out.map(x=>Array.isArray(x)?"<table>"+x.map((r,i)=>"<tr>"+r.map(c=>i?"<td>"+esc(c)+"</td>":"<th>"+esc(c)+"</th>").join("")+"</tr>").join("")+"</table>":x).join("")}
-async function loadScores(){const r=await fetch("/api/scores?k="+KEY);const t=await r.text();$("scores").innerHTML=t.trim()?md(t):"No scores yet: press Test Vor or Test both.";$("scores").classList.toggle("muted",!t.trim())}
+async function loadScores(){let t="";try{const r=await fetch("/api/scores?k="+KEY);if(r.status===403){offline(STOPPED);return}t=await r.text()}catch(e){offline(STOPPED);return}$("scores").innerHTML=t.trim()?md(t):"No scores yet: press Test Vor or Test both.";$("scores").classList.toggle("muted",!t.trim())}
 // ---- health and update
 $("docgo").onclick=()=>stream("/api/run",{action:"doctor"},$("docout"),null,true);
 $("ollamago").onclick=startOllama;
@@ -1390,9 +1525,9 @@ function draw(svg,series){
   svg.setAttribute("viewBox","0 0 "+W+" "+H);svg.innerHTML=g;svg.style.display="block"}
 $("addgo").onclick=()=>stream("/api/run",{action:"add",path:$("path").value,to:$("to").value},$("addout"));
 // ---- start: the banner, a job already running (from before this window opened), and a heartbeat
-refreshStatus();
-api("/api/jobs").then(d=>{if(d.job&&d.job.status==="running")watch(d.job.id)});
-setInterval(()=>fetch("/api/ping?k="+KEY).catch(()=>{}),30000);
+if(!KEY)offline("Open Local AI from its icon, or the address that ai printed in the terminal (it carries the key).");
+else{refreshStatus();api("/api/jobs").then(d=>{if(d.job&&d.job.status==="running")watch(d.job.id)})}
+setInterval(()=>{if(KEY)fetch("/api/ping?k="+KEY).then(r=>{if(r.ok)online();else offline(STOPPED)}).catch(()=>offline(STOPPED))},30000);
 </script></body></html>
 """
 
