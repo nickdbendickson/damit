@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.
 about=One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.
-version=0.4.8
+version=0.5.0
 icon=icon.svg
 author=N.D. Bendickson
 repository=https://github.com/nickdbendickson/damit
@@ -17,6 +17,14 @@ hasProcessingProvider=yes
 plugin_dependencies=DamIT Catalog
 tags=dam,hazard,classification,flood,dam safety,TM-11
 changelog=
+    0.5.0 - 2026-11-23
+      * Evaluation cache (from DamSafety Hazard 2.25.10): damit:classify keeps the sampled
+        receptors in OUTPUT/QA/_evaluation_cache.bin (restricted pickle, dates as ISO text, 1 GiB
+        inflate cap). The next QGIS session reuses it when the rasters, receptor layers and
+        sampling settings and this plugin version still match and the file is under 7 days old.
+        Habitability reviews, the habitable rule, the USA Structures check and the rail-trains
+        lookup are applied again after a cache hit. A miss or a cache that cannot be kept never
+        fails the run. No offline_pack setting is added. Tests: tests/test_evalcache.py.
     0.4.8 - 2026-11-20
       * Reports are written whole or not at all (audit 2026-11-19, from damit #134): damit_hazard_report.md / .html / .json go to a temp file unique per writer, are fsynced and then replace the old report, so a classify killed mid-write no longer leaves a torn report. No number changes.
     0.4.7 - 2026-11-20

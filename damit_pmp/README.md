@@ -1,4 +1,4 @@
-# DamIT PMP 0.4.5 – NOAA Atlas 14 only
+# DamIT PMP 0.5.0 – NOAA Atlas 14 only
 
 Processing provider `damit_pmp`. Depends on DamIT Core. **The only data source is NOAA Atlas 14**,
 read from the NOAA/NWS Precipitation Frequency Data Server (PFDS, https://hdsc.nws.noaa.gov/pfds/), or
@@ -125,7 +125,7 @@ re-implementation:
 | Domain ring | `terrain.mask_outline` of the basin cells, kept a tolerance from the DEM edge / no-data (`anuga_model.mesh_polygons`' rule for `outer`, pinned to it by a test), tolerance `max(min(buffer / 10, 3 dx), dx)` |
 | Refinement | optional `FLOW_PATH_START` (the runner's inflow point): `terrain.trace_downstream`, clipped to the ring, `douglas_peucker` (as `anuga_model.gmsh_spec`); empty = a uniform far-field mesh |
 | DEM | the runner's `Grid` model DEM (default cell 10 m; bilinear at the centroids); a DEM finer than `CELL_M` is also sampled at the triangle vertices (`sample_fine`, the runner's `fine` elevation) |
-| Domain | the worker's build: local coordinates (DEM lower left = 0, 0), `Geo_reference(0, 0)`, every outer edge `outflow`, `DE0`, `set_minimum_storable_height(0.001)`, Manning n 0.06, dry start, `make_outer_boundary` for `edge_bc` (`outflow` default | `transmissive`) |
+| Domain | the worker's build: local coordinates (DEM lower left = 0, 0), `Geo_reference(0, 0)`, every outer edge `outflow`, `DE0`, `set_minimum_storable_height(0.001)`, Manning n 0.05, dry start, `make_outer_boundary` for `edge_bc` (`outflow` default | `transmissive`) |
 | Not in the runner | rain: its worker has only a breach inlet. The generated script adds `anuga.Rate_operator(domain, rate=f(x, y, t))`, the series in m/s times the optional per-triangle factor (the factor raster resampled to the model grid, sampled at the centroids) |
 
 **Shared-code pattern.** The plugins install independently, so `damit_pmp/runner_shared/` holds byte copies of
@@ -207,12 +207,17 @@ puts 42.8 % of the depth into hour 11 – 12, so the two patterns give very diff
 The NRCS ordinates are typed from TR-55 tables; check them against WinTR-55's 0.1-hour tables for regulatory work.
 The HDSC files are downloaded once and cached (`CACHE_DIR`, `OFFLINE`).
 
-**Losses.** `INITIAL_LOSS` (a depth) and `CONSTANT_LOSS` (a depth per hour) in `LOSS_UNITS` (in or mm; default 0 = no
-loss). The initial loss is taken from the first rain, then a constant rate per step, never more than the rain in the
-step. `hyetograph` adds `loss_<u>` and `excess_<u>` columns (only when a loss is set; with losses at 0 the CSV is
-byte-for-byte the 0.3.0 format) and `# temporal:` / `# losses:` comment lines; `raingrid` writes the excess rain to the
-`.rain` and ANUGA files (`TOTAL_MM`; the gross storm is `GROSS_MM`) and records both. Losses are not applied twice: a
-CSV that already has an excess column is refused together with losses.
+**Losses.** `LOSS_METHOD` is initial + constant (default) or Green-Ampt (0.5.0). `INITIAL_LOSS` (a depth) and
+`CONSTANT_LOSS` (a depth per hour) in `LOSS_UNITS` (in or mm; default 0 = no loss) are the initial-and-constant method:
+the initial loss is taken from the first rain, then a constant rate per step, never more than the rain in the step.
+Green-Ampt (`LOSS_METHOD=1`) uses a USDA texture from Rawls, Brakensiek & Miller (1983) (checked in DamSafety PMP 0.7.2
+against two USACE reprints) or custom Ks, suction and moisture deficit, with optional initial loss and percent
+impervious; ponding inside a step follows Mein & Larson (1973) and Chow, Maidment & Mays (1988) sec. 4.4. The five
+shared Atlas 14 modules (`storm.py` and the others) are unchanged; Green-Ampt lives in `green_ampt.py`. `hyetograph`
+adds `loss_<u>` and `excess_<u>` columns (only when a loss is set; with losses at 0 the CSV is byte-for-byte the 0.3.0
+format) and `# temporal:` / `# losses:` comment lines; `raingrid` writes the excess rain to the `.rain` and ANUGA files
+(`TOTAL_MM`; the gross storm is `GROSS_MM`) and records both. Losses are not applied twice: a CSV that already has an
+excess column is refused together with losses.
 
 ## LISFLOOD-FP rain-on-grid (`lisfloodrain`) – new in 0.4.0
 

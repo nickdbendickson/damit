@@ -34,7 +34,7 @@ PROBE_STAGE_NAME = "lisflood_probe_stage.csv"
 MANIFEST_NAME = "run_manifest.json"
 RESULTS_NAME = "lisflood_rain_results.json"
 MAX_DEPTH_NAME = "lisflood_max_depth.tif"
-DEFAULTS = dict(cell_m=10.0, buffer_m=0.0, manning_n=0.06, solver="ACC", initial_tstep_s=10.0, massint_s=300.0,
+DEFAULTS = dict(cell_m=10.0, buffer_m=0.0, manning_n=0.05, solver="ACC", initial_tstep_s=10.0, massint_s=300.0,
                 threads=1, theta=1.0, cfl=None, extra_h=6.0, closed_edges=())
 SOLVER_CHOICES = ("ACC", "FV2", "MWDG2")        # the runner's MAIN_SOLVERS, upper-case names for the dropdown
 CUDA_NOTE = ("FV2 and MWDG2 are the CUDA solvers of LISFLOOD-FP 8: a CPU build does not stop, it silently runs "

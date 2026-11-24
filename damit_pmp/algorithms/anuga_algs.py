@@ -59,7 +59,7 @@ class AnugaRain(_Base):
             "deg), the outer ring comes from the runner's terrain.mask_outline, the refinement line is the runner's "
             "steepest-descent flow path from an optional start point, and the generated script builds the ANUGA "
             "domain with the runner's worker helpers (local coordinates, zero Geo_reference, every outer edge tagged "
-            "outflow, DE0, minimum storable height 0.001, Manning n 0.06, dry start, edge_bc outflow | transmissive, "
+            "outflow, DE0, minimum storable height 0.001, Manning n 0.05, dry start, edge_bc outflow | transmissive, "
             "ground from the model DEM at the centroids or, for a finer DEM, the native DEM at the vertices). The "
             "rain is an anuga.Rate_operator (m/s) from the *_anuga_rate.csv of damit_pmp:raingrid, with an optional "
             "per-triangle factor sampled from the raingrid FACTOR_RASTER.\n\n"
@@ -108,7 +108,7 @@ class AnugaRain(_Base):
         add(QgsProcessingParameterNumber("YIELDSTEP_S", "Yield step (s; runner default 300)", DOUBLE,
                                          defaultValue=AR.DEFAULTS["yieldstep_s"], minValue=1.0))
         add(QgsProcessingParameterEnum("EDGE_BC", "Outer boundary (runner edge_bc)", EDGE, defaultValue=0))
-        add(QgsProcessingParameterNumber("MANNING_N", "Manning n (runner default 0.06)", DOUBLE,
+        add(QgsProcessingParameterNumber("MANNING_N", "Manning n (runner default 0.05)", DOUBLE,
                                          defaultValue=AR.DEFAULTS["manning_n"], minValue=0.0001, maxValue=1.0))
         add(adv(QgsProcessingParameterEnum("ALGORITHM", "ANUGA flow algorithm (runner default DE0)", ALGOS,
                                            defaultValue=0)))

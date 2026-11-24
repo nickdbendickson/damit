@@ -57,7 +57,7 @@ def stand_in_exe(folder, depth=0.12, qout=0.5):
 class Settings(unittest.TestCase):
     def test_defaults_are_the_runners(self):
         s = LR.check_settings({})
-        self.assertEqual((s["solver"], s["manning_n"], s["initial_tstep_s"], s["cell_m"]), ("acceleration", 0.06, 10.0, 10.0))
+        self.assertEqual((s["solver"], s["manning_n"], s["initial_tstep_s"], s["cell_m"]), ("acceleration", 0.05, 10.0, 10.0))
         self.assertEqual(s["theta"], 1.0)
         self.assertIsNone(s["cfl"])
 
@@ -146,7 +146,7 @@ class Inputs(unittest.TestCase):
         shared, only_rain, only_runner = LR.runner_inputs_match()
         self.assertEqual(only_rain, {"rainfall rain.rain"})
         self.assertEqual(only_runner, {"bdyfile rain.bdy", "hazard", "inittm_depth 0.0305"})
-        for k in ("acceleration", "depthoff", "elevoff", "fpfric 0.0600", "dirroot results", "resroot rain"):
+        for k in ("acceleration", "depthoff", "elevoff", "fpfric 0.0500", "dirroot results", "resroot rain"):
             self.assertIn(k, shared)
 
     def test_fv2_and_theta_keywords(self):

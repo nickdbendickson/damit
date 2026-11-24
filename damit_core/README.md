@@ -1,12 +1,13 @@
-# DamIT Core 0.3.3
+# DamIT Core 0.4.0
 
-Shared library of the DamIT plugins (`damit_core.lib`). As a QGIS plugin it adds one menu entry,
+Shared library of the DamIT plugins (`damit_core.lib`). As a QGIS plugin it adds two menu entries:
+**Plugins > DamIT > Suite settings…** (the one suite settings window, 0.4.0) and
 **Plugins > DamIT > About DamIT Core…**, which lists the DamIT plugins found and their versions.
 It has no Processing provider and depends on no DamSafety plugin.
 
 | Module | What it holds |
 |---|---|
-| `settings` | Suite settings (`data_folder`, `work_folder`, `catalog_dir`, `state`, `preset`, layer paths, `pfds_cache`): QgsSettings group `damit/` inside QGIS, or the JSON file named by `DAMIT_SETTINGS` (tests, portable installs), else `~/.config/damit/settings.json`. `fill_empty()` never overwrites a value. |
+| `settings` | Suite settings (`data_folder`, `work_folder`, `catalog_dir`, `state`, `preset`, layer paths, `pfds_cache`, `unit_system`, `defaults_file`): QgsSettings group `damit/` inside QGIS, or the JSON file named by `DAMIT_SETTINGS` (tests, portable installs), else `~/.config/damit/settings.json`. `fill_empty()` never overwrites a value. Edited in **Plugins > DamIT > Suite settings…** (`ui/suite_settings_window.py`). There is no `offline_pack` setting. |
 | `plugins` | The DamIT plugins with their Processing provider ids (`damit_data`, `damit_screen`, `damit_run`, `damit`, `damit_lite`, `damit_pmp`), metadata reading, a suite / dependency check (missing DamIT dependencies, non-DamIT dependencies), the hand-off target ids, and `is_foreign_algorithm()` that refuses `nddam:*` / `ndbreach:*`. |
 | `states` | 50 states, DC and Puerto Rico: postal code, name, FIPS, county FIPS, WGS84 bounding box, Geofabrik path and Microsoft footprint name (`data/states.json`, from the Census 2023 cartographic boundary files). |
 | `dam_record` | DamIT Screener dam field names, a field-name alias table (NID export and generic spellings) and `suggest_field_map()` / `field_map_string()` for `damit_screen:*` `FIELD_MAP`. |
@@ -20,4 +21,4 @@ No jurisdiction threshold lives here; those are DamIT Catalog data.
 DamIT Hazard, Screener, Runner and Crest do not import DamIT Core in 0.1.0 (their PRs are open);
 they can switch to `damit_core.lib.settings` / `plugins` later.
 
-Tests: `damit_core/tests/test_core.py` (pure Python) and `tests/test_qgis_new_plugins.py` (About).
+Tests: `damit_core/tests/test_core.py`, `tests/test_shared_defaults.py`, `tests/test_suite_settings.py` (pure Python; the window when Qt is importable) and `tests/test_qgis_new_plugins.py` (About and Suite settings).

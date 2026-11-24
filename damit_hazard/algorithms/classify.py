@@ -18,7 +18,7 @@ from qgis.core import (QgsCoordinateTransform, QgsFeature, QgsFeatureRequest, Qg
                        QgsProject, QgsRasterLayer, QgsVectorFileWriter, QgsVectorLayer,
                        QgsProcessingOutputFile)
 
-from .. import compat, styles
+from .. import compat, evalcache, styles
 from ..engine import (catalog as C, core, dam_record, dvchart, e911_pack, habitability, habitable_review, rail_lookup,
                       receptors as R, report, tm11, usa_structures)
 from ..sampling import rasters as S
@@ -172,6 +172,11 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 "(ND_DAM_HAZARD_OFFLINE_PACK, NDSUITE_PACK / NDSUITE_DATA, or the suite pack "
                 "setting) and the source used is written to the log. A missing pack does not "
                 "fail the run.<br><br>"
+                "When the rasters, receptor layers and sampling settings have not changed, "
+                "classify reuses the sampled evaluation saved under OUTPUT/QA/_evaluation_cache.bin "
+                "(up to 7 days, same plugin version). Habitability reviews, the habitable rule, "
+                "the USA Structures check and the rail-trains lookup are applied again after a "
+                "cache hit. A miss or a cache that cannot be kept on disk never fails the run.<br><br>"
                 "Informational screening aid, not a regulatory determination: the engineer of "
                 "record and the regulating agency make the determination.")
 
@@ -686,61 +691,29 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                 raise QgsProcessingException(str(e))
             layers_info.append(_stat(trains_path, "rail trains lookup", "{} row(s)".format(len(trains_rows))))
         dom_src = self.parameterAsSource(p, "DOMAIN", context)
+        self._domain_src = dom_src
+        self._domain_on = dom_src is not None
         reviews, rv_path = self._reviews(p, context, run_specs, layers_info, feedback)
         usa_src = self.parameterAsSource(p, "USA_STRUCTURES", context)
         usa_tol = self.parameterAsDouble(p, "USA_TOLERANCE_M", context)
         rule = (core.RULE_LEGACY, core.RULE_REVIEWED)[self.parameterAsEnum(p, "HABITABLE_RULE", context)]
         runs, geoms, best, chart_runs = [], {}, {}, []
-        for i, spec in enumerate(run_specs):
-            paths = {role: spec.get(role) for _k, role, _l, _o in RASTERS}
-            if not paths.get("depth"):
-                raise QgsProcessingException("run {} has no depth raster".format(i + 1))
-            for role, path in paths.items():
-                if path:
-                    layers_info.append(_stat(path, "{} ({})".format(role, spec.get("scenario")
-                                                                    or "run {}".format(i + 1))))
-            crs = QgsRasterLayer(paths["depth"], "depth").crs()
-            domain = None
-            if dom_src is not None:
-                xf = QgsCoordinateTransform(dom_src.sourceCrs(), crs, context.transformContext())
-                parts = []
-                for feat in dom_src.getFeatures():
-                    gg = QgsGeometry(feat.geometry())
-                    gg.transform(xf)
-                    parts.append(gg)
-                domain = QgsGeometry.unaryUnion(parts) if parts else None
-            rs = S.open_rasters(paths, metres=bool(spec.get("metres", metres)))
-            tpath = spec.get("terrain") or terrain_path
-            tunits = spec.get("terrain_units") or terrain_units
-            tnote = "given"
-            if not tpath:
-                tpath, discovered_u, tnote = S.discover_run_terrain(paths.get("depth"))
-                if tpath and (not tunits or tunits == "auto"):
-                    tunits = discovered_u or "auto"
-            if tpath:
-                ter, how = S.open_terrain(tpath, z_units=tunits or "auto",
-                                          depth=rs.get("depth"), wse=rs.get("wse"))
-                if ter is not None:
-                    rs["terrain"] = ter
-                    layers_info.append(_stat(tpath, "terrain ({})".format(
-                        spec.get("scenario") or "run {}".format(i + 1)), how or tnote))
-                else:
-                    layers_info.append(_stat(tpath, "terrain (unused)",
-                                             how or tnote or "could not resolve elevation units"))
-                    feedback.pushInfo("Terrain not used for NoData depth: {}".format(how))
-            policy = S.nodata_policy(rs["depth"])
-            policy["terrain"] = tpath
-            policy["terrain_z_how"] = (getattr(rs.get("terrain"), "z_how", None)
-                                       if rs.get("terrain") is not None else None)
-            feedback.pushInfo("Run {} ({}, {}): sampling".format(
-                i + 1, spec.get("scenario") or "?", spec.get("model_dim") or "?"))
-            recs, g = self._receptors(sources, rs, crs, cfg, context, feedback, domain)
-            habitable_review.apply(recs, reviews)
-            self._usa_check(usa_src, usa_tol, recs, crs, context, feedback, layers_info if i == 0 else None)
-            filled = rail_lookup.apply(recs, trains_rows)
-            if filled:
-                feedback.pushWarning("{} rail receptor(s) took trains per day from RAIL_TRAINS_LOOKUP: {}".format(
-                    filled, rail_lookup.RULING_NOTE))
+        sampled, from_cache = self._load_or_sample(
+            run_specs, sources, reviews, rv_path, usa_src, usa_tol, trains_rows,
+            trains_path, extra, metres, terrain_path, terrain_units, cfg, out_dir,
+            layers_info, context, feedback)
+        for i, item in enumerate(sampled):
+            spec, paths, policy, recs, g = (item["spec"], item["paths"], item["policy"],
+                                            item["recs"], item["geoms"])
+            if from_cache:
+                self._xy = dict(item.get("xy") or {})
+                habitable_review.apply(recs, reviews)
+                self._usa_check(usa_src, usa_tol, recs, QgsRasterLayer(paths["depth"], "depth").crs(),
+                                context, feedback, layers_info if i == 0 else None)
+                filled = rail_lookup.apply(recs, trains_rows)
+                if filled:
+                    feedback.pushWarning("{} rail receptor(s) took trains per day from RAIL_TRAINS_LOOKUP: {}".format(
+                        filled, rail_lookup.RULING_NOTE))
             geoms.update(g)
             for r in recs:
                 if r.get("depth_ft") is not None and (r["id"] not in best or
@@ -753,7 +726,7 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
                          "breach_location": spec.get("breach_location"),
                          "receptors": recs,
                          "nodata_sampling": policy})
-            feedback.setProgress(10 + 60.0 * (i + 1) / len(run_specs))
+            feedback.setProgress(10 + 60.0 * (i + 1) / max(len(sampled), 1))
         res = core.classify(cat, cfg, runs, dam=dam, charts=charts, layers=layers_info, habitable_rule=rule)
         self._habitability(res, cat, cfg, runs, charts, dam, layers_info, best, rule, rv_path, reviews, feedback)
         res["dv_charts"] = self._dv_charts(chart_runs, charts, cat, cfg, dam,
@@ -790,7 +763,175 @@ class Classify(_UnitParams, QgsProcessingAlgorithm):
         return {"CLASS": res["suggested_label"], "ORDINAL": res["suggested_class"],
                 "REPORT": md, "GPKG": gpkg, "OUTPUT": out_dir}
 
+
+    def _eval_key_parts(self, run_specs, sources, metres, terrain_path, terrain_units, cfg,
+                        out_dir, extra, trains_path, layers_info, domain_on):
+        g = cfg.get("general") or {}
+        rasters = []
+        paths = []
+        for spec in run_specs:
+            roles = {}
+            for _k, role, _l, _o in RASTERS:
+                pth = spec.get(role)
+                roles[role] = evalcache.file_sig(pth)
+                if pth:
+                    paths.append(os.path.normcase(os.path.abspath(str(pth))))
+            tpath = spec.get("terrain") or terrain_path
+            roles["terrain"] = evalcache.file_sig(tpath)
+            if tpath:
+                paths.append(os.path.normcase(os.path.abspath(str(tpath))))
+            rasters.append({"label": spec.get("label") or spec.get("scenario"),
+                            "scenario": spec.get("scenario"), "model_dim": spec.get("model_dim"),
+                            "metres": bool(spec.get("metres", metres)),
+                            "terrain_units": spec.get("terrain_units") or terrain_units,
+                            "files": roles})
+        layers = []
+        for row in layers_info:
+            if not isinstance(row, dict):
+                continue
+            if row.get("role") in ("dam record", "extra charts", "extra runs", "rail trains lookup",
+                                   "habitable review"):
+                continue
+            layers.append({"role": row.get("role"), "source": row.get("source"),
+                           "size": row.get("size"), "modified": row.get("modified"),
+                           "note": row.get("note")})
+        return {
+            "version": 1,
+            "rasters": rasters,
+            "layers": layers,
+            "sampling": {k: g.get(k) for k in ("edge_ring_ft", "point_radius_ft", "line_step_ft")},
+            "metres": bool(metres),
+            "terrain": evalcache.file_sig(terrain_path),
+            "terrain_units": terrain_units,
+            "domain": bool(domain_on),
+            "extra": evalcache.file_sig(extra),
+            "out": os.path.normcase(os.path.abspath(out_dir or "")),
+        }, paths
+
+    def _load_or_sample(self, run_specs, sources, reviews, rv_path, usa_src, usa_tol, trains_rows,
+                        trains_path, extra, metres, terrain_path, terrain_units, cfg, out_dir,
+                        layers_info, context, feedback):
+        """Sample every run, or reuse a saved evaluation when the key still matches.
+
+        A cache hit returns receptors as they were just after sampling and address-point
+        merge; the caller applies reviews, the USA Structures check and the rail lookup.
+        A miss or a cache that cannot be kept never fails the run.
+        """
+        parts, raster_paths = self._eval_key_parts(
+            run_specs, sources, metres, terrain_path, terrain_units, cfg, out_dir, extra,
+            trains_path, layers_info, self._domain_on)
+        key = evalcache.evaluation_key(parts)
+        version = evalcache.plugin_version()
+        state, when, why = evalcache.load(out_dir, key, version)
+        if state and evalcache.files_exist(state):
+            sampled = []
+            for item in state.get("sampled") or []:
+                recs = item.get("recs") or []
+                geoms = evalcache.unpack_geoms(item.get("geoms") or {})
+                sampled.append({"spec": item.get("spec") or {}, "paths": item.get("paths") or {},
+                                "policy": item.get("policy") or {}, "recs": recs, "geoms": geoms,
+                                "xy": item.get("xy") or {}})
+            if sampled:
+                for i, item in enumerate(sampled):
+                    spec, paths = item.get("spec") or {}, item.get("paths") or {}
+                    for role, path in paths.items():
+                        if path:
+                            layers_info.append(_stat(path, "{} ({})".format(
+                                role, spec.get("scenario") or "run {}".format(i + 1))))
+                    tpath = (spec.get("terrain") or (item.get("policy") or {}).get("terrain"))
+                    if tpath:
+                        layers_info.append(_stat(tpath, "terrain ({})".format(
+                            spec.get("scenario") or "run {}".format(i + 1)), "from saved evaluation"))
+                feedback.pushInfo("Reusing the evaluation saved on {} (same rasters, receptor "
+                                  "layers and sampling settings).".format(when))
+                return sampled, True
+            why = why or "saved evaluation had no sampled runs"
+        if why:
+            feedback.pushInfo("The evaluation saved by an earlier session is not used: {}".format(why))
+        sampled = self._sample_runs(run_specs, sources, metres, terrain_path, terrain_units,
+                                    cfg, layers_info, context, feedback)
+        packed = []
+        for item in sampled:
+            packed.append({"spec": item["spec"], "paths": item["paths"], "policy": item["policy"],
+                           "recs": item["recs"], "geoms": evalcache.pack_geoms(item["geoms"]),
+                           "xy": item.get("xy") or {}})
+        path, info = evalcache.save(out_dir, key, {"sampled": packed, "raster_paths": raster_paths},
+                                    when=__import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                                    version=version)
+        if path:
+            feedback.pushInfo("Evaluation saved for the next QGIS session ({:.1f} KB): {}".format(
+                info / 1024.0, os.path.relpath(path, out_dir)))
+        else:
+            feedback.pushInfo("The evaluation could not be kept on disk ({}); the next classify "
+                              "run will sample again.".format(info))
+        # apply reviews / USA / rail on a fresh sample (same as before the cache)
+        for i, item in enumerate(sampled):
+            recs = item["recs"]
+            self._xy = dict(item.get("xy") or {})
+            habitable_review.apply(recs, reviews)
+            crs = QgsRasterLayer(item["paths"]["depth"], "depth").crs()
+            self._usa_check(usa_src, usa_tol, recs, crs, context, feedback, layers_info if i == 0 else None)
+            filled = rail_lookup.apply(recs, trains_rows)
+            if filled:
+                feedback.pushWarning("{} rail receptor(s) took trains per day from RAIL_TRAINS_LOOKUP: {}".format(
+                    filled, rail_lookup.RULING_NOTE))
+        return sampled, False
+
+    def _sample_runs(self, run_specs, sources, metres, terrain_path, terrain_units, cfg,
+                     layers_info, context, feedback):
+        """The expensive stage: open rasters, sample receptors, merge address points."""
+        sampled = []
+        for i, spec in enumerate(run_specs):
+            paths = {role: spec.get(role) for _k, role, _l, _o in RASTERS}
+            if not paths.get("depth"):
+                raise QgsProcessingException("run {} has no depth raster".format(i + 1))
+            for role, path in paths.items():
+                if path:
+                    layers_info.append(_stat(path, "{} ({})".format(role, spec.get("scenario")
+                                                                    or "run {}".format(i + 1))))
+            crs = QgsRasterLayer(paths["depth"], "depth").crs()
+            domain = None
+            dom_src = self._domain_src
+            if dom_src is not None:
+                xf = QgsCoordinateTransform(dom_src.sourceCrs(), crs, context.transformContext())
+                parts = []
+                for feat in dom_src.getFeatures():
+                    gg = QgsGeometry(feat.geometry())
+                    gg.transform(xf)
+                    parts.append(gg)
+                domain = QgsGeometry.unaryUnion(parts) if parts else None
+            rs = S.open_rasters(paths, metres=bool(spec.get("metres", metres)))
+            tpath = spec.get("terrain") or terrain_path
+            tunits = spec.get("terrain_units") or terrain_units
+            tnote = "given"
+            if not tpath:
+                tpath, discovered_u, tnote = S.discover_run_terrain(paths.get("depth"))
+                if tpath and (not tunits or tunits == "auto"):
+                    tunits = discovered_u or "auto"
+            if tpath:
+                ter, how = S.open_terrain(tpath, z_units=tunits or "auto",
+                                          depth=rs.get("depth"), wse=rs.get("wse"))
+                if ter is not None:
+                    rs["terrain"] = ter
+                    layers_info.append(_stat(tpath, "terrain ({})".format(
+                        spec.get("scenario") or "run {}".format(i + 1)), how or tnote))
+                else:
+                    layers_info.append(_stat(tpath, "terrain (unused)",
+                                             how or tnote or "could not resolve elevation units"))
+                    feedback.pushInfo("Terrain not used for NoData depth: {}".format(how))
+            policy = S.nodata_policy(rs["depth"])
+            policy["terrain"] = tpath
+            policy["terrain_z_how"] = (getattr(rs.get("terrain"), "z_how", None)
+                                       if rs.get("terrain") is not None else None)
+            feedback.pushInfo("Run {} ({}, {}): sampling".format(
+                i + 1, spec.get("scenario") or "?", spec.get("model_dim") or "?"))
+            recs, g = self._receptors(sources, rs, crs, cfg, context, feedback, domain)
+            sampled.append({"spec": spec, "paths": paths, "policy": policy, "recs": recs,
+                            "geoms": g, "xy": dict(getattr(self, "_xy", {}) or {})})
+        return sampled
+
     def _write_gpkg(self, gpkg, sources, geoms, best, res, context):
+
         fields = QgsFields()
         for n, t in (("rid", compat.FT_STRING), ("src_fid", compat.FT_INT),
                      ("kind", compat.FT_STRING), ("type", compat.FT_STRING),
