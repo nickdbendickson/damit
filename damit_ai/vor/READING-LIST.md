@@ -11,7 +11,8 @@ and number.
 - FEMA P-946 (2013): Federal Guidelines for Inundation Mapping of Flood Risks Associated with Dam Incidents and Failures
 - FEMA P-94 (2013): Selecting and Accommodating Inflow Design Floods for Dams
 - FEMA P-64 (2013): Emergency Action Planning for Dams
-- FEMA P-93 (2015): Federal Guidelines for Dam Safety Risk Management
+- FEMA P-93: Federal Guidelines for Dam Safety (2004; revised 2023)
+- FEMA P-1025 (2015): Federal Guidelines for Dam Safety Risk Management
 - FEMA 333 (2004): Hazard Potential Classification System for Dams
 - FEMA 484 (2005): Technical Manual: Conduits through Embankment Dams
 - FEMA P-1014 (2014): Technical Manual: Overtopping Protection for Dams
@@ -34,6 +35,7 @@ and number.
 - FERC Engineering Guidelines, Chapter 2 (Selecting and Accommodating Inflow Design Floods) and Chapter 8 (Determination of the PMF)
 
 ## North Dakota
+- ND DWR / Applied Weather Associates (2021): Probable Maximum Precipitation Study for North Dakota, and DWR's 2022 PMP Interim Guidance (`fetch_asdso.py --catalog nd` downloads both)
 - ND State Water Commission: North Dakota Dam Design Handbook
 - ND Administrative Code ch. 89-08 (dams, dikes and other devices) and the State Engineer's dam-safety guidance
 - NOAA Atlas 14 Volume 8 (precipitation frequency, Midwestern states incl. ND)
@@ -54,3 +56,8 @@ and number.
 ## Your own material
 Your project notes (for example `breach-parameters/BREACH-PARAMETERS.md` in the project files), run
 reports and past studies can go in too. `.md` and `.txt` are indexed by section.
+
+## More in the download catalog
+`reference_sources.json` lists 183 sources in ten groups; `python3 fetch_asdso.py --catalog --dry-run` prints them.
+The groups `nd` (North Dakota PMP, inspection categories, USGS reports on ND floods) and `cases` (Lake Delhi,
+Spencer, Edenville/Sanford, Big Bay and Kelly Barnes failure investigations) were added on 2026-11-24.

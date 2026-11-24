@@ -166,36 +166,55 @@ expected fact is in the answer **and** a quote the code checked comes from the r
 page (+/-1). Questions whose source is not indexed are skipped. Add your own questions in the same
 format; use questions you know the answer to.
 
-### The catalog: hazard, design, breach, software, consequence, data, hydrology, ponds
+### The catalog: hazard, design, breach, software, consequence, data, hydrology, ponds, nd, cases
 
-`reference_sources.json` lists 121 more sources in eight groups, and `fetch_asdso.py --catalog`
+`reference_sources.json` lists 183 more sources in ten groups, and `fetch_asdso.py --catalog`
 downloads them into `~/Vor/library/references/<group>/`. About a third are `manual`: paywalled papers
 and documents with no stable public link, which the run lists in `sources.csv` for you to get by hand.
 
-- **hazard** (39): the sources cited in the "US Dam Hazard Classification" papers: FEMA 333 and P-919,
+- **hazard** (45): the sources cited in the "US Dam Hazard Classification" papers: FEMA 333 and P-919,
   USBR ACER TM-11, DSO-99-06 and RCEM, NRCS TR-210-60, FERC Ch. 2, USFWS 361 FW 2, CRS R45981 and
   R46946, ND REG_05.2026 and N.D.A.C. 89-08, NY TOGS 3.1.5, the Nebraska Classification of Dams,
-  Colorado 2 CCR 402-1 and its breach guidelines, and the CA, TX, AK, AZ, VA, RI and ID rules.
-- **design** (19): USBR Design of Small Dams, Design Standards 13 and 14, the USBR/USACE Best Practices
+  Colorado 2 CCR 402-1 and its breach guidelines, and the CA, TX, AK, AZ, VA, RI and ID rules; and
+  neighbouring procedures: Montana Technical Note 6 and its small-dam inventory, Colorado's hazard
+  classification guidelines, South Dakota ARSD 74:02:08, Kansas K.A.R. 5-40-24, Virginia DCR-VSWCB-039.
+- **design** (23): USBR Design of Small Dams, Design Standards 13 and 14, the USBR/USACE Best Practices
   chapters, Wahl's breach-parameter review (DSO-98-004), USACE EM 1110-2-1420 / -2300 / -1902 / -1603 /
   -1913 and ER 1110-2-1156, HEC TD-39 (HEC-RAS dam break), NOAA HMR 51 / 52 / 55A and Atlas 14 Vol. 8,
-  the FERC Engineering Guidelines, NY's dam design guidelines and TCEQ GI-364.
-- **breach** (18): FEMA P-946, FERC Chapter R21, HEC Research Note 5, NRCS TR-66, the Ohio and Washington
+  the FERC Engineering Guidelines, NY's dam design guidelines and TCEQ GI-364; NRCS NEH 628 chapters 50
+  and 51 (earth spillways), FEMA 473 (animals) and FEMA P-675 (plastic pipe).
+- **breach** (30): FEMA P-946, FERC Chapter R21, HEC Research Note 5, NRCS TR-66, the Ohio and Washington
   dam-break guidance, HR Wallingford's breach guide, USBR DSO-04-01, the DSS-WISE Lite technical report,
   and the breach-parameter papers themselves: Froehlich (1995, 2008, 2016), MacDonald and
   Langridge-Monopolis (1984), Von Thun and Gillette (1990), Xu and Zhang (2009), Pierce, Thornton and
-  Abt (2010). The papers are paywalled, so every one of them is `manual`.
-- **software** (26): LISFLOOD-FP 8.0 to 8.3, Gmsh, ANUGA and HEC-RAS documentation, the GDAL VRT driver
-  page and the QGIS 4 plugin migration notes. Heim indexes this folder as its `engine_docs` collection.
-- **consequence** (6): flood hazard to people outside ACER TM-11: AIDR Guideline 7-3 (the H1-H6 curves),
+  Abt (2010). The papers are paywalled, so every one of them is `manual`. Also the SIMS simplified
+  EAP inundation maps, FEMA Risk MAP Guidance Document 68, USBR HL-2014-02, DSO-2017-02 and DSO-08-05,
+  WinDAM C, NWS SMPDBK, DL Breach, the ASCE 2011 task-committee review, EA FRS17071, NRC JLD-ISG-2013-01
+  and Montana Technical Note 3.
+- **software** (33): LISFLOOD-FP 8.0 to 8.3, Gmsh, ANUGA and HEC-RAS documentation, the GDAL VRT driver
+  page and the QGIS 4 plugin migration notes; the EA SC120002 and HEC RD-51 2D benchmarks, the local
+  inertial and subgrid papers (de Almeida 2012, Neal 2012, Devi and Kuiry 2024), ARR Project 15 and
+  the InFRM HEC-RAS 2D practices. Heim indexes this folder as its `engine_docs` collection.
+- **consequence** (13): flood hazard to people outside ACER TM-11: AIDR Guideline 7-3 (the H1-H6 curves),
   Defra FD2321 TR1 and TR2, the DHS 2011 loss-of-life and economic-consequence reports, and the LifeSim
-  technical reference manual.
-- **data** (3): what the suite's inputs mean: the NSI technical documentation, the NID data dictionary and
-  the USGS Lidar Base Specification (point classes and hydro-flattening).
-- **hydrology** (6): USGS SIR 2015-5096 (North Dakota peak-flow regressions), Bulletin 17C, NEH Part 630,
-  WSP 2339 (Manning's roughness), FHWA HDS-5 (culverts) and NDDOT Design Manual chapter V.
-- **ponds** (4): NRCS Conservation Practice Standard 378 (national, North Dakota, Iowa) and Agriculture
-  Handbook 590.
+  technical reference manual; FEMA's 2012 consequence how-to, FEMA P-1025, HEC-FIA, the LifeSim user's
+  guide, ARR Project 10 (safety criteria for people), USBR Public Protection Guidelines and Living with Dams.
+- **data** (7): what the suite's inputs mean: the NSI technical documentation, the NID data dictionary and
+  the USGS Lidar Base Specification (point classes and hydro-flattening) with its 2025 revision, the
+  NHDPlus HR user's guide, the Annual NLCD user guide and USGS TM 11-B12 (elevation-derived hydrography).
+- **hydrology** (14): USGS SIR 2015-5096 (North Dakota peak-flow regressions), Bulletin 17C, NEH Part 630,
+  WSP 2339 (Manning's roughness), FHWA HDS-5 (culverts) and NDDOT Design Manual chapter V; WSP 1849
+  (Barnes roughness photos), WSP 2383 (DEM drainage areas, James River ND), EM 1110-2-1406 (snowmelt) and
+  -1417 (flood runoff), HMR 48 (Red River PMP and snowmelt), NEH 630 ch. 11, Gray et al. 2001 (frozen
+  soil infiltration) and SIR 2025-5019 (peak-flow methods for MT, ND and nearby).
+- **ponds** (5): NRCS Conservation Practice Standard 378 (national, North Dakota, Iowa), Agriculture
+  Handbook 590 and NRCS EFH 650 chapter 11.
+- **nd** (8): the 2021 North Dakota PMP study and DWR's 2022 interim guidance for using it, DWR's
+  inspection recommendation categories, the NRCS North Dakota engineering summation, the DWR LiDAR
+  metadata index, and USGS SIR 2010-5225 (2009 spring floods), PP 1798-C (2011 floods) and SIR
+  2023-5064-H (ND peak-flow trends).
+- **cases** (5): dam-failure investigations to check breach and inundation models against: Lake Delhi
+  (2010), Spencer Dam (2019), Edenville and Sanford (2020), Big Bay (2004) and Kelly Barnes (1977).
 
 ```zsh
 python3 fetch_asdso.py --catalog --dry-run   # the list
@@ -290,7 +309,7 @@ Delete the block between `# >>> vor` and `# <<< vor` in `~/.zshrc`, then
 - `vor.py`: the tool (stdlib + optional numpy / PyMuPDF)
 - `../heim/tools/dam_chain.py` (in the zip: `damchain-1.4/dam_chain.py`): dam_chain 1.3 plus the `vor` pass-through, nothing else changed
 - `fetch_asdso.py`: downloads the public ASDSO / FEMA reference set, and with `--catalog` the sources in `reference_sources.json`
-- `reference_sources.json`: the catalog of sources in eight groups (edit to add more)
+- `reference_sources.json`: the catalog of sources in ten groups (edit to add more)
 - `first-run.zsh`: install, download, index, test and pack the results, in one command
 - `eval_vor.py` + `eval/questions.json`: the answer test
 - `READING-LIST.md`: a starter library of public dam-safety publications
