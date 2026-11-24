@@ -176,7 +176,7 @@ def convert_csv(text: str, state: str, fetched_utc: str | None = None, url: str 
 
 
 def _download(url: str, timeout: float = 120) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "damit-crest-desktop (NID bulk CSV)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "damit-desk (NID bulk CSV)"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:  # noqa: S310 - fixed https NID host
             data = res.read(MAX_BYTES + 1)

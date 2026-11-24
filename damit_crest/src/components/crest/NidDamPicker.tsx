@@ -6,12 +6,14 @@
  * CSV for that state and cached in the settings folder (nid-state.ts). A proposed dam that is not in the NID yet is a
  * blank record with "New dam" ticked and no NID ID.
  */
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   confirmText,
   countyOptions,
   damOptionLabel,
   demElevationsPatch,
+  duplicateNidRecords,
+  duplicateNidText,
   elevationNote,
   fieldTag,
   heightWarningOnElevations,
@@ -26,8 +28,9 @@ import {
   storageFor,
   unlinkPatch,
 } from "@/lib/crest/nid-dams";
-import { EXAMPLE_STATE, isNidState, loadNidState, NID_STATES, rememberedState, rememberState, stateName } from "@/lib/crest/nid-state";
+import { EXAMPLE_STATE, NID_STATES, stateName } from "@/lib/crest/nid-state";
 import { deskBundles, staleBundleBanner } from "@/lib/crest/data-provenance";
+import { selectNidState, useNidData, useSelectedNidState } from "@/lib/crest/use-nid-data";
 import { blankDam } from "@/lib/crest/samples";
 import { applyDefaults } from "@/lib/crest/settings";
 import { sharedNow } from "@/lib/crest/settings-store";
@@ -53,80 +56,14 @@ export function StaleBundleBanner({ data, className = "mt-2" }: { data: NidData 
   );
 }
 
-// ---------------------------------------------------------------- the chosen state (shared by the panels)
-
-const listeners = new Set<() => void>();
-let selectedState = EXAMPLE_STATE;
-let restored = false;
-function subscribe(l: () => void) {
-  listeners.add(l);
-  return () => listeners.delete(l);
-}
-export function selectNidState(code: string): void {
-  if (!isNidState(code) || code === selectedState) return;
-  selectedState = code;
-  rememberState(code);
-  listeners.forEach((l) => l());
-}
-/** The state the picker shows; the last choice in this browser profile, else the bundled example (North Dakota). */
-export function useSelectedNidState(): string {
-  const v = useSyncExternalStore(subscribe, () => selectedState, () => EXAMPLE_STATE);
-  useEffect(() => {
-    if (restored) return;
-    restored = true;
-    const r = rememberedState();
-    if (r !== selectedState) {
-      selectedState = r;
-      listeners.forEach((l) => l());
-    }
-  }, []);
-  return v;
-}
-
-/**
- * One state's NID extract, loaded on first use: the chosen state, or `state` when given (a record's own state, from
- * its NID ID). `reload()` asks the desktop server for the latest download.
- */
-export function useNidData(
-  enabled = true,
-  state?: string,
-): { data: NidData | null; error: string | null; loading: boolean; reload: () => void } {
-  const chosen = useSelectedNidState();
-  const want = state && isNidState(state) ? state : chosen;
-  const [data, setData] = useState<NidData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    if (!enabled) return;
-    let live = true;
-    setError(null);
-    setLoading(true);
-    setData((d) => (d && d.state === want ? d : null));
-    loadNidState(want, { refresh: refresh > 0 }).then(
-      (d) => {
-        if (!live) return;
-        setData(d);
-        setLoading(false);
-      },
-      (e: unknown) => {
-        if (!live) return;
-        setError(`Could not load the NID dams for ${stateName(want)}: ${(e as Error).message}`);
-        setLoading(false);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [enabled, want, refresh]);
-  return { data, error, loading, reload: () => setRefresh((n) => n + 1) };
-}
-
 export function NidDamPicker({ dam }: { dam: DamRecord }) {
   const state = useSelectedNidState();
   const { data, error, loading, reload } = useNidData();
   const update = useDesk((s) => s.update);
   const addDam = useDesk((s) => s.addDam);
+  const dams = useDesk((s) => s.dams);
+  const select = useDesk((s) => s.select);
+  const [keepBoth, setKeepBoth] = useState(false);
   const [county, setCounty] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -139,6 +76,14 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
   const results = useMemo(() => (data ? searchDams(data.dams, query, county) : []), [data, query, county]);
   const shown = results.slice(0, MAX_OPTIONS);
   const confirm = useMemo(() => (picked && data ? prefillPatch(picked, data, dam) : null), [picked, data, dam]);
+  // Another record already filed under this NID ID: "Apply" would make two (this one and that one); "New record"
+  // also counts this record when it already has the NID ID.
+  const dupOthers = useMemo(() => (picked ? duplicateNidRecords(dams, picked.nid, dam.id) : []), [picked, dams, dam.id]);
+  const dupAll = useMemo(() => (picked ? duplicateNidRecords(dams, picked.nid) : []), [picked, dams]);
+  const dup = dupOthers[0] ?? dupAll[0] ?? null;
+  const blocked = dupOthers.length > 0 && !keepBoth;
+  const dupAny = dupAll.length > 0;
+  useEffect(() => setKeepBoth(false), [picked]);
 
   const choose = (d: NidDam) => {
     setPicked(d);
@@ -165,7 +110,7 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
     <div className="rounded-md border border-line bg-paper p-3">
       <p className="text-sm font-medium">Fill from the NID (National Inventory of Dams)</p>
       {error ? <p className="mt-1 text-sm text-amber">{error}</p> : null}
-      <div className="mt-2 grid gap-3 sm:grid-cols-[180px_200px_1fr]">
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm">
           <span className="text-muted">State</span>
           <select
@@ -206,7 +151,8 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
             ))}
           </select>
         </label>
-        <div className="relative text-sm">
+        {/* The dam search gets its own full-width row: squeezed into a third column its list was ~75 px wide. */}
+        <div className="relative text-sm sm:col-span-2">
           <label htmlFor={`${listId}-input`} className="text-muted">
             Dam (name, other name or NID ID)
           </label>
@@ -236,7 +182,7 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
               id={`${listId}-list`}
               role="listbox"
               aria-label="NID dams"
-              className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-sm border border-line bg-card shadow"
+              className="absolute z-20 mt-1 max-h-72 w-full min-w-[18rem] overflow-y-auto rounded-sm border border-line bg-card shadow"
             >
               {shown.map((d, i) => (
                 <li
@@ -268,10 +214,32 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
           <p className="mt-1 text-muted">
             {damOptionLabel(picked)}. {elevationNote(confirm.replaced)}
           </p>
+          {dup ? (
+            <div role="alert" className="mt-2 rounded-sm border border-amber bg-amber-bg p-2 text-ink" data-testid="nid-duplicate">
+              <p>{duplicateNidText(picked.nid, dup)}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className="h-10 rounded-sm border border-water bg-water px-3 text-card"
+                  onClick={() => {
+                    select(dup.id);
+                    setPicked(null);
+                  }}
+                >
+                  Open the existing record
+                </button>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={keepBoth} onChange={(e) => setKeepBoth(e.target.checked)} data-testid="nid-keep-both" />
+                  Keep both (they share dams/{picked.nid.toUpperCase()})
+                </label>
+              </div>
+            </div>
+          ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
-              className="h-10 rounded-sm border border-water bg-water px-3 text-card"
+              className="h-10 rounded-sm border border-water bg-water px-3 text-card disabled:opacity-50"
+              disabled={blocked}
               onClick={() => {
                 update(confirm.patch);
                 setPicked(null);
@@ -281,7 +249,8 @@ export function NidDamPicker({ dam }: { dam: DamRecord }) {
             </button>
             <button
               type="button"
-              className="h-10 rounded-sm border border-line bg-paper px-3"
+              className="h-10 rounded-sm border border-line bg-paper px-3 disabled:opacity-50"
+              disabled={dupAny && !keepBoth}
               onClick={() => {
                 const patch = newRecordPatch(picked, data, dam);
                 const base = applyDefaults(blankDam(), sharedNow().values);
@@ -412,7 +381,7 @@ export function NidRecordPanel({ dam }: { dam: DamRecord }) {
             </p>
           ) : null}
           <p className="mt-1 text-xs text-muted">
-            Values you read off a DEM and type here; DamIT Crest does not sample the DEM, and the DEM crest check is left as is.
+            Values you read off a DEM and type here; DamIT Desk does not sample the DEM, and the DEM crest check is left as is.
             Or type them in the Crest, Streambed and datum fields below.
           </p>
         </div>
@@ -481,9 +450,9 @@ export function AboutData() {
   const { data } = useNidData(open);
   return (
     <details className="mt-8 text-xs text-muted" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary className="cursor-pointer">About DamIT Crest and its data sources</summary>
+      <summary className="cursor-pointer">About DamIT Desk and its data sources</summary>
       <p className="mt-2">
-        DamIT Crest is a desk screen for dam-breach studies. It does not assign an official hazard class. Its dam inventory
+        DamIT Desk is a desk screen for dam-breach studies. It does not assign an official hazard class. Its dam inventory
         is the USACE National Inventory of Dams, loaded one state at a time (North Dakota ships as an offline example;
         other states are downloaded from the NID by the desktop app). No state dam-safety or other inventory is used.
       </p>

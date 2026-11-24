@@ -149,6 +149,12 @@ export type DamRecord = {
    * shows it as out of date instead of as the new jurisdiction's class.
    */
   hazardResult?: HazardResult;
+  /**
+   * The last QGIS screening (Export & Hand-off, "Write folder and run screening") for this dam (Absaraka desk test
+   * 2026-11-21: a PARTIAL, time-limited screening with no preliminary class showed only in the job log while the rail
+   * and status bar said every step was complete). Not part of the dam record the plugins read.
+   */
+  screeningResult?: ScreeningResult;
   geometry?: DamGeometry;
   /** PLSS sections looked up for the flood strip (BLM CadNSDI), kept so the list works offline afterwards. */
   plss?: PlssCache;
@@ -191,6 +197,19 @@ export type DamRecord = {
 };
 
 /** What damit:classify returned (qgis_run.run_classify), stored on the record by the Report step. */
+/** One criteria hit of a damit:classify run: method (criterion), class it implies, rule or advisory, and the finding. */
+export type HazardHit = {
+  method: string;
+  ordinal: number | null;
+  label: string;
+  strength: string;
+  reason: string;
+  scenario: string;
+  /** Receptor ids the hit was scored for ("road:240"), first five; `receptorCount` is all of them. */
+  receptors: string[];
+  receptorCount: number;
+};
+
 export type HazardResult = {
   /** CLASS: the suggested class in the chosen preset's labels (generic labels in custom mode). */
   suggestedClass: string;
@@ -206,10 +225,44 @@ export type HazardResult = {
   ranMode?: string | null;
   /** The hits that set the class (method, class, reason), first few. */
   driving?: { method: string; label: string; reason: string; receptors: number }[];
+  /**
+   * Every criteria hit damit:classify scored (damit_hazard_report.json "hits"), strongest class first, at most 300
+   * (qgis_run.report_hits); `hitsTotal` is how many the run had. Absent in results from before 2026-11-21.
+   */
+  hits?: HazardHit[];
+  hitsTotal?: number;
   warnings?: number;
   /** Receptor features sent, by layer. */
   layers?: Record<string, number>;
+  /** Receptors the run scored a hit for, by layer (per_receptor in damit_hazard_report.json). */
+  impacted?: Record<string, number>;
+  /** Wet structures the run counted (habitability tally), or null when the report does not say. */
+  wetStructures?: number | null;
   skipped?: number;
+  /**
+   * The desktop server looks up the real structures, roads and rail for the depth raster's area (real_receptors.py).
+   * complete is false when any of them could not be checked (offline, a service down): the class is then a lower
+   * bound. A result without this field was classified from the desk's own receptors only (before 2026-11-20).
+   */
+  complete?: boolean | null;
+  /** Layer -> why it was not checked. */
+  notChecked?: Record<string, string>;
+  /** Layer -> where its features came from (the DamIT data folder, or a public service). */
+  layerSources?: Record<string, string>;
+  /** The rail trains-per-day lookup sent with the run (a file on this computer), when one was given. */
+  railTrainsLookup?: string | null;
+  /**
+   * The top class's hits that rest only on values still needing the engineer's ruling (qgis_run.unruled_top: e.g. the
+   * BNSF KO 15 trains/day from the rail lookup); absent when none do. The class badge shows "needs ruling".
+   */
+  ruling?: { label: string; hits: number; unruled: number; why: string[] } | null;
+  /**
+   * The algorithm that gave this result (damit:classify, or ndhazard:classify under the North Dakota profile), so the
+   * desk names the one that ran. Absent in results from before 2026-11-22 (handoff.ts resultAlgorithm infers it).
+   */
+  source?: string | null;
+  /** ndhazard:classify's ACER TM 11 class beside the ND class. */
+  tm11Class?: string | null;
   classifiedAt: string;
   /** choiceKey / receptorKey (classify-receptors.ts) and the choice in words, at the time of the run. */
   choiceKey: string;
@@ -258,6 +311,8 @@ export type NidRef = {
   /** NID download date (YYYY-MM-DD). */
   downloaded: string;
   attribution: string;
+  /** North Dakota profile only (nd-dams.ts): set when the dam joined the DWR Dams layer. */
+  dwrAttribution?: string;
 };
 
 export type SeriesPoint = { tHr: number; qCfs: number };
@@ -438,4 +493,17 @@ export type ResultsOfRecord = {
   stats: RunStats;
   samples: ReceptorSample[];
   warnings: string[];
+};
+
+/** How the last QGIS screening chain ended (qgis_run.run_screening): finished, PARTIAL at its time limit, or failed. */
+export type ScreeningResult = {
+  state: "done" | "partial" | "failed";
+  /** The preliminary class the screener suggested; null = not determined (no class). */
+  label: string | null;
+  /** Why it is partial or failed, in words (e.g. "time limit"). */
+  reason: string | null;
+  /** Wet area and maximum depth of the screening flood so far, when the server reported them. */
+  areaAc?: number | null;
+  maxDepthFt?: number | null;
+  at: string;
 };

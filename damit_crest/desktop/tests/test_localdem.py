@@ -158,5 +158,79 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(len(data), 3 * 2 * 4)
 
 
+FAKE_WARP = """#!/usr/bin/env python3
+import os, sys
+# Like a system gdalwarp handed another GDAL's PROJ_DATA: it refuses proj.db while PROJ_DATA is set.
+if os.environ.get("PROJ_DATA"):
+    sys.stderr.write("ERROR 1: PROJ: proj_create_from_database: /x/proj.db contains DATABASE.LAYOUT.VERSION.MINOR = 3 "
+                     "whereas a number >= 5 is expected\\nUsage: gdalwarp [--help]\\n")
+    sys.exit(1)
+out = sys.argv[-1]
+open(out, "wb").write(b"\\0" * (2 * 2 * 4))
+open(out[:-4] + ".hdr", "w").write("ENVI\\nbyte order = 0\\n")
+"""
+
+
+@unittest.skipIf(sys.platform == "win32", "the fake gdalwarp is a script; Windows cannot start it directly")
+class ProjDataMismatchTests(unittest.TestCase):
+    """Absaraka desk test 2026-11-21: PROJ_DATA from QGIS's conda env broke the system gdalwarp (raw 502 error)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from fakeproc import write_exe
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.exe = write_exe(Path(self.tmp.name) / "gdalwarp", FAKE_WARP)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_retries_without_foreign_proj_data(self):
+        with mock.patch.dict("os.environ", {"PROJ_DATA": "/elsewhere/share/proj"}):
+            raw = localdem.read_window("dem.vrt", (-97.4, 46.9, -97.3, 47.0), 2, 2, 10, gdalwarp=str(self.exe))
+        self.assertEqual(len(raw), 16)
+
+    def test_plain_message_when_it_still_fails(self):
+        with mock.patch.object(localdem, "own_data_env", side_effect=lambda env=None: {**__import__("os").environ}):
+            with mock.patch.dict("os.environ", {"PROJ_DATA": "/elsewhere/share/proj"}):
+                with self.assertRaises(RuntimeError) as cm:
+                    localdem.read_window("dem.vrt", (-97.4, 46.9, -97.3, 47.0), 2, 2, 10, gdalwarp=str(self.exe))
+        msg = str(cm.exception)
+        self.assertIn("map-projection database", msg)
+        self.assertNotIn("Usage", msg)
+
+    def test_own_data_env_drops_only_the_data_vars(self):
+        env = localdem.own_data_env({"PROJ_DATA": "a", "PROJ_LIB": "b", "GDAL_DATA": "c", "PATH": "p"})
+        self.assertEqual(env, {"PATH": "p"})
+
+
+class EnvGdalwarpTests(unittest.TestCase):
+    """The gdalwarp of the install PROJ_DATA / CONDA_PREFIX belong to comes before the system one."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.pre = Path(self.tmp.name) / "qgis334"
+        (self.pre / "share" / "proj").mkdir(parents=True)
+        (self.pre / "bin").mkdir()
+        self.exe = self.pre / "bin" / ("gdalwarp.exe" if sys.platform == "win32" else "gdalwarp")
+        self.exe.write_text("")
+        self.exe.chmod(0o755)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_proj_data_points_at_its_own_gdalwarp(self):
+        self.assertEqual(localdem.env_gdalwarp({"PROJ_DATA": str(self.pre / "share" / "proj")}), str(self.exe))
+        with mock.patch.dict("os.environ", {"PROJ_DATA": str(self.pre / "share" / "proj")}):
+            self.assertEqual(localdem.find_gdalwarp(), str(self.exe))
+
+    def test_conda_prefix(self):
+        self.assertEqual(localdem.env_gdalwarp({"CONDA_PREFIX": str(self.pre)}), str(self.exe))
+
+    def test_nothing_set_falls_back_to_path(self):
+        self.assertIsNone(localdem.env_gdalwarp({"PROJ_DATA": str(Path(self.tmp.name) / "none" / "share" / "proj")}))
+        self.assertIsNone(localdem.env_gdalwarp({}))
+
+
 if __name__ == "__main__":
     unittest.main()

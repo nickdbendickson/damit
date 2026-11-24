@@ -222,7 +222,7 @@ export function poolNote(p: Pool, r: { peakInCms: number; peakOutCms: number; pe
     const over = level - p.embankmentM;
     outlet =
       over > 0
-        ? ` Its level tops the ground at the outlet (about ${ft(p.embankmentM)} ft) by ${ft(over)} ft: a dam there would be overtopped. Crest does not breach it; run the Runner's cascade to see whether it fails.`
+        ? ` Its level tops the ground at the outlet (about ${ft(p.embankmentM)} ft) by ${ft(over)} ft: a dam there would be overtopped. The desk does not breach it; run the Runner's cascade to see whether it fails.`
         : ` Its level stays ${ft(-over)} ft below the ground at the outlet (about ${ft(p.embankmentM)} ft).`;
   }
   return `${head}: the wave raises it ${ft(r.peakRiseM)} ft to ${ft(level)} ft; ${cfs(r.peakInCms)} cfs in, ${cfs(r.peakOutCms)} cfs out over the outlet (${fell} % lower).${outlet}`;

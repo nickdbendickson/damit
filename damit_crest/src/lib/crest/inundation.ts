@@ -307,7 +307,7 @@ export async function probeExtent(dam: DamRecord, result: Analysis, g: DemGrid, 
     };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
-    console.warn(`DamIT Crest: the extent probe for ${dam.nid || dam.id} threw (${error}); the layer is saved without a confidence.`);
+    console.warn(`DamIT Desk: the extent probe for ${dam.nid || dam.id} threw (${error}); the layer is saved without a confidence.`);
     return { ok: false, error };
   }
 }

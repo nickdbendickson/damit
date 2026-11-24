@@ -17,8 +17,8 @@
   --color-sand: var(--sand);
   --color-amber: var(--amber);
   /* Status-flag colours for the pipeline rail and inspector (desk.tsx). These flip in field
-     mode to light tones that keep WCAG AA contrast on the dark flag backgrounds, while
-     --red/--amber/--green keep their values so badges like .risk-badge (white on --red)
+     mode (below) to light tones that keep WCAG AA contrast on the dark flag backgrounds,
+     while --red/--amber/--green keep their values so badges like .risk-badge (white on --red)
      are unaffected. */
   --color-flag-red: var(--flag-red);
   --color-flag-amber: var(--flag-amber);
@@ -53,7 +53,7 @@
   --bg: #F5F5F0;
   --panel: #FFFFFF;
   --ink: #1F2933;
-  --muted: #6B7280;
+  --muted: #5B6270;
   --border: #E5E7EB;
   --teal: #0E768A;
   --teal-dark: #0B5C6C;
@@ -65,6 +65,11 @@
   --green: #15803D;
   --green-bg: #DCFCE7;
   --sand: #ECE9E1;
+  /* Class-tinted table rows (Dashboard structure impacts). Field mode below uses dark tints: the light ones under
+     field mode's light text were 1.06:1 (Absaraka desk test 2026-11-21). */
+  --hl-high-bg: #FFF5F5;
+  --hl-sig-bg: #FFFBEB;
+  --hl-low-bg: #F7FDF9;
   --radius: 10px;
   --shadow: 0 1px 3px rgba(31, 41, 51, 0.08), 0 4px 12px rgba(31, 41, 51, 0.06);
 }
@@ -94,6 +99,9 @@ body.field-mode {
   --flag-red: #FCA5A5;
   --flag-amber: #FCD34D;
   --flag-green: #86EFAC;
+  --hl-high-bg: #3A1F24;
+  --hl-sig-bg: #3A2F14;
+  --hl-low-bg: #17301F;
 }
 
 .crest-app {
@@ -395,12 +403,12 @@ body.field-mode {
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th { text-align: left; font-size: 11px; letter-spacing: 0.05em; color: var(--muted); padding: 8px 10px; border-bottom: 2px solid var(--border); }
 td { padding: 10px; border-bottom: 1px solid var(--border); }
-tr.hl-high td { background: #FFF5F5; }
-tr.hl-high td:first-child { border-left: 4px solid var(--red); }
-tr.hl-sig td { background: #FFFBEB; }
-tr.hl-sig td:first-child { border-left: 4px solid var(--amber); }
-tr.hl-low td { background: #F7FDF9; }
-tr.hl-low td:first-child { border-left: 4px solid var(--green); }
+tr.hl-high td, tr.hl-high th { background: var(--hl-high-bg); }
+tr.hl-high td:first-child, tr.hl-high th:first-child { border-left: 4px solid var(--red); }
+tr.hl-sig td, tr.hl-sig th { background: var(--hl-sig-bg); }
+tr.hl-sig td:first-child, tr.hl-sig th:first-child { border-left: 4px solid var(--amber); }
+tr.hl-low td, tr.hl-low th { background: var(--hl-low-bg); }
+tr.hl-low td:first-child, tr.hl-low th:first-child { border-left: 4px solid var(--green); }
 
 .pill { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
 .pill.high { background: var(--red-bg); color: var(--red); }
@@ -518,7 +526,7 @@ tr.hl-low td:first-child { border-left: 4px solid var(--green); }
 .dash-root .legend-row { display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 2px 0; }
 .dash-root .legend-row span { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }
 .dash-root .dash-bottom { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; padding: 12px; background: var(--bg); }
-.dash-root .dash-impacts { grid-column: 1 / -1; }
+.dash-root .dash-impacts, .dash-root .classify-receptors { grid-column: 1 / -1; }
 @media (min-width: 1500px) { .dash-root .dash-bottom { grid-template-columns: 1.2fr 0.8fr 2fr; } .dash-root .dash-impacts { grid-column: auto; } }
 .dash-root .pane { background: var(--panel); border-radius: 7px; padding: 10px; box-shadow: var(--shadow); min-width: 0; }
 .dash-root .pane h4 { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
@@ -539,7 +547,7 @@ tr.hl-low td:first-child { border-left: 4px solid var(--green); }
 .dash-root .tbl-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 6px; }
 .dash-root .pg { display: flex; gap: 3px; }
 .dash-root .pg button { min-width: 24px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); }
-.dash-root .pg button.cur { background: var(--teal); border-color: var(--teal); color: #fff; }
+.dash-root .pg button.cur { background: var(--teal); border-color: var(--teal); color: var(--panel); }
 .dash-root .pg button:disabled { opacity: 0.4; cursor: default; }
 .dash-root .status-bar { background: #1F2933; color: #fff; font-size: 11px; padding: 6px 16px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .dash-root .status-bar .dot { display: inline; width: auto; height: auto; margin: 0; color: #6EE7B7; font-weight: 700; }
@@ -587,3 +595,83 @@ tr.hl-low td:first-child { border-left: 4px solid var(--green); }
   .hyb-root .hyb-sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .hyb-root .hyb-map { min-height: 50vh; }
 }
+
+/* DamIT Desk UI 2026-11-21 (Lumo's concept): the compact header's wordmark, the Workflow map with its callouts and
+   legend. Colours come from the design variables, so field mode applies. */
+.desk-wordmark-chip { display: inline-flex; align-items: center; border-radius: 4px; background: #fff; padding: 2px 4px; }
+.wf-map { min-height: 320px; }
+.wf-map .wf-map-canvas { position: relative; height: 52vh; min-height: 320px; }
+.wf-map .dash-leaflet { position: absolute; inset: 0; }
+.wf-callouts { position: absolute; top: 10px; left: 54px; z-index: 1000; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; max-width: calc(100% - 120px); pointer-events: none; }
+.wf-callout { background: var(--panel); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); padding: 4px 8px; pointer-events: auto; }
+.wf-callout dt { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.wf-callout dd { margin: 0; font: 600 15px/1.2 ui-monospace, 'Cascadia Mono', Menlo, monospace; }
+.wf-legend { position: absolute; bottom: 34px; left: 10px; z-index: 1000; background: var(--panel); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.35; max-width: 220px; }
+.wf-legend-title { font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; }
+.wf-legend-row { display: flex; align-items: center; gap: 6px; }
+.wf-legend-row span { display: inline-block; width: 14px; height: 10px; border: 1px solid rgba(0, 0, 0, 0.25); flex-shrink: 0; }
+.wf-legend-row span.round { width: 10px; border-radius: 50%; border-color: #111; }
+.wf-basis { margin: 0; padding: 2px 10px; font-size: 11px; color: var(--muted); background: var(--panel); border-top: 1px solid var(--border); }
+.wf-map-tools { position: absolute; top: 10px; right: 54px; z-index: 1000; }
+.wf-map-toggle { height: 30px; padding: 0 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--panel); color: var(--ink); font-size: 13px; }
+.wf-map-toggle:focus-visible, [role="tab"]:focus-visible, [data-testid="command-box"]:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+/* Field mode: amber text and the High badge used the light theme's dark amber (2.9:1 on the dark panel). Use the
+   light flag amber there (10.2:1 on --panel; the badge's dark text on it 10.2:1), so field mode passes WCAG AA. */
+body.field-mode .text-amber { color: var(--flag-amber); }
+body.field-mode .border-amber { border-color: var(--flag-amber); }
+body.field-mode .bg-amber { background-color: var(--flag-amber); }
+body.field-mode .dash-root .chip.legacy { color: var(--flag-amber); }
+/* Guided setup's inline problems (2.4–2.7:1 with the light-theme red on the dark panel): the light flag red. */
+body.field-mode .hyb-root .hyb-step .err,
+body.field-mode .hyb-root .hyb-inline-error { color: var(--flag-red); }
+
+/* Field mode, the rest of the Absaraka desk test (2026-11-21) contrast audit: the Dashboard's class badges (3.1:1),
+   the current page button (white on light teal, 1.9:1), the flag pills (light pills on the dark page), the risk pills,
+   and Tailwind's red-700 error text (about 3:1 on the dark panel). All now pass WCAG AA (4.5:1; contrast.test.ts). */
+body.field-mode .dash-root .badge.high, body.field-mode .pill.high { color: var(--flag-red); }
+body.field-mode .dash-root .badge.sig, body.field-mode .pill.sig { color: var(--flag-amber); }
+body.field-mode .dash-root .badge.low, body.field-mode .pill.low { color: var(--flag-green); }
+body.field-mode .dash-root .flag-pill.warning, body.field-mode .hyb-root .flag-pill.warning { background: var(--amber-bg); color: var(--flag-amber); border-color: var(--flag-amber); }
+body.field-mode .dash-root .flag-pill.critical, body.field-mode .hyb-root .flag-pill.critical { background: var(--red-bg); color: var(--flag-red); border-color: var(--flag-red); }
+body.field-mode .dash-root .flag-pill.info, body.field-mode .hyb-root .flag-pill.info { background: var(--teal-light); color: var(--teal); border-color: var(--teal); }
+body.field-mode .text-red-700 { color: var(--flag-red); }
+body.field-mode .text-amber-700 { color: var(--flag-amber); }
+
+/* Fix… in the rail checklist (2026-11-21): the field it jumped to, outlined for two seconds. */
+.fix-flash {
+  outline: 3px solid var(--color-water);
+  outline-offset: 3px;
+  border-radius: 4px;
+  transition: outline-color 0.3s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fix-flash { transition: none; }
+}
+
+/*
+ * Sticky first column (Absaraka desk test 2026-11-21): in a table wider than its box, the name column stays put while
+ * the figures scroll sideways. The cell keeps its row's highlight; the header cell keeps the header's.
+ */
+.sticky-first > thead > tr > :first-child,
+.sticky-first > tbody > tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); box-shadow: inset -1px 0 0 var(--border); }
+.sticky-first > thead > tr > :first-child { z-index: 2; background: inherit; }
+.sticky-first > thead { background: var(--sand); }
+.dash-root .sticky-first > thead, .sticky-first.dash-table > thead { background: var(--panel); }
+.sticky-first > tbody > tr.hl-high > :first-child { background: var(--hl-high-bg); }
+.sticky-first > tbody > tr.hl-sig > :first-child { background: var(--hl-sig-bg); }
+.sticky-first > tbody > tr.hl-low > :first-child { background: var(--hl-low-bg); }
+.sticky-first > tbody > tr.is-focused > *, .sticky-first > tbody > tr.is-focused > :first-child { background: var(--hl-sig-bg); }
+
+/* Collapsible legends: the map legends fold to their title (the choice is kept per browser). */
+.legend-toggle { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-weight: 600; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.legend-toggle::after { content: "▾"; font-size: 10px; }
+.legend-toggle[aria-expanded="false"]::after { content: "▸"; }
+
+/* Classify receptor chips */
+.classify-chip { border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; font-size: 11px; color: var(--ink); background: var(--panel); }
+.classify-chip[aria-pressed="true"] { border-color: var(--ink); font-weight: 700; }
+.classify-chip:disabled { opacity: 0.5; }
+
+.stamp .stamp-ruling { display: block; margin-top: 2px; font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; }
+.paper .p-sub { font-size: 12px; font-weight: 700; margin: 10px 0 4px; }

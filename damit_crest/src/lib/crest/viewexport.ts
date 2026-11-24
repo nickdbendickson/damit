@@ -21,7 +21,7 @@ export const NO_EXPORT_ATTR = "data-crest-noexport";
 const SKIP_CLASSES = ["leaflet-control-zoom", "leaflet-draw", "leaflet-control-layers"];
 
 export const DISCLAIMER =
-  "DamIT Crest desk screen: schematic flood strip and desk estimates, not a model run or a mapped flood extent, and not an official hazard class.";
+  "DamIT Desk screen: schematic flood strip and desk estimates, not a model run or a mapped flood extent, and not an official hazard class.";
 
 export type ViewMeta = {
   kind: ViewKind;
@@ -53,7 +53,7 @@ export function viewHeader(meta: ViewMeta): { title: string; dam: string; result
   const { dam, result } = meta;
   const wet = result.flood.receptors.filter((r) => r.flooded).length;
   return {
-    title: `DamIT Crest — ${VIEW_TITLE[meta.kind]}`,
+    title: `DamIT Desk — ${VIEW_TITLE[meta.kind]}`,
     dam: `${dam.name}${dam.nid ? ` (${dam.nid})` : ""}${dam.county ? ` · ${dam.county}` : ""} · saved ${stamp(meta.savedAt)}`,
     results: [
       `Peak discharge (routed) ${num(result.breach.peakCfs, 0)} cfs`,

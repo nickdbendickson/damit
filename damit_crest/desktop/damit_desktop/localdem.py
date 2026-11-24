@@ -2,15 +2,19 @@
 
 The desk asks for terrain the way it asks 3DEP (outline.ts fetchDem): a lon/lat box, a width and height in cells,
 float32 metres, row-major from the north-west corner, NODATA -9999. This module answers that request from the DEM file
-chosen in the app (saved in damit-crest-settings.json as "dem_path") by running gdalwarp on a window of it, so only the
+chosen in the app (saved in damit-desk-settings.json as "dem_path") by running gdalwarp on a window of it, so only the
 cells asked for are read from the mosaic. The path always comes from the settings file, never from the request.
 
-gdalwarp is looked for on PATH, then inside QGIS on macOS / Windows (QGIS ships it).
+gdalwarp is looked for next to the PROJ / GDAL data the environment points at (PROJ_DATA, PROJ_LIB, GDAL_DATA or
+CONDA_PREFIX: the QGIS env's own gdalwarp, so its proj.db matches), then on PATH, then inside QGIS on macOS / Windows
+(QGIS ships it).
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,8 +32,29 @@ _QGIS_GDALWARP = (
 )
 
 
+def env_gdalwarp(env: dict | None = None) -> str | None:
+    """The gdalwarp of the install the environment's data variables belong to (<prefix>/share/proj -> <prefix>/bin),
+    or CONDA_PREFIX's: the system gdalwarp with another install's PROJ_DATA fails on proj.db (Absaraka desk test)."""
+    env = os.environ if env is None else env
+    name = "gdalwarp.exe" if sys.platform == "win32" else "gdalwarp"
+    prefixes = []
+    for k in ("PROJ_DATA", "PROJ_LIB", "GDAL_DATA"):
+        v = env.get(k)
+        if v:
+            d = Path(v)
+            # <prefix>/share/proj, <prefix>/share/gdal (conda, Linux, macOS) or <prefix>/Library/share/proj (conda, Windows)
+            prefixes += [d.parent.parent, d.parent.parent.parent]
+    if env.get("CONDA_PREFIX"):
+        prefixes.append(Path(env["CONDA_PREFIX"]))
+    for pre in prefixes:
+        for b in (pre / "bin" / name, pre / "Library" / "bin" / name):
+            if b.is_file() and os.access(b, os.X_OK):
+                return str(b)
+    return None
+
+
 def find_gdalwarp() -> str | None:
-    found = shutil.which("gdalwarp")
+    found = env_gdalwarp() or shutil.which("gdalwarp")
     if found:
         return found
     for p in _QGIS_GDALWARP:
@@ -100,16 +125,49 @@ def warp_args(src: str, bbox, width: int, height: int, cell_m: float, out: str, 
     ]
 
 
+#: Variables that point GDAL / PROJ at their data files. When they belong to another GDAL install (e.g. QGIS's conda
+#: environment exported into the desk's shell while gdalwarp comes from the system), PROJ refuses the proj.db
+#: ("DATABASE.LAYOUT.VERSION.MINOR = 3 whereas a number >= 5 is expected") and gdalwarp fails.
+DATA_VARS = ("PROJ_DATA", "PROJ_LIB", "GDAL_DATA")
+_PROJ_DB_ERROR = re.compile(r"proj\.db|PROJ: proj_create|DATABASE\.LAYOUT\.VERSION|Cannot find proj", re.I)
+
+
+def own_data_env(env: dict | None = None) -> dict:
+    """The environment without DATA_VARS, so gdalwarp uses the PROJ / GDAL data it was built with."""
+    out = dict(os.environ if env is None else env)
+    for k in DATA_VARS:
+        out.pop(k, None)
+    return out
+
+
+def is_proj_db_error(text: str) -> bool:
+    return bool(_PROJ_DB_ERROR.search(text or ""))
+
+
 def read_window(src: str, bbox, width: int, height: int, cell_m: float, gdalwarp: str | None = None, timeout: float = 120) -> bytes:
-    """The window as little-endian float32 bytes (width * height * 4)."""
+    """The window as little-endian float32 bytes (width * height * 4).
+
+    When gdalwarp fails on its PROJ database and PROJ_DATA / PROJ_LIB / GDAL_DATA are set (they point at another GDAL
+    install), it is run once more without them, so it uses its own data files."""
     exe = gdalwarp or find_gdalwarp()
     if not exe:
         raise RuntimeError("gdalwarp was not found: install QGIS (it ships gdalwarp) or put GDAL on PATH.")
     with tempfile.TemporaryDirectory(prefix="damit-dem-") as tmp:
         out = str(Path(tmp) / "dem.bin")
-        proc = subprocess.run([exe, *warp_args(src, bbox, width, height, cell_m, out)], capture_output=True, text=True, timeout=timeout)
+        cmd = [exe, *warp_args(src, bbox, width, height, cell_m, out)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        text = (proc.stderr or proc.stdout or "").strip()
+        if proc.returncode != 0 and is_proj_db_error(text) and any(os.environ.get(k) for k in DATA_VARS):
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=own_data_env())
+            text = (proc.stderr or proc.stdout or "").strip()
         if proc.returncode != 0:
-            raise RuntimeError(f"gdalwarp failed: {(proc.stderr or proc.stdout).strip()[:400]}")
+            if is_proj_db_error(text):
+                raise RuntimeError(
+                    f"gdalwarp ({exe}) could not read its map-projection database (proj.db), so the local DEM cannot "
+                    "be read. Its PROJ files do not match this gdalwarp: start the desk without PROJ_DATA / PROJ_LIB "
+                    "pointing at another GDAL or QGIS install, or put QGIS's own gdalwarp first on PATH.")
+            first = next((ln for ln in text.splitlines() if ln.strip() and not ln.lower().startswith("usage")), text)
+            raise RuntimeError(f"gdalwarp could not read the local DEM: {first.strip()[:300]}")
         raw = Path(out).read_bytes()
         hdr = (Path(tmp) / "dem.hdr").read_text(encoding="utf-8", errors="replace")
     need = width * height * 4

@@ -5,7 +5,7 @@ The rule (``nid_rule``, ``is_nid_id``, ``NID_ID_RE``, ``OTHER_INVENTORY_RE``) li
 does not import the ``damit_catalog`` plugin package: it loads that one pure-Python file by path, so a rule change
 in Catalog is what Crest checks. Searched, in order:
 
-1. ``<bundle>/damit_catalog/handoff.py`` in a PyInstaller build (``damit_crest.spec`` ships the file there);
+1. ``<bundle>/damit_catalog/handoff.py`` in a PyInstaller build (``damit_desk.spec`` ships the file there);
 2. ``<repo>/damit_catalog/handoff.py`` in a checkout of the damit repository (INSTALL.txt: run from the repo).
 
 No fallback copy: when the file is missing Crest stops with :class:`CatalogRuleMissing` instead of guessing.
@@ -42,8 +42,8 @@ def _load():
                 raise CatalogRuleMissing(f"{path} has no nid_rule; update the damit repository (DamIT Catalog).")
             return module, path
     raise CatalogRuleMissing(
-        "DamIT Catalog's NID-ID rule (damit_catalog/handoff.py) was not found; run DamIT Crest from a checkout of "
-        "the damit repository (INSTALL.txt). Looked in: " + ", ".join(str(p) for p in candidates())
+        "DamIT Catalog's NID-ID rule (damit_catalog/handoff.py) was not found; run DamIT Desk from a checkout of "
+        "the damit-desk repository (INSTALL.txt). Looked in: " + ", ".join(str(p) for p in candidates())
     )
 
 

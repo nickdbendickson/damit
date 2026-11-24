@@ -1,4 +1,4 @@
-"""The local DEM FOLDER DamIT Crest writes for the screener holds the chosen DEM only (2026-11-21).
+"""The local DEM FOLDER the desk writes for the screener holds the chosen DEM only (2026-11-21).
 
 damit_settings.json carried local_dem = the DEM's own folder (terrain_source 1). A DamSafety-style screener's tool 2
 mosaics every raster in that folder, and the Absaraka test folder held hmax_ft.tif, vmax_fps.tif, arr_hr.tif and a

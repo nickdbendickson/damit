@@ -110,6 +110,9 @@ describe("hand-off to the DamIT plugins", () => {
       runchain: "damit_screen:runchain",
       rundam: "damit_run:rundam",
       batch: "damit_run:batch",
+      data: "damit_data:download",
+      pmp: "damit_pmp:pointpf",
+      finder: "damit_find:embankments",
     });
     for (const id of Object.values(DEFAULT_ALGORITHMS)) assert.doesNotMatch(id, /^(nddam|ndbreach|nd_)/);
   });

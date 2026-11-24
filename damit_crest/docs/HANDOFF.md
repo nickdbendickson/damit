@@ -26,6 +26,35 @@ Windows (`%APPDATA%\QGIS\QGIS3\...`). ND analog: `ndbreach_cli.py`, which is nev
 The compiled-in defaults live in `desktop/damit_desktop/algorithms.py` (`DEFAULT_ALGORITHMS`) and, for what the page
 shows before the desktop server answers, `src/lib/crest/handoff.ts`. Tests pin both.
 
+## North Dakota profile: the DWR DamSafety suite
+
+In the North Dakota profile (*Settings > Dam inventory profile*, or `?profile=nd`; `src/lib/crest/profile.ts`) the
+page sends `profile: "nd"` with every job and `?profile=nd` with `/api/handoff`, and the server runs the job under it
+(`desktop/damit_desktop/profile.py`). The buttons then hand off to the DWR DamSafety plugins, as the old dwr_crest desk
+did (Nick, 2026-11-22: damit-desk is the one desk). The US profile above is unchanged, and still refuses ND ids.
+
+| Role | ND default id | Provided by |
+|---|---|---|
+| `classify` | `ndhazard:classify` | DamSafety Hazard: takes the dam folder (`DAM_FOLDER`) and the flood rasters, finds the structures itself (NSI, ND 911 address points, roads, rail) and gives the ND class and the ACER TM 11 class. The desk's receptor layers and jurisdiction choice are not sent. |
+| `preflight` | `nddam:preflight` | DamSafety Screening |
+| `runchain` | `nddam:runchain` | DamSafety Screening. It names a dam in the DWR layer by its DWR id (ND00199 is DWR-2801); a work folder that already ran the chain sends both in `DAM_ID` / `only_ids`, and the results are read under the DWR name. |
+| `rundam` | `ndbreach:rundam` | DamSafety Runner; CLI `ndbreach_cli.py` (searched under `DamSafety_Runner`), sent no `failure_mode` or `classification` (the CLI refuses unknown keys) |
+| `batch` | `ndbreach:batch` | never started by the app |
+| `data` | (none) | DamSafety Data publishes no download algorithm; the button is hidden and the layers come from the ND offline pack |
+| `pmp` | `ndpmp:atlas14_point` | DamSafety PMP |
+| `finder` | `ndfind:embankments` | DamSafety Finder |
+
+- **Dam ids.** A DWR dam, dugout or unknown structure picked from the ND structures list goes as its DWR id
+  (`DWR-16431`, `DUG-…`, `UNK-…`); the DamIT NID-ID rule is not applied, since the DWR plugins apply their own.
+- **qgis_process.** `DAMIT_ND_QGIS_PROCESS`; else `<DAMSAFETY_PREFIX or ~/dwr-dam-suite>/qgis-process-dwr.sh`;
+  else, from the DWR installer's `damsafety_env.sh` there, a `qgis-process-dwr.sh` the desk writes in its settings
+  folder (it sources the env file, sets `QGIS_CUSTOM_CONFIG_PATH` to the install's headless configuration, whose
+  default profile links to the `damsafety` QGIS profile, and runs that install's `qgis_process`); else
+  `QGIS_PROCESS` / PATH / the Mac QGIS apps. Never the DamIT suite's `qgis-process-damit.sh`.
+- **Data folder.** `NDSUITE_DATA`, else `ndsuite/data_folder` in `~/.ndsuite/config.json`, else the DamIT data folder.
+- **Overrides.** `DAMIT_ND_ALG_<ROLE>` and `DAMIT_ND_CLI`, or an `"nd"` section in `damit-handoff.json` with the same
+  `algorithms` / `cli` / `cliNames` keys. A DamIT id is refused there (the two suites live in separate QGIS profiles).
+
 ## Overriding
 
 For every role the first of these wins:
@@ -71,6 +100,9 @@ such a port also works. Enums are sent as the option index read from `help` (QGI
 | Write folder and run screening | `preflight`, then `runchain` **only if READY** | `--WORK --DAMS=<dam folder>/dam_point.geojson --MODE --PRESET` (preset) or `--SCENARIOS --METHODS` (custom) `[--TERRAIN] [--APPLY_ADVISORIES] --SETTINGS`; preflight adds `--REPORT`, runchain `--PREFLIGHT=true --FAIL_ON_ERROR=true` |
 | Run the flood model | `rundam` (one dam) or the runner CLI | `--HANDOFF=<work>/handoff/<id>/damit_handoff.json` when the screening wrote it, else `--DAM_ID --X --Y --CRS=EPSG:4326 --HEIGHT_FT --STORAGE_ACFT --MODE --PRESET/--SCENARIOS/--METHODS [--TERRAIN] [--HYDROGRAPH]`; always `--OUTPUT_FOLDER=<work>/runs --DRY_RUN=true`, never `ENGINE`; CLI: `run runner_config.json` |
 | Classify | `classify` | `--PRESET=<index>` (0 = custom, else the option whose text is the preset's catalog label) `[--METHODS --SCENARIOS --MODIFIERS] [--APPLY_ADVISORY] --DEPTH [--VELOCITY] [--DV] [--WSE] [--NONBREACH] [--ARRIVAL]` + the receptor layers `[--STRUCTURES] [--ROADS] [--RAIL] [--FACILITIES] [--LIFELINES] [--ENVIRONMENT]=<dam folder>/classify_inputs/<layer>.geojson` (at least one) `[--DOMAIN=<dam folder>/classify_inputs/domain.geojson] --DAM_JSON=<dam folder>/damit_dam.json --DAM_NAME --OUTPUT=<dam folder>/classify` |
+| Download layers | `data` (`damit_data:download`) | `--FOLDER=<DamIT data folder or <work>/data>` `[--STATE=<index of the NID postal code>]` `[--EXTENT=<drawn area>]` |
+| Atlas 14 point | `pmp` (`damit_pmp:pointpf`) | `--POINT=<lon>,<lat> [EPSG:4326] --OUTPUT_CSV=<work>/pmp/<id>_atlas14.csv --OUTPUT_JSON=<work>/pmp/<id>_atlas14.json` |
+| Find fills | `finder` (`damit_find:embankments`) | `--DEM=<local DEM> --OUT=<work>/finder/<id>_embankments.gpkg` `[--EXTENT=<drawn area>]` |
 
 Details:
 

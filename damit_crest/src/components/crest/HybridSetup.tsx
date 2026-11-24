@@ -202,7 +202,7 @@ function StepCard({
       <b>
         {n}. {s.label}
         {s.state === "done" ? (
-          <span style={{ color: crest.green }}>
+          <span className="text-flag-green">
             {" "}
             ✓<span className="sr-only"> done</span>
           </span>

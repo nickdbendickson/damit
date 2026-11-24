@@ -108,7 +108,7 @@ export function BatchTable({
     () => [
       col.accessor("label", {
         id: "structure",
-        header: "Structure",
+        header: "Dam",
         sortingFn: (a: Row<BatchRow>, b: Row<BatchRow>) => a.original.label.localeCompare(b.original.label, "en", { numeric: true }),
         cell: (c) => {
           const r = c.row.original;
@@ -239,7 +239,7 @@ export function BatchTable({
         ) : null}
       </div>
       <div className="mt-2 max-h-[70vh] max-w-full overflow-auto">
-        <table className="w-full text-left text-sm" data-testid="batch-results">
+        <table className="sticky-first w-full text-left text-sm" data-testid="batch-results">
           <thead className="sticky top-0 z-10 bg-card text-xs text-muted">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id} className="border-b border-line">

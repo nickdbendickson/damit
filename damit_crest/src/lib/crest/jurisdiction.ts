@@ -174,13 +174,13 @@ export function screenOrdinal(level: ScreenLevel): number | null {
  * adapted from, so it is never translated into the chosen preset's labels or offered as that preset's (or the custom
  * methods') determination: that class comes from damit:classify on the downstream receptors.
  */
-export function screenAgainstChoice(level: ScreenLevel, choice: ClassificationChoice): string {
+export function screenAgainstChoice(level: ScreenLevel, choice: ClassificationChoice, classifyAlg = "damit:classify"): string {
   const c = resolveChoice(choice);
   const chosen = c.mode === "preset" ? CATALOG.presets[c.preset ?? DEFAULT_PRESET].label : "the custom methods";
   const preview = level === "Review" ? "is at Review" : `reads ${level}`;
   return (
     `Schematic preview only: the desk screen ${preview} on the ND / ACER TM 11 desk rules, not on ${chosen}. ` +
-    `It is not the DamIT classification. The class for ${chosen} is the one damit:classify returns for the downstream receptors (Classify below).`
+    `It is not the DamIT classification. The class for ${chosen} is the one ${classifyAlg} returns for the downstream receptors (Classify below).`
   );
 }
 

@@ -101,7 +101,7 @@ export function exportDamJson(dam: DamRecord, analysis: Analysis, shared: Shared
           nid_hazard: dam.nidHazard ?? null,
           nid_hazard_note: "As reported to the NID (FEMA class). Not used by the desk screen; not the class of record.",
           provenance: dam.provenance ?? {},
-          attribution: [dam.nidRef?.attribution].filter(Boolean),
+          attribution: [dam.nidRef?.attribution, dam.nidRef?.dwrAttribution].filter(Boolean),
         }
       : {}),
     // Only when an imported model run is the source of record (Results step), so dam.json is unchanged otherwise.
@@ -222,7 +222,7 @@ export function generateLisfloodPackage(dam: DamRecord, series: SeriesPoint[], o
 
   const simS = Math.round(simHours * 3600);
   const par = [
-    `# DamIT Crest desk export for ${dam.name} (${dam.nid || dam.id}). ${simHours} h run so the recession drains.`,
+    `# DamIT Desk desk export for ${dam.name} (${dam.nid || dam.id}). ${simHours} h run so the recession drains.`,
     `# Written for LISFLOOD-FP 5.x-8.x (the ND Runner's build): QVAR point sources are m3/s per metre of cell width`,
     `# (m2/s) = Q / (cell size x inflow cells). A LISFLOOD-FP that expects total m3/s for point sources would read this`,
     `# as 1/(cell x cells) of the breach discharge; re-scale the .bdy before using it with such a version.`,

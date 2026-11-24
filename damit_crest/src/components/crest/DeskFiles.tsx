@@ -3,14 +3,12 @@ import { FolderOpen, Save } from "lucide-react";
 
 import {
   DESK_FILE_MAX_BYTES,
-  deskFileName,
-  deskFileText,
   mergeIntoDesk,
   mergeSummary,
   openDeskFile,
   type OpenedFile,
 } from "@/lib/crest/desk-file";
-import { saveText } from "@/lib/crest/save";
+import { saveDeskFile } from "@/lib/crest/desk-save";
 import { useDesk } from "@/lib/crest/store";
 
 type Opened = Extract<OpenedFile, { ok: true }>;
@@ -27,14 +25,10 @@ export function DeskFiles({ onNote }: { onNote: (note: string) => void }) {
   const link = "inline-flex h-11 items-center gap-2 text-left text-sm text-muted hover:text-ink";
 
   async function save() {
-    const { dams, activeId } = useDesk.getState();
     setError(null);
-    const r = await saveText(deskFileName(), deskFileText(dams, activeId), "application/json");
-    if (r.status === "error") setError(`The desk file was not saved: ${r.message}`);
-    else if (r.status === "saved")
-      onNote(
-        `Desk saved to a file: ${dams.length} dam${dams.length === 1 ? "" : "s"}${r.path ? ` (${r.path})` : ""}. Keep it somewhere safe; open it again with "Open desk file or dam.json".`,
-      );
+    const r = await saveDeskFile();
+    if (r.error) setError(r.error);
+    else if (r.note) onNote(r.note);
   }
 
   async function pick(files: FileList | null) {
@@ -43,7 +37,7 @@ export function DeskFiles({ onNote }: { onNote: (note: string) => void }) {
     setError(null);
     setPending(null);
     if (f.size > DESK_FILE_MAX_BYTES)
-      return setError(`${f.name} is too large to be a DamIT Crest desk file.`);
+      return setError(`${f.name} is too large to be a DamIT Desk file.`);
     setBusy(true);
     try {
       const opened = openDeskFile(await f.text());

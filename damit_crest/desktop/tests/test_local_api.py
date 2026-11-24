@@ -28,7 +28,12 @@ class LocalApiTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.home = Path(cls.tmp.name) / "home"
         cls.home.mkdir()
-        cls.env = mock.patch.dict(os.environ, {"HOME": str(cls.home), "DAMIT_WORK": "", "DAMIT_WORK_ROOTS": ""})
+        cls.env = mock.patch.dict(os.environ, {
+            "HOME": str(cls.home),
+            "USERPROFILE": str(cls.home),
+            "DAMIT_WORK": "",
+            "DAMIT_WORK_ROOTS": "",
+        })
         cls.env.start()
         web = Path(cls.tmp.name) / "web"
         web.mkdir()
@@ -143,6 +148,8 @@ class LocalApiTests(unittest.TestCase):
         event.wait.side_effect = KeyboardInterrupt
         with mock.patch.dict(sys.modules, {"webview": None}), \
                 mock.patch.object(m, "storage_dir", return_value=self.home / "store"), \
+                mock.patch.object(m, "legacy_storage_dir", return_value=self.home / "old-store"), \
+                mock.patch.object(m.qgis_run, "DESK_SETTINGS_FILE", m.qgis_run.DESK_SETTINGS_FILE), \
                 mock.patch.object(m, "SETTINGS_FILE", m.SETTINGS_FILE), \
                 mock.patch.object(m.qgis_run, "SETTINGS_DIR", m.qgis_run.SETTINGS_DIR), \
                 mock.patch.object(m.nid, "NID_DIR", m.nid.NID_DIR), \
@@ -164,6 +171,8 @@ class LocalApiTests(unittest.TestCase):
         event.wait.side_effect = KeyboardInterrupt
         with mock.patch.dict(sys.modules, {"webview": None}), \
                 mock.patch.object(m, "storage_dir", return_value=self.home / "store"), \
+                mock.patch.object(m, "legacy_storage_dir", return_value=self.home / "old-store"), \
+                mock.patch.object(m.qgis_run, "DESK_SETTINGS_FILE", m.qgis_run.DESK_SETTINGS_FILE), \
                 mock.patch.object(m, "SETTINGS_FILE", m.SETTINGS_FILE), \
                 mock.patch.object(m.qgis_run, "SETTINGS_DIR", m.qgis_run.SETTINGS_DIR), \
                 mock.patch.object(m.nid, "NID_DIR", m.nid.NID_DIR), \
@@ -239,6 +248,16 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(info["sources"]["rundam"], "DAMIT_ALG_RUNDAM")
         self.assertEqual(info["roles"]["classify"]["status"], "published")
         self.assertEqual(info["roles"]["batch"]["status"], "not published")
+
+    def test_handoff_endpoint_answers_for_the_nd_profile(self):
+        status, data = self.req("GET", "/api/handoff?profile=nd")
+        self.assertEqual(status, 200)
+        info = json.loads(data)
+        self.assertEqual(info["profile"], "nd")
+        self.assertEqual(info["algorithms"]["rundam"], "ndbreach:rundam")
+        self.assertEqual(info["algorithms"]["classify"], "ndhazard:classify")
+        status, data = self.req("GET", "/api/handoff")
+        self.assertEqual(json.loads(data)["profile"], "us")
 
     def test_nid_state_endpoint_needs_the_token_and_serves_the_cached_state(self):
         from damit_desktop import nid
@@ -394,7 +413,12 @@ class ResolveWorkTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name)
-        self.env = mock.patch.dict(os.environ, {"HOME": str(self.home), "DAMIT_WORK": "", "DAMIT_WORK_ROOTS": ""})
+        self.env = mock.patch.dict(os.environ, {
+            "HOME": str(self.home),
+            "USERPROFILE": str(self.home),
+            "DAMIT_WORK": "",
+            "DAMIT_WORK_ROOTS": "",
+        })
         self.env.start()
 
     def tearDown(self):

@@ -46,7 +46,7 @@ export function isLargeFlood(result: Analysis): boolean {
 export function runnerNeededText(releasedAcFt: number): string {
   return (
     `Large flood (${Math.round(releasedAcFt).toLocaleString("en-US")} ac-ft released): the terrain layers can badly under-predict a flood this size ` +
-    "(on DWR-2801 the outline covered about a tenth of the area the ND Breach Runner floods). Run this dam in the ND Breach Runner " +
+    "(on DWR-2801 the outline covered about a tenth of the area the Runner's LISFLOOD-FP run floods). Run this dam in the DamIT Runner " +
     "and import the run on Results; it then becomes the layer of record."
   );
 }
@@ -69,7 +69,7 @@ export function layerOfRecord(dam: DamRecord, result: Analysis, outline: Outline
       releasedAcFt,
       needsRunner: false,
       note:
-        `Layer of record: ${ref.label}, an imported ${runner ? "ND Breach Runner" : SOURCE_LABEL[ref.source]} run. ` +
+        `Layer of record: ${ref.label}, an imported ${runner ? "DamIT Runner" : SOURCE_LABEL[ref.source]} run. ` +
         "The terrain layer is shown for comparison only and does not drive the screen, the lists or the report.",
     };
   }
@@ -84,7 +84,7 @@ export function layerOfRecord(dam: DamRecord, result: Analysis, outline: Outline
     needsRunner: large,
     note: large
       ? runnerNeededText(releasedAcFt)
-      : "This terrain layer is DamIT Crest's inundation layer of record until a Runner run is imported. The schematic flood strip is a dated last resort, kept only for offline use or until this layer is built; build this once and it is saved with the dam.",
+      : "This terrain layer is DamIT Desk's inundation layer of record until a Runner run is imported. The schematic flood strip is a dated last resort, kept only for offline use or until this layer is built; build this once and it is saved with the dam.",
   };
 }
 

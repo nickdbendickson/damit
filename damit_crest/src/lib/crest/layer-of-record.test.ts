@@ -67,7 +67,7 @@ describe("layer of record", () => {
     const b = layerOfRecord(big(), analyze(big()), ready("routed"));
     assert.equal(b.kind, "routed");
     assert.ok(b.needsRunner);
-    assert.match(b.note, /Run this dam in the ND Breach Runner/);
+    assert.match(b.note, /Run this dam in the DamIT Runner/);
     const s = layerOfRecord(small(), analyze(small()), ready("outline"));
     assert.equal(s.kind, "outline");
     assert.ok(!s.needsRunner);

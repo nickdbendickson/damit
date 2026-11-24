@@ -29,7 +29,7 @@ GEOMETRY = {
 FOLDER = "classify_inputs"
 #: Property values kept: scalars only, short strings.
 _MAX_TEXT = 200
-_MAX_FEATURES = 20000
+_MAX_FEATURES = 20000  # per layer from the desk's payload (real layers: real_receptors.MAX_FEATURES)
 
 STRUCTURE_KINDS = {"house": "home", "mobile": "mobile_home", "barn": "farm_unoccupied"}
 
@@ -188,16 +188,56 @@ def _collection(features: list) -> dict:
             "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}, "features": features}
 
 
-def write_receptor_layers(folder: Path, dam: dict, payload=None) -> dict:
+def merge_real(layers: dict, placement: dict, real: dict | None) -> tuple[dict, dict, dict, dict]:
+    """Put the real receptor layers (real_receptors.find_receptors) in place of the desk's schematic ones.
+
+    For a layer the real lookup found, the desk's "desk valley" features (placed along the desk's straight schematic
+    valley, not on the ground) are dropped; features the user mapped or that sit on a 911 address point are kept,
+    and the real features are added. Returns (layers, placement, sources {KEY: text}, missing {KEY: why})."""
+    if not isinstance(real, dict):
+        return layers, placement, {}, {}
+    found = real.get("layers") if isinstance(real.get("layers"), dict) else {}
+    sources = {k: str(v) for k, v in (real.get("sources") or {}).items() if k in LAYERS}
+    missing = {k: str(v) for k, v in (real.get("missing") or {}).items() if k in LAYERS}
+    out = dict(layers)
+    placement = dict(placement)
+    for key in LAYERS:
+        if key not in sources:
+            continue
+        own = out.get(key) or []
+        kept = [f for f in own if (f.get("properties") or {}).get("placed") != "desk valley"]
+        dropped = len(own) - len(kept)
+        if dropped:
+            placement["desk valley"] = max(0, int(placement.get("desk valley", 0)) - dropped)
+            placement["desk valley (replaced)"] = int(placement.get("desk valley (replaced)", 0)) + dropped
+        added = []
+        for feat in found.get(key) or []:
+            geom = feat.get("geometry") if isinstance(feat, dict) else None
+            if not usable_geometry(geom, GEOMETRY[key]):
+                continue
+            props = _props(feat.get("properties"))
+            props["placed"] = "real layer"
+            props.setdefault("receptor_source", sources[key][:_MAX_TEXT])
+            added.append({"type": "Feature", "geometry": geom, "properties": props})
+            if len(added) >= _MAX_FEATURES * 3:
+                break
+        placement["real layer"] = int(placement.get("real layer", 0)) + len(added)
+        out[key] = kept + added
+    return out, placement, sources, missing
+
+
+def write_receptor_layers(folder: Path, dam: dict, payload=None, real: dict | None = None) -> dict:
     """Write the classify receptor layers and DOMAIN into <folder>/classify_inputs/. Returns
     {"layers": {KEY: path}, "counts": {KEY: n}, "domain": path | None, "skipped": [...], "placement": {...},
-    "direction": str | None, "source": "desk" | "record", "manifest": path}."""
+    "direction": str | None, "source": "desk" | "record", "manifest": path, "sources": {KEY: text},
+    "missing": {KEY: why}}. real: the real layers found for the area (merge_real); None keeps the desk's own."""
     if isinstance(payload, dict) and payload.get("format") == "damit_crest/classify_receptors":
         layers, domain, skipped, placement, direction = _from_payload(payload)
         source = "desk"
     else:
         layers, domain, skipped, placement, direction = _from_dam(dam or {})
         source = "record"
+    layers, placement, sources, missing = merge_real(layers, placement, real)
     out_dir = Path(folder) / FOLDER
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in out_dir.glob("*.geojson"):
@@ -218,8 +258,8 @@ def write_receptor_layers(folder: Path, dam: dict, payload=None) -> dict:
     manifest = out_dir / "receptors_manifest.json"
     info = {"format": "damit_crest/classify_receptors_manifest", "crs": "EPSG:4326", "source": source,
             "counts": counts, "domain": bool(domain_path), "placement": placement, "direction": direction,
-            "skipped": skipped}
+            "layerSources": sources, "notChecked": missing, "skipped": skipped}
     manifest.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     return {"layers": paths, "counts": counts, "domain": str(domain_path) if domain_path else None,
             "skipped": skipped, "placement": placement, "direction": direction, "source": source,
-            "manifest": str(manifest)}
+            "manifest": str(manifest), "sources": sources, "missing": missing}

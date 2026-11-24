@@ -10,6 +10,7 @@ import type { FloodStrip } from "@/lib/crest/floodstrip";
 import { ND_CENTER } from "@/lib/crest/mapview";
 import type { Bounds, Overlay } from "./ResultsMap";
 import { escHtml } from "@/lib/crest/esc-html";
+import { useReceptorFocus } from "@/lib/crest/receptor-focus";
 
 const LAYERS = basemaps(import.meta.env);
 const PANE = "crest-dash";
@@ -27,6 +28,8 @@ export type DashPoint = {
 type Props = {
   depth: FloodStrip | null;
   points: DashPoint[];
+  /** The receptors damit:classify judged (small dots by class), under the desk's own points. */
+  classify?: DashPoint[];
   arrival: { id: string; lon: number; lat: number; text: string }[];
   hillshade: boolean;
   overlays: Overlay[];
@@ -44,6 +47,25 @@ function Fit({ fit }: { fit: Bounds | null }) {
     if (fit) map.fitBounds(ll(fit), { padding: [16, 16], maxZoom: 15 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, key]);
+  return null;
+}
+
+/** Click-to-zoom from the classify receptor tables (receptor-focus.ts): zoom to the receptor and mark it. */
+function FocusReceptor() {
+  const map = useMap();
+  const focus = useReceptorFocus((s) => s.focus);
+  useEffect(() => {
+    if (!focus) return;
+    const b = focus.bounds;
+    map.fitBounds(ll(b), { padding: [24, 24], maxZoom: 17 });
+    const at: [number, number] = focus.at ? [focus.at[1], focus.at[0]] : [(b.south + b.north) / 2, (b.west + b.east) / 2];
+    const ring = L.circleMarker(at, { radius: 12, color: "#B91C1C", weight: 3, fill: false, interactive: false })
+      .bindTooltip(escHtml(focus.name), { permanent: true, direction: "top", offset: [0, -10] })
+      .addTo(map);
+    return () => {
+      ring.remove();
+    };
+  }, [map, focus]);
   return null;
 }
 
@@ -99,12 +121,11 @@ function DepthLayer({ depth }: { depth: FloodStrip | null }) {
       edge?.remove();
       open?.remove();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` stands for the layer's content
   }, [map, key]);
   return null;
 }
 
-export function DashboardMap({ depth, points, arrival, hillshade, overlays, fit }: Props) {
+export function DashboardMap({ depth, points, classify = [], arrival, hillshade, overlays, fit }: Props) {
   return (
     <MapContainer center={ND_CENTER} zoom={12} className="dash-leaflet" scrollWheelZoom preferCanvas>
       <LayersControl position="topright">
@@ -140,6 +161,19 @@ export function DashboardMap({ depth, points, arrival, hillshade, overlays, fit 
       />
       <DepthLayer depth={depth} />
       <Group
+        deps={[classify]}
+        build={() => {
+          if (!classify.length) return null;
+          const g = L.featureGroup();
+          for (const p of classify) {
+            const m = L.circleMarker([p.lat, p.lon], { radius: 4, color: "#111", weight: 1, fillColor: p.color, fillOpacity: 0.9 });
+            m.bindTooltip(escHtml(p.label ?? p.name), { direction: "top" });
+            g.addLayer(m);
+          }
+          return g;
+        }}
+      />
+      <Group
         deps={[points]}
         build={() => {
           if (!points.length) return null;
@@ -169,7 +203,7 @@ export function DashboardMap({ depth, points, arrival, hillshade, overlays, fit 
                 interactive: false,
                 icon: L.divIcon({
                   className: "dash-arrival",
-                  html: a.text,
+                  html: escHtml(a.text),
                   iconSize: undefined as unknown as L.PointExpression,
                   iconAnchor: [-8, 22],
                 }),
@@ -179,6 +213,7 @@ export function DashboardMap({ depth, points, arrival, hillshade, overlays, fit 
         }}
       />
       <Fit fit={fit} />
+      <FocusReceptor />
     </MapContainer>
   );
 }

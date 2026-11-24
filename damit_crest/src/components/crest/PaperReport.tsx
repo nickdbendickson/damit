@@ -9,7 +9,9 @@ import {
   PAPER_NOTICE,
   paperFlagsCoded,
   paperRows,
+  receptorSection,
   receptorCsv,
+  receptorMetrics,
   stampClass,
 } from "@/lib/crest/paper";
 import { saveText } from "@/lib/crest/save";
@@ -17,6 +19,15 @@ import { choiceText, paperStamp, reportLead } from "@/lib/crest/classify-recepto
 import { damChoice } from "@/lib/crest/jurisdiction";
 import type { Analysis, DamRecord } from "@/lib/crest/types";
 import { CREST_VERSION } from "@/lib/crest/version";
+import { useProfile } from "@/lib/crest/profile";
+import { receptorFilesText } from "@/lib/crest/handoff";
+import { useClassifyAlg } from "./use-classify-alg";
+import { useClassifyReceptors } from "./use-classify-receptors";
+import { countsLine, LAYER_WORD, needsRuling, rulingFlag } from "@/lib/crest/classify-list";
+
+/** Rows of classify's receptor list on the printed report (the strongest first). */
+const PAPER_CLASSIFY_ROWS = 40;
+
 
 type Props = {
   dam: DamRecord;
@@ -25,7 +36,7 @@ type Props = {
   source: string;
   /** Warnings of the imported run of record, if any. */
   runWarnings?: string[];
-  /** Pull time (and state) of the NID extract the record came from (NidDamPicker useNidData), for the age line in the footer. */
+  /** Pull time (and state) of the NID extract the record came from (lib/crest/use-nid-data.ts useNidData), for the age line in the footer. */
   bundles?: { nidFetchedUtc?: string | null; state?: string | null };
   /** "Now" for the dates (injected for tests and for a reproducible print); default the clock. */
   now?: Date;
@@ -107,11 +118,20 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
   const level = result.screen.label;
   // The class for the chosen jurisdiction is damit:classify's (when it ran for this choice and these receptors); the
   // desk screen is a schematic preview on the ND / ACER TM 11 rules and is never stamped as the chosen state's class.
-  const lead = reportLead(dam, result);
+  const profile = useProfile((s) => s.profile);
+  const classifyAlg = useClassifyAlg(dam.hazardResult);
+  const lead = reportLead(dam, result, profile);
   const hazardClass = lead.kind === "hazard" ? dam.hazardResult?.suggestedClass : undefined;
   const chosen = choiceText(damChoice(dam));
-  const wet = result.flood.receptors.filter((r) => r.flooded).length;
+  // The receptor rows: damit:classify's real receptors when its result is current, else the desk's own list.
+  const metrics = receptorMetrics(result, lead.kind === "hazard" ? dam.hazardResult : null, profile);
   const { rows, shown, total } = paperRows(result);
+  const section = receptorSection(result, lead.kind === "hazard" ? dam.hazardResult : null, profile);
+  // classify's own receptors with names, when its result is current and the desk server could read its GeoPackage.
+  const classifyLoad = useClassifyReceptors(dam);
+  const judged = lead.kind === "hazard" ? (classifyLoad.list?.receptors ?? []) : [];
+  const judgedCounts = classifyLoad.list ? countsLine(classifyLoad.list.counts) : "";
+  const ruling = lead.kind === "hazard" ? rulingFlag(dam.hazardResult) : null;
   const flags = paperFlagsCoded(result, runWarnings);
   const deepest = [...result.flood.receptors]
     .filter((r) => r.flooded)
@@ -130,6 +150,11 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
         </div>
         <div className={`stamp stamp--${hazardClass ? "hazard" : stampClass(result.screen.level)}`} data-testid="paper-stamp">
           {paperStamp(level, lead, hazardClass)}
+          {ruling ? (
+            <span className="stamp-ruling" data-testid="paper-stamp-ruling" title={ruling.text}>
+              {ruling.short}
+            </span>
+          ) : null}
         </div>
       </header>
       <hr className="rule" />
@@ -160,8 +185,8 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
             <td>{num(result.flood.maxDepthFt, 1)} ft</td>
             <td>
               {deepest
-                ? `deepest structure: ${deepest.name}, ${num(deepest.depthFt, 2)} ft`
-                : "no structure wet"}
+                ? `deepest desk receptor: ${deepest.name}, ${num(deepest.depthFt, 2)} ft`
+                : "no desk receptor wet"}
             </td>
           </tr>
           <tr>
@@ -169,13 +194,13 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
             <td>{num(result.flood.acres, 0)} acres</td>
             <td>{result.flood.engineLabel}</td>
           </tr>
-          <tr>
-            <th scope="row">Structures affected</th>
-            <td>
-              {wet} of {result.flood.receptors.length} mapped
-            </td>
-            <td>{source}</td>
-          </tr>
+          {metrics.map((m) => (
+            <tr key={m.metric} data-testid="paper-receptor-metric">
+              <th scope="row">{m.metric}</th>
+              <td>{m.value}</td>
+              <td>{m.note}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
 
@@ -205,6 +230,10 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
 
       <section className="p-section">
         <h2>Receptor impacts</h2>
+        <p className="fine" data-testid="paper-receptor-source">
+          <b>{section.title}.</b>
+          {section.note ? ` ${section.note}` : ""}
+        </p>
         {rows.length ? (
           <div className="p-scroll">
             <table className="recepttab">
@@ -246,6 +275,47 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
           Front arrival: the desk's travel time to the flood front (or the imported run's arrival
           raster). Routed peak and the DEM behind each depth are not computed per structure yet.
         </p>
+        {judged.length ? (
+          <>
+            <h3 className="p-sub">Receptors {classifyAlg} judged ({judgedCounts})</h3>
+            <div className="p-scroll">
+              <table className="recepttab" data-testid="paper-classify-receptors">
+                <thead>
+                  <tr>
+                    <th scope="col">Receptor</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Class</th>
+                    <th scope="col">Depth ft</th>
+                    <th scope="col">Vel ft/s</th>
+                    <th scope="col">Method</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {judged.slice(0, PAPER_CLASSIFY_ROWS).map((r) => (
+                    <tr key={r.rid}>
+                      <th scope="row">
+                        {r.name} <span className="fine">({r.rid})</span>
+                      </th>
+                      <td>{LAYER_WORD[r.layer]}</td>
+                      <td>
+                        {r.label || "wet, no hit"}
+                        {r.advisory ? " (advisory)" : ""}
+                        {needsRuling(r) ? " · needs ruling" : ""}
+                      </td>
+                      <td>{r.depthFt ?? "—"}</td>
+                      <td>{r.velFps ?? "—"}</td>
+                      <td>{r.methods || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="fine">
+              {judged.length > PAPER_CLASSIFY_ROWS ? `The ${PAPER_CLASSIFY_ROWS} strongest of ${judged.length.toLocaleString("en-US")}; ` : ""}
+              every receptor is in {receptorFilesText(classifyAlg)}.
+            </p>
+          </>
+        ) : null}
       </section>
 
       <section className="p-section">
@@ -287,7 +357,7 @@ function PaperSheet({ dam, result, source, runWarnings = [], bundles, now = new 
       </footer>
 
       <div className="foot">
-        Generated by DamIT Crest {CREST_VERSION} ({ENGINE_VERSION}){dam.county ? ` · ${dam.county} County` : ""} · {date}{" "}
+        Generated by DamIT Desk {CREST_VERSION} ({ENGINE_VERSION}){dam.county ? ` · ${dam.county} County` : ""} · {date}{" "}
         · {PAPER_DISCLAIMER}
         {ages.length ? <span data-testid="report-bundle-age"> · {ages.join(" · ")}</span> : null}
       </div>

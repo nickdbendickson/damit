@@ -60,6 +60,24 @@ describe("migrateDesk", () => {
     );
     assert.equal(state.activeId, "local-sample");
   });
+
+  it("v4: drops the DWR Dams file note and a new record's made-up 1550 ft DEM crest; edited values stay", () => {
+    const old = "Crest converted from NGVD29 1070.0 ft (DWR Dams file; +1.09 ft VERTCON at the site); do not shift again.";
+    const blank = { statedDatum: "Local", crestFt: 100, streambedFt: 82, demCrestFt: 1550 };
+    const persisted = {
+      dams: [
+        { id: "nd00199", nid: "ND00199", datumNote: old },
+        { id: "desk-a", nid: "", ...blank },
+        { id: "desk-b", nid: "", ...blank, demCrestFt: 1612 },
+      ],
+      activeId: "nd00199",
+      step: "setup",
+    };
+    const state = migrateDesk(persisted, 3);
+    assert.doesNotMatch(String(state.dams[0].datumNote), /DWR/);
+    assert.ok(Number.isNaN(state.dams[1].demCrestFt));
+    assert.equal(state.dams[2].demCrestFt, 1612);
+  });
 });
 
 describe("applyPatch (Docs & QA on #57: a stale NGVD29 note after the crest is retyped)", () => {

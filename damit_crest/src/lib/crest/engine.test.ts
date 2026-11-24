@@ -82,3 +82,22 @@ test("blankDam leaves spillway and normal pool blank", () => {
   const a = analyze(d);
   assert.ok(a);
 });
+
+test("blankDam invents no DEM crest, so no local-datum offset", () => {
+  const d = blankDam();
+  assert.ok(Number.isNaN(d.demCrestFt));
+  const a = analyze(d);
+  assert.equal(a.datum.offsetFt, null);
+  assert.ok(a.datum.warnings.some((w) => /No DEM tie/.test(w)), JSON.stringify(a.datum.warnings));
+});
+
+test("the Breach step's duration is the hydrograph's last time (Absaraka desk test 2026-11-21)", () => {
+  // The desk showed 2.48 hr next to a hydrograph.csv ending at 1.78 hr: the same series, read at two different
+  // states of the record (before and after the surface area). Both come from one routed series.
+  const nd = SAMPLE_DAMS.find((d) => d.nid === "ND00199")!;
+  for (const surfaceAreaAc of [undefined, 154.5]) {
+    const a = analyze({ ...structuredClone(nd), surfaceAreaAc });
+    const s = a.breach.series;
+    assert.ok(Math.abs(a.breach.durationHr - s[s.length - 1].tHr) < 1e-9, `${surfaceAreaAc}: ${a.breach.durationHr} vs ${s[s.length - 1].tHr}`);
+  }
+});

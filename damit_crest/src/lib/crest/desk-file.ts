@@ -26,7 +26,8 @@ export const DESK_FILE_MAX_BYTES = 400 * 1024 * 1024;
 export type DeskFile = {
   format: typeof DESK_FILE_FORMAT;
   formatVersion: number;
-  crestVersion: string;
+  /** The DamIT Desk build that saved the file. Files saved before 2026-11-21 call it `crestVersion` (still read). */
+  deskVersion: string;
   savedAt: string;
   activeId: string;
   dams: DamRecord[];
@@ -37,7 +38,7 @@ export function deskFileText(dams: DamRecord[], activeId: string, now = new Date
   const file: DeskFile = {
     format: DESK_FILE_FORMAT,
     formatVersion: DESK_FILE_VERSION,
-    crestVersion: CREST_VERSION,
+    deskVersion: CREST_VERSION,
     savedAt: now.toISOString(),
     activeId,
     dams,
@@ -45,10 +46,10 @@ export function deskFileText(dams: DamRecord[], activeId: string, now = new Date
   return JSON.stringify(file) + "\n";
 }
 
-/** damit-crest-desk-2026-11-13.json (local date). */
+/** damit-desk-2026-11-13.json (local date). */
 export function deskFileName(now = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
-  return `damit-crest-desk-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}.json`;
+  return `damit-desk-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}.json`;
 }
 
 export type OpenedFile =
@@ -59,7 +60,8 @@ export type OpenedFile =
       dams: DamRecord[];
       activeId?: string;
       savedAt?: string;
-      crestVersion?: string;
+      /** The build that wrote the file: `deskVersion`, or `crestVersion` / `crest_version` in older files. */
+      deskVersion?: string;
       notes: string[];
     }
   | { ok: false; reason: string };
@@ -146,13 +148,14 @@ const READ: { [K in keyof Required<DamRecord>]: (v: unknown) => unknown } = {
   nidHazard: oneOf(["Low", "Significant", "High", "Undetermined"] as const),
   provenance: obj,
   nidRef: obj,
-  // DamIT Crest: the "New dam" box, the jurisdiction choice for damit:classify, and the last classify result. A
+  // DamIT Desk: the "New dam" box, the jurisdiction choice for damit:classify, and the last classify result. A
   // result is kept only whole (its keys say which choice and receptors it was made for; without them it could be
   // shown as current for another choice).
   isNew: bool,
   classification: (v) => (isObj(v) && (v.mode === "preset" || v.mode === "custom") ? v : undefined),
   hazardResult: (v) =>
     isObj(v) && [v.suggestedClass, v.classifiedAt, v.choiceKey, v.receptorKey, v.choiceText].every((x) => typeof x === "string") ? v : undefined,
+  screeningResult: (v) => (isObj(v) && (v.state === "done" || v.state === "partial" || v.state === "failed") && typeof v.at === "string" ? v : undefined),
 };
 
 /** Fields every record has: a present but unusable value in the file is worth a note. */
@@ -279,17 +282,17 @@ export function recordFromDamJson(j: Obj, notes: string[]): DamRecord | null {
 /** Read a Save-desk file or a dam.json. Never throws. */
 export function openDeskFile(textIn: string): OpenedFile {
   if (textIn.length > DESK_FILE_MAX_BYTES)
-    return { ok: false, reason: "The file is too large to be a DamIT Crest desk file." };
+    return { ok: false, reason: "The file is too large to be a DamIT Desk file." };
   let j: unknown;
   try {
     j = JSON.parse(textIn);
   } catch (e) {
     return {
       ok: false,
-      reason: `This is not a JSON file DamIT Crest can read (${(e as Error).message}).`,
+      reason: `This is not a JSON file DamIT Desk can read (${(e as Error).message}).`,
     };
   }
-  if (!isObj(j)) return { ok: false, reason: "This file is not a DamIT Crest desk file or a dam.json." };
+  if (!isObj(j)) return { ok: false, reason: "This file is not a DamIT Desk file or a dam.json." };
   const notes: string[] = [];
 
   if (j.format === DESK_FILE_FORMAT) {
@@ -297,7 +300,7 @@ export function openDeskFile(textIn: string): OpenedFile {
     if (v > DESK_FILE_VERSION)
       return {
         ok: false,
-        reason: `This desk file was saved by a newer DamIT Crest (file format ${v}; this one reads up to ${DESK_FILE_VERSION}). Update DamIT Crest and open it again.`,
+        reason: `This desk file was saved by a newer DamIT Desk (file format ${v}; this one reads up to ${DESK_FILE_VERSION}). Update DamIT Desk and open it again.`,
       };
     if (!Array.isArray(j.dams)) return { ok: false, reason: "This desk file has no dams in it." };
     const dams: DamRecord[] = [];
@@ -313,7 +316,7 @@ export function openDeskFile(textIn: string): OpenedFile {
       }
     }
     if (!dams.length)
-      return { ok: false, reason: "This desk file has no dam records DamIT Crest can read." };
+      return { ok: false, reason: "This desk file has no dam records DamIT Desk can read." };
     const activeId = text(j.activeId, 80);
     return {
       ok: true,
@@ -321,7 +324,7 @@ export function openDeskFile(textIn: string): OpenedFile {
       dams,
       activeId: activeId && seen.has(activeId) ? activeId : dams[0].id,
       savedAt: text(j.savedAt, 40),
-      crestVersion: text(j.crestVersion, 80),
+      deskVersion: text(j.deskVersion, 80) ?? text(j.crestVersion, 80),
       notes,
     };
   }
@@ -334,7 +337,7 @@ export function openDeskFile(textIn: string): OpenedFile {
         kind: "record",
         dams: [d],
         activeId: d.id,
-        crestVersion: text(j.crest_version, 80),
+        deskVersion: text(j.crest_version, 80),
         notes,
       };
     notes.push(
@@ -349,12 +352,12 @@ export function openDeskFile(textIn: string): OpenedFile {
       kind: "inputs",
       dams: [d],
       activeId: d.id,
-      crestVersion: text(j.crest_version, 80),
+      deskVersion: text(j.crest_version, 80),
       notes,
     };
   return {
     ok: false,
-    reason: "This file is not a DamIT Crest desk file or a dam.json (it has no dam name and height).",
+    reason: "This file is not a DamIT Desk file or a dam.json (it has no dam name and height).",
   };
 }
 

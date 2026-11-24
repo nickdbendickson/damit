@@ -16,6 +16,7 @@ from unittest import mock
 
 DESKTOP = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DESKTOP))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import damit_desktop.qgis_run as qr  # noqa: E402
 from damit_desktop.algorithms import (  # noqa: E402
@@ -27,6 +28,7 @@ from damit_desktop.algorithms import (  # noqa: E402
     load_config,
 )
 from damit_desktop.handoff import resolved_failure_mode, write_dam_folder  # noqa: E402
+from fakeproc import pin_home, write_exe  # noqa: E402
 
 # The parameter lists of the published DamIT algorithms: damit_screener / damit_runner 0.2.0 (rundam launches the
 # model with the DamSafety Runner's parameters) and damit_hazard's damit:classify. FAKE_STYLE=nd gives rundam an
@@ -48,6 +50,9 @@ LISTS = {
                "MODE", "PRESET", "SCENARIOS", "METHODS", "TERRAIN", "HYDROGRAPH", "OUTPUT_FOLDER", "DRY_RUN",
                "DAMS_FOLDER", "DEM", "DEM_Z", "TOP_FT", "AREA_AC", "PMF_FT", "METHOD", "TIER", "CELL", "MANNING",
                "MAX_RUNS", "DURATION_HR", "DURATION_MAX_HR", "LISFLOOD_EXE", "ANUGA_PYTHON", "ENGINE", "DAM_LINES"],
+    "download": ["STATE", "EXTENT", "SOURCES", "FOLDER", "FORCE", "MAX_MB"],
+    "pointpf": ["POINT", "OUTPUT_CSV", "OUTPUT_JSON"],
+    "embankments": ["DEM", "OUT", "EXTENT", "KNOWN"],
 }
 ENUMS = {"MODE": ["preset", "custom"],
          "ENGINE": ["From Models (TIER)", "LISFLOOD-FP", "ANUGA (LISFLOOD-FP for the extent, then ANUGA)",
@@ -61,7 +66,8 @@ ENUMS = {"MODE": ["preset", "custom"],
                     "NRCS TR-60 peak breach discharge, triangular hydrograph"],
          "TIER": ["LISFLOOD-FP only", "LISFLOOD-FP for the extent, then ANUGA (final results from ANUGA)",
                   "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; needs HEC-RAS 6.6, see help)"],
-         "PRESET@classify": ["Custom (methods ticked below)", "FEMA P-333 baseline", "Nebraska (unverified)", "North Dakota"]}
+         "PRESET@classify": ["Custom (methods ticked below)", "FEMA P-333 baseline", "Nebraska (unverified)", "North Dakota"],
+         "STATE@download": ["(none - use the extent)", "ND - North Dakota", "MN - Minnesota"]}
 if args[:1] == ["help"]:
     crash = [x for x in os.environ.get("QGIS_CRASH", "").split(",") if x]
     if args[1] in crash:
@@ -74,7 +80,7 @@ if args[:1] == ["help"]:
     if name == "classify":
         # damit_hazard/algorithms/classify.py (PR #1): presets, rasters, the six receptor layers and DOMAIN.
         params = ["PRESET", "METHODS", "MODIFIERS", "SCENARIOS", "OVERRIDES", "APPLY_ADVISORY", "RUN_SCENARIO",
-                  "MODEL_DIM", "DEPTH", "VELOCITY", "DV", "WSE", "NONBREACH", "ARRIVAL", "METRES", "STRUCTURES",
+                  "MODEL_DIM", "DEPTH", "VELOCITY", "DV", "WSE", "NONBREACH", "ARRIVAL", "METRES", "TERRAIN", "TERRAIN_UNITS", "STRUCTURES",
                   "ROADS", "RAIL", "FACILITIES", "LIFELINES", "ENVIRONMENT", "DOMAIN", "EXTRA_RUNS", "DAM_JSON",
                   "CHARTS_JSON", "RAIL_TRAINS_LOOKUP", "DAM_NAME", "OUTPUT"]
         if os.environ.get("FAKE_CLASSIFY") == "no-receptors":
@@ -109,36 +115,42 @@ if any(a.endswith(":runchain") for a in args) and os.environ.get("FAKE_PACKAGE")
             "status": "computed_preliminary", "suggested_label": "Significant", "suggested_ordinal": 2,
             "flags": ["preliminary"]}}))
 if any(a.endswith(":runchain") for a in args) and os.environ.get("FAKE_CHAIN"):
-    # Like DamIT Screener: FAKE_CHAIN=partial (0.3.5-0.3.6) keeps a time-limited flood's maxima (engine2d GAP, "partial:
+    # Like DamIT Screener 0.3.5+: FAKE_CHAIN=partial keeps a time-limited flood's maxima (engine2d GAP, "partial:
     # time limit"), writes the package with its preliminary class, then fails the chain (FAIL_ON_ERROR) saying the
-    # flood "did not run". FAKE_CHAIN=partial-ok (0.3.7+) marks the step and the package gap partial=true and finishes
-    # the chain OK. FAKE_CHAIN=partial-noclass is partial with no class; FAKE_CHAIN=fail fails with no package; FAKE_CHAIN=nopkg-timeout writes only steps.json.
+    # flood "did not run". FAKE_CHAIN=partial-noclass: the same with no preliminary class in the package.
+    # FAKE_CHAIN=fail fails with no package; FAKE_CHAIN=nopkg-timeout writes only steps.json.
+    # FAKE_CHAIN=partial-ok / partial-ok-noclass: DamIT Screener 0.3.7+ (damit #146) marks the engine2d step and the
+    # package gap partial=true / partial_reason=time_limit and finishes the chain OK (exit 0).
     mode = os.environ["FAKE_CHAIN"]
+    new = mode.startswith("partial-ok")
+    flags = {"partial": True, "partial_reason": "time_limit"} if new else {}
+    if new:
+        mode = "partial" if mode == "partial-ok" else "partial-noclass"
     settings = json.loads(Path(vals["SETTINGS"]).read_text())
     Path(os.environ["CALLS"]).open("a").write("SETTINGS " + json.dumps(settings) + "\n")
     dam_id = (settings.get("dam_ids") or [""])[0]
     detail = ("screening flood (built-in, partial: time limit): 5190.8 ac, max 12.49 ft, 3 receptor(s) sampled")
-    flags = {"partial": True, "partial_reason": "time_limit"} if mode == "partial-ok" else {}
-    if mode in ("partial", "partial-ok", "partial-noclass", "nopkg-timeout"):
+    if mode in ("partial", "partial-noclass", "nopkg-timeout"):
         dam_dir = Path(vals["WORK"]) / "dams" / dam_id
         dam_dir.mkdir(parents=True, exist_ok=True)
         (dam_dir / "steps.json").write_text(json.dumps({"engine2d": {"status": "gap", "detail": detail, "stats": {
             "flooded_acres": 5190.8, "max_depth_ft": 12.49, "sim_time_hr": 18.0, "run_s": 2880.1,
             "timed_out": True, "edge_flag": True}, **flags}}))
-    if mode in ("partial", "partial-ok"):
+    if mode == "partial":
         folder = Path(vals["WORK"]) / "handoff" / dam_id
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "damit_handoff.json").write_text(json.dumps({"schema": "damit.handoff", "screening": {
             "status": "computed_preliminary", "suggested_label": "Medium", "suggested_ordinal": 2},
             "gaps": [{"step": "engine2d", "status": "gap", "detail": detail, **flags}]}))
     if mode == "partial-noclass":
-        # Absaraka 2026-11-20: no receptors were screened, so the package has no suggestion; the flood still ran
+        # As on Absaraka 2026-11-20: no receptors screened, so the package has no suggestion, only the flood gap.
         folder = Path(vals["WORK"]) / "handoff" / dam_id
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "damit_handoff.json").write_text(json.dumps({"schema": "damit.handoff", "screening": {
-            "status": "not_computed"}, "gaps": [{"step": "engine2d", "status": "gap", "detail": detail},
-            {"step": "suggest", "status": "gap", "detail": "no receptor hydraulics yet: suggestion not computed"}]}))
-    if mode == "partial-ok":
+            "status": "not_computed", "suggested_label": None, "suggested_ordinal": None},
+            "gaps": [{"step": "engine2d", "status": "gap", "detail": detail, **flags},
+                     {"step": "suggest", "status": "gap", "detail": "no receptor hydraulics yet"}]}))
+    if new:
         print("!!! " + dam_id + ": PARTIAL SCREENING: the screening flood reached its time limit (" + detail + ")")
         print("OK:\ttrue")
         sys.exit(0)
@@ -169,7 +181,9 @@ if any(a.endswith(":classify") for a in args):
         "config": {"mode": "preset" if preset else "custom", "preset": preset, "preset_label": preset,
                    "labels": {"2": "Significant", "3": "High"}},
         "driving": [{"method": "M2", "class": 2, "reason": "home wet 2.1 ft", "receptors": ["structure:0"]}],
-        "flags": [{"level": "warning", "code": "x", "message": "m", "receptors": []}]}))
+        "flags": [{"level": "warning", "code": "x", "message": "m", "receptors": []}],
+        "per_receptor": {"structure:0": {"rule": 2}, "road:4": {"rule": None, "advisory": 2}},
+        "habitability": {"tally": {"wet_structures": 2}}}))
     print("CLASS:\tSignificant")
     print("ORDINAL:\t2")
     print("REPORT:\t" + str(out / "damit_hazard_report.md"))
@@ -234,15 +248,14 @@ class Base(unittest.TestCase):
         self.home = self.root / "home"
         self.home.mkdir()
         self.calls = self.root / "calls.txt"
-        self.qgis = self.root / "qgis_process"
-        self.qgis.write_text(FAKE_QGIS, encoding="utf-8")
-        self.qgis.chmod(0o755)
+        self.qgis = write_exe(self.root / "qgis_process", FAKE_QGIS)
         clean = {k: "" for k in ENV_VARS.values()}
         self.env = mock.patch.dict(
             os.environ,
             {
                 **clean,
                 "HOME": str(self.home),
+                "USERPROFILE": str(self.home),
                 "QGIS_PROCESS": str(self.qgis),
                 "CALLS": str(self.calls),
                 "DAMIT_CLI": "",
@@ -264,6 +277,11 @@ class Base(unittest.TestCase):
                 "DAMIT_RUN_DURATION_HR": "",
                 "DAMIT_RUN_DURATION_MAX_HR": "",
                 "DAMIT_RAIL_TRAINS_LOOKUP": "",
+                # No online receptor lookups in the headless tests (real_receptors.py); test_desk_fixes fakes them.
+                "DAMIT_OFFLINE": "1",
+                "DAMIT_PLUGIN_TIMEOUT_S": "",
+                # No suite-installed qgis-process-damit.sh from this machine's ~/dam-suite.
+                "DAMSUITE_PREFIX": str(self.root / "no-dam-suite"),
             },
         )
         self.env.start()
@@ -304,6 +322,9 @@ class ConfigTests(Base):
                 "runchain": "damit_screen:runchain",
                 "rundam": "damit_run:rundam",
                 "batch": "damit_run:batch",
+                "data": "damit_data:download",
+                "pmp": "damit_pmp:pointpf",
+                "finder": "damit_find:embankments",
             },
         )
         self.assertTrue(all(src == "default" for src in cfg.sources.values()))
@@ -358,7 +379,9 @@ class CliSearchTests(Base):
 
     def test_finds_the_damit_runner_cli_in_a_damit_plugin(self):
         path = self.plugin_file("damit_runner", "damit_cli.py")
-        self.assertEqual(find_damit_cli(load_config(None)), str(path))
+        found = find_damit_cli(load_config(None))
+        self.assertIsNotNone(found)
+        self.assertEqual(Path(found).resolve(), path.resolve())
 
     def test_ignores_the_nd_runner_cli(self):
         self.plugin_file("DamSafety_Runner", "ndbreach_cli.py")
@@ -376,7 +399,9 @@ class CliSearchTests(Base):
         path.parent.mkdir(parents=True)
         path.write_text(FAKE_CLI, encoding="utf-8")
         with mock.patch.dict(os.environ, {"APPDATA": str(appdata)}):
-            self.assertEqual(find_damit_cli(load_config(None)), str(path))
+            found = find_damit_cli(load_config(None))
+        self.assertIsNotNone(found)
+        self.assertEqual(Path(found).resolve(), path.resolve())
 
 
 class HandoffRunTests(Base):
@@ -696,6 +721,44 @@ class ClassificationTests(Base):
             qr.run_classify(dam, ANALYSIS, str(self.root / "work2"), self.log)
         self.assertIn("--RAIL_TRAINS_LOOKUP=" + str(lookup.resolve()), self.classify_run())
 
+    def test_classify_sends_the_chosen_dem_as_terrain(self):
+        # Absaraka desk test 2026-11-21: the DEM chosen in the panel never reached damit:classify, so 219 structures
+        # on NoData cells next to water were scored dry ("no run DEM / terrain was available").
+        dem = self.root / "cass_10m.vrt"
+        dem.write_text("<VRTDataset/>", encoding="utf-8")
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(), "demPath": str(dem),
+               "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        result = qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(result["ok"], self.lines)
+        self.assertIn("--TERRAIN=" + str(dem.resolve()), self.classify_run())
+        self.assertTrue(any(line.startswith("Run DEM / terrain for NoData depth:") for line in self.lines))
+
+    def test_classify_without_a_dem_says_so_and_sends_no_terrain(self):
+        dam = {**DAM, "receptors": SEEDS, "depthRaster": self.depth(),
+               "classification": {"mode": "preset", "preset": "NE", "presetLabel": "Nebraska"}}
+        qr.run_classify(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertNotIn("--TERRAIN=", self.classify_run())
+        self.assertTrue(any(line.startswith("No DEM chosen:") for line in self.lines))
+
+    def test_screening_flags_are_words_not_dicts(self):
+        block = {"suggested_label": None, "status": "not_computed", "flags": [
+            {"code": "outside_routed_domain", "message": "Receptor is outside the routed domain", "receptor": "nd911-FE82"},
+            "plain flag"]}
+        line = qr._package_line("ND00199", block)
+        self.assertIn("Receptor is outside the routed domain (nd911-FE82)", line)
+        self.assertIn("plain flag", line)
+        self.assertNotIn("{", line)
+        self.assertNotIn("'code'", line)
+        # a flag the chain repeats once per scenario is listed once
+        twice = {"suggested_label": None, "flags": [block["flags"][0], dict(block["flags"][0])]}
+        self.assertEqual(qr._package_line("ND00199", twice).count("nd911-FE82"), 1)
+
+    def test_qgis_start_up_notices_are_not_logged(self):
+        self.assertTrue(qr.is_noise("Can't load library /q/plugins/libpdal_plugin.so: libgflags.so.2.2: cannot open"))
+        self.assertTrue(qr.is_noise("gdal.py:330: FutureWarning: Neither gdal.UseExceptions() nor gdal.DontUseExceptions() has been explicitly called."))
+        self.assertFalse(qr.is_noise("CLASS: High"))
+        self.assertFalse(qr.is_noise("ERROR: the depth raster could not be opened"))
+
     def test_classify_runs_with_gdal_pam_off(self):
         # GUI chain walk 2026-11-09: classify left <raster>.tif.aux.xml in a read-only run folder. The classify
         # qgis_process gets GDAL_PAM_ENABLED=NO; the desk's own environment is untouched.
@@ -806,6 +869,9 @@ class ClassificationTests(Base):
         self.assertTrue(c["gpkg"].endswith("damit_hazard_receptors.gpkg"))
         self.assertEqual(c["driving"][0]["method"], "M2")
         self.assertEqual(c["warnings"], 1)
+        # What it found affected among the receptors, for the printed report's table.
+        self.assertEqual(c["impacted"], {"STRUCTURES": 1, "ROADS": 1})
+        self.assertEqual(c["wetStructures"], 2)
         self.assertNotIn("presetMismatch", c)
 
     def test_receptor_files_have_hazard_field_names_and_geometries(self):
@@ -958,6 +1024,49 @@ class DataFolderTests(Base):
     def test_default_work_folder_is_damitdams(self):
         with mock.patch.dict(os.environ, {"DAMIT_WORK": ""}):
             self.assertEqual(qr.work_dir(None), (self.home / "DamITDams").resolve())
+
+
+class ToolTests(Base):
+    def test_data_pmp_and_finder_call_the_damit_ids(self):
+        os.environ["QGIS_MODE"] = "pass"
+        dam = {**DAM, "nid": "ND00199"}
+        data = qr.run_data(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(data["ok"], self.lines)
+        text = self.calls_text()
+        self.assertIn("run damit_data:download", text)
+        self.assertIn("--STATE=1", text)  # ND00199 -> ND, index 1 in the fake list
+        self.assertNotIn("nddam", text)
+
+        self.calls.write_text("", encoding="utf-8")
+        pmp = qr.run_pmp(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(pmp["ok"], self.lines)
+        text = self.calls_text()
+        self.assertIn("run damit_pmp:pointpf", text)
+        self.assertIn("--POINT=-100.0,46.75 [EPSG:4326]", text)
+        self.assertIn("_atlas14.csv", text)
+
+        self.calls.write_text("", encoding="utf-8")
+        os.environ["DAMIT_DEM"] = str(self.root / "dem.tif")
+        (self.root / "dem.tif").write_bytes(b"not a dem")
+        found = qr.run_finder(dam, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertTrue(found["ok"], self.lines)
+        text = self.calls_text()
+        self.assertIn("run damit_find:embankments", text)
+        self.assertIn("--DEM=", text)
+        self.assertIn("_embankments.gpkg", text)
+
+    def test_a_missing_tool_is_not_started(self):
+        os.environ["QGIS_MISSING"] = "damit_pmp:pointpf"
+        result = qr.run_pmp(DAM, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["missingAlgorithm"], "damit_pmp:pointpf")
+        self.assertTrue(any("not started" in line for line in self.lines))
+
+    def test_pmp_without_a_point_stops(self):
+        result = qr.run_pmp({"nid": "ND00199"}, ANALYSIS, str(self.root / "work"), self.log)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("No dam point" in line for line in self.lines))
+        self.assertNotIn("pointpf", self.calls_text())
 
 
 if __name__ == "__main__":

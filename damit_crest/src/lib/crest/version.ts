@@ -14,10 +14,10 @@
 declare const __CREST_VERSION__: string | undefined;
 
 /** Keep equal to package.json "version" (version.test.ts checks it); the build string starts with it. */
-export const PACKAGE_VERSION = "0.1.3";
+export const PACKAGE_VERSION = "0.1.6";
 
 export const CREST_VERSION: string =
   typeof __CREST_VERSION__ === "string" && __CREST_VERSION__ ? __CREST_VERSION__ : `${PACKAGE_VERSION}+local`;
 
-/** The version line the exports write, e.g. "DamIT Crest 0.1.0+424065c". */
-export const CREST_VERSION_LABEL = `DamIT Crest ${CREST_VERSION}`;
+/** The version line the exports write, e.g. "DamIT Desk 0.1.0+424065c". */
+export const CREST_VERSION_LABEL = `DamIT Desk ${CREST_VERSION}`;

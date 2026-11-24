@@ -1,5 +1,5 @@
 // The starting pool (engine.ts startingPool) and per-record Manning's n (routing.ts roughnessOf): the same engine
-// behaviour as crest's settings.test.ts. The desk controls for them are not in DamIT Crest yet.
+// behaviour as crest's settings.test.ts. The desk controls for them are not in DamIT Desk yet.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
@@ -45,8 +45,9 @@ describe("starting pool", () => {
     const a = analyze(dwr2801({ startPool: "elevation", startPoolFt: 1066.09 }));
     assert.equal(a.breach.startPool, "elevation");
     assert.ok(Math.abs(a.breach.headFt - 22.5) < 1e-9);
-    // A local (0-300 ft) record: the typed value moves with the record's offset.
-    const local = { ...blankDam(), startPool: "elevation" as const, startPoolFt: 95 };
+    // A local (0-300 ft) record tied to a 1550 ft DEM crest: the typed value moves with the record's offset.
+    // (A new desk record starts with no DEM crest, so the tie is set here.)
+    const local = { ...blankDam(), demCrestFt: 1550, startPool: "elevation" as const, startPoolFt: 95 };
     const b = analyze(local);
     assert.equal(b.breach.startPool, "elevation");
     assert.ok(Math.abs(b.breach.startPoolNavdFt - (95 + 1550 - 100)) < 1e-9, String(b.breach.startPoolNavdFt));

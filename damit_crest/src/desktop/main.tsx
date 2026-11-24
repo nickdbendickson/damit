@@ -8,7 +8,7 @@ import { Desk } from "@/components/crest/desk";
 import "../styles.css";
 
 const root = document.getElementById("root");
-if (!root) throw new Error("DamIT Crest desktop: #root is missing from index.html");
+if (!root) throw new Error("DamIT Desk: #root is missing from index.html");
 createRoot(root).render(
   <StrictMode>
     <Desk />

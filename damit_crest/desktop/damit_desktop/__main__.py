@@ -1,4 +1,4 @@
-"""Open the DamIT Crest desk in a desktop window.
+"""Open the DamIT Desk desk in a desktop window.
 
 Serves the bundled web desk (damit_desktop/web/, built by `npm run build:desktop`) on 127.0.0.1 and shows it in a pywebview
 window. Exports go through a native Save dialog (`window.pywebview.api.save_file`, and `save_file_b64` for the view
@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -26,18 +27,24 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from damit_desktop import WEB_DIR_NAME
+from damit_desktop import browser_io
+from damit_desktop import classify_receptors
 from damit_desktop import defaults
 from damit_desktop import localdem
 from damit_desktop import nid
+from damit_desktop import profile as desk_profile
 from damit_desktop import qgis_run
 from damit_desktop.qgis_run import (
     WorkFolderError,
     handoff_config,
     resolve_work,
     run_classify,
+    run_data,
+    run_finder,
     run_folder,
     run_layers,
     run_model,
+    run_pmp,
     run_screening,
 )
 
@@ -46,7 +53,36 @@ from damit_desktop.qgis_run import (
 #: If it is taken, a random port is used for that session.
 PREFERRED_PORT = 47241
 
-TITLE = "DamIT Crest — Dam Breach and Hazard Desk"
+
+class PortBusyError(OSError):
+    """The fixed port asked for (DAMIT_PORT or "port" in the settings file) is in use."""
+
+
+def configured_port(settings_file: Path | None = None, env: dict | None = None) -> int | None:
+    """The fixed port the user asked for: DAMIT_PORT, else "port" in damit-desk-settings.json; None = the default
+    (PREFERRED_PORT, or a random port when it is busy). A value that is not 1024-65535 is ignored with a message."""
+    env = os.environ if env is None else env
+    raw = (env.get("DAMIT_PORT") or "").strip()
+    where = "DAMIT_PORT"
+    if not raw and settings_file is not None:
+        try:
+            data = json.loads(Path(settings_file).read_text(encoding="utf-8"))
+            raw = str(data.get("port") or "").strip() if isinstance(data, dict) else ""
+            where = f"\"port\" in {Path(settings_file).name}"
+        except (OSError, ValueError):
+            raw = ""
+    if not raw:
+        return None
+    try:
+        port = int(raw)
+    except ValueError:
+        port = -1
+    if not 1024 <= port <= 65535:
+        print(f"DamIT Desk: {where} = {raw!r} is not a port from 1024 to 65535; using the default.", flush=True)
+        return None
+    return port
+
+TITLE = "DamIT Desk"
 
 # Official DaMiT wordmark (docs/img/damit-wordmark-light.png), copied next to this package as icon.png
 # so python run.py and the packaged app can find it without Node or a Vite-hashed asset name.
@@ -162,7 +198,8 @@ def consume_launch_code(code: str) -> str:
         return "ok"
 _LOCAL_HOSTS = ("127.0.0.1", "localhost")
 
-#: damit-crest-settings.json (last Save folder, the chosen local DEM). Set by main(); tests set it directly.
+#: damit-desk-settings.json (last Save folder, the chosen local DEM; read from damit-crest-settings.json before the
+#: rename). Set by main(); tests set it directly.
 SETTINGS_FILE: Path | None = None
 
 _jobs: dict[str, dict] = {}
@@ -202,11 +239,16 @@ def start_job(
     source: str = "pack",
     timeout: float | None = None,
     receptors: dict | None = None,
+    profile: str = "us",
 ) -> dict:
     """Write the dam folder, fetch layers, or call the plugins on a background thread. Returns immediately.
 
-    cancel_job(id) stops a screening or model run (qgis_process / the CLI); timeout (seconds) limits the
-    screening chain (else DAMIT_SCREENING_TIMEOUT_S, else none)."""
+    profile: the page's desk profile; the job runs under it (profile.profile_scope), so "nd" hands off to the DWR
+    DamSafety plugins and "us" (the default) to the DamIT plugins.
+
+    cancel_job(id) stops any job that runs qgis_process or the CLI (screening, model, classify, Download layers,
+    Atlas 14, Find fills) and what it started; timeout (seconds) limits the screening chain (else
+    DAMIT_SCREENING_TIMEOUT_S, else none). The plugin buttons have their own limits (qgis_run.plugin_timeout)."""
     job_id = uuid.uuid4().hex[:12]
     job = {"id": job_id, "done": False, "ok": False, "log": "", "folder": "", "work": "", "cancelled": False}
     cancel = threading.Event()
@@ -216,6 +258,10 @@ def start_job(
         _evict_finished_locked()
 
     def work_job():
+        with desk_profile.profile_scope(profile):
+            _work_job()
+
+    def _work_job():
         try:
             log = lambda line: _job_log(job, line)
             if kind == "check":
@@ -228,6 +274,12 @@ def start_job(
                 result = run_model(dam or {}, analysis or {}, work, log, model, files, source, cancel=cancel)
             elif kind == "classify":
                 result = run_classify(dam or {}, analysis or {}, work, log, files, cancel=cancel, receptors=receptors)
+            elif kind == "data":
+                result = run_data(dam or {}, analysis or {}, work, log, files, cancel=cancel)
+            elif kind == "pmp":
+                result = run_pmp(dam or {}, analysis or {}, work, log, files, cancel=cancel)
+            elif kind == "finder":
+                result = run_finder(dam or {}, analysis or {}, work, log, files, cancel=cancel)
             else:
                 result = run_screening(dam or {}, analysis or {}, work, log, files, timeout=timeout, cancel=cancel,
                                        receptors=receptors)
@@ -245,16 +297,15 @@ def start_job(
                 if isinstance(result.get("classification"), dict):
                     # damit:classify's class for the chosen jurisdiction; the Report step stores and leads with it.
                     job["classification"] = dict(result["classification"])
-                for flag in ("noReceptors", "noDepth", "timedOut", "partial"):
+                for flag in ("noReceptors", "noDepth", "incomplete", "timedOut", "partial"):
                     if result.get(flag):
                         job[flag] = True
                 if result.get("warning"):
-                    # a PARTIAL (time-limited) screening: the warning is also in the log
                     job["warning"] = str(result["warning"])
                 job["folder"] = result.get("folder") or ""
                 job["work"] = result.get("work") or ""
         except Exception as exc:
-            _job_log(job, f"DamIT Crest stopped: {exc}")
+            _job_log(job, f"DamIT Desk stopped: {exc}")
         finally:
             with _jobs_lock:
                 job["done"] = True
@@ -295,7 +346,7 @@ def check_bundle(root: Path | None = None) -> Path:
     index = root / "index.html"
     if not index.is_file():
         raise SystemExit(
-            f"DamIT Crest desktop: the web desk bundle is missing ({index}).\n"
+            f"DamIT Desk desktop: the web desk bundle is missing ({index}).\n"
             "Build it from the repo root with `npm ci && npm run build:desktop`."
         )
     return root
@@ -387,21 +438,21 @@ class _Handler(SimpleHTTPRequestHandler):
         result = consume_launch_code(code)
         if result == "ok":
             self.send_response(303)
-            self.send_header("Location", f"/index.html#damit-token={API_TOKEN}")
+            self.send_header("Location", f"/index.html#damit-token={API_TOKEN}{profile_fragment()}")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
         if result == "used":
-            print("DamIT Crest desktop: WARNING - the browser launch link was used more than once. If the desk in your "
-                  "browser says so, another program used it first: stop DamIT Crest (Ctrl+C) and start it again.",
+            print("DamIT Desk: WARNING - the browser launch link was used more than once. If the desk in your "
+                  "browser says so, another program used it first: stop DamIT Desk (Ctrl+C) and start it again.",
                   flush=True)
         msg = {
-            "used": "This DamIT Crest launch link was already used. Use the DamIT Crest tab that is already open, or "
-                    "stop DamIT Crest (Ctrl+C in its terminal) and start it again for a new link.",
-            "expired": "This DamIT Crest launch link has expired. Stop DamIT Crest (Ctrl+C in its terminal) and start "
+            "used": "This DamIT Desk launch link was already used. Use the DamIT Desk tab that is already open, or "
+                    "stop DamIT Desk (Ctrl+C in its terminal) and start it again for a new link.",
+            "expired": "This DamIT Desk launch link has expired. Stop DamIT Desk (Ctrl+C in its terminal) and start "
                        "it again.",
-        }.get(result, "This is not a valid DamIT Crest launch link. Stop DamIT Crest (Ctrl+C in its terminal) and "
+        }.get(result, "This is not a valid DamIT Desk launch link. Stop DamIT Desk (Ctrl+C in its terminal) and "
                       "start it again.")
         self._send(410 if result in ("used", "expired") else 403, msg.encode("utf-8"), "text/plain; charset=utf-8")
 
@@ -427,9 +478,29 @@ class _Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/nid/state":
             self._send_nid(parse_qs(parsed.query))
             return
+        if parsed.path in ("/api/fs/list", "/api/dem/choice", "/api/export_dir"):
+            self._browser_get(parsed.path, parse_qs(parsed.query))
+            return
         if parsed.path == "/api/handoff":
             # The algorithm ids the buttons will call (DamIT defaults or overrides), for the Report step to show.
-            self._send(200, json.dumps(handoff_config().as_json()).encode(), "application/json")
+            # Also the folder a blank Work folder field means, and a one-line notice when this run's settings came
+            # over from the old DamIT Crest folder (2026-11-21: that copy was only printed in the terminal).
+            with desk_profile.profile_scope((parse_qs(parsed.query).get("profile") or [""])[0]):
+                info = handoff_config().as_json()
+            info["work"] = str(qgis_run.default_work_dir())
+            info["notices"] = list(STORAGE_NOTICES)
+            self._send(200, json.dumps(info).encode(), "application/json")
+            return
+        if parsed.path == "/api/classify/receptors":
+            # The real receptors damit:classify judged (its GeoPackage), with names and a point to zoom to.
+            self._reply(lambda: classify_receptors.read_receptors(
+                classify_receptors.gpkg_path((parse_qs(parsed.query).get("gpkg") or [""])[0])))
+            return
+        if parsed.path == "/api/handoff/autofill":
+            # Paths for the hand-off form: the chosen DEM, the imported run's rasters found by name, a rail lookup CSV.
+            q = parse_qs(parsed.query)
+            names = [n for n in (q.get("names") or [""])[0].split(",") if n.strip()]
+            self._reply(lambda: browser_io.autofill(SETTINGS_FILE, names))
             return
         if parsed.path == "/api/job":
             job_id = (parse_qs(parsed.query).get("id") or [""])[0]
@@ -461,6 +532,9 @@ class _Handler(SimpleHTTPRequestHandler):
             "/api/folder": "folder",
             "/api/layers": "layers",
             "/api/classify": "classify",
+            "/api/data": "data",
+            "/api/pmp": "pmp",
+            "/api/finder": "finder",
             "/api/check": "check",
         }
         kind = kinds.get(parsed.path)
@@ -470,6 +544,13 @@ class _Handler(SimpleHTTPRequestHandler):
             job_id = (parse_qs(parsed.query).get("id") or [""])[0]
             found = cancel_job(job_id)
             self._send(404 if found.get("error") else 200, json.dumps(found).encode(), "application/json")
+            return
+        if parsed.path in BROWSER_POST:
+            if not self._api_allowed(need_json=True):
+                return
+            body = self._json_body(limit=MAX_SAVE_BODY if parsed.path == "/api/save" else 1_000_000)
+            if body is not None:
+                self._browser_post(parsed.path, body)
             return
         if kind is None:
             self._send(404, b"not found", "text/plain")
@@ -508,7 +589,8 @@ class _Handler(SimpleHTTPRequestHandler):
         # Classify: the model run's rasters (paths on this computer), for damit:classify's DEPTH / VELOCITY / DV / WSE /
         # NONBREACH / ARRIVAL.
         for key, field in (("depth", "depthRaster"), ("velocity", "velocityRaster"), ("dv", "dvRaster"),
-                           ("wse", "wseRaster"), ("nonbreach", "nonbreachRaster"), ("arrival", "arrivalRaster")):
+                           ("wse", "wseRaster"), ("nonbreach", "nonbreachRaster"), ("arrival", "arrivalRaster"),
+                           ("railLookup", "railTrainsLookup")):
             if isinstance(payload.get(key), str) and payload[key].strip():
                 dam = dict(dam)
                 dam[field] = payload[key].strip()
@@ -531,8 +613,75 @@ class _Handler(SimpleHTTPRequestHandler):
         # Screen: the same payload when the desk sends one (else the record's mapped seeds), structures only.
         receptors = (payload.get("receptors") if kind in ("classify", "screen")
                      and isinstance(payload.get("receptors"), dict) else None)
-        body = json.dumps(start_job(kind, dam, analysis, work, model, files, source, timeout, receptors))
+        # The page's desk profile (Settings, or ?profile=nd): "nd" hands off to the DWR DamSafety plugins (profile.py).
+        profile = desk_profile.normalize(payload.get("profile"))
+        body = json.dumps(start_job(kind, dam, analysis, work, model, files, source, timeout, receptors, profile))
         self._send(200, body.encode(), "application/json")
+
+    def _json_body(self, limit: int) -> dict | None:
+        """The request's JSON object, or None after sending the 400 / 413."""
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            self._send(400, b'{"error":"chunked request bodies are not supported"}', "application/json")
+            return None
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = -1
+        if length < 0:
+            self._send(400, b'{"error":"bad content length"}', "application/json")
+            return None
+        if length > limit:
+            self._send(413, b'{"error":"too large"}', "application/json")
+            return None
+        try:
+            payload = json.loads((self.rfile.read(length) if length else b"{}").decode() or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        if not isinstance(payload, dict):
+            self._send(400, b'{"error":"bad json"}', "application/json")
+            return None
+        return payload
+
+    def _reply(self, fn) -> None:
+        try:
+            out = fn()
+        except browser_io.BrowserIOError as exc:
+            self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
+            return
+        except (OSError, ValueError) as exc:
+            self._send(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+            return
+        self._send(200, json.dumps(out).encode(), "application/json")
+
+    def _browser_get(self, path: str, query: dict) -> None:
+        """Browser mode (browser_io.py): list a folder for the desk's file chooser, the chosen DEM, the exports folder."""
+        if path == "/api/fs/list":
+            mode = (query.get("mode") or ["dem"])[0]
+            self._reply(lambda: browser_io.list_dir((query.get("dir") or [""])[0] or None, mode if mode in ("folder", "csv") else "dem",
+                                                     SETTINGS_FILE))
+        elif path == "/api/dem/choice":
+            self._reply(lambda: browser_io.dem_state(SETTINGS_FILE))
+        else:
+            self._reply(lambda: {"dir": str(browser_io.export_dir(SETTINGS_FILE))})
+
+    def _browser_post(self, path: str, body: dict) -> None:
+        if path == "/api/dem/choose":
+            self._reply(lambda: browser_io.choose_dem(SETTINGS_FILE, str(body.get("path") or "")))
+        elif path == "/api/dem/clear":
+            self._reply(lambda: browser_io.clear_dem(SETTINGS_FILE))
+        elif path == "/api/export_dir":
+            self._reply(lambda: {"dir": str(browser_io.set_export_dir(SETTINGS_FILE, str(body.get("path") or "")))})
+        else:  # /api/save
+            def save():
+                if isinstance(body.get("b64"), str):
+                    data = decode_b64(body["b64"])
+                elif isinstance(body.get("text"), str):
+                    data = body["text"].encode("utf-8")
+                else:
+                    raise browser_io.BrowserIOError("nothing to save")
+                return {"saved": str(browser_io.save_export(SETTINGS_FILE, str(body.get("name") or ""), data))}
+
+            self._reply(save)
 
     def _send_dem(self, query: dict) -> None:
         """Terrain from the local DEM chosen in the app (localdem.py); 409 when none is chosen."""
@@ -594,30 +743,114 @@ class _Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def serve(root: Path | None = None, port: int = PREFERRED_PORT) -> ThreadingHTTPServer:
-    """Serve the bundle on 127.0.0.1 in a daemon thread. Port 0 means any free port."""
+def serve(root: Path | None = None, port: int = PREFERRED_PORT, fixed: bool = False) -> ThreadingHTTPServer:
+    """Serve the bundle on 127.0.0.1 in a daemon thread. Port 0 means any free port. fixed (a port the user set):
+    a busy port is an error (PortBusyError) instead of a random port, so the saved records' address never changes."""
     root = check_bundle(root)
     bundle_handler = type("_BundleHandler", (_Handler,), {"security_headers": load_security_headers(root)})
     handler = partial(bundle_handler, directory=str(root))
     try:
         server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     except OSError as e:
-        if port == 0 or e.errno not in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1), 10048):
+        # Windows says WSAEACCES (10013) when the port is held with SO_EXCLUSIVEADDRUSE (or reserved): busy, too.
+        busy = e.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1), 10048) or (
+            os.name == "nt" and getattr(e, "winerror", None) == 10013)
+        if port == 0 or not busy:
             raise
-        print(f"DamIT Crest desktop: port {port} is busy; using a random port (saved records will not carry over).", flush=True)
+        if fixed:
+            raise PortBusyError(e.errno, f"DamIT Desk: port {port} (set with DAMIT_PORT or \"port\" in the settings "
+                                         "file) is busy: close the program using it, or choose another port.") from e
+        print(f"DamIT Desk: port {port} is busy (another DamIT Desk, or another program). Using a random port for this "
+              "session: records saved in the browser are kept per address, so the ones from port "
+              f"{port} are not shown until the desk runs on {port} again.", flush=True)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
 
+#: The settings file in the storage folder (last Save folder, the chosen local DEM, the exports folder).
+SETTINGS_NAME = "damit-desk-settings.json"
+#: Its name before the rename to DamIT Desk (2026-11-20): still read when the new one is missing.
+LEGACY_SETTINGS_NAME = "damit-crest-settings.json"
+#: Written into the new folder when it was copied from the old DamIT Crest one: where from, and when.
+MIGRATED_NOTE = "COPIED-FROM-DAMIT-CREST.txt"
+
+
+#: One-line notices about this run's settings folder (a copy from the old DamIT Crest folder), for the Report step.
+STORAGE_NOTICES: list[str] = []
+
+
+def _data_home() -> Path:
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
 def storage_dir() -> Path:
-    """Where the webview keeps localStorage (the desk's records) between runs."""
+    """Where the webview keeps localStorage (the desk's records) between runs, the settings and the NID cache."""
     if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
-        return base / "DamIT Crest"
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "DamIT Desk"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "DamIT Desk"
+    return _data_home() / "damit-desk"
+
+
+def legacy_storage_dir() -> Path:
+    """The same folder under its DamIT Crest name, from before the rename (read, never changed or deleted)."""
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "DamIT Crest"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "DamIT Crest"
-    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "damit-crest"
+    return _data_home() / "damit-crest"
+
+
+def prepare_storage(log=print) -> tuple[Path, Path]:
+    """(storage folder, settings file) for this run.
+
+    First run after the rename: the old DamIT Crest folder is copied to the DamIT Desk one, so saved records, the
+    chosen DEM and the NID cache carry over; the old folder is left exactly as it was. When the copy cannot be made the
+    old folder is used as it is. Later runs: a settings file missing from the new folder is read from the old one."""
+    store, legacy = storage_dir(), legacy_storage_dir()
+    STORAGE_NOTICES.clear()
+
+    def notice(line: str) -> None:
+        STORAGE_NOTICES.append(line)
+        log("DamIT Desk: " + line)
+
+    if not store.exists() and legacy.is_dir():
+        try:
+            shutil.copytree(legacy, store, symlinks=True,
+                            ignore=shutil.ignore_patterns("SingletonLock", "SingletonSocket", "SingletonCookie",
+                                                          "*.lock", "lockfile"))
+            notice(f"first start: copied the old DamIT Crest settings and records from {legacy} to {store}. "
+                   "The old folder is left as it was; delete it yourself once you no longer need DamIT Crest.")
+            try:
+                (store / MIGRATED_NOTE).write_text(
+                    f"Copied from {legacy} by DamIT Desk on {time.strftime('%Y-%m-%d %H:%M %Z')}.\n"
+                    "The old folder was not changed.\n", encoding="utf-8")
+            except OSError:
+                pass
+        except (OSError, shutil.Error) as exc:
+            notice(f"could not copy the old DamIT Crest folder {legacy} to {store} ({exc}); using the old folder.")
+            return legacy, _settings_in(legacy)
+    store.mkdir(parents=True, exist_ok=True)
+    settings = store / SETTINGS_NAME
+    old = store / LEGACY_SETTINGS_NAME
+    if not settings.exists():
+        for source in (old, legacy / LEGACY_SETTINGS_NAME):
+            if source.is_file():
+                try:
+                    shutil.copy2(source, settings)
+                except OSError:
+                    notice(f"reading the settings from the old file {source} (it could not be copied to {settings}).")
+                    return store, source
+                if source.parent != store:
+                    notice(f"copied the old DamIT Crest settings file {source} to {settings}.")
+                break
+    return store, settings
+
+
+def _settings_in(folder: Path) -> Path:
+    new = folder / SETTINGS_NAME
+    return new if new.is_file() or not (folder / LEGACY_SETTINGS_NAME).is_file() else folder / LEGACY_SETTINGS_NAME
 
 
 def _save_dialog_type(webview_mod):
@@ -692,7 +925,7 @@ class Api:
             return {"cancelled": True}
         path = picked if isinstance(picked, str) else picked[0]
         if Path(path).suffix.lower() not in localdem.DEM_SUFFIXES:
-            return {"error": f"Not a DEM file DamIT Crest reads ({', '.join(localdem.DEM_SUFFIXES)}): {path}"}
+            return {"error": f"Not a DEM file DamIT Desk reads ({', '.join(localdem.DEM_SUFFIXES)}): {path}"}
         if self._settings_file:
             localdem.write_dem_path(self._settings_file, path)
         return {"path": path, "gdalwarp": localdem.find_gdalwarp()}
@@ -780,6 +1013,10 @@ class Api:
 
 #: Largest binary export accepted from the page (a view PDF is a few MB).
 MAX_BINARY_BYTES = 100 * 1024 * 1024
+#: Largest /api/save request (base64 of MAX_BINARY_BYTES plus the JSON around it).
+MAX_SAVE_BODY = MAX_BINARY_BYTES * 4 // 3 + 1_000_000
+#: Browser-mode POSTs (browser_io.py).
+BROWSER_POST = ("/api/dem/choose", "/api/dem/clear", "/api/save", "/api/export_dir")
 
 
 def decode_b64(b64: str) -> bytes:
@@ -851,9 +1088,17 @@ def write_text(path: Path, text: str) -> None:
         raise
 
 
+def profile_fragment() -> str:
+    """"&profile=nd" (or "&profile=us") when DAMIT_DESK_PROFILE names a profile, else "". The suite installer's North
+    Dakota launcher sets DAMIT_DESK_PROFILE=nd, so the desk opens in that profile (the page reads profile= from the
+    address fragment, profile.ts; the token is taken out of the fragment and the rest is kept)."""
+    chosen = desk_profile.normalize(os.environ.get("DAMIT_DESK_PROFILE"))
+    return f"&profile={chosen}" if (os.environ.get("DAMIT_DESK_PROFILE") or "").strip() else ""
+
+
 def desk_url(port: int) -> str:
     """The address the desk window opens: the API token rides in the fragment, which is never sent over HTTP."""
-    return f"http://127.0.0.1:{port}/index.html#damit-token={API_TOKEN}"
+    return f"http://127.0.0.1:{port}/index.html#damit-token={API_TOKEN}{profile_fragment()}"
 
 
 def launch_url(port: int, code: str) -> str:
@@ -863,20 +1108,23 @@ def launch_url(port: int, code: str) -> str:
 
 def main() -> None:
     global SETTINGS_FILE
-    store = storage_dir()
-    store.mkdir(parents=True, exist_ok=True)
-    SETTINGS_FILE = store / "damit-crest-settings.json"
+    store, SETTINGS_FILE = prepare_storage(lambda line: print(line, flush=True))
     qgis_run.SETTINGS_DIR = store  # damit-handoff.json is read from here (docs/HANDOFF.md)
-    qgis_run.DESK_SETTINGS_FILE = SETTINGS_FILE  # the DEM chosen in the app goes to the plugins too
+    qgis_run.DESK_SETTINGS_FILE = SETTINGS_FILE  # the DEM chosen in the desk goes to the plugins too
     nid.NID_DIR = store / "nid"  # the per-state NID cache (nid.py), outside the install and any repository
-    server = serve()
+    fixed = configured_port(SETTINGS_FILE)
+    try:
+        server = serve(port=fixed or PREFERRED_PORT, fixed=fixed is not None)
+    except PortBusyError as e:
+        print(e.strerror, flush=True)
+        sys.exit(2)
     # printed without the token: opening this plain address elsewhere shows the desk, but its /api/ calls are refused
     url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
     open_url = desk_url(server.server_address[1])
     # install test 2026-11-18: the address is printed at start (flushed: the launcher's output may be a pipe), so the
     # port is visible whichever window opens. It carries no token: opened by hand it shows the desk, but every /api/
     # call is refused. Only the window (or the browser fallback's one-time launch link) gets the token.
-    print(f"DamIT Crest desktop: {url}", flush=True)
+    print(f"DamIT Desk: {url}", flush=True)
     try:
         import webview
 
@@ -899,15 +1147,17 @@ def main() -> None:
         if icon is not None:
             start_kw["icon"] = str(icon)
         webview.start(**start_kw)
-    except Exception as e:  # no GUI backend: use the system browser (downloads work there)
-        print(f"DamIT Crest desktop: no webview ({e}). Opening the desk in the browser with a one-time launch link; "
-              "press Ctrl+C to stop.", flush=True)
+    except Exception as e:  # no GUI backend: use the system browser (Linux on purpose; see browser_io.py)
+        if not isinstance(e, ImportError):
+            print(f"DamIT Desk: no native window ({e}).", flush=True)
         # The OS passes this address to the browser on its command line, which other local users may be able to
         # list, so it carries a one-time launch code that expires, not the token (see LAUNCH_PATH).
         link = launch_url(server.server_address[1], issue_launch_code())
+        print("DamIT Desk is opening in your browser with a one-time launch link.", flush=True)
+        print("Leave this terminal open while you use the desk; press Ctrl+C here to close it.", flush=True)
         if not webbrowser.open(link):
             # No browser could be started (e.g. over ssh). The terminal is the user's own; the link is single-use.
-            print(f"DamIT Crest desktop: no browser started. Open this one-time link within {int(LAUNCH_CODE_TTL_S)} s: "
+            print(f"DamIT Desk: no browser started. Open this one-time link within {int(LAUNCH_CODE_TTL_S)} s: "
                   f"{link}", flush=True)
         try:
             threading.Event().wait()

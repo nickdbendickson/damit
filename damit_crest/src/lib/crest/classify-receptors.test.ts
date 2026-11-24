@@ -38,6 +38,9 @@ function classified(d: DamRecord, extra: Partial<HazardResult> = {}): DamRecord 
       choiceKey: choiceKey(d.classification),
       receptorKey: receptorKey(exp),
       choiceText: "x",
+      complete: true,
+      notChecked: {},
+      layerSources: { RAIL: "BTS NTAD North American Rail Network (online)" },
       ...extra,
     },
   };
@@ -140,6 +143,38 @@ describe("the Report leads with damit:classify's class for the chosen jurisdicti
     assert.ok(lead.lines.some((l) => l.startsWith("M2 Significant")));
     assert.ok(lead.lines.some((l) => l.includes("damit_hazard_receptors.gpkg")));
     assert.equal(paperStamp("High", lead, "Significant"), "DAMIT CLASSIFY: SIGNIFICANT");
+  });
+
+  it("a class with unchecked receptor layers leads as a lower bound, loudly, never as the answer", () => {
+    const d = classified({ ...dam(), classification: { mode: "preset", preset: "NE" } }, {
+      suggestedClass: "Low",
+      complete: false,
+      notChecked: { RAIL: "the online service failed: timed out", ROADS: "offline" },
+      layerSources: { STRUCTURES: "USACE NSI (online)" },
+    });
+    const lead = reportLead(d, analyze(d));
+    assert.equal(lead.kind, "hazard");
+    assert.ok(lead.incomplete);
+    assert.match(lead.title, /: at least Low, INCOMPLETE$/);
+    assert.match(lead.lines[0], /^INCOMPLETE: rail, roads were not checked, so Low is only the lowest the class can be/);
+    assert.ok(lead.lines.some((l) => l === "RAIL not checked: the online service failed: timed out."));
+    assert.equal(paperStamp("High", lead, "Low"), "DAMIT CLASSIFY: AT LEAST LOW (INCOMPLETE)");
+  });
+
+  it("a complete class names where the real layers came from", () => {
+    const d = classified({ ...dam(), classification: { mode: "preset", preset: "NE" } }, { railTrainsLookup: "/w/trains.csv" });
+    const lead = reportLead(d, analyze(d));
+    assert.ok(!lead.incomplete);
+    assert.ok(lead.lines.some((l) => l.startsWith("Real receptor layers: rail from BTS NTAD")));
+    assert.ok(lead.lines.some((l) => l.startsWith("Rail trains per day from /w/trains.csv")));
+  });
+
+  it("a result from before the real-receptor lookup is out of date, not the class", () => {
+    const d = classified({ ...dam(), classification: { mode: "preset", preset: "NE" } }, { complete: undefined });
+    const st = hazardStatus(d, analyze(d));
+    assert.equal(st.state, "stale");
+    assert.match(st.state === "stale" ? st.why : "", /desk's own receptors only/);
+    assert.equal(paperStamp("High", reportLead(d, analyze(d)), "Low"), "SCHEMATIC PREVIEW: HIGH");
   });
 
   it("a result for another preset, other methods or other receptors is out of date, never the new choice's class", () => {

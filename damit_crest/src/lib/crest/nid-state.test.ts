@@ -56,6 +56,6 @@ describe("NID by state", () => {
     const down = (async () => {
       throw new TypeError("fetch failed");
     }) as unknown as typeof fetch;
-    await assert.rejects(loadNidState("VT", { fetchImpl: down }), /desktop server/);
+    await assert.rejects(loadNidState("VT", { fetchImpl: down }), /DamIT Desk server/);
   });
 });

@@ -1,6 +1,8 @@
 /**
  * The committed NID example extract (nid_example = data/nid_ND.json, about 200 KB) on demand. Other states' NID
- * extracts are downloaded by the desktop server (nid-state.ts); no other dam inventory is bundled.
+ * extracts are downloaded by the desktop server (nid-state.ts). The North Dakota profile adds nd_dams_dwr
+ * (data/nd_dams_dwr.json, the ND DWR dam values) and nd_structures (data/nd_structures.json, the DWR structures list);
+ * no other dam inventory is bundled.
  *
  * Web and desktop builds: a dynamic `import()` of the JSON, which Vite keeps as its own chunk (vite.desktop.config.ts
  * keeps it out of the first parse). The one-file DamIT.html cannot have a separate chunk, so there the
@@ -11,7 +13,10 @@
  * Node (the tests, the batch command line) and Vite dev have an empty `packed` table and take the JSON import.
  */
 
-export type BundleName = "nid_example";
+/** nid_example for every profile; nd_dams_dwr (the ND DWR Dams-layer values joined on NID ID) and nd_structures (the
+ *  ND DWR structures list: DWR dams not in the NID, dugouts, unknown structures) are loaded only by nd-dams.ts and
+ *  nd-structures.ts, the North Dakota profile (profile.ts), so a US desk never loads them. */
+export type BundleName = "nid_example" | "nd_dams_dwr" | "nd_structures";
 
 /** gzip + base64 of each bundle when the single-file build packed it; empty otherwise (data/packed.ts). */
 type Packed = Partial<Record<BundleName, string>>;
@@ -59,6 +64,9 @@ const loaders: Record<BundleName, () => Promise<unknown>> = {
   // text/javascript"). So the attribute is dropped under Vite dev only. The `import.meta.env` guard is needed because
   // `import.meta.env` is undefined under `node --test`.
   nid_example: () => (viteDev() ? import("./data/nid_ND.json") : import("./data/nid_ND.json", { with: { type: "json" } })),
+  nd_dams_dwr: () => (viteDev() ? import("./data/nd_dams_dwr.json") : import("./data/nd_dams_dwr.json", { with: { type: "json" } })),
+  nd_structures: () =>
+    viteDev() ? import("./data/nd_structures.json") : import("./data/nd_structures.json", { with: { type: "json" } }),
 };
 
 const viteDev = () => typeof import.meta !== "undefined" && typeof import.meta.env !== "undefined" && import.meta.env.DEV === true;

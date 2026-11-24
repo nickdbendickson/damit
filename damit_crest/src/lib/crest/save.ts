@@ -1,10 +1,16 @@
 /**
  * Save a text export (CSV, dam.json, LISFLOOD .par/.bci/.bdy), or a binary one (view PDF/PNG, `saveBytes`).
  *
- * In a browser this is the usual blob download. Inside the Crest desktop window (pywebview) blob downloads do
- * nothing, so the desktop exposes `window.pywebview.api.save_file(name, text)`, which opens the native Save dialog
- * and writes the file; binary files go through `save_file_b64(name, base64)`. Detection is by that bridge only, so the web desk behaves exactly as before.
+ * Inside the native desk window (pywebview) blob downloads do nothing, so the desktop exposes
+ * `window.pywebview.api.save_file(name, text)`, which opens the native Save dialog and writes the file; binary files
+ * go through `save_file_b64(name, base64)`.
+ *
+ * In a browser page served by the desk (Linux), the desk server writes the file into the exports folder
+ * (POST /api/save, browser_io.py; <work>/exports unless another folder was chosen on the Report step) and the desk
+ * says where, instead of a download landing in the browser's Downloads folder. A page with no desk server keeps the
+ * usual blob download.
  */
+import { hasDeskServer, postServer } from "./server-picker.ts";
 
 export type SaveResult = { status: "saved"; path?: string } | { status: "cancelled" } | { status: "error"; message: string };
 
@@ -38,8 +44,19 @@ function browserDownload(name: string, data: string | Uint8Array, type: string):
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/** Browser page from the desk server: the server writes the export into the exports folder. */
+async function serverSave(name: string, body: { text: string } | { b64: string }): Promise<SaveResult> {
+  try {
+    const r = await postServer<{ saved?: string }>("/api/save", { name, ...body });
+    return r.saved ? { status: "saved", path: r.saved } : { status: "error", message: "the desk server did not say where it saved" };
+  } catch (e) {
+    return { status: "error", message: (e as Error)?.message ?? String(e) };
+  }
+}
+
 export async function saveText(name: string, text: string, type = "text/plain"): Promise<SaveResult> {
   const api = desktopApi();
+  if (!api?.save_file && hasDeskServer()) return serverSave(name, { text });
   if (!api?.save_file) {
     browserDownload(name, text, type);
     return { status: "saved" };
@@ -64,6 +81,7 @@ export function toBase64(bytes: Uint8Array): string {
 /** Save a binary export (the view PDF or PNG): a download in a browser, the native Save dialog on the desktop. */
 export async function saveBytes(name: string, bytes: Uint8Array, type: string): Promise<SaveResult> {
   const api = desktopApi();
+  if (!api && hasDeskServer()) return serverSave(name, { b64: toBase64(bytes) });
   if (!api) {
     browserDownload(name, bytes, type);
     return { status: "saved" };
@@ -71,7 +89,7 @@ export async function saveBytes(name: string, bytes: Uint8Array, type: string): 
   if (typeof api.save_file_b64 !== "function") {
     return {
       status: "error",
-      message: "this DamIT Crest desktop app is older than the PDF/image export; update damit_crest (git pull) and restart it",
+      message: "this DamIT Desk is older than the PDF/image export; update it (git pull) and restart it",
     };
   }
   try {

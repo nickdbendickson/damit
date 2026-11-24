@@ -1,4 +1,4 @@
-"""DamIT Crest desktop: a native window around the built web desk (damit_desktop/web/).
+"""DamIT Desk: a native window around the built web desk (damit_desktop/web/).
 
 There is no Python copy of the breach engine. The desk is the TypeScript app in damit_crest/src, bundled by
 `npm run build:desktop` into damit_desktop/web/. This package serves those files, saves exports, and, from the

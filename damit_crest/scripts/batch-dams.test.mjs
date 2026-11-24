@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 
 import { tempDir } from "./test-tmp.mjs";
@@ -17,7 +17,7 @@ const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "batch-dams.mjs");
 /** Run `body` (JS source) in a child node that has `m` = the script's exports and `argv` = JSON args; returns stdout JSON. */
 function inChild(body, ...args) {
   const src = `
-    import * as m from ${JSON.stringify(SCRIPT)};
+    import * as m from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
     const argv = ${JSON.stringify(args)};
     const out = await (async () => { ${body} })();
     process.stdout.write(JSON.stringify(out ?? null));

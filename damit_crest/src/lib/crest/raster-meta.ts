@@ -64,6 +64,9 @@ export function classifyFile(path: string): FileRole {
     if (/^lisflood_vmax_fps/.test(n)) return g("velocity", 1, "ft/s", 0);
     if (/^lisflood_arr_hr/.test(n)) return g("arrival", 1, "h", 0);
     if (/^lisflood_wsemax_ft/.test(n)) return g("wse", 1, "ft", 0);
+    // DamIT Runner's own outputs/ names (hmax_ft.tif and vmax_fps.tif match the DSS-WISE rules below)
+    if (/^arr_hr(\.|_)/.test(n)) return g("arrival", 1, "h", 0);
+    if (/^wsemax_ft(\.|_)/.test(n)) return g("wse", 1, "ft", 0);
     // DSS-WISE Lite rasters
     if (/dvmax/.test(n)) return { kind: "skip", reason: "depth × velocity, not used here" };
     if (/h_ft_at_final/.test(n)) return { kind: "skip", reason: "depth at the final time step, not the maximum" };
@@ -78,7 +81,7 @@ export function classifyFile(path: string): FileRole {
     if (/^velocity \(max\)/.test(n)) return g("velocity", 1, "ft/s", 2, { final: true });
     if (/^arrival time/.test(n)) return g("arrival", 1, "h", 2, { final: true });
     if (/hmax|max_?depth|depth_?max/.test(n)) return g("depth", 1, "ft", 3, { guessed: true });
-    return { kind: "skip", reason: "GeoTIFF not recognized (expected Hmax_ft, Vmax_ftps, Arrival_Time_hr or lisflood_*)" };
+    return { kind: "skip", reason: "GeoTIFF not recognized (expected Hmax_ft, Vmax_ftps, Arrival_Time_hr, arr_hr or lisflood_*)" };
   }
   // LISFLOOD-FP ASCII outputs: <resroot>.<ext>, with or without a trailing .asc
   const base = n.replace(/\.asc$/, "");

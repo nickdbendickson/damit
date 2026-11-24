@@ -24,7 +24,7 @@ export type BatchJobState = "running" | "stopped" | "paused" | "done";
 
 export type BatchJob = {
   selection: Selection;
-  /** DamIT Crest: the state whose NID dams the selection is from (the batch screen lists one state at a time). */
+  /** DamIT Desk: the state whose NID dams the selection is from (the batch screen lists one state at a time). */
   nidState?: string;
   /** Structures in the selection when the batch started. */
   total: number;

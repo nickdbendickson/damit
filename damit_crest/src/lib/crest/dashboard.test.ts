@@ -189,11 +189,12 @@ describe("Style B dashboard", () => {
     assert.equal(peakOf([]), null);
   });
 
-  it("four independent map toggles, depth and structures on by default", () => {
+  it("five independent map toggles, depth, structures and classify receptors on by default", () => {
     assert.deepEqual(
       LAYER_DEFS.map(([k]) => k),
-      ["depth", "arrival", "structures", "hillshade"],
+      ["depth", "arrival", "structures", "classify", "hillshade"],
     );
+    assert.equal(DEFAULT_LAYERS.classify, true);
     assert.equal(DEFAULT_LAYERS.depth && DEFAULT_LAYERS.structures, true);
     assert.equal(DEFAULT_LAYERS.runnerOverlay, false);
   });

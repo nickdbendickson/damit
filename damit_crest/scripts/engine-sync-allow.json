@@ -1,6 +1,12 @@
 {
   "_comment": "Files that must match line for line between crest (src/lib/crest) and damit (damit_crest/src/lib/crest), and the only line pairs allowed to differ. Keep this file identical in both repos. Checked by scripts/check-engine-sync.mjs.",
-  "files": ["engine.ts", "spread.ts", "outline.ts", "routing.ts", "warnings.ts"],
+  "files": [
+    "engine.ts",
+    "spread.ts",
+    "outline.ts",
+    "routing.ts",
+    "warnings.ts"
+  ],
   "allow": [
     {
       "file": "engine.ts",
@@ -25,6 +31,12 @@
       "crest": " *   W-H1/H2   nd-dams.ts NID height checks               warn",
       "damit": " *   W-H1/H2   nid-dams.ts NID height checks               warn",
       "why": "Comment only: crest's NID loader is nd-dams.ts, DamIT's is nid-dams.ts."
+    }
+  ],
+  "pending": [
+    {
+      "file": "outline.ts",
+      "why": "Local-DEM terrain labels (terrainInfo, currentTerrain, stampTerrain, layerLabel) and dropping the unused H argument from linkRings, already in damit-desk 0.1.6. A parallel DWR_Plugins PR is updating dwr_crest/outline.ts to the same text. Remove this entry once that change is on DWR_Plugins main (or when a same-named branch already matches)."
     }
   ]
 }

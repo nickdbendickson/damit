@@ -1,9 +1,11 @@
 # damit_crest — DamIT Crest desktop app
 
-> **Retired (2026-11-22).** DamIT Desk ([nickdbendickson/damit-desk](https://github.com/nickdbendickson/damit-desk)) is
-> the one desk now, with a United States profile (this desk's NID-only hand-off to the DamIT plugins) and a North
-> Dakota profile (the DWR desk's values and hand-off). The suite installer installs DamIT Desk instead of this folder
-> (`suite_install/README.md`). This folder stays until its removal is agreed; fixes go to damit-desk.
+> **Embedded copy of DamIT Desk 0.1.6 (refreshed 2026-11-23).** The live desktop app is
+> [nickdbendickson/damit-desk](https://github.com/nickdbendickson/damit-desk), with a United States profile (NID-only
+> hand-off to the DamIT plugins) and a North Dakota profile (the DWR desk's values and hand-off). The suite installer
+> installs DamIT Desk instead of this folder (`suite_install/README.md`). This folder stays until its removal is
+> agreed; day-to-day fixes go to damit-desk, and this copy is refreshed from that repo. See [CHANGELOG.md](CHANGELOG.md)
+> for what 0.1.6 brings over.
 
 **0.1.2 (2026-11-18).** The official DaMiT wordmark (`docs/img/damit-wordmark-light.png`) is shown in the desk header and the Dashboard brand, is the page favicon, and is the desktop window / packaged-app icon (`webview.start(icon=…)`, PyInstaller `icon=`).
 

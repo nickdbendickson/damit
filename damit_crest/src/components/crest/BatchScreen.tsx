@@ -15,11 +15,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  BATCH_DISCLAIMER,
+  batchDisclaimer,
   BROWSER_BATCH_WARN,
   DEFAULT_STATUSES,
   batchCsv,
   batchCsvMeta,
+  batchCsvName,
   facets,
   insertRow,
   loadStructures,
@@ -32,6 +33,7 @@ import {
   type BatchRow,
   type Selection,
   type Structure,
+  type StructureKind,
 } from "@/lib/crest/batch";
 import {
   FailureWatch,
@@ -60,7 +62,10 @@ import { EXAMPLE_STATE, NID_STATES, stateName } from "@/lib/crest/nid-state";
 import { saveText } from "@/lib/crest/save";
 import { useDesk } from "@/lib/crest/store";
 import { BatchTable } from "./BatchTable";
-import { selectNidState, useSelectedNidState } from "./NidDamPicker";
+import { selectNidState, useSelectedNidState } from "@/lib/crest/use-nid-data";
+import { useProfile } from "@/lib/crest/profile";
+import { ND_DEFAULT_STATUSES, ND_KINDS, loadNdStructures, ndInventory } from "@/lib/crest/nd-structures";
+import type { NdData } from "@/lib/crest/nd-dams";
 import { TerrainSource } from "./TerrainSource";
 
 const btn =
@@ -99,12 +104,17 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
   const deskDams = useDesk((s) => s.dams);
   const selectDam = useDesk((s) => s.select);
   const [data, setData] = useState<{
-    nd: NidData;
+    nd: NidData | NdData;
     structures: Structure[];
     source: Record<string, unknown>;
   } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const nidState = useSelectedNidState();
+  // North Dakota profile (profile.ts): the list is the NID dams with their DWR values plus every other DWR dam, dugout
+  // and unknown structure (nd-structures.ts), always North Dakota; the US profile lists the chosen state's NID dams.
+  const ndProfile = useProfile((s) => s.profile) === "nd";
+  const pickedState = useSelectedNidState();
+  const nidState = ndProfile ? "ND" : pickedState;
+  const inventory = useMemo(() => (ndProfile && data && "dwr" in data.nd ? ndInventory(data.nd) : undefined), [ndProfile, data]);
   // A batch that was stopped, paused or cut off by a closed tab: the screen reopens on the state and the selection it
   // was running (the selection is put back when that state's dams load, below).
   const [job, setJobState] = useState<BatchJob | null>(() => recoverJob(loadBatchJob()));
@@ -115,8 +125,8 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
   }, []);
   const was = job && job.state !== "done" ? job.selection : null;
   const [by, setBy] = useState<Selection["by"]>(was?.by === "pick" || was?.by === "state" ? was.by : "county");
-  const kinds = useMemo(() => ["nid" as const], []);
-  const statuses = useMemo(() => [...DEFAULT_STATUSES] as string[], []);
+  const kinds = useMemo<StructureKind[]>(() => (ndProfile ? [...ND_KINDS] : ["nid"]), [ndProfile]);
+  const statuses = useMemo(() => (ndProfile ? [...ND_DEFAULT_STATUSES] : [...DEFAULT_STATUSES]) as string[], [ndProfile]);
   const [ids, setIds] = useState<string[]>(was?.ids ?? []);
   const [counties, setCounties] = useState<string[]>(was?.counties ?? []);
   const [query, setQuery] = useState("");
@@ -183,13 +193,13 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
         setJob(stopped);
       }
     }
-    loadStructures(nidState)
+    (ndProfile ? loadNdStructures() : loadStructures(nidState))
       .then((d) => live && setData(d))
       .catch((e) => live && setLoadErr((e as Error).message));
     return () => {
       live = false;
     };
-  }, [nidState, setJob]);
+  }, [nidState, ndProfile, setJob]);
 
   // Nothing is lost to a closed or backgrounded tab: when the page is hidden, write the rows still in the buffer and
   // how far the batch got. While a batch runs, closing the tab asks first, and a paused batch resumes when the
@@ -326,6 +336,7 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
     try {
       await runBatchInBrowser(list, {
         nd: data.nd,
+        inventory,
         signal: c.signal,
         skip,
         yieldFn: () => new Promise((r) => setTimeout(r, 0)),
@@ -427,7 +438,7 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
         if (!s || !data) return;
         setOpening(id);
         try {
-          const again = await runStructure(s, { nd: data.nd });
+          const again = await runStructure(s, { nd: data.nd, inventory });
           d = again.dam ?? undefined;
           if (d) dams.current.set(id, d);
           else
@@ -455,12 +466,12 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
         `New record from the batch for ${id}. Its terrain layer is rebuilt on the Flood step in one click.`,
       );
     },
-    [deskDams, selectDam, addDam, onOpen, byId, data],
+    [deskDams, selectDam, addDam, onOpen, byId, data, inventory],
   );
 
   const exportCsv = async () => {
     const r = await saveText(
-      `crest-batch-${new Date().toISOString().slice(0, 10)}.csv`,
+      batchCsvName(),
       batchCsv(rows, data ? batchCsvMeta(data) : {}),
       "text/csv",
     );
@@ -475,7 +486,11 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
     );
   };
 
-  const statePicker = (
+  const statePicker = ndProfile ? (
+    <p className="text-sm text-muted" data-testid="batch-nd-list">
+      North Dakota: NID dams with their DWR values, plus every other DWR dam, dugout and unknown structure.
+    </p>
+  ) : (
     <label className="block text-sm">
       <span className="text-muted">State (NID dams)</span>
       <select
@@ -522,7 +537,7 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
   ) => (
     <div>
       <p className="mb-2 text-sm text-muted">
-        {chosen.length ? `${chosen.length} chosen. ` : ""}Tick one or more {label}.
+        {chosen.length ? `${chosen.length} chosen. ` : ""}Tick one or more {label}.{" "}
         {chosen.length ? (
           <button type="button" className="ml-2 text-water underline" onClick={() => set([])}>
             Clear
@@ -535,6 +550,8 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
             key={x.value}
             type="button"
             className={chip(chosen.includes(x.value))}
+            aria-pressed={chosen.includes(x.value)}
+            aria-label={`${x.value}: ${x.count} dam${x.count === 1 ? "" : "s"}`}
             onClick={() => toggle(chosen, x.value, set)}
           >
             {x.value} <span className="opacity-70">{x.count}</span>
@@ -549,10 +566,22 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
       <div className={pane}>
         <h2 className="text-xl">Batch screen</h2>
         <p className="mt-1 text-sm text-muted">
-          Run many NID dams through the same build and triage as one dam on the desk. Each record is
-          auto-derived: height and storage from the NID, crest from 3DEP at the NID point, and the
-          downstream direction from the 3DEP downhill (or from the local DEM chosen below). Use the
-          results to order the Runner worklist.
+          {ndProfile ? (
+            <>
+              Run many North Dakota dams and structures through the same build and triage as one dam on the
+              desk. Each record is auto-derived: height and storage from the NID with DWR&apos;s values (or from
+              DWR alone), the crest from DWR&apos;s NAVD 88 elevations where DWR gives them, else from 3DEP at the
+              point, and the downstream direction from the 3DEP downhill (or from the local DEM chosen below).
+              Use the results to order the Runner worklist.
+            </>
+          ) : (
+            <>
+              Run many NID dams through the same build and triage as one dam on the desk. Each record is
+              auto-derived: height and storage from the NID, crest from 3DEP at the NID point, and the
+              downstream direction from the 3DEP downhill (or from the local DEM chosen below). Use the
+              results to order the Runner worklist.
+            </>
+          )}
         </p>
         <div className="mt-3">{statePicker}</div>
         <TerrainSource />
@@ -769,7 +798,7 @@ export function BatchScreen({ onOpen }: { onOpen: (note?: string) => void }) {
       {sorted.length ? (
         <div className={pane}>
           <h3 className="text-lg">Results: Runner worklist first</h3>
-          <p className="mt-1 text-xs text-muted">{BATCH_DISCLAIMER}</p>
+          <p className="mt-1 text-xs text-muted">{batchDisclaimer()}</p>
           {opening ? (
             <p className="mt-1 text-sm text-muted" role="status">
               Rebuilding the record for {opening} from the inventories and the terrain…

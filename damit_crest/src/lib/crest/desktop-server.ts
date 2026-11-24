@@ -1,5 +1,5 @@
 /**
- * Calls to the DamIT Crest desktop server (desktop/damit_desktop/__main__.py). The server opens the desk at
+ * Calls to the DamIT Desk server (desktop/damit_desktop/__main__.py). The server opens the desk at
  * index.html#damit-token=<token>; every /api/ call must send that per-launch token back in X-DamIT-Token.
  *
  * Security audit 2026-11-18: the token used to be written into <meta name="damit-token"> of the served page, so any
@@ -84,4 +84,20 @@ export function crestApiHeaders(json = false): Record<string, string> {
  */
 export function hasDesktopServer(): boolean {
   return desktopToken() !== "";
+}
+
+/**
+ * The Report step's Work folder hint (fresh install test 2026-11-21): the folder a blank field really means, as the
+ * desk server answers it in /api/handoff (`work`: DAMIT_WORK when set, else DamITDams in the home folder). Without a
+ * server, or before it answers, the general rule.
+ */
+export function workFolderHint(work: string | null | undefined): string {
+  const w = typeof work === "string" ? work.trim() : "";
+  return w ? `blank = ${w}` : "blank = DAMIT_WORK, else DamITDams in your home folder";
+}
+
+/** The server's one-line notices (/api/handoff `notices`, e.g. the first-start copy from DamIT Crest): text only. */
+export function serverNotices(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((n): n is string => typeof n === "string" && n.trim() !== "").map((n) => n.trim().slice(0, 600)).slice(0, 5);
 }

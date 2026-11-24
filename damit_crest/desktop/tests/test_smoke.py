@@ -252,11 +252,12 @@ class ServedEngineTests(unittest.TestCase):
         from damit_desktop.__main__ import API_TOKEN
 
         self.assertNotIn(API_TOKEN.encode(), body)
-        self.assertEqual(body, (WEB / "index.html").read_bytes())
+        on_disk = (WEB / "index.html").read_bytes().replace(b"\r\n", b"\n")
+        self.assertEqual(body.replace(b"\r\n", b"\n"), on_disk)
         self.assertIn("text/html", ctype)
         for ref in ASSET_RE.findall(body.decode("utf-8")):
             data, ctype = self.get("/" + ref)
-            self.assertEqual(data, (WEB / ref).read_bytes(), ref)
+            self.assertEqual(data.replace(b"\r\n", b"\n"), (WEB / ref).read_bytes().replace(b"\r\n", b"\n"), ref)
             if ref.endswith(".js"):
                 self.assertIn("javascript", ctype, f"{ref} served as {ctype}; module scripts need a JS type")
 

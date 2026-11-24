@@ -1,7 +1,9 @@
 DamIT Crest desktop
 ===================
 
-Python 3.10 or newer. Python 3.14 is fine. You do not need Node.
+This folder is a refreshed copy of DamIT Desk 0.1.6 (the live app is the
+damit-desk repository). Python 3.10 or newer. Python 3.14 is fine. You do
+not need Node.
 
 1. Get the damit repository (git clone, or unzip a copy).
 2. Open a terminal and go into the damit_crest/desktop folder:
@@ -25,14 +27,15 @@ expired, stop the desk (Ctrl+C) and start it again.
 Report step — DamIT plugins in QGIS
 -----------------------------------
 These buttons need QGIS (3.28 to 4.x) and the DamIT plugins installed.
-Set QGIS_PROCESS if qgis_process is not on PATH.
+Set QGIS_PROCESS if qgis_process is not on PATH. The desk also finds
+~/dam-suite/qgis-process-damit.sh from the suite installer by itself.
 
 Algorithm ids (defaults; see docs/HANDOFF.md to change them):
   damit:classify          hazard classification (damit_hazard)
   damit_screen:preflight  screening preflight (damit_screener)
   damit_screen:runchain   screening chain (damit_screener)
-  damit_run:rundam        one-dam run (damit_runner; 0.1.0 prepares and
-                          records the run, it launches no model)
+  damit_run:rundam        one-dam run (damit_runner; it runs the flood
+                          model, LISFLOOD-FP or its built-in engine)
   damit_run:batch         not published - never started here
   damit_cli.py            one-dam runner CLI, searched in DamIT plugin
                           folders (none published yet)
@@ -48,7 +51,8 @@ Dam inventory
   No state dam-safety, dugout or suite-pack inventory is read (NDSUITE_DATA
   and ~/.ndsuite are not used). Records are handed off under their NID ID;
   a proposed dam needs the New dam box, the two fictional samples go as
-  samples.
+  samples. A United States or North Dakota profile chooses which inventory
+  and hand-off the desk uses.
 
 Get layers
   DamIT data folder (DAMIT_DATA, or damit/data_folder in ~/.damit/config.json),
@@ -66,15 +70,27 @@ Write folder and run screening
 
 Run the flood model
   One dam only: damit_run:rundam (with the screening's hand-off package
-  when there is one, DRY_RUN=true), or a DamIT runner CLI when Point X and
+  when there is one, DRY_RUN=false), or a DamIT runner CLI when Point X and
   Point Y are both filled in the DEM's coordinates. Never the batch.
   A failure mode you did not choose is sent as piping.
 
 Classify
   Sends the jurisdiction choice (preset or custom methods, Report step),
-  the model run's depth raster (type its path) and the dam record to
-  damit:classify.
+  the model run's depth raster, the dam record and the real structures,
+  roads and rail lines in the flood area (the DamIT data folder, else USACE
+  NSI, FHWA HPMS and the national rail network online) to damit:classify.
+  A layer it could not check makes the class "at least ..., INCOMPLETE".
+  Rail is High only with a trains-per-day CSV (Report field, or
+  DAMIT_RAIL_TRAINS_LOOKUP). In the North Dakota profile, classify can also
+  read ndhazard:classify's receptor layers.
 
-A blank work folder means ~/DamITDams.
+Download layers, Atlas 14 point, Find fills
+  Cancel stops them and everything they started. They stop by themselves
+  after 3 h, 15 min and 2 h (DAMIT_PLUGIN_TIMEOUT_S: one limit for all,
+  0 = none). Find fills gets the state's NID dams, so a listed dam is not
+  reported as new.
+
+A blank work folder means DAMIT_WORK when it is set, else ~/DamITDams (the
+field's hint shows which).
 The desk screen is not an official hazard class; the engineer of record
 and the regulating agency make the determination.

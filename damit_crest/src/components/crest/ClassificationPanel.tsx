@@ -16,6 +16,7 @@ import {
   type ClassificationChoice,
 } from "@/lib/crest/jurisdiction";
 import type { DamRecord, ScreenLevel } from "@/lib/crest/types";
+import { useClassifyAlg } from "./use-classify-alg";
 
 const SECTION_LABEL = {
   scenarios: "Scenarios (S)",
@@ -33,6 +34,7 @@ export function ClassificationPanel({
   level: ScreenLevel;
   update: (patch: Partial<DamRecord>) => void;
 }) {
+  const classifyAlg = useClassifyAlg();
   // No choice yet: the record's state preset (ND00199 -> North Dakota REG_05.2026), else FEMA 333.
   const choice = damChoice(dam);
   const set = (next: ClassificationChoice) => update({ classification: resolveChoice(next, defaultPresetFor(dam)) });
@@ -46,8 +48,11 @@ export function ClassificationPanel({
       <h3 className="text-lg">Jurisdiction and classification methods</h3>
       <p className="mt-1 text-sm text-muted">
         DamIT is multi-jurisdiction and consequence-based. Pick a state or agency preset, or switch to custom mode and
-        tick method ids. The choice is written into dam.json and sent to damit:classify; the thresholds come from the
-        hazard catalog data file, not from this desk. {CATALOG.disclaimer}
+        tick method ids. The choice is written into dam.json
+        {classifyAlg === "damit:classify"
+          ? " and sent to damit:classify; the thresholds come from the hazard catalog data file, not from this desk. "
+          : `; ${classifyAlg} is not sent it and classifies on its own rules (North Dakota REG_05.2026 and ACER TM 11). `}
+        {CATALOG.disclaimer}
       </p>
       {explanation ? (
         <p className="mt-2 rounded-sm border border-teal/30 bg-teal/5 px-3 py-2 text-xs text-foreground" data-testid="preset-explanation">
@@ -150,7 +155,7 @@ export function ClassificationPanel({
           ))}
         </div>
       )}
-      <p className="mt-3 text-xs text-muted">{screenAgainstChoice(level, choice)}</p>
+      <p className="mt-3 text-xs text-muted">{screenAgainstChoice(level, choice, classifyAlg)}</p>
       <p className="mt-1 text-xs text-muted">
         Catalog {CATALOG.catalogVersion}: {CATALOG.sourceDocument}.
       </p>
