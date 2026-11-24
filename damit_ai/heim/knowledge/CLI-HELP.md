@@ -579,7 +579,7 @@ heim/knowledge/ALGORITHM-HELP-DAMIT.md, so Heim cites ids that exist (damit_run:
 
 ---
 
-## vor.py 1.4.10
+## vor.py 1.4.11
 
 Installed command: `vor`. The literature assistant.
 
@@ -748,7 +748,7 @@ Download public ASDSO-listed dam-safety references into the vor library.
 
 ---
 
-## eval_vor.py 1.6
+## eval_vor.py 1.7
 
 Installed command: `eval_vor.py`. Score a model on the literature questions.
 
