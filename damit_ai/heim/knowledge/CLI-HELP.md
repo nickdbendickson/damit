@@ -416,7 +416,7 @@ One local page for Heim and Vor (127.0.0.1 only).
 | Argument | Value | Default | Meaning |
 |---|---|---|---|
 | `--port` | PORT | `0` | port (default: any free one) |
-| `--no-browser` |  |  | print the address instead of opening it |
+| `--no-browser` |  |  | print the one-time link instead of opening it |
 
 ---
 
