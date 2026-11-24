@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""ai_ui.py 1.1.0 - one local page for both assistants (the `ai` command).
+"""ai_ui.py 1.2.0 - one local page for both assistants (the `ai` command).
 
     ai                 open the page in your browser (http://127.0.0.1:<port>/, this computer only)
     ai --port 8765     a fixed port
-    ai --no-browser    print the address instead of opening it
+    ai --no-browser    print the one-time link instead of opening it
 
 What it is: a page served by this script on 127.0.0.1 only, so nothing leaves the machine and
 nothing on the network can reach it. It runs the same commands you would type (`heim`,
@@ -23,11 +23,26 @@ answers differently from the terminal. On the page:
   Health   ai-doctor, with one line per assistant.
 
 Safety: the server binds 127.0.0.1, answers only requests whose Host is that address, and every
-request must carry the random key printed at start (other web pages in your browser cannot run
+request must carry a random key in the X-Key header (other web pages in your browser cannot run
 commands through it). Commands are fixed argument lists, never a shell. A PDF is served only from
 Vor's library or Heim's index folders. Stdlib only. Ctrl+C stops it.
+
+1.2.0 (security audit 2026-11-24): the key is never in an address. 127.0.0.1 is shared by every account
+on the computer, and the browser is started with the address on its command line, which other local
+users can list (ps, /proc/<pid>/cmdline) for as long as that browser runs. 1.1.0 put the key there
+(/?k=<key>), so another account could read it and use the page as you (add your files to the library
+and read them back through /pdf). Now `ai` opens /launch?c=<one-time code>. The server swaps a valid
+code, once, for the page with the key in its body (the HTTP response to your browser's own loopback
+connection); the page keeps the key in sessionStorage (this tab and this port only) and sends it only
+in the X-Key header. The code is random, single-use, expires after LAUNCH_CODE_TTL_S and is compared in
+constant time, so what stays visible on the command line is dead once the page has loaded. A key in
+the query string (?k=) is no longer accepted. PDFs open through fetch + a blob: address. Residual risk
+(the same as DamIT Desk's): a local user who uses the code before your browser does gets the page; your
+browser then shows "already used", the terminal warns, and restarting `ai` makes a new key and code.
+Same scheme as DamIT Desk (damit_crest/desktop/damit_desktop/__main__.py, LAUNCH_PATH).
 """
 import argparse
+import hmac
 import json
 import os
 import re
@@ -41,10 +56,38 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOME = os.path.expanduser("~")
 RUN_SECONDS = 3600
+LAUNCH_PATH = "/launch"
+LAUNCH_CODE_TTL_S = 120.0          # --no-browser: LAUNCH_CODE_TTL_PRINTED_S (the link is copied by hand)
+LAUNCH_CODE_TTL_PRINTED_S = 600.0
+_launch_lock = threading.Lock()
+_launch = {"code": None, "expires": 0.0, "used": False}
+
+
+def issue_launch_code(ttl=LAUNCH_CODE_TTL_S):
+    """A fresh one-time launch code (replaces any earlier one)."""
+    code = secrets.token_urlsafe(32)
+    with _launch_lock:
+        _launch.update(code=code, expires=time.monotonic() + ttl, used=False)
+    return code
+
+
+def consume_launch_code(code):
+    """'ok' (and the code is spent), 'used', 'expired' or 'invalid'. Constant-time compare; one success per code."""
+    with _launch_lock:
+        current = _launch["code"]
+        if not current or not code or not hmac.compare_digest(code.encode(), current.encode()):
+            return "invalid"
+        if _launch["used"]:
+            return "used"
+        if time.monotonic() > _launch["expires"]:
+            _launch["used"] = True
+            return "expired"
+        _launch["used"] = True
+        return "ok"
 
 
 def tool(name):
@@ -205,9 +248,10 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").lower()
         return host in ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
 
-    def _key_ok(self, query):
-        got = self.headers.get("X-Key") or (query.get("k") or [""])[0]
-        return bool(got) and secrets.compare_digest(got, self.key)
+    def _key_ok(self):
+        """The key, in the X-Key header only (1.2.0: never from the address, see the module docstring)."""
+        got = self.headers.get("X-Key") or ""
+        return bool(got) and bool(self.key) and hmac.compare_digest(got.encode(), self.key.encode())
 
     def _send(self, code, body, ctype="text/plain; charset=utf-8"):
         data = body if isinstance(body, bytes) else body.encode("utf-8")
@@ -216,8 +260,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(data)
+
+    def _page(self, key):
+        return PAGE.replace("__KEY__", key).replace("__VERSION__", VERSION)
+
+    def _serve_launch(self, query):
+        """Swap the one-time launch code for the page with the key in its body (never in an address)."""
+        result = consume_launch_code((query.get("c") or [""])[0])
+        if result == "ok":
+            return self._send(200, self._page(self.key), "text/html; charset=utf-8")
+        if result == "used":
+            print("ai: WARNING - the one-time link was used more than once. If the page in your browser says so, "
+                  "another program used it first: stop ai (Ctrl+C) and start it again.", flush=True)
+        msg = {"used": "This link was already used. Use the Heim and Vor tab that is already open, or stop ai "
+                       "(Ctrl+C in its terminal) and start it again for a new link.",
+               "expired": "This link has expired. Stop ai (Ctrl+C in its terminal) and start it again."}.get(
+            result, "This is not a valid link. Stop ai (Ctrl+C in its terminal) and start it again.")
+        return self._send(410 if result in ("used", "expired") else 403, msg)
 
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj), "application/json")
@@ -267,12 +329,12 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         if not self._host_ok():
             return self._send(403, "wrong host")
+        if u.path == LAUNCH_PATH:
+            return self._serve_launch(q)
         if u.path == "/":
-            if not self._key_ok(q):
-                return self._send(403, "Open the address that `ai` printed (it carries the key).")
-            return self._send(200, PAGE.replace("__KEY__", self.key).replace("__VERSION__", VERSION),
-                              "text/html; charset=utf-8")
-        if not self._key_ok(q):
+            # no key in this copy: a reload in the same tab takes it from sessionStorage (see PAGE)
+            return self._send(200, self._page(""), "text/html; charset=utf-8")
+        if not self._key_ok():
             return self._send(403, "missing key")
         if u.path == "/pdf":
             path = (q.get("path") or [""])[0]
@@ -297,7 +359,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
-        if not self._host_ok() or not self._key_ok({}):
+        if not self._host_ok() or not self._key_ok():
             return self._send(403, "forbidden")
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -325,12 +387,19 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, "not found")
 
 
+def launch_url(port, code):
+    """The address `ai` opens or prints: a one-time launch code, never the key (see the module docstring)."""
+    return "http://127.0.0.1:%d%s?c=%s" % (port, LAUNCH_PATH, code)
+
+
 def serve(port=0, open_browser=True):
-    Handler.key = secrets.token_urlsafe(18)
+    Handler.key = secrets.token_urlsafe(32)
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     Handler.port = httpd.server_address[1]
-    url = "http://127.0.0.1:%d/?k=%s" % (Handler.port, Handler.key)
-    print("Heim and Vor: %s\n(this computer only; Ctrl+C stops it)" % url, flush=True)
+    code = issue_launch_code(LAUNCH_CODE_TTL_S if open_browser else LAUNCH_CODE_TTL_PRINTED_S)
+    url = launch_url(Handler.port, code)
+    print("Heim and Vor: %s\n(a one-time link: it works once, for %d minutes; this computer only; Ctrl+C stops it)"
+          % (url, int((LAUNCH_CODE_TTL_S if open_browser else LAUNCH_CODE_TTL_PRINTED_S) // 60)), flush=True)
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
@@ -344,7 +413,7 @@ def serve(port=0, open_browser=True):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="ai", description="One local page for Heim and Vor (127.0.0.1 only).")
     ap.add_argument("--port", type=int, default=0, help="port (default: any free one)")
-    ap.add_argument("--no-browser", action="store_true", help="print the address instead of opening it")
+    ap.add_argument("--no-browser", action="store_true", help="print the one-time link instead of opening it")
     a = ap.parse_args(argv)
     serve(a.port, not a.no_browser)
     return 0
@@ -390,13 +459,23 @@ pre:empty{display:none}svg{width:100%;height:280px}svg text{fill:var(--muted);fo
 </div><pre id="addout"></pre></section>
 <section id="health"><div class="card"><button class="go" id="docgo">Run ai-doctor</button></div><pre id="docout"></pre></section>
 </main>
+<div id="nokey" class="card" style="display:none">This tab has no key. Open the one-time link that <code>ai</code> printed, or stop <code>ai</code> (Ctrl+C) and start it again.</div>
 <script>
-const KEY="__KEY__";
+// 1.2.0: the key comes only in the body of the one-time /launch page, is kept in sessionStorage (this tab, this
+// port) and is sent only in the X-Key header. The address bar is set back to "/" so the code is not reused.
+const KEY=(function(){const k="__KEY__";try{if(k){sessionStorage.setItem("ai-ui-key",k);history.replaceState(null,"","/");return k}return sessionStorage.getItem("ai-ui-key")||""}catch(e){return k}})();
+if(!KEY)document.getElementById("nokey").style.display="block";
+async function openPdf(path,page){
+  const w=window.open("about:blank","_blank");
+  try{const r=await fetch("/pdf?path="+encodeURIComponent(path),{headers:{"X-Key":KEY}});
+    if(!r.ok)throw new Error(await r.text());
+    const u=URL.createObjectURL(await r.blob());if(w)w.location=u+(page?"#page="+page:"");else location.href=u}
+  catch(e){if(w)w.close();alert(String(e.message||e))}}
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{document.querySelectorAll("nav button,section").forEach(x=>x.classList.remove("on"));b.classList.add("on");document.getElementById(b.dataset.t).classList.add("on")});
 function esc(s){return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 function linkify(t){
   let h=esc(t);
-  h=h.replace(/file:\/\/([^\s)#"]+\.pdf)(#page=(\d+))?/gi,(m,p,_,n)=>'<a target="_blank" href="/pdf?k='+KEY+'&path='+encodeURIComponent(decodeURIComponent(p))+(n?'#page='+n:'')+'">'+esc(decodeURIComponent(p).split('/').pop())+(n?' p.'+n:'')+'</a>');
+  h=h.replace(/file:\/\/([^\s)#"]+\.pdf)(#page=(\d+))?/gi,(m,p,_,n)=>'<a href="#" data-pdf="'+esc(decodeURIComponent(p))+'" data-page="'+(n||'')+'">'+esc(decodeURIComponent(p).split('/').pop())+(n?' p.'+n:'')+'</a>');
   h=h.replace(/\[report\] (\S+\.md)/g,(m,p)=>'<a href="#" data-report="'+esc(p)+'">open the full report</a>');
   h=h.replace(/\b(PROBLEM)\b/g,'<span class="bad">$1</span>').replace(/\b(WATCH)\b/g,'<span class="watch">$1</span>').replace(/^(\s*)(ok|OK)\b/gm,'$1<span class="ok">$2</span>');
   return h}
@@ -406,15 +485,19 @@ async function stream(url,body,out,who){
   if(who)who.textContent=r.headers.get("X-Answered-By")?("Answered by "+r.headers.get("X-Answered-By")):"";
   const rd=r.body.getReader(),dec=new TextDecoder();
   for(;;){const {value,done}=await rd.read();if(done)break;text+=dec.decode(value,{stream:true});out.innerHTML=linkify(text);out.scrollTop=out.scrollHeight}
-  out.querySelectorAll("a[data-report]").forEach(a=>a.onclick=async e=>{e.preventDefault();const t=await (await fetch("/api/report?k="+KEY+"&path="+encodeURIComponent(a.dataset.report))).text();
-    out.innerHTML=linkify(t.replace(/\]\((file:[^)]+)\)/g," $1"))});
+  wire(out);
+}
+function wire(out){
+  out.querySelectorAll("a[data-pdf]").forEach(a=>a.onclick=e=>{e.preventDefault();openPdf(a.dataset.pdf,a.dataset.page)});
+  out.querySelectorAll("a[data-report]").forEach(a=>a.onclick=async e=>{e.preventDefault();const t=await (await fetch("/api/report?path="+encodeURIComponent(a.dataset.report),{headers:{"X-Key":KEY}})).text();
+    out.innerHTML=linkify(t.replace(/\]\((file:[^)]+)\)/g," $1"));wire(out)});
 }
 document.getElementById("askgo").onclick=()=>stream("/api/ask",{q:document.getElementById("q").value,target:document.getElementById("target").value},document.getElementById("answer"),document.getElementById("who"));
 document.getElementById("q").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey))document.getElementById("askgo").click()});
 document.querySelectorAll("[data-a]").forEach(b=>b.onclick=async()=>{
   const a=b.dataset.a,dam=document.getElementById("dam").value,svg=document.getElementById("chart");svg.style.display="none";
   stream("/api/run",{action:a,dam:dam,place:document.getElementById("place").value},document.getElementById("runsout"));
-  if(a==="hydrograph"&&dam){const d=await (await fetch("/api/hydrograph?k="+KEY+"&dam="+encodeURIComponent(dam))).json();if(Array.isArray(d)&&d.length)draw(svg,d)}});
+  if(a==="hydrograph"&&dam){const d=await (await fetch("/api/hydrograph?dam="+encodeURIComponent(dam),{headers:{"X-Key":KEY}})).json();if(Array.isArray(d)&&d.length)draw(svg,d)}});
 function draw(svg,series){
   const W=900,H=280,L=60,B=30,all=series.flatMap(s=>s.points),tx=Math.max(...all.map(p=>p[0]))||1,qx=Math.max(...all.map(p=>p[1]))||1;
   const X=t=>L+(W-L-10)*t/tx,Y=q=>H-B-(H-B-10)*q/qx,cols=["var(--accent)","var(--watch)","var(--ok)","var(--bad)","var(--muted)","var(--ink)"];

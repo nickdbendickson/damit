@@ -83,15 +83,74 @@ class UiTest(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode(), None
 
-    def test_page_needs_the_key(self):
-        self.assertEqual(self.req("/", key=None)[0], 403)
-        code, body, _ = self.req("/?k=k3y", key=None)
+    def test_the_plain_page_carries_no_key(self):
+        code, body, _ = self.req("/", key=None)
         self.assertEqual(code, 200)
         self.assertIn("Heim and Vor", body)
-        self.assertIn('const KEY="k3y"', body)
+        self.assertNotIn("k3y", body)
+        self.assertIn('const k=""', body)
+
+    def test_the_one_time_link_gives_the_key_once(self):
+        code_ = self.ui.issue_launch_code()
+        code, body, _ = self.req("/launch?c=" + code_, key=None)
+        self.assertEqual(code, 200)
+        self.assertIn('const k="k3y"', body)
+        again = self.req("/launch?c=" + code_, key=None)
+        self.assertEqual(again[0], 410)
+        self.assertNotIn("k3y", again[1])
+
+    def test_a_wrong_or_expired_launch_code_gets_nothing(self):
+        self.ui.issue_launch_code()
+        bad = self.req("/launch?c=not-the-code", key=None)
+        self.assertEqual(bad[0], 403)
+        self.assertNotIn("k3y", bad[1])
+        self.assertEqual(self.req("/launch", key=None)[0], 403)
+        late = self.ui.issue_launch_code(ttl=-1)
+        expired = self.req("/launch?c=" + late, key=None)
+        self.assertEqual(expired[0], 410)
+        self.assertNotIn("k3y", expired[1])
+
+    def test_a_key_in_the_address_is_not_accepted(self):
+        # security audit 2026-11-24: the key used to ride in ?k=, which is on the browser's command line
+        self.assertEqual(self.req("/api/hydrograph?k=k3y&dam=2801", key=None)[0], 403)
+        self.assertEqual(self.req("/api/ask?k=k3y", {"q": "x"}, key=None)[0], 403)
+
+    def test_the_browser_is_given_the_launch_link_not_the_key(self):
+        opened, printed = [], []
+        ui = self.ui
+        old_open, old_srv = ui.webbrowser.open, ui.ThreadingHTTPServer
+
+        class OneShot(ThreadingHTTPServer):
+            def serve_forever(self, *a, **k):
+                raise KeyboardInterrupt
+
+        class Now:
+            def __init__(self, interval, fn):
+                self.fn = fn
+
+            def start(self):
+                self.fn()
+        old_timer, old_print = ui.threading.Timer, ui.__dict__.get("print")
+        ui.webbrowser.open, ui.ThreadingHTTPServer, ui.threading.Timer = opened.append, OneShot, Now
+        ui.print = lambda *a, **k: printed.append(" ".join(str(x) for x in a))
+        try:
+            ui.serve(0, open_browser=True)
+        finally:
+            ui.webbrowser.open, ui.ThreadingHTTPServer, ui.threading.Timer = old_open, old_srv, old_timer
+            if old_print is None:
+                del ui.print
+        self.assertEqual(len(opened), 1)
+        key = ui.Handler.key
+        self.assertTrue(key and key != "k3y")
+        self.assertIn("/launch?c=", opened[0])
+        self.assertNotIn(key, opened[0])
+        self.assertNotIn(key, "\n".join(printed))
+        self.assertNotIn("k=", opened[0].split("?", 1)[1].replace("c=", ""))
+        ui.Handler.key = "k3y"
 
     def test_a_request_from_another_host_name_is_refused(self):
-        self.assertEqual(self.req("/?k=k3y", key=None, host="evil.example:80")[0], 403)
+        self.assertEqual(self.req("/", key=None, host="evil.example:80")[0], 403)
+        self.assertEqual(self.req("/launch?c=x", key=None, host="evil.example:80")[0], 403)
 
     def test_api_needs_the_key(self):
         self.assertEqual(self.req("/api/ask", {"q": "x"}, key=None)[0], 403)
