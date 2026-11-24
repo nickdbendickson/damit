@@ -26,10 +26,14 @@ if (( rc == 0 )); then
 fi
 echo ""
 if (( rc == 0 )); then
-  echo "Done. Close this window and open a NEW Terminal window: heim, vor and ai are ready there."
+  echo "Done. Local AI is in your Applications folder (Spotlight: Local AI): it opens Heim and Vor in a window."
+  echo "In a NEW Terminal window, heim, vor and ai are ready too."
+  # opened for you after a first install or an update run from here; an update started from the Local AI
+  # window itself (AI_UI_JOB) leaves that window to say so
+  [[ -z "${AI_UI_JOB:-}" && -d "$HOME/Applications/Local AI.app" ]] && /usr/bin/open "$HOME/Applications/Local AI.app"
 else
   echo "The install stopped (exit $rc). Fix what it says above, then double-click this file again:"
   echo "it carries on from where it stopped."
 fi
-read -k1 "?Press any key to close this window."
+[[ -t 0 ]] && read -k1 "?Press any key to close this window."
 exit $rc

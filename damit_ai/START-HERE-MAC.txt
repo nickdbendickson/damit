@@ -17,9 +17,13 @@ Two assistants that run on this Mac only (nothing is sent anywhere):
    - If it stops, read the last lines, fix that, and double-click it again. It carries on
      where it stopped.
 
-2. Open a NEW Terminal window (Finder > Applications > Utilities > Terminal).
+2. Open Local AI: it is in your Applications folder (or press Cmd+Space and type Local AI).
+     Ask questions, add documents (drop PDFs on the Library tab), get more from the download
+     catalog, fix what Health reports with one press, test the answers and install updates.
+     Nothing to type, and nothing needs admin rights.
+   Or open a NEW Terminal window (Finder > Applications > Utilities > Terminal) and type:
 
-3. Try it:
+3. Try these:
      vor "what breach width does Froehlich 2008 give?"
      heim "what does REFINE_NEAR do?"
      ai            both on one page in your web browser

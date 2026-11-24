@@ -4908,6 +4908,41 @@ alias heim-reindex-all='heim-index -c nd_hazard "\$ND_REPO" && heim-index -c dwr
 EOF
 ok "aliases written (run: source ~/.zshrc, then edit ND_REPO/DWR_REPO/CREST_REPO/STD_PDFS)"
 
+# The Local AI icon (ai_ui 1.2.0): ~/Applications/Local AI.app opens the `ai` page in a window of its own.
+# It is made here, on this Mac, so macOS does not ask about it (only downloaded apps are checked), and it
+# lives in your own Applications folder: no sudo. It is a launcher only: a short zsh script that reads
+# the assistants' settings (the export lines this installer and Vor's write to ~/.zshrc) and runs
+# ai_ui.py --app, which starts the page's server in the background when it is not running.
+APP="$HOME/Applications/Local AI.app"
+if mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" 2>/dev/null; then
+  cat > "$APP/Contents/Info.plist" << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Local AI</string>
+  <key>CFBundleDisplayName</key><string>Local AI</string>
+  <key>CFBundleIdentifier</key><string>org.damit.local-ai</string>
+  <key>CFBundleExecutable</key><string>local-ai</string>
+  <key>CFBundleIconFile</key><string>local-ai</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.2.0</string>
+  <key>LSUIElement</key><true/>
+</dict></plist>
+PLIST
+  cat > "$APP/Contents/MacOS/local-ai" << LAUNCH
+#!/bin/zsh
+eval "\$(/usr/bin/grep -E '^export (VOR|HEIM|OLLAMA|DAMCHAIN|DAMAUDIT|LOCAL_AI)_[A-Za-z0-9_]*=|^export (ND_REPO|DWR_REPO|CREST_REPO|STD_PDFS)=' "\$HOME/.zshrc" 2>/dev/null)"
+mkdir -p "\$HOME/local-ai/logs"
+exec $PYRUN "\$HOME/local-ai/ai_ui.py" --app >> "\$HOME/local-ai/logs/ai-ui.log" 2>&1
+LAUNCH
+  chmod +x "$APP/Contents/MacOS/local-ai"
+  [[ -f "${0:A:h}/icons/local-ai.icns" ]] && cp "${0:A:h}/icons/local-ai.icns" "$APP/Contents/Resources/local-ai.icns"
+  touch "$APP"
+  ok "Local AI icon -> $APP (Launchpad and Spotlight find it; drag it to the Dock to keep it there)"
+else
+  warn "could not make $APP: open the page with  ai  instead"
+fi
+
 # ===========================================================================
 say "Step 9/10 — Housekeeping"
 rm -rf "$TMPDIR_L"
@@ -4944,7 +4979,7 @@ if [[ $PASS -eq $TOTAL ]]; then
   printf '\033[1;32mALL %s CHECKS PASSED — fully operational.\033[0m\n' "$TOTAL"
   cat << 'NEXT'
 
-TRY IT NOW (open a new Terminal window first):
+TRY IT NOW: open Local AI (in your Applications folder, or Spotlight: Local AI), or in a new Terminal window:
   heim "what does REFINE_NEAR do?"      the suite's tools and known behaviours, cited
   ai                                    Heim and Vor on one page in your browser
   heim help                             the short list of commands

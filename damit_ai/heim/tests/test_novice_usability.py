@@ -749,6 +749,24 @@ class LinuxInstallerRunTest(unittest.TestCase):
         self.assertIn("install-local-ai-linux.sh --ollama-port", log)
         self.assertIn("Try it now", log)
         self.assertNotIn("The install stopped", out)
+        # ai_ui 1.2.0: the Local AI icon, in the user's own menu folder
+        desktop = os.path.join(home, ".local", "share", "applications", "local-ai.desktop")
+        with open(desktop, encoding="utf-8") as fh:
+            entry = fh.read()
+        app = os.path.join(home, "local-ai", "bin", "local-ai-app")
+        self.assertIn('Exec="%s"' % app, entry)
+        self.assertIn("Icon=%s" % os.path.join(home, "local-ai", "icons", "local-ai.png"), entry)
+        self.assertTrue(os.path.isfile(os.path.join(home, "local-ai", "icons", "local-ai.png")))
+        self.assertTrue(os.access(app, os.X_OK))
+        with open(app, encoding="utf-8") as fh:
+            launcher = fh.read()
+        self.assertIn('ai_ui.py" --app', launcher)
+        # the launcher's settings line reads the export lines the installer wrote (a menu has no shell rc)
+        settings = launcher.splitlines()[1]
+        r = subprocess.run(["bash", "-c", settings + '\necho "VOR_HOME=$VOR_HOME"'], capture_output=True, text=True,
+                           env={"HOME": home, "PATH": "/usr/bin:/bin"})
+        self.assertIn("VOR_HOME=%s" % os.path.join(home, "Vor"), r.stdout)
+        self.assertIn("Local AI (your applications menu)", out)
 
     def test_too_little_disk_stops_before_any_download_and_says_how_to_carry_on(self):
         fake = os.path.join(self.tmp, "smalldf")

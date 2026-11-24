@@ -573,6 +573,7 @@ ai_block() {
     if [[ -n "${SANDBOX:-}" ]]; then
       # the tools' defaults are ~/local-ai/...: everything they write stays in the sandbox
       echo "export HEIM_DB=\"$LOCAL_AI/knowledge.db\" HEIM_RUNS_DB=\"$LOCAL_AI/runs.db\" HEIM_REPORTS=\"$LOCAL_AI/reports\""
+      echo "export LOCAL_AI_HOME=\"$LOCAL_AI\""
       echo "export DAMAUDIT_REPORTS=\"$LOCAL_AI/reports\" DAMAUDIT_GOLDEN=\"$LOCAL_AI/golden\""
       echo "export DAMCHAIN_BATCH_ROOT=\"$LOCAL_AI/qgis-batch\" DAMCHAIN_CREST_DIR=\"$LOCAL_AI/crest-desktop\" VOR_TOOL=\"$VOR_DIR/vor.py\""
       echo "export PIP_NO_CACHE_DIR=1 CONDA_PKGS_DIRS=\"$LOCAL_AI/conda-pkgs\" CONDA_REGISTER_ENVS=false"
@@ -626,6 +627,33 @@ fi
 
 # ---------------------------------------------------------------------------
 say "Done"
+# The Local AI icon (ai_ui 1.2.0): an entry in your applications menu that opens the `ai` page in a window
+# of its own. Your own menu folder (~/.local/share/applications): no sudo. The launcher reads the
+# assistants' settings (the export lines of the block written to the rc file) and runs ai_ui.py --app, which starts the
+# page's server in the background when it is not running. Not made for a sandbox (--prefix).
+if [[ "$DO_HEIM" == 1 && -z "${SANDBOX:-}" ]]; then
+  mkdir -p "$LOCAL_AI/bin" "$LOCAL_AI/icons" "$HOME/.local/share/applications"
+  [[ -f "${HERE:-}/heim/icons/local-ai.png" ]] && cp "$HERE/heim/icons/local-ai.png" "$LOCAL_AI/icons/local-ai.png"
+  cat > "$LOCAL_AI/bin/local-ai-app" <<LAUNCH
+#!/usr/bin/env bash
+eval "\$(grep -E '^export (VOR|HEIM|OLLAMA|DAMCHAIN|DAMAUDIT|LOCAL_AI)_[A-Za-z0-9_]*=' "$RC" 2>/dev/null)"
+mkdir -p "$LOCAL_AI/logs"
+exec "$LOCAL_AI/python" "$LOCAL_AI/ai_ui.py" --app >> "$LOCAL_AI/logs/ai-ui.log" 2>&1
+LAUNCH
+  chmod +x "$LOCAL_AI/bin/local-ai-app"
+  cat > "$HOME/.local/share/applications/local-ai.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Local AI
+Comment=Heim and Vor, the dam-safety assistants on this computer
+Exec="$LOCAL_AI/bin/local-ai-app"
+Icon=$LOCAL_AI/icons/local-ai.png
+Terminal=false
+Categories=Science;Education;
+DESKTOP
+  ok "Local AI icon -> your applications menu ($HOME/.local/share/applications/local-ai.desktop)"
+fi
+
 if [[ -n "$SANDBOX" ]]; then cat <<EOF
   Sandbox $SANDBOX: in each shell run  . $RC  (its Ollama: $OLLAMA_HOST_URL; start it again with dam-ollama-serve).
   To remove it: kill \$(cat $LOCAL_AI/ollama-serve.pid), then delete $SANDBOX.
@@ -638,6 +666,7 @@ fi
 [[ "$DO_VOR" == 1 ]] && echo "    vor \"what breach width does Froehlich 2008 give?\"     answered from your library, quotes checked"
 [[ "$DO_HEIM" == 1 ]] && echo "    heim \"what does REFINE_NEAR do?\"                      the suite's tools and known behaviours"
 [[ "$DO_HEIM" == 1 ]] && echo "    ai                                                     both on one page in your browser"
+[[ "$DO_HEIM" == 1 && -z "$SANDBOX" ]] && echo "    Local AI (your applications menu)                      the same page in a window of its own: no typing"
 [[ "$DO_HEIM" == 1 ]] && echo "    heim help                                              the short list of commands"
 if [[ "$DO_VOR" == 1 && "$LIB_EMPTY" == 1 ]]; then cat <<EOF
   Vor's library is empty, so vor has nothing to quote yet. Add your own PDFs:  vor add FILE ...
