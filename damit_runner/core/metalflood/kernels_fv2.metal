@@ -8,9 +8,13 @@
 // Numerics (differences from FV1 noted):
 //   - conserved cell variables U = (h, hu, hv); bed z (relative to the lowest cell, float32 care);
 //   - MUSCL reconstruction (2nd order in space): per cell, minmod-limited slopes of the free
-//     surface eta = z + h and of the discharges qx = hu, qy = hv, and of the bed z, in x and y.
-//     At a face the + and - states are the cell-centre values extrapolated a half cell with the
-//     limited slope. Reconstructing eta (not h) is what keeps a lake at rest at 2nd order; the
+//     surface eta = z + h and of the VELOCITIES u = qx / h, v = qy / h (Runner 3.66.0; before it the
+//     discharges qx, qy were reconstructed and divided by the reconstructed depth eta_face - z,
+//     which on a steep bank can be a few mm under a full cell's discharge: face velocities of
+//     20-30 m/s, momentum spikes in 0.5-2 m of water, and answers that moved by 15 cm with the
+//     last bit of rounding), in x and y. At a face the + and - states are the cell-centre values
+//     extrapolated a half cell with the limited slope, so a face velocity lies between the cell's
+//     and its neighbours' velocities. Reconstructing eta (not h) is what keeps a lake at rest at 2nd order; the
 //     minmod limiter is TVD, so no new extrema and no spurious oscillation at the front;
 //   - Audusse et al. (2004) hydrostatic reconstruction at each face on the *reconstructed* states:
 //     face bed z_face = max(z_L+, z_R-); h*_L = max(0, eta_L+ - z_face), h*_R = max(0, eta_R- -
@@ -24,7 +28,9 @@
 //     depth>=0 clip and the running maxima are applied as in FV1, the maxima on the final stage;
 //   - dt = min(initial_tstep, cfl dx / max_cell(|u|+c, |v|+c)), cfl capped at MF_CFL_CAP, computed
 //     on the GPU every step from the wave speeds of U^n;
-//   - FREE domain edges are transmissive (zero-gradient ghost); closed edges are reflective walls.
+//   - FREE domain edges are transmissive (zero-gradient ghost) for OUTFLOW only: an inward velocity
+//     is cut to 0, so no water enters from outside the model (as ACC / LISFLOOD-FP FREE edges);
+//     closed edges are reflective walls.
 //
 // Compiled two ways, exactly like kernels_fv.metal: by Metal at run time on a Mac, and as C++ with
 // mf_shim.h (cpu_kernels_fv2.cpp) everywhere else. So: plain functions, B(i)/GID for the Metal
@@ -42,6 +48,9 @@ using namespace metal;
 #define MF_TEPS 1.0e-3f
 #define MF_CFL_CAP 0.45f         // 2-D explicit Godunov stability ceiling
 #define MF_HVEL 1.0e-6f          // depth below which a cell carries no velocity (desingularisation)
+#define MF_SLOPE_EPS 1.0e-6f     // FREE-edge normal-depth floor deadband: a surface flat to
+//                                 within this slope has no drainage drive (sqrt(slope) ill-
+//                                 conditioned as slope -> 0); below it the transmissive flux stands.
 
 // edges in Params.free_mask (shared with kernels.metal)
 #define MF_N 1u
@@ -127,7 +136,8 @@ struct Params {
     device float* h0 B(24), \
     device float* hu0 B(25), \
     device float* hv0 B(26), \
-    constant Params& p B(27), \
+    device float* hs B(27), \
+    constant Params& p B(28), \
     uint2 gid GID
 
 struct F3 { float h, mn, mt; };   // flux: mass, normal momentum, tangential momentum
@@ -170,14 +180,50 @@ inline float mf_sle(device const float* z, device const float* h, uint i, uint l
     return mf_minmod(dl, dh);
 }
 
-struct Slp { float e, u, v; };   // minmod slopes of (eta, hu, hv) in one direction
+// the stage-start depth of cell (r, c) for k_cont_fv2's neighbour slopes: hs inside the compute
+// window (k_save_fv2 refreshed it this stage), h outside it (no kernel writes h there, and hs may be
+// stale from a batch when the window was bigger).
+inline float mf_hstart(device const float* h, device const float* hs, uint r, uint c, uint nx,
+                       constant Params& p) {
+    uint i = r * nx + c;
+    bool in = r >= p.r0 && r < p.r0 + p.wr && c >= p.c0 && c < p.c0 + p.wc;
+    return in ? hs[i] : h[i];
+}
+
+// mf_sle on stage-start depths: the cell's own (hc) and its two neighbours' (hlo_d, hhi_d).
+inline float mf_sle_d(device const float* z, uint i, uint lo, uint hi, float hc, float hlo_d,
+                      float hhi_d, bool hlo, bool hhi) {
+    float c = z[i] + hc;
+    float dl = hlo ? (c - (z[lo] + hlo_d)) : 0.0f;
+    float dh = hhi ? ((z[hi] + hhi_d) - c) : 0.0f;
+    return mf_minmod(dl, dh);
+}
+
+// minmod-limited slope of the VELOCITY q / h across cell i (primitive variable): the face velocity
+// is then bounded by the cell's and its neighbours' velocities (TVD in u), however thin the
+// reconstructed depth at the face.
+inline float mf_slv(device const float* q, device const float* h, uint i, uint lo, uint hi,
+                    bool hlo, bool hhi) {
+    float c = mf_vel(q[i], h[i]);
+    float dl = hlo ? (c - mf_vel(q[lo], h[lo])) : 0.0f;
+    float dh = hhi ? (mf_vel(q[hi], h[hi]) - c) : 0.0f;
+    return mf_minmod(dl, dh);
+}
+
+struct Slp { float e, u, v; };
+
+// the reconstructed face velocity: the cell's velocity plus half its limited slope, or 0 where the
+// reconstructed depth at the face (eta_face - bed) leaves no water to carry it.
+inline float mf_fvel(float q, float hc, float half_slope, float hface) {
+    return (hface > MF_HVEL) ? mf_vel(q, hc) + half_slope : 0.0f;
+}   // minmod slopes of (eta, hu, hv) in one direction
 
 inline Slp mf_slopes(device const float* z, device const float* h, device const float* hu,
                      device const float* hv, uint i, uint lo, uint hi, bool hlo, bool hhi) {
     Slp s;
     s.e = mf_sle(z, h, i, lo, hi, hlo, hhi);
-    s.u = mf_sl(hu, i, lo, hi, hlo, hhi);
-    s.v = mf_sl(hv, i, lo, hi, hlo, hhi);
+    s.u = mf_slv(hu, h, i, lo, hi, hlo, hhi);
+    s.v = mf_slv(hv, h, i, lo, hi, hlo, hhi);
     return s;
 }
 
@@ -299,23 +345,46 @@ kernel void k_begin_fv2(MF_ARGS_FV2) {
         sf[S_VIN] += qin * dt;
     }
     st[S_WNEXT] = 0u;
-    st[S_QOUT] = 0u;
+    // the edge outflow is summed over BOTH stages: the Heun blend U^n+1 = (U^n + U* + dt L(U*)) / 2
+    // moves 0.5 dt (F(U^n) + F(U*)) through each face, so k_end books half the two-stage sum
+    // (counting only the corrector's flux mis-booked up to ~1 % of a draining basin's volume)
+    if (stage == 0u) st[S_QOUT] = 0u;
 }
 
-// every cell of the window: at the predictor (stage 0) save U^n into h0/hu0/hv0 for the RK2 blend,
-// before k_cont_fv2 overwrites the state. The minmod slopes are no longer stored (Metal's 31-buffer
-// cap); they are recomputed inline in k_faces_fv2 and k_cont_fv2. A no-op at the corrector.
+// every cell of the window, at both stages: save the stage-start depth into hs, which k_cont_fv2
+// reads for its neighbours' eta-slopes (it overwrites h in place, so reading h there would be a
+// read-after-write race between cells: the answer would depend on the order the cells run in). At the
+// predictor (stage 0) it also saves U^n into h0/hu0/hv0 for the RK2 blend. The minmod slopes are not
+// stored (Metal's 31-buffer cap); they are recomputed inline in k_faces_fv2 and k_cont_fv2.
 kernel void k_save_fv2(MF_ARGS_FV2) {
     device float* sf = (device float*)st;
-    if (sf[S_DT] <= 0.0f || st[S_STAGE] != 0u) {
+    if (sf[S_DT] <= 0.0f) {
         return;
     }
     uint r = p.r0 + gid.y;
     uint c = p.c0 + gid.x;
     uint i = r * p.nx + c;
+    hs[i] = h[i];
+    if (st[S_STAGE] != 0u) {
+        return;
+    }
     h0[i] = h[i];
     hu0[i] = hu[i];
     hv0[i] = hv[i];
+}
+
+// FREE-edge outflow floor: the Manning normal-depth velocity that the water-surface slope to the
+// inner cell drives, so a flooded basin that decelerates into a FREE boundary still drains instead
+// of ponding. 0 when the surface does not slope outward, and at an established outflow the cell's
+// own velocity already exceeds it, so the transmissive outflow is only ever raised, never cut.
+inline float mf_free_und(float etac, float etain, float hc, float n2c, float dx) {
+    float slope = (etain - etac) / dx;
+    // deadband: a surface flat to within MF_SLOPE_EPS has no drainage drive, and sqrt(slope) is
+    // ill-conditioned as slope -> 0, so below it the transmissive flux stands (keeps engines matched).
+    if (slope <= MF_SLOPE_EPS || hc <= MF_HVEL) {
+        return 0.0f;
+    }
+    return sqrt(slope) * pow(hc, 2.0f / 3.0f) / sqrt(fmax(n2c, 1e-12f));
 }
 
 // every face of the window: HLLC flux of the MUSCL-reconstructed, hydrostatically reconstructed
@@ -355,10 +424,10 @@ kernel void k_faces_fv2(MF_ARGS_FV2) {
                 float zf = fmax(z[l], z[rr]);     // first-order face bed (eta-slope is 0 at rest)
                 float hLs = fmax(0.0f, etaL - zf);
                 float hRs = fmax(0.0f, etaR - zf);
-                float uL = mf_vel(hu[l] + 0.5f * sL.u, fmax(0.0f, etaL - z[l]));
-                float vL = mf_vel(hv[l] + 0.5f * sL.v, fmax(0.0f, etaL - z[l]));
-                float uR = mf_vel(hu[rr] - 0.5f * sR.u, fmax(0.0f, etaR - z[rr]));
-                float vR = mf_vel(hv[rr] - 0.5f * sR.v, fmax(0.0f, etaR - z[rr]));
+                float uL = mf_fvel(hu[l], h[l], 0.5f * sL.u, etaL - z[l]);
+                float vL = mf_fvel(hv[l], h[l], 0.5f * sL.v, etaL - z[l]);
+                float uR = mf_fvel(hu[rr], h[rr], -0.5f * sR.u, etaR - z[rr]);
+                float vR = mf_fvel(hv[rr], h[rr], -0.5f * sR.v, etaR - z[rr]);
                 fl = mf_hllc(hLs, uL, vL, hRs, uR, vR, g);
             }
         } else if (c == 0u) {         // left domain edge, cell i is the + side
@@ -367,7 +436,13 @@ kernel void k_faces_fv2(MF_ARGS_FV2) {
                 float ui = mf_vel(hu[ii], h[ii]);
                 float vi = mf_vel(hv[ii], h[ii]);
                 if ((p.free_mask & MF_W) != 0u) {
-                    fl = mf_hllc(h[ii], ui, vi, h[ii], ui, vi, g);
+                    float uo = ui;
+                    if (nx > 1u) {
+                        float und = mf_free_und(z[ii] + h[ii], z[ii + 1u] + h[ii + 1u], h[ii], n2[ii], p.dx);
+                        if (und > 0.0f) uo = fmin(ui, -und);          // at least und outward (-x)
+                    }
+                    uo = fmin(uo, 0.0f);                     // outflow only: nothing enters from outside
+                    fl = mf_hllc(h[ii], uo, vi, h[ii], uo, vi, g);
                     outflow += fmax(-fl.h, 0.0f);
                 } else {
                     fl = mf_hllc(h[ii], -ui, vi, h[ii], ui, vi, g);
@@ -379,7 +454,13 @@ kernel void k_faces_fv2(MF_ARGS_FV2) {
                 float ui = mf_vel(hu[ii], h[ii]);
                 float vi = mf_vel(hv[ii], h[ii]);
                 if ((p.free_mask & MF_E) != 0u) {
-                    fl = mf_hllc(h[ii], ui, vi, h[ii], ui, vi, g);
+                    float uo = ui;
+                    if (nx > 1u) {
+                        float und = mf_free_und(z[ii] + h[ii], z[ii - 1u] + h[ii - 1u], h[ii], n2[ii], p.dx);
+                        if (und > 0.0f) uo = fmax(ui, und);           // at least und outward (+x)
+                    }
+                    uo = fmax(uo, 0.0f);                     // outflow only: nothing enters from outside
+                    fl = mf_hllc(h[ii], uo, vi, h[ii], uo, vi, g);
                     outflow += fmax(fl.h, 0.0f);
                 } else {
                     fl = mf_hllc(h[ii], ui, vi, h[ii], -ui, vi, g);
@@ -409,10 +490,10 @@ kernel void k_faces_fv2(MF_ARGS_FV2) {
                 float zf = fmax(z[u], z[d]);
                 float hUs = fmax(0.0f, etaU - zf);
                 float hDs = fmax(0.0f, etaD - zf);
-                float nU = mf_vel(hv[u] + 0.5f * sU.v, fmax(0.0f, etaU - z[u]));
-                float tU = mf_vel(hu[u] + 0.5f * sU.u, fmax(0.0f, etaU - z[u]));
-                float nD = mf_vel(hv[d] - 0.5f * sD.v, fmax(0.0f, etaD - z[d]));
-                float tD = mf_vel(hu[d] - 0.5f * sD.u, fmax(0.0f, etaD - z[d]));
+                float nU = mf_fvel(hv[u], h[u], 0.5f * sU.v, etaU - z[u]);
+                float tU = mf_fvel(hu[u], h[u], 0.5f * sU.u, etaU - z[u]);
+                float nD = mf_fvel(hv[d], h[d], -0.5f * sD.v, etaD - z[d]);
+                float tD = mf_fvel(hu[d], h[d], -0.5f * sD.u, etaD - z[d]);
                 fl = mf_hllc(hUs, nU, tU, hDs, nD, tD, g);
             }
         } else if (r == 0u) {         // north domain edge, cell i is the + (south) side
@@ -421,7 +502,13 @@ kernel void k_faces_fv2(MF_ARGS_FV2) {
                 float ni = mf_vel(hv[ii], h[ii]);
                 float ti = mf_vel(hu[ii], h[ii]);
                 if ((p.free_mask & MF_N) != 0u) {
-                    fl = mf_hllc(h[ii], ni, ti, h[ii], ni, ti, g);
+                    float no = ni;
+                    if (ny > 1u) {
+                        float und = mf_free_und(z[ii] + h[ii], z[ii + nx] + h[ii + nx], h[ii], n2[ii], p.dx);
+                        if (und > 0.0f) no = fmin(ni, -und);          // at least und outward (-y)
+                    }
+                    no = fmin(no, 0.0f);                     // outflow only: nothing enters from outside
+                    fl = mf_hllc(h[ii], no, ti, h[ii], no, ti, g);
                     outflow += fmax(-fl.h, 0.0f);
                 } else {
                     fl = mf_hllc(h[ii], -ni, ti, h[ii], ni, ti, g);
@@ -433,7 +520,13 @@ kernel void k_faces_fv2(MF_ARGS_FV2) {
                 float ni = mf_vel(hv[ii], h[ii]);
                 float ti = mf_vel(hu[ii], h[ii]);
                 if ((p.free_mask & MF_S) != 0u) {
-                    fl = mf_hllc(h[ii], ni, ti, h[ii], ni, ti, g);
+                    float no = ni;
+                    if (ny > 1u) {
+                        float und = mf_free_und(z[ii] + h[ii], z[ii - nx] + h[ii - nx], h[ii], n2[ii], p.dx);
+                        if (und > 0.0f) no = fmax(ni, und);           // at least und outward (+y)
+                    }
+                    no = fmax(no, 0.0f);                     // outflow only: nothing enters from outside
+                    fl = mf_hllc(h[ii], no, ti, h[ii], no, ti, g);
                     outflow += fmax(fl.h, 0.0f);
                 } else {
                     fl = mf_hllc(h[ii], ni, ti, h[ii], -ni, ti, g);
@@ -473,15 +566,23 @@ kernel void k_cont_fv2(MF_ARGS_FV2) {
     float dx = p.dx;
     float g = p.g;
 
-    float h0c = h[i];
+    // stage-start depths (hs, saved by k_save_fv2): this kernel writes h in place, so a neighbour's h
+    // may already hold its new value here; hs never does, whatever order the cells run in
+    float h0c = hs[i];
     float etaI = z[i] + h0c;
     // the cell's own eta-slopes, recomputed inline (consistent with k_faces_fv2's reconstruction)
     bool hlx = (c > 0u) && ok[i - 1u] != 0;
     bool hhx = (c + 1u < nx) && ok[i + 1u] != 0;
-    float sxe_i = mf_sle(z, h, i, (c > 0u) ? i - 1u : i, (c + 1u < nx) ? i + 1u : i, hlx, hhx);
+    float hW = (c > 0u) ? mf_hstart(h, hs, r, c - 1u, nx, p) : h0c;
+    float hE = (c + 1u < nx) ? mf_hstart(h, hs, r, c + 1u, nx, p) : h0c;
+    float sxe_i = mf_sle_d(z, i, (c > 0u) ? i - 1u : i, (c + 1u < nx) ? i + 1u : i, h0c, hW, hE,
+                           hlx, hhx);
     bool hly = (r > 0u) && ok[i - nx] != 0;
     bool hhy = (r + 1u < ny) && ok[i + nx] != 0;
-    float sye_i = mf_sle(z, h, i, (r > 0u) ? i - nx : i, (r + 1u < ny) ? i + nx : i, hly, hhy);
+    float hN = (r > 0u) ? mf_hstart(h, hs, r - 1u, c, nx, p) : h0c;
+    float hS = (r + 1u < ny) ? mf_hstart(h, hs, r + 1u, c, nx, p) : h0c;
+    float sye_i = mf_sle_d(z, i, (r > 0u) ? i - nx : i, (r + 1u < ny) ? i + nx : i, h0c, hN, hS,
+                           hly, hhy);
     // reconstructed cell-edge depths for the Audusse source, consistent with k_faces_fv2
     float etaxR = etaI + 0.5f * sxe_i;
     float etaxL = etaI - 0.5f * sxe_i;
@@ -611,6 +712,6 @@ kernel void k_end_fv2(MF_ARGS_FV2) {
     st[S_STEPS] = st[S_STEPS] + 1u;
     sf[S_MINDT] = fmin(sf[S_MINDT], dt);
     sf[S_LASTDT] = dt;
-    sf[S_VOUT] += float(st[S_QOUT]) * MF_FIX * dt;
+    sf[S_VOUT] += 0.5f * float(st[S_QOUT]) * MF_FIX * dt;   // half the two-stage sum (k_begin)
     st[S_WMAX] = st[S_WNEXT];
 }

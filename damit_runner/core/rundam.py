@@ -50,6 +50,7 @@ and the QA maps no longer end a run that has no Qt application and no matplotlib
 LISFLOOD-FP path that is no program, the kill stage on Windows, culvert prep), and compat/keepawake.py takes the log the model
 runners pass. No change to this module's run or its numbers.
 
+0.9.0: DamSafety Runner 3.74.0 / Boann 5.0.0 flood and grid port - Boann (core/metalflood) re-copied whole, BoannGrid (core/metalterrain) added, enclosed DEM no-data holes the flood reaches are filled, run health card, 0.06 Manning n fallbacks now 0.05; CHANGES RESULTS for GPU-engine (Boann ACC) runs and for runs held up by an enclosed DEM hole.
 0.8.6: repo audit 2026-11-23 - engine_sources() helpers restored (NameError on a set engine path that is not a file); no number change.
 0.8.5: DamSafety #392 generic part - C1 centre snap (only with DAM_POINT_CHECK = move; DamIT keeps warn as the default), dam line local normal in the inflow side check, Crest raised warning once per run; no number change at the default. dwr_lines (ND DWR pack) not ported.
 0.8.4: DamSafety #387 - with a dam line the downstream side comes from the reservoir's flat water and the breach inflow is no longer put on the reservoir; CHANGES RESULTS for dams with a dam line whose side was wrong.
@@ -90,7 +91,7 @@ import os
 from . import atomicio
 from . import catalog_bridge as CB
 
-VERSION = "0.8.6"
+VERSION = "0.9.0"
 PROVIDER_ID = "damit_run"
 RUN_SETUP = "run_setup.json"
 RUN_SCHEMA = "damit.run_setup"

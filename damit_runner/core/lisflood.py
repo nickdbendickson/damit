@@ -132,6 +132,27 @@ def solver_from_env(default=SOLVER_ACC):
 # again with them (workflow.run_dam); a run that balances is never changed.
 STABLE_THETA = 0.7
 STABLE_CFL = 0.5
+# Boann's shock-capturing engines (FV1 / FV2 / DG2 / sub-grid FV) clamp the Courant number to their
+# own ceiling (FV 0.45, DG2 1/3), so STABLE_CFL 0.5 re-ran them unchanged and theta means nothing
+# to them. Their mass is lost where a thin cell empties past zero in one step (the depth >= 0 clip
+# MAKES water); a smaller step cures it. Real Lake Delhi 2010, sub-grid FV at r = 8: default 2.3 M m3
+# clipped (2.1 % of the inflow), CFL 0.25 nothing clipped (volume error 2.5 m3), 50 % more steps.
+STABLE_CFL_SHOCK = 0.25
+
+
+def stable_cfl(exe):
+    """The Courant number the mass-balance re-run uses for this engine (see STABLE_CFL_SHOCK).
+    DamIT: the shock-capturing engines are carried in core/metalflood but not offered as Runner
+    engines (only LISFLOOD-FP, the GPU engine's ACC scheme and its sub-grid channels), so every
+    engine DamIT runs gets STABLE_CFL; the shock value is kept for the day they are offered."""
+    return STABLE_CFL_SHOCK if _is_gpu_shock(exe) else STABLE_CFL
+
+
+def _is_gpu_shock(exe):
+    """DamIT: no shock-capturing engine is selectable in the Runner (see stable_cfl)."""
+    return False
+
+
 STABILITY_RETRY_PCT = 1.0
 STABILITY_MARKER = "stable_settings.json"
 
@@ -207,9 +228,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BUILTIN_EXE = os.path.join(HERE, "builtin_lisflood.py")
 BUNDLED_DIR = os.path.join(os.path.dirname(HERE), "bin")
 BUILTIN_WORDS = ("builtin", "built-in", "built in", "internal")
-# 3.22.0: the GPU engine (core/metalflood): LISFLOOD-FP 8.3's ACC scheme as GPU kernels, run on the
-# Apple GPU through Metal, or on other computers through the CPU build of the same kernels (one
-# core, needs a C++ compiler). Like the built-in engine it is chosen only by name, never as a
+# 3.22.0: the GPU engine (Boann, core/metalflood): LISFLOOD-FP 8.3's ACC scheme as GPU kernels, run on the
+# Apple GPU through Metal, or on other computers through the CPU build of the same kernels (every
+# core; shipped prebuilt, else compiled once). Like the built-in engine it is chosen only by name, never as a
 # fallback, and its "executable" is its engine.py so the existence checks and the manifest work.
 GPU_EXE = os.path.join(HERE, "metalflood", "engine.py")
 GPU_WORDS = ("gpu", "metal", "gpu engine", "metalflood")
@@ -222,6 +243,39 @@ GPU_WORDS = ("gpu", "metal", "gpu engine", "metalflood")
 GPU_SGC_EXE = os.path.join(HERE, "metalflood", "engine_sgc.py")
 GPU_SGC_WORDS = ("gpu-sgc", "metal-sgc", "sgc", "boann-sgc", "gpu sgc", "subgrid channels",
                  "sub-grid channels")
+
+# 3.44.0: "Recommended (auto)": the engine is picked for this computer, by an explicit choice only
+# (never as a silent fallback for a named engine). A Mac with an Apple GPU runs Boann's ACC scheme
+# (the same scheme as LISFLOOD-FP 8.3, matched within millimetres, many times faster there); any
+# other computer runs LISFLOOD-FP when one is installed, else Boann ACC on its CPU build. The run
+# report names the engine that ran, so the choice is always on the record.
+AUTO_WORDS = ("auto", "recommended", "recommended (auto)", "automatic")
+
+
+def is_auto_word(v):
+    return str(v or "").strip().lower() in AUTO_WORDS
+
+
+def choose_auto(lisflood_exe=""):
+    """(engine exe, one line why) for "Recommended (auto)"; exe is "" when nothing can run.
+    lisflood_exe is the LISFLOOD-FP the caller found (setting or auto-detect), if any."""
+    try:
+        from .metalflood import backends as mfb
+        gpu, why = mfb.metal_available()
+        cpu = bool(mfb.prebuilt_available() or mfb.find_compiler())
+    except Exception as e:  # pragma: no cover - backend import trouble: LISFLOOD-FP only
+        gpu, why, cpu = False, str(e), False
+    if gpu:
+        return GPU_EXE, ("Recommended (auto): Boann ACC on this Mac's GPU, the same scheme as "
+                         "LISFLOOD-FP 8.3 and many times faster here")
+    if lisflood_exe and os.path.isfile(str(lisflood_exe)):
+        return str(lisflood_exe), ("Recommended (auto): LISFLOOD-FP (installed here; no Apple "
+                                   "GPU: {})".format(why))
+    if cpu:
+        return GPU_EXE, ("Recommended (auto): Boann ACC on the CPU (no LISFLOOD-FP found and no "
+                         "Apple GPU: {})".format(why))
+    return "", ("Recommended (auto) found no flood engine: no Apple GPU, no LISFLOOD-FP and no "
+                "Boann CPU build. Install LISFLOOD-FP with the suite installer.")
 
 
 def bundled_platform(system=None, machine=None):
@@ -286,6 +340,24 @@ def is_gpu_any(exe):
     return is_gpu(exe) or is_gpu_sgc(exe)
 
 
+def boann_info(exe):
+    """Boann's version and the solver an engine word / path picks, for the run manifest
+    (software.boann, beside the Runner's own version): {"version", "solver", "engine",
+    "engine_version"}; None when exe is not a Boann engine (LISFLOOD-FP, built-in)."""
+    if not is_gpu_any(exe):
+        return None
+    from .metalflood.version import BOANN_VERSION
+    from .metalflood import cli as _cli
+    key = "sgc" if is_gpu_sgc(exe) else "acc"      # DamIT offers only these two Boann solvers
+    info = {"version": BOANN_VERSION, "solver": key}
+    try:
+        mod = _cli.solver_module(key)
+        info.update(engine=mod.NAME, engine_version=mod.VERSION)
+    except Exception:
+        pass
+    return info
+
+
 def is_inprocess(exe):
     """True for the engines that run inside this process (built-in, GPU), not as a program."""
     return is_builtin(exe) or is_gpu_any(exe)
@@ -298,9 +370,9 @@ def gpu_backend_note():
         ok, why = mfb.metal_available()
         if ok:
             return "the Apple GPU ({})".format(why)
-        if mfb.find_compiler():
-            return ("the CPU build of the GPU kernels, one core (no Metal GPU here: {})"
-                    .format(why))
+        if mfb.prebuilt_available() or mfb.find_compiler():
+            return ("the CPU build of the GPU kernels, every core where built with OpenMP (no "
+                    "Metal GPU here: {})".format(why))
         return "nothing: no Metal GPU ({}) and no C++ compiler for the CPU build".format(why)
     except Exception as e:  # a description only
         return "unknown ({})".format(e)
@@ -375,7 +447,7 @@ class Cancelled(RuntimeError):
 
 
 class LisfloodSettings:
-    def __init__(self, exe, threads=0, manning_n=0.06, manning_grid=None,
+    def __init__(self, exe, threads=0, manning_n=0.05, manning_grid=None,
                  arrival_depth_m=ARRIVAL_DEPTH_FT * FT, sim_time_s=6 * 3600.0, massint_s=300.0,
                  initial_tstep_s=10.0, velocity_min_depth_m=0.03, extra_par=None,
                  initial_depth=None, gauges=None, snapshot_s=None, extra_sources=None,

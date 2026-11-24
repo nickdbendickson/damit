@@ -211,7 +211,7 @@ def inflow_cells(dem, inflow_xy, line=None):
     return cells
 
 
-def write_inputs(workdir, dem, inflow_xy, hydrograph, sim_time_s, manning_n=0.06, arrival_depth_m=0.03048,
+def write_inputs(workdir, dem, inflow_xy, hydrograph, sim_time_s, manning_n=0.05, arrival_depth_m=0.03048,
                  name="run", inflow_line=None, massint_s=300.0, initial_tstep_s=10.0, cells=None):
     """<name>.dem.asc / .bci / .bdy / .par in local coordinates (lower-left at 0, 0), as the DamSafety Runner
     writes them: a QVAR point source per inflow cell (1/n of the breach outflow each), free edges, the ACC solver
