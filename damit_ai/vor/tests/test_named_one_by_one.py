@@ -99,7 +99,7 @@ class OneByOne(unittest.TestCase):
         self.assertIn("[S4]", self.sent[-1])
         answer = vor.no_findings_answer(ev, None)
         self.assertIn("twice", answer)
-        self.assertIn("4 passage(s) asked about one at a time", answer)
+        self.assertIn("4 passages asked about one at a time", answer)
 
     def test_a_first_reply_with_findings_asks_nothing_more(self):
         good = json.dumps({"findings": [{"source": "S1", "quote": ROW, "claim": "c", "kind": "value"}]})
@@ -117,17 +117,82 @@ class OneByOne(unittest.TestCase):
         self.assertEqual(len(ev.findings), 1)
 
 
+class OddReplies(OneByOne):
+    """What the model writes in the one-at-a-time calls is not trusted to be the right shape."""
+
+    def run_with(self, third):
+        self.fake([EMPTY, EMPTY, third])
+        ev = self.ev()
+        vor.extract(ev, "q", [hit(1, 5, 15, "Table 3.\n" + ROW)])
+        return ev
+
+    def test_not_covered_as_a_number_or_a_string(self):
+        good = {"source": "S1", "quote": ROW, "claim": "c", "kind": "value"}
+        for nc in (5, "Table 4 not given", None, {"a": 1}):
+            ev = self.run_with(json.dumps({"findings": [good], "not_covered": nc}))
+            self.assertEqual(len(ev.findings), 1, nc)
+            self.assertEqual(ev.not_covered, [], nc)
+            self.sent = []
+
+    def test_findings_not_a_list(self):
+        for fs in (3, "none", {"source": "S1"}, ["a string", 7]):
+            ev = self.run_with(json.dumps({"findings": fs, "not_covered": []}))
+            self.assertEqual(ev.findings, [], fs)
+            self.sent = []
+
+    def test_not_json_at_all(self):
+        ev = self.run_with("I could not find it.")
+        self.assertEqual(ev.findings, [])
+        self.assertIn("twice", vor.no_findings_answer(ev, None))
+
+    def test_the_first_replys_gaps_are_kept(self):
+        good = json.dumps({"findings": [{"source": "S1", "quote": ROW, "claim": "c", "kind": "value"}],
+                           "not_covered": ["the flow depth"]})
+        self.fake(['{"findings": [], "not_covered": ["the season"]}', EMPTY, good])
+        ev = self.ev()
+        vor.extract(ev, "q", [hit(1, 5, 15, "Table 3.\n" + ROW)])
+        self.assertEqual([g for _, g in ev.not_covered], ["the season", "the flow depth"])
+
+
+class Wording(OneByOne):
+    def test_one_passage_is_said_as_one(self):
+        self.fake([])
+        ev = self.ev()
+        lines = []
+        say = vor.say
+        vor.say = lambda *a: lines.append(" ".join(str(x) for x in a))
+        try:
+            vor.extract(ev, "q", [hit(1, 5, 15, "page of WSP 2339"), other(2)])
+        finally:
+            vor.say = say
+        self.assertTrue(any("named publication's passage on its own" in l for l in lines), lines)
+        self.assertIn("nor from the named publication's passage asked about on its own",
+                      vor.no_findings_answer(ev, None))
+
+    def test_research_mode_counts_passages_not_calls(self):
+        self.fake([])
+        ev = self.ev()
+        h = hit(1, 5, 15, "page of WSP 2339")
+        vor.extract(ev, "sub one", [h])
+        vor.extract(ev, "sub two", [h])
+        self.assertEqual(sum(1 for c in ev.calls if c.get("retry") == "named"), 2)
+        self.assertIn("passage asked about on its own", vor.no_findings_answer(ev, None))
+
+
 class NumbersFromTheQuestion(unittest.TestCase):
     H = hit(1, 5, 15, "x")
 
-    def check(self, claim, question, quote="| Very large | 0.050-0.100 |", page="Very large 0.050-0.100"):
-        return vor.numbers_outside(claim, quote, page, vor._naming_text(question, self.H))
+    def check(self, claim, question, quote="| Very large | 0.050-0.100 |", page="Very large 0.050-0.100", h=None):
+        h = h or self.H
+        return vor.numbers_outside(vor.naming_removed(claim, question, h), quote, page)
 
     def test_the_report_number_the_question_says_is_not_flagged(self):
         self.assertEqual(self.check("WSP 2339 gives 0.050 to 0.100.", "What does WSP 2339 give?"), [])
+        self.assertEqual(self.check("WSP-2339 gives 0.050.", "What does wsp 2339 give?"), [])
 
     def test_the_documents_own_number_and_year_are_not_flagged(self):
-        self.assertEqual(self.check("Arcement and Schneider (1989), WSP 2339, give 0.050.", "What n?"), [])
+        self.assertEqual(self.check("Arcement (1989), WSP 2339, give 0.050.", "What n?"), [])
+        self.assertEqual(self.check("Arcement and Schneider 1989 give 0.050.", "What n?"), [])
 
     def test_a_table_number_the_question_says_is_not_flagged(self):
         self.assertEqual(self.check("Table 3 gives 0.050.", "What does Table 3 of the guide give?"), [])
@@ -137,6 +202,32 @@ class NumbersFromTheQuestion(unittest.TestCase):
 
     def test_an_invented_number_is_still_flagged(self):
         self.assertEqual(self.check("WSP 2339 gives 0.050 to 0.150.", "What does WSP 2339 give?"), ["0.150"])
+
+    def test_a_year_the_question_asks_about_is_still_flagged(self):
+        self.assertEqual(self.check("The coefficient is 2020.", "Is the coefficient 2010 or 2020?",
+                                    quote="coefficient", page="the coefficient"), ["2020"])
+        self.assertEqual(self.check("The design flow is 2000 cfs.", "Is the design flow 2000 cfs?",
+                                    quote="design flow", page="design flow"), ["2000"])
+
+    def test_part_of_a_report_number_does_not_excuse_a_value(self):
+        h = hit(1, 6, 4, "x", "Slope Stability", "/lib/em_1110-2-1902.pdf", "EM 1110-2-1902")
+        self.assertEqual(self.check("The minimum factor of safety is 2.", "In EM 1110-2-1902, what is the "
+                                    "minimum factor of safety?", quote="factor of safety", page="1.5", h=h), ["2"])
+        self.assertEqual(self.check("EM 1110-2-1902 gives a minimum factor of safety of 1.5.", "In EM 1110-2-1902, "
+                                    "what is the minimum factor of safety?", quote="1.5", page="1.5", h=h), [])
+
+    def test_a_table_number_does_not_excuse_the_same_number_as_a_value(self):
+        self.assertEqual(self.check("Freeboard is 3 ft.", "What freeboard does Table 3 give?",
+                                    quote="freeboard 5 ft", page="freeboard 5 ft"), ["3"])
+
+    def test_numbers_in_the_title_are_not_excused(self):
+        h = hit(1, 6, 4, "x", "Design of 15 m dams", "/lib/d15.pdf", "")
+        self.assertEqual(self.check("Crest width is 15 m.", "What crest width?", quote="width", page="width 6 m",
+                                    h=h), ["15"])
+
+    def test_a_page_reference_does_not_excuse_a_decimal(self):
+        self.assertEqual(self.check("The ratio is 0.5.", "What ratio does p 0.5 give?", quote="ratio",
+                                    page="ratio 0.4"), ["0.5"])
 
     def test_extract_passes_the_question(self):
         vor_chat = vor.chat

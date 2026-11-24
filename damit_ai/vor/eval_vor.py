@@ -156,7 +156,8 @@ def main():
     still_cut = [r for r in results if r.get("answer_from") == "model" and "cut off" in (r.get("answer_note") or "")]
     # 1.7: vor 1.4.11 asks about the named publication's passages one at a time when the model quoted nothing twice
     one_by_one = [r for r in results if any(c.get("retry") == "named" for c in r.get("calls") or [])]
-    rescued = [r for r in one_by_one if r.get("findings")]
+    rescued = [r for r in one_by_one if any(c.get("retry") == "named" and c.get("findings")
+                                            for c in r.get("calls") or [])]
     by_model = sum(1 for r in scored if r["status"] == "pass" and r.get("answer_from", "model") != "findings")
     wrote = ""
     if second or listed:
@@ -174,7 +175,7 @@ def main():
     if one_by_one:
         wrote = (wrote + " " if wrote else "") + (
             "The model quoted nothing twice on %d question(s); asked about the named publication's passages one at "
-            "a time, %d of them then had checked findings." % (len(one_by_one), len(rescued)))
+            "a time, the model then offered findings on %d of them." % (len(one_by_one), len(rescued)))
     if wrote:
         say(wrote)
 

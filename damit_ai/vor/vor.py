@@ -55,8 +55,9 @@
 #   answer page read and labelled as the publication the question names. When the model quotes nothing twice,
 #   the named publication's passages (up to 4, in search order) are now asked about one at a time; their
 #   quotes are checked against their pages as always, and the call record says "named". A claim that repeats
-#   the question's 'WSP 2339', a year, a 'Table 3', or the publication's own number or title, is no longer
-#   flagged as holding numbers that are not on its page. (The P-64 p.69 miss is retrieval: the question names
+#   the question's 'WSP 2339' or 'Table 3', the publication's own number, or its year beside an author, is no
+#   longer flagged as holding numbers that are not on its page (those words are taken out before the check; a
+#   number on its own, such as a year or value the question asks about, is still checked). (The P-64 p.69 miss is retrieval: the question names
 #   no document, so P-64 had its usual 3 passages, pp.35, 67 and 18; see `vor search ... --doc P-64`.)
 # 1.4.10 (2026-11-23): tables printed without ruling lines (USGS WSP 2339 tables 1-4) are read row by row from
 #   where their words sit, so "Cobble | 64-256 | 0.030-0.050" stays one line instead of three columns read one
@@ -2255,11 +2256,10 @@ def nums(s):
     return ["0" + n if n.startswith(".") else n for n in NUM.findall(s)]
 
 
-def numbers_outside(claim, quote, source_txt, also=""):
+def numbers_outside(claim, quote, source_txt):
     """Numbers in the paraphrase that appear in neither the quote nor the page — likely invented.
-    1.4.11: nor in `also`: the question and the publication's own number, title and year. A claim that says
-    'WSP 2339 gives n = 0.050' was flagged '2339 not on the page' (2026-11-23), though the question said it."""
-    allowed = set(nums(norm(quote))) | set(nums(norm(source_txt))) | set(nums(norm(also or "")))
+    1.4.11: extract() hands it the claim with the publication's naming words taken out (naming_removed)."""
+    allowed = set(nums(norm(quote))) | set(nums(norm(source_txt)))
     bad = [n for n in nums(norm(claim)) if n not in allowed and n.replace(",", "") not in allowed]
     return bad
 
@@ -2365,7 +2365,7 @@ def _note_call(ev, blocks, msg, reply, out, retry=False):
     call = {"passages": len(blocks), "est_tokens": est_tokens(SYSTEM + msg),
             "prompt_tokens": LAST_REPLY.get("prompt_tokens", 0), "seconds": round(LAST_REPLY.get("seconds", 0.0), 1),
             "done": LAST_REPLY.get("done_reason", ""), "reply_chars": len(reply or ""),
-            "findings": len((out or {}).get("findings") or []) if isinstance(out, dict) else None}
+            "findings": len(_as_list(out.get("findings"))) if isinstance(out, dict) else None}
     if retry:
         call["retry"] = retry           # True: passages in reverse order; "named": one named passage (1.4.11)
     ev.calls.append(call)
@@ -2376,17 +2376,42 @@ def _note_call(ev, blocks, msg, reply, out, retry=False):
                                      "?" if call["findings"] is None else call["findings"]))
 
 
-def _naming_text(question, h):
-    """1.4.11: the words that name a publication, whose numbers a claim may repeat although its page does not
-    print them: the report numbers ('WSP 2339', 'FEMA 333'), years and table, figure, chapter or equation numbers
-    the question says, and the passage's own publication number, title, year and file name. Other numbers in the
-    question are not allowed this way: a value the question asks about must still be on the page."""
+def _as_list(x):
+    """1.4.11: a model's 'findings' or 'not_covered' as a list: a string or a number in its place is not one."""
+    return x if isinstance(x, list) else []
+
+
+def _phrase_re(phrase):
+    """'WSP 2339' as a pattern that also finds 'WSP-2339' and 'wsp2339', standing on its own."""
+    parts = [re.escape(p) for p in re.split(r"[^0-9A-Za-z]+", phrase) if p]
+    return re.compile(r"(?<![0-9A-Za-z])" + r"[\s_.-]*".join(parts) + r"(?![0-9A-Za-z])", re.I) if parts else None
+
+
+def naming_removed(claim, question, h):
+    """1.4.11: the claim with the words that name a publication taken out, so numbers_outside does not read their
+    numbers as values. Taken out: the report numbers and the table, figure, chapter or equation numbers the
+    question says ('WSP 2339', 'EM 1110-2-1902', 'Table 3'), when the claim says the same words; the passage's own
+    publication number; and its year beside an author's name or in brackets ('Arcement (1989)', 'Pierce et al.
+    2010'). A number on its own is never allowed this way: 'Table 3' in the question does not excuse '3 ft' in a
+    claim, nor does 'EM 1110-2-1902' excuse a factor of safety of 2, nor a year the question asks about.
+    On 2026-11-23 a claim that said 'WSP 2339 gives ...' was flagged '2339 not on the page'."""
     q = _plain(question or "")
-    said = ([m.group(0) for m in _NAMED.finditer(q)] + re.findall(r"(?<!\d)(?:19|20)\d\d(?!\d)", q)
-            + re.findall(r"\b(?:table|figure|fig\.|chapter|section|appendix|equation|eq\.)\s*[A-Z]?-?\d+(?:[.-]\d+)*",
-                         q, re.I))
-    return " ".join(said + [str(x or "") for x in (h.number, h.title, h.year,
-                                                   os.path.basename(h.path or ""))])
+    phrases = [m.group(0) for m in _NAMED.finditer(q) if re.search(r"[A-Za-z]{2}", m.group(1))
+               or not re.search(r"\s", m.group(0))]                       # 'P-64', 'FEMA 333'; not 'p 10'
+    phrases += re.findall(r"\b(?:table|figure|fig\.|chapter|section|appendix|equation|eq\.)\s*[A-Z]?-?\d+"
+                          r"(?:[.-]\d+)*[A-Za-z]?", q, re.I)
+    if (h.number or "").strip():
+        phrases.append(h.number.strip())
+    out = claim or ""
+    for ph in sorted(set(phrases), key=len, reverse=True):
+        pat = _phrase_re(ph)
+        if pat:
+            out = pat.sub(" ", out)
+    year = (h.year or "").strip()
+    if re.fullmatch(r"(?:19|20)\d\d", year):
+        out = re.sub(r"\(\s*%s[a-z]?\s*\)" % year, " ", out)
+        out = re.sub(r"((?:[A-Z][A-Za-z'-]+|al\.),?\s+)%s[a-z]?(?![\d.,])" % year, r"\1", out)
+    return out
 
 
 NAMED_ONE_BY_ONE = 4      # 1.4.11: passages of the named publication asked about one at a time, at most
@@ -2405,7 +2430,8 @@ def _ask_named_one_by_one(ev, sub, blocks):
     mine = [(s, b) for s, b in blocks if ev.sources[s - 1].doc_id in ev.named][:NAMED_ONE_BY_ONE]
     if not mine:
         return None
-    say("  (still no finding; asking about the named publication's %d passage(s) one at a time)" % len(mine))
+    say("  (still no finding; asking about the named publication's %s)"
+        % ("%d passages one at a time" % len(mine) if len(mine) > 1 else "passage on its own"))
     found, gaps = [], []
     for s, b in mine:
         msg = ("Sub-question: %s\n\nSource passage (from the publication the question names):\n\n%s\n\n"
@@ -2417,10 +2443,11 @@ def _ask_named_one_by_one(ev, sub, blocks):
                      schema=EXTRACT_SCHEMA, num_predict=2500)
         o = parse_json(reply)
         _note_call(ev, [(s, b)], msg, reply, o, retry="named")
+        ev.calls[-1]["S"] = s
         if isinstance(o, dict):
             # one passage was given, so every finding is from it, whatever label the model wrote
-            found += [dict(f, source="S%d" % s) for f in (o.get("findings") or []) if isinstance(f, dict)]
-            gaps += [g for g in (o.get("not_covered") or []) if isinstance(g, str)]
+            found += [dict(f, source="S%d" % s) for f in _as_list(o.get("findings")) if isinstance(f, dict)]
+            gaps += [g for g in _as_list(o.get("not_covered")) if isinstance(g, str)]
     return {"findings": found, "not_covered": gaps} if found else None
 
 
@@ -2484,8 +2511,9 @@ def extract(ev, sub, hits):
             out, reply = out2, reply2
         else:
             out3 = _ask_named_one_by_one(ev, sub, blocks)
-            if out3 is not None:
-                out = out3
+            if out3 is not None:          # keep the gaps the first reply named too
+                out = {"findings": out3["findings"],
+                       "not_covered": _as_list(out.get("not_covered")) + out3["not_covered"]}
     if out is None and not strip_think(reply):
         # 1.3.0: nothing came back at all. Once more with twice the room, because the usual
         # cause is the allowance being spent before the first character of the answer.
@@ -2502,7 +2530,7 @@ def extract(ev, sub, hits):
         ev.rejected.append({"sub": sub, "why": "model reply was not valid JSON"})
         return
     allowed = {s for s, _ in blocks}
-    for f in out.get("findings") or []:
+    for f in _as_list(out.get("findings")):
         if not isinstance(f, dict):
             continue
         src = str(f.get("source", ""))
@@ -2523,8 +2551,8 @@ def extract(ev, sub, hits):
             continue
         ev.findings.append({"F": len(ev.findings) + 1, "source": s, "quote": quote, "claim": claim,
                             "kind": f.get("kind", ""), "check": chk, "sub": sub,
-                            "numbers": numbers_outside(claim, quote, h.txt, also=_naming_text(ev.question, h))})
-    for g in out.get("not_covered") or []:
+                            "numbers": numbers_outside(naming_removed(claim, ev.question, h), quote, h.txt)})
+    for g in _as_list(out.get("not_covered")):
         if isinstance(g, str) and g.strip() and g.strip().lower() not in {x.lower() for _, x in ev.not_covered}:
             ev.not_covered.append((sub, g.strip()))
 
@@ -2651,9 +2679,9 @@ def no_findings_answer(ev, keep):
         drew = "the model drew no quote from them"
         if any(c.get("retry") is True for c in ev.calls):
             drew += ", twice (the second time with the passages in reverse order)"
-        n_one = sum(1 for c in ev.calls if c.get("retry") == "named")
+        n_one = len({c.get("S") for c in ev.calls if c.get("retry") == "named"})     # passages, not calls
         if n_one:
-            drew += (", nor from the named publication's %d passage(s) asked about one at a time" % n_one
+            drew += (", nor from the named publication's %d passages asked about one at a time" % n_one
                      if n_one > 1 else ", nor from the named publication's passage asked about on its own")
     return ("There is nothing to cite: %d passage(s) were read and %s. That is not the same as the "
             "library having nothing. These are the passages the search ranked closest to the question, "
