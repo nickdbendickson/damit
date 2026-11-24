@@ -34,8 +34,9 @@
    "from": "DamSafety_Finder/core/dataset.py"
   },
   "damit_finder/core/embankments.py": {
-   "diff": "",
-   "from": "DamSafety_Finder/core/embankments.py"
+   "diff": "c4c2dc37ddd44ba10b49c52576b2e328329af2e3bdd422320df956c998869b9f",
+   "from": "DamSafety_Finder/core/embankments.py",
+   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
   },
   "damit_finder/core/evaluate.py": {
    "diff": "",
@@ -86,13 +87,14 @@
    "from": "DamSafety_Finder/core/water.py"
   },
   "damit_finder/finder.py": {
-   "diff": "3c19e6845b77a66ba5466f28b329513f1baba7408365d7b3e257d1d5ebf629dc",
+   "diff": "8c48047dc0ce520fbae4163962ee7de921f492d4806252b09f7a80d3f83449c9",
    "from": "DamSafety_Finder/finder.py",
-   "note": "DamIT-only edit from damit #149 (GDAL handles released in check_dem_unit / warp_dem / write_hillshade; no number change), recorded in Runner 0.7.8."
+   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
   },
   "damit_finder/plugin.py": {
-   "diff": "",
-   "from": "DamSafety_Finder/plugin.py"
+   "diff": "a913f1316d59986525d0d7c2f94a8f8b07ddbb669e7179627a1bbaf2ec5664ed",
+   "from": "DamSafety_Finder/plugin.py",
+   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
   },
   "damit_finder/tests/__init__.py": {
    "diff": "",
@@ -103,8 +105,9 @@
    "from": "DamSafety_Finder/tests/test_core.py"
   },
   "damit_finder/tests/test_finder.py": {
-   "diff": "",
-   "from": "DamSafety_Finder/tests/test_finder.py"
+   "diff": "d081ee0c12932dba245ba5297246f412c0fe203af47efd22829e538c052e13f7",
+   "from": "DamSafety_Finder/tests/test_finder.py",
+   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
   },
   "damit_finder/tests/test_qgis.py": {
    "diff": "",
