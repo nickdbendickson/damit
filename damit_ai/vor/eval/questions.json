@@ -114,7 +114,7 @@
   {
    "id": "p64-exercises",
    "q": "How often do the federal EAP guidelines suggest tabletop and functional exercises for an Emergency Action Plan?",
-   "doc": "p-?64|EAP",
+   "doc": "p-?64(?!\\d)",
    "pages": [
     69
    ],

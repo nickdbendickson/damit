@@ -112,7 +112,7 @@ class Prompts(unittest.TestCase):
         self.assertEqual(len(ev.findings), 1)
 
     def test_the_retry_carries_the_same_labels(self):
-        replies = ['{"findings": [], "not_covered": []}', '{"findings": [], "not_covered": []}']
+        replies = ['{"findings": [], "not_covered": []}'] * 3      # 1.4.11: then the named passage on its own
 
         def chat(messages, schema=None, **kw):
             self.sent.append(messages)
@@ -121,7 +121,7 @@ class Prompts(unittest.TestCase):
         ev = vor.Evidence()
         ev.named = {5: ["WSP 2339"]}
         vor.extract(ev, "q", [wsp()])
-        self.assertEqual(len(self.sent), 2)
+        self.assertEqual(len(self.sent), 3)
         for m in self.sent:
             self.assertIn("the publication the question names", m[-1]["content"])
 

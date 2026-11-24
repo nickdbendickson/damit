@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_vor.py v1.6 - score vor's answers against questions with known answers.
+# eval_vor.py v1.7 - score vor's answers against questions with known answers.
 #
 #   python3 eval_vor.py                         # the vor model, all questions
 #   python3 eval_vor.py --model qwen3.6:27b     # any Ollama model (run once per model)
@@ -47,12 +47,14 @@ def main():
     sys.path.insert(0, HERE)
     import vor as dr
 
-    qs = json.load(open(a.questions, encoding="utf-8"))["questions"]
+    with open(a.questions, encoding="utf-8") as f:
+        qs = json.load(f)["questions"]
     if a.only:
         want = set(x.strip() for x in a.only.split(","))
         qs = [q for q in qs if q["id"] in want]
     db = dr.connect()
     files = [os.path.basename(r[0]) for r in db.execute("SELECT path FROM docs")]
+    db.close()
 
     def indexed(q):
         pat = re.compile(q["doc"], re.I)
@@ -132,7 +134,11 @@ def main():
             if facts_missing:
                 why.append("missing fact(s): " + ", ".join(facts_missing))
             if not grounded:
-                why.append("no checked quote from %s p.%s" % (docs[0], "/".join(map(str, q.get("pages") or ["any"]))))
+                # 1.7: name every file the pattern matches; on 2026-11-23 p64-exercises said "FactSheet_EAP_0.pdf"
+                # (a 2-page sheet the old pattern also matched) for a page of FEMA P-64
+                why.append("no checked quote from %s p.%s" % (" or ".join(docs[:3]) + (" (+%d more)" % (len(docs) - 3)
+                                                                if len(docs) > 3 else ""),
+                                                                "/".join(map(str, q.get("pages") or ["any"]))))
             r.update(status="pass" if ok else "fail", test="answer", grounded=sorted(set(grounded)), why="; ".join(why))
         results.append(r)
         say("[%d/%d] %-28s %s  %5.0f s  %s" % (n, len(qs), q["id"], r["status"].upper(), secs, r["why"]))
@@ -148,6 +154,9 @@ def main():
     # not "wrote no answer at first"
     cutoff = [r for r in results if r.get("answer_from") == "model, after cut-off"]
     still_cut = [r for r in results if r.get("answer_from") == "model" and "cut off" in (r.get("answer_note") or "")]
+    # 1.7: vor 1.4.11 asks about the named publication's passages one at a time when the model quoted nothing twice
+    one_by_one = [r for r in results if any(c.get("retry") == "named" for c in r.get("calls") or [])]
+    rescued = [r for r in one_by_one if r.get("findings")]
     by_model = sum(1 for r in scored if r["status"] == "pass" and r.get("answer_from", "model") != "findings")
     wrote = ""
     if second or listed:
@@ -162,6 +171,10 @@ def main():
     if still_cut:
         wrote = (wrote + " " if wrote else "") + (
             "On %d question(s) the answer stayed cut off at its length limit and its end is missing." % len(still_cut))
+    if one_by_one:
+        wrote = (wrote + " " if wrote else "") + (
+            "The model quoted nothing twice on %d question(s); asked about the named publication's passages one at "
+            "a time, %d of them then had checked findings." % (len(one_by_one), len(rescued)))
     if wrote:
         say(wrote)
 
@@ -171,6 +184,7 @@ def main():
         json.dump(dict(model=model, when=datetime.now().isoformat(timespec="seconds"), passed=passed,
                        passed_model_written=by_model, second_attempt=len(second), findings_listed=len(listed),
                        cut_off=len(cutoff), cut_off_unfinished=len(still_cut),
+                       named_one_by_one=len(one_by_one), named_one_by_one_found=len(rescued),
                        scored=len(scored), minutes=round(total_s / 60, 1), results=results), f, indent=1)
     L = ["# vor answer test: %s" % model, "",
          "%s. **%d / %d passed**, %d skipped, %.1f min." % (datetime.now().strftime("%Y-%m-%d %H:%M"), passed,
