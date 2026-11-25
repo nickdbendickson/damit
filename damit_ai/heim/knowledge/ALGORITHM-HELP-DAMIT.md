@@ -438,6 +438,7 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `SGC_CURVE` | Sub-grid channels: bankfull width/depth curve | enum | 0 | optional; advanced; options: 0=Bieger 2015, conterminous US (national); 1=North Dakota, 79 USGS gauges |
 | `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
@@ -462,7 +463,10 @@ For the flood scenario put each dam's inputs in <Dams folder>/<Dam ID>/inputs/: 
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
-| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=GPU engine, sub-grid channels (narrow rivers the grid cannot resolve) |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP (the standard engine); 1=Boann, fast (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=Boann, sub-grid channels (narrow rivers the grid cannot resolve); 3=Boann, shock-capturing (HLLC; sharp dam-break fronts and jumps); 4=Advanced: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2); 5=Advanced: Boann, discontinuous Galerkin 2nd order (RKDG2); 6=Advanced: Boann, sub-grid finite volume (coarse grid; research, can over-pond narrow channels); 7=Recommended (auto): picks for this computer; 8=Advanced: Boann, sub-grid local inertial (coarse cells that keep the DEM's detail; new) |
+| `CFL` | Courant number for the flood solver (empty = each engine's stable default: ~0.7 ACC and sub-grid channels, 0.45 shock-capturing, 1/3 discontinuous Galerkin). Lower = more robust and slower; the engine caps it at its own stability limit. | number | - | optional; advanced |
+| `THETA` | Momentum weighting theta for the local-inertial solver (ACC / sub-grid channels; empty = 1.0, LISFLOOD-FP's default). 0.7 adds the de Almeida et al. 2012 numerical diffusion that steadies a flashy inflow. Ignored by the shock-capturing and Galerkin solvers. | number | - | optional; advanced |
+| `SUBGRID_R` | Sub-grid coarsening factor r (the 'Boann, sub-grid finite volume' and 'Boann, sub-grid local inertial' engines only): the run uses cells r x the DEM resolution, keeping each cell's r x r DEM sub-cells, so it is r*r cheaper and still writes a full-resolution map. Empty = 4; 1 to 8. Ignored by the other engines. | number | - | optional; advanced |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |
@@ -584,6 +588,7 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `SGC_CURVE` | Sub-grid channels: bankfull width/depth curve | enum | 0 | optional; advanced; options: 0=Bieger 2015, conterminous US (national); 1=North Dakota, 79 USGS gauges |
 | `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
@@ -608,7 +613,10 @@ Dams are ordered upstream first by the order field (or the layer order).
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
-| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=GPU engine, sub-grid channels (narrow rivers the grid cannot resolve) |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP (the standard engine); 1=Boann, fast (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=Boann, sub-grid channels (narrow rivers the grid cannot resolve); 3=Boann, shock-capturing (HLLC; sharp dam-break fronts and jumps); 4=Advanced: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2); 5=Advanced: Boann, discontinuous Galerkin 2nd order (RKDG2); 6=Advanced: Boann, sub-grid finite volume (coarse grid; research, can over-pond narrow channels); 7=Recommended (auto): picks for this computer; 8=Advanced: Boann, sub-grid local inertial (coarse cells that keep the DEM's detail; new) |
+| `CFL` | Courant number for the flood solver (empty = each engine's stable default: ~0.7 ACC and sub-grid channels, 0.45 shock-capturing, 1/3 discontinuous Galerkin). Lower = more robust and slower; the engine caps it at its own stability limit. | number | - | optional; advanced |
+| `THETA` | Momentum weighting theta for the local-inertial solver (ACC / sub-grid channels; empty = 1.0, LISFLOOD-FP's default). 0.7 adds the de Almeida et al. 2012 numerical diffusion that steadies a flashy inflow. Ignored by the shock-capturing and Galerkin solvers. | number | - | optional; advanced |
+| `SUBGRID_R` | Sub-grid coarsening factor r (the 'Boann, sub-grid finite volume' and 'Boann, sub-grid local inertial' engines only): the run uses cells r x the DEM resolution, keeping each cell's r x r DEM sub-cells, so it is r*r cheaper and still writes a full-resolution map. Empty = 4; 1 to 8. Ignored by the other engines. | number | - | optional; advanced |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |
@@ -789,6 +797,7 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `SGC_CURVE` | Sub-grid channels: bankfull width/depth curve | enum | 0 | optional; advanced; options: 0=Bieger 2015, conterminous US (national); 1=North Dakota, 79 USGS gauges |
 | `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
@@ -813,7 +822,10 @@ Sets up the dam as 'Run breach model for one dam' would (breach hydrograph, infl
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
-| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=GPU engine, sub-grid channels (narrow rivers the grid cannot resolve) |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP (the standard engine); 1=Boann, fast (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=Boann, sub-grid channels (narrow rivers the grid cannot resolve); 3=Boann, shock-capturing (HLLC; sharp dam-break fronts and jumps); 4=Advanced: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2); 5=Advanced: Boann, discontinuous Galerkin 2nd order (RKDG2); 6=Advanced: Boann, sub-grid finite volume (coarse grid; research, can over-pond narrow channels); 7=Recommended (auto): picks for this computer; 8=Advanced: Boann, sub-grid local inertial (coarse cells that keep the DEM's detail; new) |
+| `CFL` | Courant number for the flood solver (empty = each engine's stable default: ~0.7 ACC and sub-grid channels, 0.45 shock-capturing, 1/3 discontinuous Galerkin). Lower = more robust and slower; the engine caps it at its own stability limit. | number | - | optional; advanced |
+| `THETA` | Momentum weighting theta for the local-inertial solver (ACC / sub-grid channels; empty = 1.0, LISFLOOD-FP's default). 0.7 adds the de Almeida et al. 2012 numerical diffusion that steadies a flashy inflow. Ignored by the shock-capturing and Galerkin solvers. | number | - | optional; advanced |
+| `SUBGRID_R` | Sub-grid coarsening factor r (the 'Boann, sub-grid finite volume' and 'Boann, sub-grid local inertial' engines only): the run uses cells r x the DEM resolution, keeping each cell's r x r DEM sub-cells, so it is r*r cheaper and still writes a full-resolution map. Empty = 4; 1 to 8. Ignored by the other engines. | number | - | optional; advanced |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |
@@ -1118,6 +1130,7 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `SGC_MIN_AREA_SQMI` | Sub-grid channels: smallest drainage area that has a channel (sq mi; starting value 0.77 = 2 km2 is the engineer's, a screening value you choose) | number | 0.77 | advanced |
 | `SGC_N` | Sub-grid channels: channel Manning's n | number | 0.035 | advanced |
 | `SGC_START` | Sub-grid channels: water in the channels at the start | enum | 0 | optional; advanced; options: 0=Auto (full on hydro-flattened water, else empty); 1=Empty; 2=Full |
+| `SGC_CURVE` | Sub-grid channels: bankfull width/depth curve | enum | 0 | optional; advanced; options: 0=Bieger 2015, conterminous US (national); 1=North Dakota, 79 USGS gauges |
 | `POTHOLE_START_FILL` | Potholes: share of each closed depression already full at the start (0 = dry, 1 = full) | number | 0 | advanced |
 | `STOP_RULE` | Class-stop rule: accept a shallow edge with no receptor beyond | boolean | False | advanced |
 | `STOP_THRESHOLD_FT` | Class-stop rule: threshold for the depth or the rise (ft; starting value 2 = ND Dam Hazard's default, a screening value you choose) | number | 2 | advanced |
@@ -1142,7 +1155,10 @@ Cell-size convergence check (v3.4.0, on by default): the base case runs again at
 | `ANUGA_BUFFER` | ANUGA: mesh margin around the LISFLOOD-FP extent (m; 500 m = 1,640 ft) | number | 500 | advanced |
 | `THREADS` | Threads (0 = the provider setting, then automatic: LISFLOOD-FP all cores; ANUGA NDBREACH_ANUGA_THREADS, else CPUs - 2, at most 4) | number | 0 | advanced |
 | `LISFLOOD_EXE` | LISFLOOD-FP executable (empty = provider setting or an installed LISFLOOD-FP; type 'builtin' to use the built-in screening engine - a numpy approximation, NOT LISFLOOD-FP) | string | - | optional; advanced |
-| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP; 1=GPU engine (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=GPU engine, sub-grid channels (narrow rivers the grid cannot resolve) |
+| `FLOOD_ENGINE` | Flood engine | enum | 0 | optional; options: 0=LISFLOOD-FP (the standard engine); 1=Boann, fast (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU); 2=Boann, sub-grid channels (narrow rivers the grid cannot resolve); 3=Boann, shock-capturing (HLLC; sharp dam-break fronts and jumps); 4=Advanced: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2); 5=Advanced: Boann, discontinuous Galerkin 2nd order (RKDG2); 6=Advanced: Boann, sub-grid finite volume (coarse grid; research, can over-pond narrow channels); 7=Recommended (auto): picks for this computer; 8=Advanced: Boann, sub-grid local inertial (coarse cells that keep the DEM's detail; new) |
+| `CFL` | Courant number for the flood solver (empty = each engine's stable default: ~0.7 ACC and sub-grid channels, 0.45 shock-capturing, 1/3 discontinuous Galerkin). Lower = more robust and slower; the engine caps it at its own stability limit. | number | - | optional; advanced |
+| `THETA` | Momentum weighting theta for the local-inertial solver (ACC / sub-grid channels; empty = 1.0, LISFLOOD-FP's default). 0.7 adds the de Almeida et al. 2012 numerical diffusion that steadies a flashy inflow. Ignored by the shock-capturing and Galerkin solvers. | number | - | optional; advanced |
+| `SUBGRID_R` | Sub-grid coarsening factor r (the 'Boann, sub-grid finite volume' and 'Boann, sub-grid local inertial' engines only): the run uses cells r x the DEM resolution, keeping each cell's r x r DEM sub-cells, so it is r*r cheaper and still writes a full-resolution map. Empty = 4; 1 to 8. Ignored by the other engines. | number | - | optional; advanced |
 | `ANUGA_PYTHON` | ANUGA Python interpreter (a path; a symlink is resolved to the real file). Empty = provider setting or auto-detected | string | - | optional; advanced |
 | `KEEP_FILES` | Keep the model input and output files | boolean | True | advanced |
 | `PRODUCTS` | Write the flood products and the HTML report | boolean | True | advanced |

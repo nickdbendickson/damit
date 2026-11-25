@@ -53,14 +53,71 @@ BIEGER_2015_US = (2.70, 0.352, 0.30, 0.213)
 ND_USGS_2026 = (1.946, 0.304, 0.221, 0.256)
 # DamIT: the default stays the national curve (Bieger 2015), because DamIT is used in every
 # state; DamSafety 3.53.0 made ND_USGS_2026 its default. sgc_curve / curve= selects ND_USGS_2026
-# (or any regional a, b, c, f) for a study where it applies. SGC_CURVES names the built-in choices.
+# (or any regional a, b, c, f) for a study where it applies. CURVES (below) names the built-in choices.
 DEFAULT_CURVE = BIEGER_2015_US
-SGC_CURVES = {"bieger_2015_us": BIEGER_2015_US, "nd_usgs_2026": ND_USGS_2026}
 DEFAULT_MIN_AREA_KM2 = 2.0      # about 0.8 sq mi: W ~ 3.4 m, D ~ 0.35 m (Bieger; ND curve: W ~ 2.4 m, D ~ 0.26 m)
 DEFAULT_CHANNEL_N = 0.035       # LISFLOOD-FP's own SGCn default (a clean natural channel)
 START_MODES = ("auto", "empty", "full")
 MIN_DEPTH_M = 0.05              # a channel shallower than this adds nothing (and LISFLOOD-FP
                                 # keeps the bed at least 0.01 m under the DEM anyway)
+
+# Named regional hydraulic-geometry curves, selectable in the run tool and the CLI. Each is
+# (a, b, c, f) for W = a A^b and D = c A^f (A in km2, W and D in m). A project's own four
+# coefficients (model.sgc_curve / --sgc-curve) are always allowed too; these are the presets.
+# Index 0 is the default. Regional US curves (e.g. Bieger's physiographic divisions) can be
+# added here as their coefficients are verified against the source.
+# DamIT: Bieger first (index 0 = DamIT's default, the national curve); DamSafety lists ND first.
+CURVES = (
+    ("bieger-us", "Bieger 2015, conterminous US (national)", BIEGER_2015_US),
+    ("nd", "North Dakota, 79 USGS gauges", ND_USGS_2026),
+)
+# DamIT 0.9.x names for the two built-in curves, kept for scripts that used them
+SGC_CURVES = {"bieger_2015_us": BIEGER_2015_US, "nd_usgs_2026": ND_USGS_2026}
+CURVES_BY_KEY = {k: c for k, _lab, c in CURVES}
+CURVE_LABELS = [lab for _k, lab, _c in CURVES]   # run-tool dropdown, in order (0 = default)
+
+
+def resolve_curve(curve):
+    """Coefficients (a, b, c, f) from a preset key in CURVES_BY_KEY, a four-number sequence
+    (a, b, c, f), or None for the default. Raises SGCError on anything else."""
+    if curve is None:
+        return DEFAULT_CURVE
+    if isinstance(curve, str):
+        key = curve.strip().lower()
+        if key in CURVES_BY_KEY:
+            return CURVES_BY_KEY[key]
+        raise SGCError("unknown curve '{}'; use one of {} or four numbers a,b,c,f".format(
+            curve, ", ".join(k for k, _l, _c in CURVES)))
+    c = tuple(float(v) for v in curve)
+    if len(c) != 4 or min(c) <= 0:
+        raise SGCError("a hydraulic-geometry curve is a preset name or four positive numbers "
+                       "a, b, c, f")
+    return c
+
+
+def curve_name(curve):
+    """A label for a curve (preset key or four numbers), for the run log and report."""
+    t = tuple(round(float(v), 6) for v in resolve_curve(curve))
+    for _key, lab, c in CURVES:
+        if tuple(round(float(v), 6) for v in c) == t:
+            return lab
+    return "custom curve"
+
+
+def curve_key(curve):
+    """The preset key for a curve ('nd', 'bieger-us', ...), 'custom' for other coefficients,
+    or None for the default. Handy for tagging a run folder by its curve."""
+    if curve is None:
+        return None
+    if isinstance(curve, str):
+        k = curve.strip().lower()
+        return k if k in CURVES_BY_KEY else "custom"
+    t = tuple(round(float(v), 6) for v in resolve_curve(curve))
+    for key, _lab, c in CURVES:
+        if tuple(round(float(v), 6) for v in c) == t:
+            return key
+    return "custom"
+
 
 # D8 neighbours (dr, dc) and their distances in cells
 _D8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
@@ -235,6 +292,7 @@ def build(dem, inflow_rc=None, upstream_km2=None, min_area_km2=DEFAULT_MIN_AREA_
     "auto"). Drainage is raw-DEM D8 (priority-flood). For a BoannGrid-conditioned network
     (D4, culvert reconnection, freeze mask) use from_boanngrid — that is opt-in, so this
     path's published SGC numbers do not move."""
+    curve = resolve_curve(curve)
     _curve_ok(start, min_area_km2, curve)
     extra = []
     if inflow_rc is not None and upstream_km2:
@@ -262,6 +320,7 @@ def from_boanngrid(dem, inflow_rc=None, upstream_km2=None, min_area_km2=DEFAULT_
     freeze-refusal. Writing the conditioned DEM itself goes through
     delta_log.export_conditioned_dem, which refuses while those refusals are unresolved.
     """
+    curve = resolve_curve(curve)
     _curve_ok(start, min_area_km2, curve)
     from .metalterrain import burn as _burn
     from .metalterrain import delta_log as _dl
@@ -300,11 +359,11 @@ def describe(info):
     if not info.get("cells"):
         return ("Sub-grid channels: none (no cell drains {:g} km2 or more inside the model "
                 "domain).".format(info.get("min_area_km2", 0)))
-    s = ("Sub-grid channels (LISFLOOD-FP SGC): {:,} cells, {:.1f} km of channel, up to {:.1f} m "
+    s = ("Sub-grid channels ({}): {:,} cells, {:.1f} km of channel, up to {:.1f} m "
          "wide and {:.2f} m deep (W = {:g} A^{:g}, D = {:g} A^{:g}), channel n {:g}; {:,} cells "
-         "start full.".format(info["cells"], info["length_km"], info["max_width_m"],
-                              info["max_depth_m"], *info["curve"], info["channel_n"],
-                              info["cells_start_full"]))
+         "start full.".format(curve_name(info["curve"]), info["cells"], info["length_km"],
+                              info["max_width_m"], info["max_depth_m"], *info["curve"],
+                              info["channel_n"], info["cells_start_full"]))
     if not info.get("upstream_km2"):
         s += (" The drainage area at the dam was not given, so the channel below the dam is "
               "sized only from the area inside the model domain (too small for a dam whose "

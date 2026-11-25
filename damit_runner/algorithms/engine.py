@@ -75,11 +75,22 @@ TIERS = [(workflow.TIER_LISFLOOD, "LISFLOOD-FP only"),
          (workflow.TIER_HECRAS, "LISFLOOD-FP then HEC-RAS 2D (final results from HEC-RAS; "
                                 "needs HEC-RAS 6.6, see help)")]
 # 3.22.0: the run tools' flood engine choice (LISFLOOD-FP stays index 0 and the default)
-FLOOD_ENGINES = ("lisflood", "gpu", "gpu-sgc")
-# 0.8.0: the GPU engine with sub-grid channels, appended (saved indices unchanged). Labels say "Mac GPU
-# or any CPU": the engine also runs on the CPU build of the same kernels.
-FLOOD_ENGINES_TEXT = ["LISFLOOD-FP", "GPU engine (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU)",
-                      "GPU engine, sub-grid channels (narrow rivers the grid cannot resolve)"]
+# DamIT: the order differs from DamSafety's (index 2 has been "gpu-sgc" since DamIT Runner 0.8.0);
+# DamSafety's other Boann solvers and "Recommended (auto)" are APPENDED (0.10.0) so saved models
+# and scripts keep their indices. Labels match DamSafety 3.44.0+ (Mac GPU or any CPU; research
+# solvers marked Advanced).
+FLOOD_ENGINES = ("lisflood", "gpu", "gpu-sgc", "gpu-fv", "gpu-fv2", "gpu-dg2", "gpu-subfv",
+                 "auto", "gpu-subli")
+FLOOD_ENGINES_TEXT = [
+    "LISFLOOD-FP (the standard engine)",
+    "Boann, fast (LISFLOOD-FP's ACC scheme; Mac GPU or any CPU)",
+    "Boann, sub-grid channels (narrow rivers the grid cannot resolve)",
+    "Boann, shock-capturing (HLLC; sharp dam-break fronts and jumps)",
+    "Advanced: Boann, shock-capturing 2nd order (MUSCL + SSP-RK2)",
+    "Advanced: Boann, discontinuous Galerkin 2nd order (RKDG2)",
+    "Advanced: Boann, sub-grid finite volume (coarse grid; research, can over-pond narrow channels)",
+    "Recommended (auto): picks for this computer",
+    "Advanced: Boann, sub-grid local inertial (coarse cells that keep the DEM's detail; new)"]
 DEFAULT_MAX_EXTENT_MI = 20.0     # the run tools' and Setup's default largest domain side
 ZUNITS = [("auto", "Detect from the raster"), ("feet", "Feet"),
           ("us_feet", "US survey feet"), ("meters", "Meters"),
@@ -158,6 +169,18 @@ def _suite_source_label(key):
         if os.environ.get(name):
             return "environment variable " + name
     return "suite setting " + key
+
+
+def _why_not_a_file(path):
+    """Why a set engine path cannot be used, in words: a link whose target is gone, a folder, or
+    nothing there at all."""
+    if os.path.islink(path) and not os.path.exists(path):
+        return "is a link to {}, which does not exist".format(os.path.realpath(path))
+    if os.path.isdir(path):
+        return "is a folder, not a program"
+    if os.path.lexists(path) or os.path.exists(os.path.realpath(path)):
+        return "is not a file"
+    return "does not exist"
 
 
 def _why_not_a_file(path):
@@ -939,7 +962,8 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
                    help="Put the creeks and rivers the grid cannot resolve into the model as "
                    "LISFLOOD-FP sub-grid channels: every cell draining at least the smallest "
                    "channel area gets a rectangular channel inside the cell, with bankfull width "
-                   "and depth from drainage area (Bieger et al. 2015, US). The channel carries "
+                   "and depth from drainage area (Bieger et al. 2015, US, by default; see the "
+                   "bankfull width/depth curve option below). The channel carries "
                    "water the grid cannot, so depths are reported ABOVE THE BANK and a flood "
                    "that stays in the channel is not flooded ground. Channels on hydro-flattened "
                    "water start full, the rest empty. Needs a LISFLOOD-FP built with the "
@@ -959,6 +983,16 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         _set_help(p, "Auto: channels on hydro-flattened water (LiDAR shows a water surface there) "
                   "start full to the bank, every other channel starts empty. Empty: all start "
                   "empty (the breach water fills them first). Full: all start full.")
+        self.addParameter(set_advanced(p))
+        # 3.72.0: the regional hydraulic-geometry curve that sizes the sub-grid channels
+        p = QgsProcessingParameterEnum(
+            "SGC_CURVE", "Sub-grid channels: bankfull width/depth curve",
+            list(sgc_defaults.CURVE_LABELS), defaultValue=0, optional=True)
+        _set_help(p, "The regional curve that sizes each sub-grid channel (bankfull width and "
+                  "depth from drainage area). Bieger 2015, the conterminous-US national curve, is "
+                  "the default; North Dakota (79 USGS gauges) is about half as wide. A "
+                  "project with its own regional curve can set its four coefficients a,b,c,f on "
+                  "the command line (model.sgc_curve).")
         self.addParameter(set_advanced(p))
         self._num("POTHOLE_START_FILL", "Potholes: share of each closed depression already full "
                   "at the start (0 = dry, 1 = full)", 0.0, minimum=0.0, maximum=1.0, advanced=True,
@@ -1038,17 +1072,45 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         p = QgsProcessingParameterEnum("FLOOD_ENGINE", "Flood engine", FLOOD_ENGINES_TEXT,
                                        defaultValue=0, optional=True)
         _set_help(p, "LISFLOOD-FP: the executable below, else the provider setting, else an "
-                  "installed one. GPU engine: LISFLOOD-FP 8.3's ACC (local inertial) scheme "
+                  "installed one. Boann (GPU engine): LISFLOOD-FP 8.3's ACC (local inertial) scheme "
                   "rewritten as GPU kernels; it runs on the Apple GPU through Metal, and on other "
                   "computers on the CPU build of the same kernels (compiled once with a C++ "
-                  "compiler; every core where it builds with OpenMP). It matched LISFLOOD-FP 8.3 within millimetres on the test cases; "
-                  "the run report says which engine ran. ACC only (no FV2 / MWDG2, no near-dam "
-                  "FV1 refine). Typing 'gpu' in the LISFLOOD-FP field does the same. 'GPU engine, "
-                  "sub-grid channels' adds LISFLOOD-FP's sub-grid channels (a channel narrower "
-                  "than the cell, built from the DEM or the SGC rasters); on the Lake Delhi 2010 "
-                  "survey it matched LISFLOOD-FP 8.3's SGC within about 0.1 ft. Typing 'gpu-sgc' "
-                  "does the same.")
+                  "compiler; every core where it builds with OpenMP). "
+                  "It matched LISFLOOD-FP 8.3 within millimetres on the test cases; "
+                  "the run report says which engine ran. 'Boann, shock-capturing' is its HLLC "
+                  "finite-volume solver (the analogue of LISFLOOD-FP's FV1). Typing 'gpu' or "
+                  "'shock' in the LISFLOOD-FP field does the same. 'Recommended (auto)' picks for this "
+                  "computer: Boann's fast ACC on a Mac with an Apple GPU, else LISFLOOD-FP when "
+                  "installed, else Boann on the CPU; the report names the engine that ran. "
+                  "Where it runs Boann and the model cell is 3 m or finer, it runs Boann's "
+                  "sub-grid local inertial (r = 4: solver cells 4 times the model cell that keep "
+                  "the fine ground; within about 0.1 ft of the fine run at a fraction of the time). "
+                  "'Advanced' solvers are for research and special cases.")
         self.addParameter(p)
+        # 3.39.0: the solver's Courant number and theta, exposed (were .par / env only). Empty =
+        # each engine's stable default. Both reach LISFLOOD-FP and Boann through the .par; every
+        # Boann solver caps the Courant number at its own stability ceiling, and a run that loses
+        # its mass balance still falls back to the stable settings regardless of what is set here.
+        self._num("CFL", "Courant number for the flood solver (empty = each engine's stable "
+                  "default: ~0.7 ACC and sub-grid channels, 0.45 shock-capturing, 1/3 "
+                  "discontinuous Galerkin). Lower = more robust and slower; the engine caps it "
+                  "at its own stability limit.", optional=True, minimum=0.05, maximum=1.0,
+                  advanced=True)
+        self._num("THETA", "Momentum weighting theta for the local-inertial solver (ACC / "
+                  "sub-grid channels; empty = 1.0, LISFLOOD-FP's default). 0.7 adds the "
+                  "de Almeida et al. 2012 numerical diffusion that steadies a flashy inflow. "
+                  "Ignored by the shock-capturing and Galerkin solvers.", optional=True,
+                  minimum=0.5, maximum=1.0, advanced=True)
+        # 3.42.0: the sub-grid finite-volume coarsening factor r. Only the 'Boann, sub-grid finite
+        # volume' engine reads it: it runs on a grid of r x the DEM cell and keeps each cell's r x r
+        # DEM sub-cells as stage tables, so the run is r*r cheaper but still writes a full-resolution
+        # map. Empty = 4. Ignored by every other engine.
+        self._num("SUBGRID_R", "Sub-grid coarsening factor r (the 'Boann, sub-grid finite volume' "
+                  "and 'Boann, sub-grid local inertial' engines only): the run uses cells r x the "
+                  "DEM resolution, keeping each cell's r x r DEM sub-cells, so it is r*r cheaper "
+                  "and still writes a full-resolution map. Empty = 4; 1 to 8. Ignored by the "
+                  "other engines.", optional=True,
+                  minimum=1, maximum=8, advanced=True)
         self._text("ANUGA_PYTHON", "ANUGA Python interpreter (a path; a symlink is resolved "
                    "to the real file). Empty = provider setting or auto-detected",
                    advanced=True)
@@ -1082,19 +1144,34 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         exe = (self._str(parameters, "LISFLOOD_EXE", context)
                or _suite_setting("lisflood_exe") or _setting(SET_LISFLOOD))
         from ..core import lisflood as lfmod
+        # 3.91.0: "Recommended (auto)" runs Boann sub-grid local inertial on a 3 m or finer cell
+        _cell = (self.parameterAsDouble(parameters, "CELL", context)
+                 if self.parameterDefinition("CELL") is not None else None)
         if self.parameterDefinition("FLOOD_ENGINE") is not None and \
                 parameters.get("FLOOD_ENGINE") not in (None, ""):
             _eng = FLOOD_ENGINES[self.parameterAsEnum(parameters, "FLOOD_ENGINE", context)]
+            # Delegate to resolve_exe so every Boann engine the dropdown offers (gpu / gpu-fv /
+            # gpu-fv2 / gpu-dg2 / gpu-sgc) maps from one list. Inlining the branches here is what
+            # left gpu-sgc unreachable from the dropdown when #446 added it (Runner 3.38.0).
+            if _eng == "auto":
+                _lf = exe if exe and os.path.isfile(exe) else data_conventions.detect_lisflood()
+                return lfmod.choose_auto(_lf, _cell)[0]
             if _eng != "lisflood":
                 return lfmod.resolve_exe(_eng)
         # Opt in to the built-in screening engine ONLY by an explicit act: the word "builtin" in
         # the field, or the provider flag. It is never selected just because the field is empty,
         # so the numpy approximation can never silently stand in for LISFLOOD-FP (M5 safety).
-        if exe and str(exe).strip().lower() in lfmod.BUILTIN_WORDS:
-            return lfmod.BUILTIN_EXE
-        # 3.22.0: the GPU engine, likewise only by name ("gpu" / "metal")
-        if exe and str(exe).strip().lower() in lfmod.GPU_WORDS + lfmod.GPU_SGC_WORDS:
-            return lfmod.resolve_exe(exe)
+        # 3.22.0: an engine named by word in the executable field (builtin, or a Boann engine:
+        # gpu / gpu-fv / gpu-fv2 / gpu-dg2 / gpu-sgc). resolve_exe owns the one word->engine list,
+        # so a new engine never has to be added here too. An empty field stays empty (resolve_exe
+        # returns it unchanged), so the built-in numpy approximation is never silently selected
+        # (M5 safety) and a real path falls through to the file check below.
+        if exe and lfmod.is_auto_word(exe):
+            return lfmod.choose_auto(data_conventions.detect_lisflood(), _cell)[0]
+        if exe:
+            _resolved = lfmod.resolve_exe(exe)
+            if _resolved != str(exe).strip():
+                return _resolved
         if not exe or not os.path.isfile(exe):
             found = data_conventions.detect_lisflood()
             if found:
@@ -1142,10 +1219,10 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
             v, w = first
             if real and str(v).strip().lower() in lfmod.BUILTIN_WORDS:
                 return w + " (built-in engine)"
+            if real and str(v).strip().lower() in lfmod.GPU_FV_WORDS:
+                return w + " (Boann, shock-capturing)"
             if real and str(v).strip().lower() in lfmod.GPU_WORDS:
-                return w + " (GPU engine)"
-            if real and str(v).strip().lower() in lfmod.GPU_SGC_WORDS:
-                return w + " (GPU engine, sub-grid channels)"
+                return w + " (Boann)"
             ok = os.path.isfile(v if real else os.path.realpath(v))
             if ok:
                 return w
@@ -1163,7 +1240,6 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
                 return flag + ": the {} path is not a file".format(w)
             return "auto-detected: the {} path is not a file".format(w)
         return source(lf_set, exe, True), source(an_set, py, False), problems
-
     def run_settings(self, parameters, context, method=None, need_models=True):
         g = lambda n: self.parameterAsDouble(parameters, n, context)
         exe = self.find_lisflood(parameters, context)
@@ -1222,6 +1298,15 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
         st.planning_cell_m = max(30.0, st.cell_size_m)
         st.allow_unpatched = str(_setting(SET_ALLOW_UNPATCHED, False)).lower() in (
             "true", "1", "yes", "on")
+        # 3.39.0: user Courant / theta from the run tool (None = each engine's stable default).
+        # Threaded into the solver settings in workflow (and overridden by the stability fallback).
+        if self.parameterDefinition("CFL") is not None:
+            st.user_cfl = self._opt(parameters, "CFL", context)
+        if self.parameterDefinition("THETA") is not None:
+            st.user_theta = self._opt(parameters, "THETA", context)
+        if self.parameterDefinition("SUBGRID_R") is not None:
+            _sr = self._opt(parameters, "SUBGRID_R", context)
+            st.user_subgrid_r = int(_sr) if _sr is not None else None
         if self.parameterDefinition("PIPE_FRACTION") is not None:
             st.overrides = brmod.BreachOverrides(
                 self._opt(parameters, "BREACH_WIDTH", context),
@@ -1305,6 +1390,10 @@ class _Base(_UnitParams, QgsProcessingAlgorithm):
             if parameters.get("SGC_START") not in (None, ""):
                 st.sgc_start = sgc_defaults.START_MODES[min(2, max(0, self.parameterAsEnum(
                     parameters, "SGC_START", context)))]
+            if self.parameterDefinition("SGC_CURVE") is not None and \
+                    parameters.get("SGC_CURVE") not in (None, ""):      # 3.72.0
+                st.sgc_curve = list(sgc_defaults.CURVES[min(len(sgc_defaults.CURVES) - 1, max(0,
+                    self.parameterAsEnum(parameters, "SGC_CURVE", context)))][2])
         if self.parameterDefinition("POTHOLE_START_FILL") is not None:  # 3.35.0
             st.pothole_start_fill = min(1.0, max(0.0, float(g("POTHOLE_START_FILL") or 0.0)))
         if self.parameterDefinition("REFINE_NEAR") is not None:        # v3.4.0
@@ -3269,7 +3358,8 @@ class CheckAlgorithm(_Base):
         import tempfile
         exe = self.find_lisflood(parameters, context)
         py = self.find_anuga(parameters, context)
-        lines = []
+        lf_src, an_src, problems = self.engine_sources(parameters, context, exe, py)
+        lines = ["PROBLEM " + n for n in problems]
         with tempfile.TemporaryDirectory(prefix="ndbreach_check_") as tmp:
             if not exe:
                 lines.append("PROBLEM LISFLOOD-FP not found. Build it with "
