@@ -2,3 +2,6 @@
 # hashes of its assets. A line-ending conversion on checkout (Windows, core.autocrlf) would change the bytes and the
 # window would refuse to load them.
 damit_crest/desktop/damit_desktop/web/** -text
+
+# Vendored Boann (damit_runner/BOANN.lock pins the sha256 of every file): keep its bytes on every checkout.
+damit_runner/boann/** -text

@@ -120,8 +120,9 @@
    "from": "DamSafety_Core/damsuite/nodata_sample.py"
   },
   "damit_runner/core/__init__.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/__init__.py"
+   "diff": "bd64c4ec5579fc2f11bf9197d3d481c6016ce437d6b774bd25e80ad7bbaf5e21",
+   "from": "DamSafety_Runner/core/__init__.py",
+   "note": "ported from DWR_Plugins #529 (f71ac94b, Runner 3.101.1) for DamIT Runner 0.11.0: Boann pinned at damit_runner/boann (BOANN.lock)"
   },
   "damit_runner/core/aadt_join.py": {
    "diff": "3bb21e29a79b7db5c01c76f1df97c61c548c9ee6ea2640e2d05227b530c6ba9f",
@@ -343,37 +344,9 @@
    "from": "DamSafety_Runner/core/impacts.py"
   },
   "damit_runner/core/lisflood.py": {
-   "diff": "9ae6e5cb7426a37e7de2556826e4fa11b1825f9d4058b118834655a8a779bd0a",
+   "diff": "3cd4d8d25dec7ce3b146a4efcabb6bf178c5627cc7e0b5427e52f77bd6957b9c",
    "from": "DamSafety_Runner/core/lisflood.py",
-   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): every Boann solver recognised and offered (fv/fv2/dg2/subfv/subli), choose_auto with the 3 m sub-grid local inertial rule (#510), checkerboard re-run (#504). Only DamIT names / compat imports / check_log_version differ."
-  },
-  "damit_runner/core/metalflood/__init__.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/__init__.py"
-  },
-  "damit_runner/core/metalflood/__main__.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/__main__.py"
-  },
-  "damit_runner/core/metalflood/backends.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/backends.py"
-  },
-  "damit_runner/core/metalflood/bench.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/bench.py"
-  },
-  "damit_runner/core/metalflood/cases.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/cases.py"
-  },
-  "damit_runner/core/metalflood/deckio.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/deckio.py"
-  },
-  "damit_runner/core/metalflood/engine.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/engine.py"
+   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): every Boann solver recognised and offered (fv/fv2/dg2/subfv/subli), choose_auto with the 3 m sub-grid local inertial rule (#510), checkerboard re-run (#504). Only DamIT names / compat imports / check_log_version differ. Runner 0.11.0: BOANN_DIR / GPU_*_EXE into damit_runner/boann/hydro and _legacy_boann ported from DWR_Plugins #529 (f71ac94b, Runner 3.101.1); Boann pinned by BOANN.lock."
   },
   "damit_runner/core/model_terrain.py": {
    "diff": "",
@@ -409,8 +382,9 @@
    "from": "DamSafety_Runner/core/proposed.py"
   },
   "damit_runner/core/provenance.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/provenance.py"
+   "diff": "3b92dfe73c478611cb8a333ae6a8ddd8ee59e6b44c12ad204769240fdf4888ed",
+   "from": "DamSafety_Runner/core/provenance.py",
+   "note": "ported from DWR_Plugins #529 (f71ac94b, Runner 3.101.1) for DamIT Runner 0.11.0: Boann pinned at damit_runner/boann (BOANN.lock)"
   },
   "damit_runner/core/qa_maps.py": {
    "diff": "",
@@ -471,8 +445,9 @@
    "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): curve presets (CURVES, resolve_curve, curve_name, curve_key; #496) ported. Deliberate DamIT difference: DEFAULT_CURVE = BIEGER_2015_US and CURVES lists Bieger first (index 0 = default); SGC_CURVES kept for 0.9.x scripts."
   },
   "damit_runner/core/solve_gate.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/solve_gate.py"
+   "diff": "0dc2ed50661dcd8f2b93a57d87d97e4f9a501b3d4b53da37a3b12110a6244b64",
+   "from": "DamSafety_Runner/core/solve_gate.py",
+   "note": "ported from DWR_Plugins #529 (f71ac94b, Runner 3.101.1) for DamIT Runner 0.11.0: Boann pinned at damit_runner/boann (BOANN.lock)"
   },
   "damit_runner/core/stoprule.py": {
    "diff": "",
