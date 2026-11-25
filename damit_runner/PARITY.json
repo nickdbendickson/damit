@@ -14,8 +14,9 @@
    "from": "DamSafety_Finder/__init__.py"
   },
   "damit_finder/brand.py": {
-   "diff": "c0202a31819a85df7c0ea1132cb805fd4aab4d0bfefb2c8ed7909dcdf1700298",
-   "from": "DamSafety_Finder/brand.py"
+   "diff": "ff59b12daffe2dbcd76e3fbbe0f6f316bace9348a7afa8ab05e673db63c2c672",
+   "from": "DamSafety_Finder/brand.py",
+   "note": "DamIT branding (NID, DamIT Data); docstring says DWR_Plugins (was a stray 'dAmIt_Plugins')."
   },
   "damit_finder/core/__init__.py": {
    "diff": "",
@@ -34,9 +35,8 @@
    "from": "DamSafety_Finder/core/dataset.py"
   },
   "damit_finder/core/embankments.py": {
-   "diff": "c4c2dc37ddd44ba10b49c52576b2e328329af2e3bdd422320df956c998869b9f",
-   "from": "DamSafety_Finder/core/embankments.py",
-   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
+   "diff": "",
+   "from": "DamSafety_Finder/core/embankments.py"
   },
   "damit_finder/core/evaluate.py": {
    "diff": "",
@@ -87,14 +87,12 @@
    "from": "DamSafety_Finder/core/water.py"
   },
   "damit_finder/finder.py": {
-   "diff": "8c48047dc0ce520fbae4163962ee7de921f492d4806252b09f7a80d3f83449c9",
-   "from": "DamSafety_Finder/finder.py",
-   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
+   "diff": "",
+   "from": "DamSafety_Finder/finder.py"
   },
   "damit_finder/plugin.py": {
-   "diff": "a913f1316d59986525d0d7c2f94a8f8b07ddbb669e7179627a1bbaf2ec5664ed",
-   "from": "DamSafety_Finder/plugin.py",
-   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
+   "diff": "",
+   "from": "DamSafety_Finder/plugin.py"
   },
   "damit_finder/tests/__init__.py": {
    "diff": "",
@@ -105,18 +103,17 @@
    "from": "DamSafety_Finder/tests/test_core.py"
   },
   "damit_finder/tests/test_finder.py": {
-   "diff": "d081ee0c12932dba245ba5297246f412c0fe203af47efd22829e538c052e13f7",
-   "from": "DamSafety_Finder/tests/test_finder.py",
-   "note": "river-levee / dike detection ported ahead of synced_to (DamSafety DWR #509, merged d92cfa4d); finder.py also carries the GDAL handle release (damit #149). Re-records to \"\" when the Runner parity catch-up bumps synced_to to a DWR main that includes #509."
+   "diff": "",
+   "from": "DamSafety_Finder/tests/test_finder.py"
   },
   "damit_finder/tests/test_qgis.py": {
    "diff": "",
    "from": "DamSafety_Finder/tests/test_qgis.py"
   },
   "damit_runner/algorithms/engine.py": {
-   "diff": "9725b38f0ba14f80677742d1982120437dd0e4473ea8c861292b76f1cba496d2",
+   "diff": "5cbee88bfc893e8143b78e816f3c68e6f6e04deb627e8aac656b50e10480da17",
    "from": "DamSafety_Runner/algorithms.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): DAM_POINT_CHECK tip (C1 centre snap). Deliberate DamIT difference: DAM_POINT_CHECK defaults to warn, not DamSafety 3.20.13's move (dam_point_check.DEFAULT_MODE; the moves are not validated outside North Dakota, Nick 2026-11-23). Repo audit 2026-11-23: ported _suite_source_label and _why_not_a_file (dropped in the port; engine_sources raised NameError). _suite_source_label reads DamIT's compat suite_config (DamIT setting, then env), since DamIT has no suite_config.source(). Docstring only (2026-11-23): _suite_setting describes DamIT's compat.suite_config (DamIT setting, then DAMIT_RUN_LISFLOOD_EXE / NDBREACH_LISFLOOD), not DamSafety Setup or QgsSettings ndsuite. No result change. Runner 0.9.0: flood-engine help text says the CPU build runs on every core with OpenMP (DamSafety #466 wording, compiled once; DamIT ships no prebuilt libraries). No result change."
+   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0). DamIT keeps its own FLOOD_ENGINES order (index 2 = gpu-sgc since 0.8.0; DamSafety's other Boann solvers, auto and gpu-subli appended), SGC_CURVE help says Bieger 2015 is the default, no prebuilt CPU libraries in the engine help. Not ported (ND only): USE_DWR_LINES / DAM_LINES-from-pack / F_STRUCTURE batch parameters, _dwr_line_sources, _dwr_line, the CREST_LINE dwr_lines guard (_own_crest_lines, CREST_REFUSED), _feature_attrs and structure ids in the batch. DAM_POINT_CHECK stays warn."
   },
   "damit_runner/compat/nodata_sample.py": {
    "diff": "591019cfca8a4de2df473eb1d17f9de7b135356305d7a314db2216b8fb5c86e8",
@@ -143,9 +140,8 @@
    "from": "DamSafety_Runner/core/anuga_crest.py"
   },
   "damit_runner/core/anuga_detach.py": {
-   "diff": "a2681ef4d289e9793d8c8ff9b69f536feb1b89d8de3db5ee69f6c151fe3a3c5b",
-   "from": "DamSafety_Runner/core/anuga_detach.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins 8a153696 (#394): signalable() and the Attached._signal re-check (a cancel never signals a cross-host, dead or recycled pid). The file is now byte-identical to DamSafety main de2c93ad."
+   "diff": "",
+   "from": "DamSafety_Runner/core/anuga_detach.py"
   },
   "damit_runner/core/anuga_dtdiag.py": {
    "diff": "",
@@ -156,9 +152,8 @@
    "from": "DamSafety_Runner/core/anuga_fine_maxima.py"
   },
   "damit_runner/core/anuga_model.py": {
-   "diff": "683e6d7de68af187c5c4544cb93e4aace9ede7951a5b1c3bfadf45b8d193231f",
-   "from": "DamSafety_Runner/core/anuga_model.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins 8d43bf62 (Runner 3.20.7): omp_duplicate_hint for 'OMP: Error #15'. Otherwise only DamIT's own import / wording differences. Runner 0.9.0: Settings manning_n code fallback 0.06 -> 0.05 (the suite default since 0.7.12; DamSafety main still has 0.06 here)."
+   "diff": "566f402a1ea454484015aeb6835cef65968f9dba3dd7ff2c57e4cbf91801f486",
+   "from": "DamSafety_Runner/core/anuga_model.py"
   },
   "damit_runner/core/anuga_slowcheck.py": {
    "diff": "",
@@ -167,6 +162,11 @@
   "damit_runner/core/anuga_worker.py": {
    "diff": "",
    "from": "DamSafety_Runner/core/anuga_worker.py"
+  },
+  "damit_runner/core/atomicio.py": {
+   "diff": "22186dbff22bd99e753bde88f122d7e615e6dcec7318d0c2820233d7bbb64fb6",
+   "from": "DamSafety_Runner/core/atomicio.py",
+   "note": "Docstring only: DamIT's own provenance line (DamSafety ported it from DamIT #150)."
   },
   "damit_runner/core/basemap.py": {
    "diff": "064612b15cb3ef8cba97f1ae3480f1d63bbd78f174b822778f6ddb8f5b7d69d2",
@@ -181,37 +181,33 @@
    "from": "DamSafety_Runner/core/benchmark.py"
   },
   "damit_runner/core/breach.py": {
-   "diff": "5e90e3b50cf512524f5b410c74c2c1cf9047b71013ebd97cd65b91b2cc23b207",
-   "from": "DamSafety_Runner/core/breach.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (MacDonald units sentence) and 6dfd42cd (VTG citation). 6dfd42cd's Froehlich 2016b citation and M7 named peak-flow range wait for the Xu & Zhang port (#401, group C). Runner 0.7.11 (port group C3, #401 Xu & Zhang): ported ahead of synced_to from DWR_Plugins 75e71aa6 (XZ methods, MLM / USBR / Froehlich 2016b / Zhong / Azmi peak checks and range) and 6dfd42cd (M7 named range, Froehlich 2016b citation). TR-60 shape note keeps DamIT's 'the jurisdiction' wording."
+   "diff": "8db132fc5a8c5e752ae6f2526a63e7997531542b69433bce051399f8c3959657",
+   "from": "DamSafety_Runner/core/breach.py"
   },
   "damit_runner/core/bridge_snap.py": {
    "diff": "",
    "from": "DamSafety_Runner/core/bridge_snap.py"
   },
   "damit_runner/core/builtin_lisflood.py": {
-   "diff": "237b26023823e0efec79350f211b119e3fafa698f4d8d7a39c28163963983c98",
-   "from": "DamSafety_Runner/core/builtin_lisflood.py",
-   "note": "0.7.13 already carries DWR 005aa147 (#432 inflow_lf_order, newer than the pin); the re-pin PR syncs it. Runner 0.9.0: fpfric fallback 0.06 -> 0.05 when a deck has no fpfric (DamSafety main still has 0.06 here)."
+   "diff": "965de37ac60489548317173417914fa56790fe16f0c6520a8277cf70c5f60b48",
+   "from": "DamSafety_Runner/core/builtin_lisflood.py"
   },
   "damit_runner/core/cascade.py": {
-   "diff": "025bd43cca85288a436769754afc82e639d836190273e3b8c96047abff7b4d97",
-   "from": "DamSafety_Runner/core/cascade.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check."
+   "diff": "",
+   "from": "DamSafety_Runner/core/cascade.py"
   },
   "damit_runner/core/chain.py": {
-   "diff": "1ddca4624659a9d799b3fd5df3e69f83751f71698121931a12c4683be8b20540",
+   "diff": "c0cecb44f3471711c336a1137408615306108020395a0bae1a78bd7a24876404",
    "from": "DamSafety_Runner/core/chain.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins e2725333 (#412): raise_open_files / open_files_note. The #392 dam-line hunks of DamSafety main are not ported yet (RUNNER_PORT_PLAN.md group D)."
+   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): merge_batch_row / RUNNER_ROW_NAME (#489) ported. Not ported (ND only): the 3.20.13 dam_line_rule fingerprint term and placement-kept rerun (dwr_lines)."
   },
   "damit_runner/core/ckpt_sign.py": {
    "diff": "1a7825762893179ee92eb1e130d3bade9ccf9e3024ab9cead7b6c83d53e2155a",
    "from": "DamSafety_Runner/core/ckpt_sign.py"
   },
   "damit_runner/core/conditioning.py": {
-   "diff": "d403bb14d309a20760c9829bb93f98239a81abc8c405e19f405eaf5e254a325d",
-   "from": "DamSafety_Runner/core/conditioning.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 07ab314c (S6a channel_width_warning). Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f ported ahead of synced_to."
+   "diff": "",
+   "from": "DamSafety_Runner/core/conditioning.py"
   },
   "damit_runner/core/consequences.py": {
    "diff": "",
@@ -222,18 +218,21 @@
    "from": "DamSafety_Runner/core/crestburn.py"
   },
   "damit_runner/core/culvert_guess.py": {
-   "diff": "37aaa2d726c65b1b9aaa8792585a07544cf1e82027e49d41b924dd836cef6ed5",
-   "from": "DamSafety_Runner/core/culvert_guess.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 07ab314c (H6-1 mark_on_dam, on_dam CSV column); docstring says inventory points (NID, state lists) instead of DWR / NID."
+   "diff": "75f29747af25b574073e34a118427e8d47bdb95a4ccfb6f5369f33958ac938c6",
+   "from": "DamSafety_Runner/core/culvert_guess.py"
   },
   "damit_runner/core/culvert_precheck.py": {
-   "diff": "1555205af72f763d234e8357d866cf01ee49b5e22a7f6a79f565255f75373d54",
-   "from": "DamSafety_Runner/core/culvert_precheck.py",
-   "note": "DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): files read back on resume are written atomically (core/atomicio.write_text: unique temp, fsync, os.replace). Not yet in DamSafety; propose the same lines there, then this pair returns to its earlier difference."
+   "diff": "a886a2ff489e8678faf0acf37af2c0555163f74ccb490c3f6822be3e0efcb586",
+   "from": "DamSafety_Runner/core/culvert_precheck.py"
   },
   "damit_runner/core/culvert_prep.py": {
    "diff": "78dce0da20638c8068f3a3800421f18fe0c9e08e9e59955fe71b7f0d2a1cbdbe",
    "from": "DamSafety_Runner/core/culvert_prep.py"
+  },
+  "damit_runner/core/dam_point_check.py": {
+   "diff": "6312ec6cf34ce3ba40796e671ba9a2e37e0a23ed196d0ef532cfe3a0b121f13a",
+   "from": "DamSafety_Runner/core/dam_point_check.py",
+   "note": "Deliberate DamIT difference: DEFAULT_MODE = warn (DamSafety: move); docstring names the NID point."
   },
   "damit_runner/core/damjson.py": {
    "diff": "88488e2d4b960dcb20d95262f48badfcd3341b0d67a14616a8d3dcf08c80b9fd",
@@ -244,9 +243,8 @@
    "from": "DamSafety_Runner/core/dashboard_html.py"
   },
   "damit_runner/core/dem_refill.py": {
-   "diff": "b106d4555c9fcddb2144a02daf7e161f0b5a6c74e44e9bedbba325452ea21676",
-   "from": "DamSafety_Runner/core/dem_refill.py",
-   "note": "DamIT-only edit from damit #149 (GDAL dataset released in fill_grid; no number change), recorded in Runner 0.7.8. Runner 0.7.10 (port group C2, #397): ported ahead of synced_to from DWR_Plugins 0ca91de6 (fetch_3dep asks noData, check_tile refuses a tile of no ground; opens through compat.gdalsafe, DamSafety: damsuite.gdalsafe). Runner 0.9.0: ported ahead of synced_to from DWR_Plugins 0af7575 (#491, Runner 3.74.0): HOLE_FILL, interior_holes, fill_interior_holes. The hunk is identical to DamSafety main."
+   "diff": "c4a5ffcf95e89f7455c320acc3d5a0036a4f0d7d8782ea306438c176e82ba2e7",
+   "from": "DamSafety_Runner/core/dem_refill.py"
   },
   "damit_runner/core/dem_zunit.py": {
    "diff": "",
@@ -257,14 +255,12 @@
    "from": "DamSafety_Runner/core/estimate.py"
   },
   "damit_runner/core/flood.py": {
-   "diff": "1bf349e0aabc309f42faa6652337e87422ca5285e68413186062eb4d31d7cfe3",
-   "from": "DamSafety_Runner/core/flood.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins 07ab314c (Runner 3.23.0): the CREST_C_US citation comment. The file then matches DamSafety main except DamIT's own differences."
+   "diff": "d5dc0727b966f52413a2e62a927c5028584a2d8b0fe5b9113a08327647f49bf3",
+   "from": "DamSafety_Runner/core/flood.py"
   },
   "damit_runner/core/gdal_io.py": {
-   "diff": "9b78a9d315e22082f8771856f2555beee4870e499364305c977f2507c5996579",
-   "from": "DamSafety_Runner/core/gdal_io.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins a37e396a (#416): GdalTerrain refuses a terrain with no CRS. Not accepted drift: this hunk is identical to DamSafety a37e396a; re-recording at a synced_to that includes #416 should leave only DamIT naming differences. Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): 6023cc1b (H9 Manning coverage count) ported ahead of synced_to; DamIT reads NLCD through data_conventions.nlcd_to_manning (DamSafety: nd_data). Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f ported ahead of synced_to. Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check."
+   "diff": "1641d1cef420426319624523b832a3092125659d020a2f581090be555f0c967d",
+   "from": "DamSafety_Runner/core/gdal_io.py"
   },
   "damit_runner/core/geom2d.py": {
    "diff": "",
@@ -283,9 +279,8 @@
    "from": "DamSafety_Runner/core/grid_default.py"
   },
   "damit_runner/core/handoff.py": {
-   "diff": "479b70fa082da167ff6cb54d289fb8bbfdf3b5b0f5f5e65804e7b996addcc1b7",
-   "from": "DamSafety_Runner/core/handoff.py",
-   "note": "DamIT audit fix 2026-11-20: nid_for logs an unreadable dam.json. The same lines are proposed for DamSafety_Runner/core/handoff.py in DWR_Plugins #441 (Runner 3.35.1); once merged and synced, this pair returns to its earlier difference. DamIT-only edit from damit #149 (nid_for stderr breadcrumb, pushInfo fallback; logging only), recorded in Runner 0.7.8."
+   "diff": "c54413562123911bc9f32e7db05227de49883960dfd87778a00afeecb62429dc",
+   "from": "DamSafety_Runner/core/handoff.py"
   },
   "damit_runner/core/hecras.py": {
    "diff": "d0727c4d6f8c79f0469f5983a96f9cff81dbf083e69a8b6afd89e9dbfe2b0ca2",
@@ -304,18 +299,16 @@
    "from": "DamSafety_Runner/core/hecras_crest.py"
   },
   "damit_runner/core/hecras_engine.py": {
-   "diff": "35cd2d49ce28c1563897b9b7ece07729c80269ccc6bf9b576135b9020c14c978",
-   "from": "DamSafety_Runner/core/hecras_engine.py",
-   "note": "DamIT-only audit fix 2026-11-19 (damit #134, Runner 0.7.5): files read back on resume are written atomically (core/atomicio.write_text: unique temp, fsync, os.replace). Not yet in DamSafety; propose the same lines there, then this pair returns to its earlier difference."
+   "diff": "40ec8f7ccf33a8d3958c72c9b6170eba0143ad7a7fd1d4ee950f61baaaa7eae8",
+   "from": "DamSafety_Runner/core/hecras_engine.py"
   },
   "damit_runner/core/hecras_fine.py": {
    "diff": "",
    "from": "DamSafety_Runner/core/hecras_fine.py"
   },
   "damit_runner/core/hecras_model.py": {
-   "diff": "b2d89c304d298509b7132b52597e897cc45c0bfcd7d7a7d95ffbe726d235f65c",
-   "from": "DamSafety_Runner/core/hecras_model.py",
-   "note": "Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d (HEC-RAS window follows the spread rule). Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Runner 0.9.0: manning_n code fallbacks 0.06 -> 0.05 (HecRasModel default and the build fallback; DamSafety main still has 0.06 here)."
+   "diff": "5381cb0285c65eb245ba1fd9f3d9991fe9f996dc105290a6979743e2923c81b7",
+   "from": "DamSafety_Runner/core/hecras_model.py"
   },
   "damit_runner/core/hecras_package.py": {
    "diff": "",
@@ -350,9 +343,37 @@
    "from": "DamSafety_Runner/core/impacts.py"
   },
   "damit_runner/core/lisflood.py": {
-   "diff": "758a4c6b075e68cc66c38a8813217764301afaf6e74120b3912ce384a41a8d54",
+   "diff": "9ae6e5cb7426a37e7de2556826e4fa11b1825f9d4058b118834655a8a779bd0a",
    "from": "DamSafety_Runner/core/lisflood.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Runner 0.9.0: ported ahead of synced_to from DWR_Plugins 2a8750b (#466 CPU build on every core), 8060af1 (#467 AUTO_WORDS / choose_auto only; not wired to a DamIT engine choice), f137bf4 (#481 STABLE_CFL_SHOCK / stable_cfl; DamIT offers no shock-capturing engine, so _is_gpu_shock is False), de3b26f (#490 boann_info, ACC and SGC solvers only). Settings manning_n fallback 0.06 -> 0.05."
+   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): every Boann solver recognised and offered (fv/fv2/dg2/subfv/subli), choose_auto with the 3 m sub-grid local inertial rule (#510), checkerboard re-run (#504). Only DamIT names / compat imports / check_log_version differ."
+  },
+  "damit_runner/core/metalflood/__init__.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/metalflood/__init__.py"
+  },
+  "damit_runner/core/metalflood/__main__.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/metalflood/__main__.py"
+  },
+  "damit_runner/core/metalflood/backends.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/metalflood/backends.py"
+  },
+  "damit_runner/core/metalflood/bench.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/metalflood/bench.py"
+  },
+  "damit_runner/core/metalflood/cases.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/metalflood/cases.py"
+  },
+  "damit_runner/core/metalflood/deckio.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/metalflood/deckio.py"
+  },
+  "damit_runner/core/metalflood/engine.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/metalflood/engine.py"
   },
   "damit_runner/core/model_terrain.py": {
    "diff": "",
@@ -370,48 +391,47 @@
    "diff": "",
    "from": "DamSafety_Runner/core/outlets.py"
   },
+  "damit_runner/core/pothole_fill.py": {
+   "diff": "8c482c62e518a747a5861977ded518b7caee7efc78548585417139fbf2cc0626",
+   "from": "DamSafety_Runner/core/pothole_fill.py",
+   "note": "DamIT: numpy _label4 instead of metalterrain.audit._label4 and a vendored-from header; same labels up to numbering."
+  },
   "damit_runner/core/probabilistic.py": {
-   "diff": "f960b9bc804e13f7db220143cc10585d936d68b64ca8671e3b5135fbeb1ff74c",
-   "from": "DamSafety_Runner/core/probabilistic.py",
-   "note": "Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ aliases) ported ahead of synced_to."
+   "diff": "1a097aef10bea53007314c5ff0eb7b597a116e04fa53a81b4e359228f6bc8512",
+   "from": "DamSafety_Runner/core/probabilistic.py"
   },
   "damit_runner/core/products.py": {
-   "diff": "6ba1e2292ba0bc9bb668a9d31c2695755be6676d90039199b9491bc2265f8c92",
-   "from": "DamSafety_Runner/core/products.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6dfd42cd (S3 dem_edits footprint layer)."
+   "diff": "e30962c2e392c65e79345b52ccb2408c2eda1c81fcf3debc317f237b7ac27769",
+   "from": "DamSafety_Runner/core/products.py"
   },
   "damit_runner/core/proposed.py": {
    "diff": "",
    "from": "DamSafety_Runner/core/proposed.py"
   },
   "damit_runner/core/provenance.py": {
-   "diff": "7af7d4846f6daa820773e59ca99bf49fcf7d5710bdde06139fddb8a227a51f4a",
-   "from": "DamSafety_Runner/core/provenance.py",
-   "note": "Runner 0.9.0: ported ahead of synced_to from DWR_Plugins de3b26f (#490): software.boann in the run manifest. The hunk is identical to DamSafety main."
+   "diff": "",
+   "from": "DamSafety_Runner/core/provenance.py"
   },
   "damit_runner/core/qa_maps.py": {
-   "diff": "0381cf9bbccc142d9542c2bd52571a51b40c13b45e832fadde22361dab0d671a",
-   "from": "DamSafety_Runner/core/qa_maps.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check."
+   "diff": "",
+   "from": "DamSafety_Runner/core/qa_maps.py"
   },
   "damit_runner/core/refine.py": {
-   "diff": "8447ad47a28d2c698a701be27d37bc3839e917cee180ab0f75193e68cb90dbc2",
-   "from": "DamSafety_Runner/core/refine.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to"
+   "diff": "",
+   "from": "DamSafety_Runner/core/refine.py"
   },
   "damit_runner/core/report_docx.py": {
-   "diff": "8f66d145388541cd2c1d7f7caef5521ab7bb73ceb6cfe28697105b3b5e164162",
+   "diff": "1ebfffc97fe8ee87b24d69ddc3370faa277675f31bc259775955632d596ab96e",
    "from": "DamSafety_Runner/core/report_docx.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 6023cc1b (H4a/H4b/A5 run-built assumptions), 07ab314c (H12 tailwater limitation, S7 crossings sentence). DamIT drops the ND 5.1.1 citation from the starting-pool basis text (DamIT is multi-state). Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): bd9f159d (spread-rule report lines) ported ahead of synced_to. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (XZ method text, regression range) ported ahead of synced_to. Runner 0.7.12 (port group C4, Manning n default 0.06 -> 0.05; CHANGES RESULTS for runs on the default): d4ba451f / 2863c0a1 display fallbacks ported ahead of synced_to. Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. DamIT: the Dam location line says Inventory point, not DWR point."
+   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): extent_flags ported; DamIT wording for the top-of-dam basis (no ND 5.1.1) and 'Inventory point' for 'DWR point'."
   },
   "damit_runner/core/report_metrics.py": {
    "diff": "44e4b9e61c5defbafde3ef3411336429bb690b1a9d5f2c7e90a60edc5e5057a1",
    "from": "DamSafety_Runner/core/report_metrics.py"
   },
   "damit_runner/core/reservoir_carve.py": {
-   "diff": "36d13fa9aeade2dab3e8567bf65451844af0ac35e37396101352fc49f5466e5f",
-   "from": "DamSafety_Runner/core/reservoir_carve.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins 9fa40a96 (#387, Runner 3.20.12): breach inflow side from the reservoir's flat water."
+   "diff": "78dce0da20638c8068f3a3800421f18fe0c9e08e9e59955fe71b7f0d2a1cbdbe",
+   "from": "DamSafety_Runner/core/reservoir_carve.py"
   },
   "damit_runner/core/results_info.py": {
    "diff": "acd2dfceba670fbefb1866a1e7a62f25b62dcd26c99cdcd1bf26dfcdfae44e37",
@@ -425,6 +445,10 @@
    "diff": "7b873e13638da8b0a90f95352943e9fef6da0639f6e5e0dcbeab29fd9c12bbfe",
    "from": "DamSafety_Runner/core/road_profile.py"
   },
+  "damit_runner/core/run_health.py": {
+   "diff": "",
+   "from": "DamSafety_Runner/core/run_health.py"
+  },
   "damit_runner/core/run_params.py": {
    "diff": "a6965d3eff8c916bdf29f2757b616e8ae09dd830a696a4fd8319ae1991f8844f",
    "from": "DamSafety_Runner/core/run_params.py"
@@ -434,33 +458,33 @@
    "from": "DamSafety_Runner/core/runlock.py"
   },
   "damit_runner/core/selftest.py": {
-   "diff": "a7326c096774b43a72ec07478fe67d2b86d644a835df8eb96809b1c3f5061dc8",
-   "from": "DamSafety_Runner/core/selftest.py",
-   "note": "Runner 0.9.0: check_nlcd_raster's unclassified default 0.06 -> 0.05 (matches the NLCD lookup default since 0.7.12; DamSafety main still has 0.06 here)."
+   "diff": "0f17894bbd721a31e0aacb2690df58959669e15a6a5750208b2e3aa7fc5c8852",
+   "from": "DamSafety_Runner/core/selftest.py"
   },
   "damit_runner/core/sensitivity.py": {
-   "diff": "5a36ee252c1f3f76b6b79533391ec67e3014f84831e2c03fa5c3e269c8cbd4a9",
-   "from": "DamSafety_Runner/core/sensitivity.py",
-   "note": "Runner 0.7.9 (port group C1, #383 area-based spread rule; CHANGES RESULTS): ported ahead of synced_to from DWR_Plugins bd9f159d. Runner 0.7.11 (port group C3, #401 Xu & Zhang): 75e71aa6 (method sweep runs XZ piping) ported ahead of synced_to."
+   "diff": "e138ed895aee636a032e1843bd9d26720662359bc7c36acccc2a8493bdb7ef22",
+   "from": "DamSafety_Runner/core/sensitivity.py"
+  },
+  "damit_runner/core/sgc.py": {
+   "diff": "c2fddb46c5629f7fd0764032a770630c12817c87390e206cd9d090816840357f",
+   "from": "DamSafety_Runner/core/sgc.py",
+   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): curve presets (CURVES, resolve_curve, curve_name, curve_key; #496) ported. Deliberate DamIT difference: DEFAULT_CURVE = BIEGER_2015_US and CURVES lists Bieger first (index 0 = default); SGC_CURVES kept for 0.9.x scripts."
   },
   "damit_runner/core/solve_gate.py": {
-   "diff": "5b51ec6f51047681a143801023505b6f5b48ab6427ef566003c0345b000350a0",
-   "from": "DamSafety_Runner/core/solve_gate.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins #473 (Runner 3.51.0, fix 1): lisflood_smoke skips in-process engines (is_inprocess_engine). The file is byte-identical to the #473 version."
+   "diff": "",
+   "from": "DamSafety_Runner/core/solve_gate.py"
   },
   "damit_runner/core/stoprule.py": {
    "diff": "",
    "from": "DamSafety_Runner/core/stoprule.py"
   },
   "damit_runner/core/structures.py": {
-   "diff": "9344603b13c11c87384956ee038328acf380692f40788e067cf0367ffd5213c7",
-   "from": "DamSafety_Runner/core/structures.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): ported ahead of synced_to from DWR_Plugins 07ab314c (S7 crossing_barriers)."
+   "diff": "c8230c960199275188146e55850acdf7a1fd828c5ace1482469468f8798bccd7",
+   "from": "DamSafety_Runner/core/structures.py"
   },
   "damit_runner/core/terrain.py": {
-   "diff": "169c689c781b4a0fd316b5fd8f28f704713da5125d328055a9f5f2fd87029638",
-   "from": "DamSafety_Runner/core/terrain.py",
-   "note": "Ported ahead of synced_to from DWR_Plugins facc89fe (#382, Runner 3.20.8): INFLOW_DEEP_FACTOR / INFLOW_DEEP. Ported ahead of synced_to from DWR_Plugins 9fa40a96 (#387, Runner 3.20.12): breach inflow side from the reservoir's flat water. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): _local_line_normal."
+   "diff": "",
+   "from": "DamSafety_Runner/core/terrain.py"
   },
   "damit_runner/core/units.py": {
    "diff": "2e9d39beb135656b18f121981424401d80c90c6ffa21ee6896ee713275438d32",
@@ -483,18 +507,17 @@
    "from": "DamSafety_Runner/core/warp_opts.py"
   },
   "damit_runner/core/workflow.py": {
-   "diff": "4d47a557f94b1e97c4356469b7540e370001b4b031e80f2affe727678725a83c",
+   "diff": "a34d2958c077ed8a11c379d82bb8380fd26d108f2694d624aeda657109fe6d15",
    "from": "DamSafety_Runner/core/workflow.py",
-   "note": "ported Boann SGC wiring from DamSafety Runner 3.36.0-3.41.0 (DWR main 3f536222), ahead of synced_to Ported ahead of synced_to from DWR_Plugins facc89fe (#382, Runner 3.20.8): _inflow_depth_check. Ported ahead of synced_to from DWR_Plugins bd14874b (#385, Runner 3.20.11): dam point check. Ported ahead of synced_to from DWR_Plugins 9fa40a96 (#387, Runner 3.20.12): breach inflow side from the reservoir's flat water. Ported ahead of synced_to from DWR_Plugins cd6345c7 (#392, Runner 3.20.13), generic part only (dwr_lines not ported): C1 centre snap, add_crest_raised_warning, the inflow-site message; the DWR dam line hunks are left out. Deliberate DamIT difference: DAM_POINT_CHECK defaults to warn, not DamSafety 3.20.13's move (dam_point_check.DEFAULT_MODE; the moves are not validated outside North Dakota, Nick 2026-11-23). Runner 0.9.0: ported ahead of synced_to from DWR_Plugins 9ccd71e (#469 run health card), 8d0d901 (#472 user_subgrid_r setting; DamIT offers no sub-grid FV engine, so it stays None), 6218ee1 (#480 sgc_curve from sgc.DEFAULT_CURVE, which DamIT keeps at Bieger 2015 US), f137bf4 (#481 stable_cfl in the mass-balance re-run, engine name in its messages), 0af7575 (#491 enclosed DEM hole fill and re-run). #498 (DWR record point, spillway-dip mid-crest) not ported."
+   "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0). Not ported (ND only): dwr_lines import and its dam-line / record-point / crest-refused report blocks (crest_refused_text). Bieger 2015 stays the documented SGC default; 'flat plains' for 'the ND plains'."
   },
   "damit_runner/flood/breach.py": {
-   "diff": "34ecff47b05f68842068a6b6c8fdb19b024a44d76543d1dba41ee83373db1b8c",
-   "from": "DamSafety_Runner/core/breach.py",
-   "note": "Runner 0.7.8 (port group B, report provenance / disclosure; no computed result changes): same hunks as core/breach.py (6023cc1b, 6dfd42cd VTG citation); M7 waits for #401 (group C). Runner 0.7.11 (port group C3, #401 Xu & Zhang): same hunks as core/breach.py (75e71aa6, 6dfd42cd M7)."
+   "diff": "b6d5815aa35db334c1907c7e29e0c6ccd6c52b649f0f464f8627d33adc979f44",
+   "from": "DamSafety_Runner/core/breach.py"
   }
  },
  "schema": "damit.engine_parity",
  "schema_version": 1,
  "source": "nickdbendickson/DWR_Plugins",
- "synced_to": "ed2b141f18cbac0f0e6791dbb996580a0d6eab04"
+ "synced_to": "c86ba9151d890f8f390ac8ca486d7f7be34b4f33"
 }

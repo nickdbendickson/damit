@@ -1,10 +1,10 @@
 {
-  "about": "Provenance of damit_runner/core/metalterrain/ (BoannGrid, DEM conditioning: priority-flood fill, flow accumulation and D4 dead-end refill, crossing reconnect with the 6 m cap and keep-out mask, below-water channel prism, raise_levee, one-call conditioning, delta log). Copied from DamSafety_Runner/core/metalterrain/ at source_commit (DWR_Plugins main, DamSafety Runner 3.74.0) in DamIT Runner 0.9.0. 'identical' files are byte-for-byte copies; 'modified' files carry only the DamIT differences noted. tests/test_metalterrain_source.py checks both.",
+  "about": "Provenance of damit_runner/core/metalterrain/ (BoannGrid, DEM conditioning: priority-flood fill, flow accumulation and D4 dead-end refill, crossing reconnect with the 6 m cap and keep-out mask, below-water channel prism, raise_levee, one-call conditioning, delta log). Copied from DamSafety_Runner/core/metalterrain/ at source_commit (DWR_Plugins main, DamSafety Runner 3.93.0) in DamIT Runner 0.10.0 (first copied in 0.9.0 from DamSafety Runner 3.74.0; 0.10.0 brings in DamSafety #507: fill_dem uses the priority-flood fill by default, float32-exact with the old relaxation, which stays as method relax). 'identical' files are byte-for-byte copies; 'modified' files carry only the DamIT differences noted. tests/test_metalterrain_source.py checks both.",
   "from": "DamSafety_Runner/core/metalterrain/",
   "identical": {
     "burn.py": "39c3512fa54f86e9a9eb1df8fb020ebae1cf32aa2170193c4a36b2f9398e7f3e",
     "cases.py": "092290aefb9a0ef042def6144ef09b8d7840ae9885c77d41a19b606f7ffb7cc2",
-    "cpu_kernels_fill.cpp": "920853fd3fec602147446057ad21995cee785cade6cae5c0e2c1d20f9799335f",
+    "cpu_kernels_fill.cpp": "7e727aefdcc83428835a62cbdc995eef197fe80a9e82f858c6f16e99997d900d",
     "cpu_kernels_flow.cpp": "577dd696431052281f5d40b9f031531c8d551a5fb3cc293431049eb88d8ddafa",
     "cpu_kernels_flow8.cpp": "a0b61eb0002d106e66e864fde294d807c17df9d7e88d2ae09428c0e8655b8c13",
     "kernels_fill.metal": "b4b51b2589f84ce78a4d59431fbb10128c8a3339df3421e376ced93c37f8ad85",
@@ -13,8 +13,8 @@
   },
   "modified": {
     "README.md": {
-      "damit_sha256": "a3e357fbca05fc0e8eecb9f8bb9c16284a000267f3e93944bffdcef9407b3220",
-      "source_sha256": "9b07b920424d2e29c3438a6621f2033af33db9f93bf8bc8469cf1b290c1de89c",
+      "damit_sha256": "ee1ac239ae51c535cbcc9be4fa6f3a707ee65b1b4f77457bb0541d69c7ca470e",
+      "source_sha256": "fa4895751b42fcdbee2b0d9d93048fec8904ea237c23c8e443b232529c4dcfc1",
       "note": "usage examples name damit_runner.core.metalterrain."
     },
     "__init__.py": {
@@ -23,8 +23,8 @@
       "note": "usage docstring names damit_runner."
     },
     "__main__.py": {
-      "damit_sha256": "937b04161eaeec24983748575693d2e0cd6241f3264111220a8daf3130e2b913",
-      "source_sha256": "240674e2ca9c39eae0dd14622787d22f664df207b0bdc99c81a639c84b5982c1",
+      "damit_sha256": "2756f24762ccc026b8ec7ad48900a643bb0df3db1384027ca1d40c93ec429acd",
+      "source_sha256": "6649cf53d900e9e989173e19444b4f3fda70104993c7b41af1e1902e96d602c2",
       "note": "usage docstring names damit_runner."
     },
     "audit.py": {
@@ -33,8 +33,8 @@
       "note": "usage docstring names damit_runner."
     },
     "condition.py": {
-      "damit_sha256": "82c35416b9ae7d4396c8f04239a911877ea61151147bbe2b03dbeba722d4bf6a",
-      "source_sha256": "9c6ef73081315a25d70e28ae493234ea342ea6b7c4c51a97c8b7452489505820",
+      "damit_sha256": "6e0c7bc0bb98083ffe1e339326e9d466f68b322a42bef14e0593d8e0b9e3f888",
+      "source_sha256": "ae3ca4f7cb6412c4ff330a8c4b3cd0efd353214e621fb76ac340de9a1881be83",
       "note": "GDAL through damit_runner/compat/gdalsafe (DamSafety: damsuite.gdalsafe); usage docstring names damit_runner."
     },
     "culvert.py": {
@@ -48,8 +48,8 @@
       "note": "usage docstring names damit_runner."
     },
     "fill.py": {
-      "damit_sha256": "5cec9d6ce9992e70d6d9d5e50c0674de9e0900d28f27f5aa3d981303c444a55b",
-      "source_sha256": "7fa28e431602101e94a056b4aed780256da8a410f42c4f56c9da046734d2748b",
+      "damit_sha256": "5f1d32aaece68cf70916dd9ae8a16802df25584f58642eca774d9ed6185fe5c6",
+      "source_sha256": "edc3789626257c6fb6308c222e0a16f32025f59311115ae09dff32b8f6d58527",
       "note": "usage docstring names damit_runner."
     },
     "flow.py": {
@@ -64,5 +64,5 @@
     }
   },
   "source": "nickdbendickson/DWR_Plugins",
-  "source_commit": "01758ea1f50efabe954bdcf57eef09479d1d2475"
+  "source_commit": "c86ba9151d890f8f390ac8ca486d7f7be34b4f33"
 }

@@ -1,6 +1,6 @@
 """What differs between DamIT Finder and DamSafety Finder: names, the Processing provider id and
 the hints about which layers to give. Every other file of the Finder is the same in both
-repositories (damit_finder/ here, the DamSafety Finder folder in dAmIt_Plugins) except the
+repositories (damit_finder/ here, the DamSafety Finder folder in DWR_Plugins) except the
 docstring of core/warp_opts.py."""
 from .provider import PROVIDER_ID  # noqa: F401  (the one place the id is written)
 
