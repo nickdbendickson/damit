@@ -1,24 +1,6 @@
-"""BoannGrid terrain conditioner (core/metalterrain): GPU depression-fill (Planchon & Darboux
-1984/2002) as Metal compute kernels for the Apple GPU, with a CPU build of the same kernel for
-the cloud. It reuses core/metalflood's backend (backends.Spec) and shim. See README.md.
-
-    from damit_runner.core.metalterrain import fill
-    filled, info = fill.fill_dem(dem, eps=1e-5, backend="auto")   # NaN / -9999 = NoData
-
-This is the first harvested piece of the BoannGrid conditioner: the depression-fill, the one
-GPU kernel of the Lumo/Terra Swift spike that reviewed as correct, reimplemented in the real
-Python+Metal stack (not Swift) against core/terrain.priority_flood as the ground-truth oracle.
-"""
-from .fill import fill_dem, SPEC, TParams, NODATA  # noqa: F401
-from ..metalflood.backends import metal_available, find_compiler  # noqa: F401
-
-
-def available():
-    """(True, device text) when the fill can run here: a Metal GPU, or a C++ compiler for the
-    CPU build. (False, why) otherwise."""
-    ok, why = metal_available()
-    if ok:
-        return True, "Apple GPU ({})".format(why)
-    if find_compiler():
-        return True, "CPU build of the fill kernel, one core (no Metal GPU: {})".format(why)
-    return False, "no Metal GPU ({}) and no C++ compiler for the CPU build".format(why)
+"""Boann's terrain conditioner (BoannGrid) is vendored once, byte-identical, at damit_runner/boann/grid
+(pinned to DWR_Plugins' DamSafety_Core/boann by damit_runner/BOANN.lock, DamIT Runner 0.11.0). This
+shim makes `damit_runner.core.metalterrain` that very package (compat/alias.py), so the old import
+path keeps working. Nothing else may live in this folder (tests/test_boann_lock.py checks)."""
+from ...compat import alias as _alias
+_alias.install(__name__, "damit_runner.boann.grid")

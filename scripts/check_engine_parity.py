@@ -54,14 +54,9 @@ FILES = (
     ("damit_runner/flood/breach.py", "DamSafety_Runner/core/breach.py"),
     ("damit_runner/algorithms/engine.py", "DamSafety_Runner/algorithms.py"),
     ("damit_runner/compat/nodata_sample.py", "DamSafety_Core/damsuite/nodata_sample.py"),
-    # core/metalflood is a byte-for-byte copy of the DamSafety Runner's GPU engine folder
-    ("damit_runner/core/metalflood/__init__.py", "DamSafety_Runner/core/metalflood/__init__.py"),
-    ("damit_runner/core/metalflood/__main__.py", "DamSafety_Runner/core/metalflood/__main__.py"),
-    ("damit_runner/core/metalflood/backends.py", "DamSafety_Runner/core/metalflood/backends.py"),
-    ("damit_runner/core/metalflood/bench.py", "DamSafety_Runner/core/metalflood/bench.py"),
-    ("damit_runner/core/metalflood/cases.py", "DamSafety_Runner/core/metalflood/cases.py"),
-    ("damit_runner/core/metalflood/deckio.py", "DamSafety_Runner/core/metalflood/deckio.py"),
-    ("damit_runner/core/metalflood/engine.py", "DamSafety_Runner/core/metalflood/engine.py"),
+    # Boann (core/metalflood, core/metalterrain) is not a port: since DamIT Runner 0.11.0 it is the
+    # byte-identical copy at damit_runner/boann, pinned by damit_runner/BOANN.lock and checked by
+    # scripts/boann_sync.py (engine_parity.yml's boann-lock job), not by this gate.
 )
 # DamSafety folders whose NEW modules must be looked at: a module there that DamIT has neither
 # ported nor listed under "not_ported" in PARITY.json is drift (a ported file may import it).

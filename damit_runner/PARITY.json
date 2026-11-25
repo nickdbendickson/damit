@@ -347,34 +347,6 @@
    "from": "DamSafety_Runner/core/lisflood.py",
    "note": "Runner 0.10.0 catch-up to DWR_Plugins c86ba915 (Runner 3.93.0 / Boann 6.0.0): every Boann solver recognised and offered (fv/fv2/dg2/subfv/subli), choose_auto with the 3 m sub-grid local inertial rule (#510), checkerboard re-run (#504). Only DamIT names / compat imports / check_log_version differ."
   },
-  "damit_runner/core/metalflood/__init__.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/__init__.py"
-  },
-  "damit_runner/core/metalflood/__main__.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/__main__.py"
-  },
-  "damit_runner/core/metalflood/backends.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/backends.py"
-  },
-  "damit_runner/core/metalflood/bench.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/bench.py"
-  },
-  "damit_runner/core/metalflood/cases.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/cases.py"
-  },
-  "damit_runner/core/metalflood/deckio.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/deckio.py"
-  },
-  "damit_runner/core/metalflood/engine.py": {
-   "diff": "",
-   "from": "DamSafety_Runner/core/metalflood/engine.py"
-  },
   "damit_runner/core/model_terrain.py": {
    "diff": "",
    "from": "DamSafety_Runner/core/model_terrain.py"

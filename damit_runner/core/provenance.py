@@ -160,7 +160,12 @@ def verify_manifest(path, folder=None):
                     group[:-1], label, p))
     exe = (m.get("software") or {}).get("lisflood_exe")
     if exe and exe.get("sha256"):
-        d = file_digest(exe.get("path", ""))
+        epath = exe.get("path", "")
+        if not os.path.exists(epath):
+            # DamIT Runner 0.11.0: Boann's engine files moved from core/metalflood to damit_runner/boann/hydro
+            from . import lisflood as _lf
+            epath = _lf._legacy_boann(epath) or epath
+        d = file_digest(epath)
         checked += 1
         if d.get("missing"):
             problems.append("the LISFLOOD-FP executable is not at {} any more".format(
