@@ -13,9 +13,14 @@ Two assistants that run on this computer only (nothing is sent anywhere):
    - If it stops, read the last lines, fix that (often: free disk space), and run it again.
      It carries on where it stopped. Everything it printed is in ~/local-ai/install.log
 
-2. Open a NEW terminal window (or run the  source ...  line the installer printed at the end).
+2. Open Local AI: it is in your applications menu.
+     Ask questions, add documents (drop PDFs on the Library tab), get more from the download
+     catalog, fix what Health reports with one press, test the answers and install updates.
+     Nothing to type, and nothing needs admin rights.
+   Or open a NEW terminal window (or run the  source ...  line the installer printed at
+   the end) and type:
 
-3. Try it:
+3. Try these:
      vor "what breach width does Froehlich 2008 give?"
      heim "what does REFINE_NEAR do?"
      ai            both on one page in your web browser

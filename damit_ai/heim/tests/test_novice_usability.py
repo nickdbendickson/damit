@@ -486,7 +486,7 @@ class InstallerTextTest(unittest.TestCase):
         self.assertIn('exec > >(trap \'\' INT; exec tee -i -a "$INSTALL_LOG") 2>&1', t)
         self.assertIn("HEIM_SKIP_DISK_CHECK", t)
         self.assertIn("-partial*", t)                                   # a stopped pull's part is not counted twice
-        self.assertIn('! vor_has_index "$RHOME"', t)                     # a copied but unindexed library is indexed
+        self.assertIn('! vor_index_has_passages "$RHOME"', t)             # a copied but unindexed (or empty-index) library is indexed
         self.assertIn("echo 'vor doctor'", t)                            # a Vor-only install is not sent to ai-doctor
         self.assertIn("trap on_exit EXIT", t)
         self.assertIn("not enough free disk space for the models", t)
@@ -520,7 +520,7 @@ class InstallerTextTest(unittest.TestCase):
         self.assertIn("HEIM_SKIP_DISK_CHECK", t)
         self.assertIn("'*-partial*'", t)
         self.assertIn("-not $StartedServer -and -not $Prefix", t)
-        self.assertIn("if ($hasLib -and -not (VorHasIndex $RHome))", t)
+        self.assertIn("if ($hasLib -and -not $hasPassages)", t)             # an empty index is indexed again
         self.assertIn("if ($DoHeim) { 'ai-doctor' } else { 'vor doctor' }", t)
         self.assertIn("Command Prompt:", t)                              # the starter-library line for cmd.exe too
         # a -Prefix sandbox never changes the user's execution policy
@@ -749,6 +749,24 @@ class LinuxInstallerRunTest(unittest.TestCase):
         self.assertIn("install-local-ai-linux.sh --ollama-port", log)
         self.assertIn("Try it now", log)
         self.assertNotIn("The install stopped", out)
+        # ai_ui 1.2.0: the Local AI icon, in the user's own menu folder
+        desktop = os.path.join(home, ".local", "share", "applications", "local-ai.desktop")
+        with open(desktop, encoding="utf-8") as fh:
+            entry = fh.read()
+        app = os.path.join(home, "local-ai", "bin", "local-ai-app")
+        self.assertIn('Exec="%s"' % app, entry)
+        self.assertIn("Icon=%s" % os.path.join(home, "local-ai", "icons", "local-ai.png"), entry)
+        self.assertTrue(os.path.isfile(os.path.join(home, "local-ai", "icons", "local-ai.png")))
+        self.assertTrue(os.access(app, os.X_OK))
+        with open(app, encoding="utf-8") as fh:
+            launcher = fh.read()
+        self.assertIn('ai_ui.py" --app', launcher)
+        # the launcher's settings line reads the export lines the installer wrote (a menu has no shell rc)
+        settings = launcher.splitlines()[1]
+        r = subprocess.run(["bash", "-c", settings + '\necho "VOR_HOME=$VOR_HOME"'], capture_output=True, text=True,
+                           env={"HOME": home, "PATH": "/usr/bin:/bin"})
+        self.assertIn("VOR_HOME=%s" % os.path.join(home, "Vor"), r.stdout)
+        self.assertIn("Local AI (your applications menu)", out)
 
     def test_too_little_disk_stops_before_any_download_and_says_how_to_carry_on(self):
         fake = os.path.join(self.tmp, "smalldf")

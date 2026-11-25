@@ -417,6 +417,9 @@ One local page for Heim and Vor (127.0.0.1 only).
 |---|---|---|---|
 | `--port` | PORT | `0` | port (default: any free one) |
 | `--no-browser` |  |  | print the address instead of opening it |
+| `--app` |  |  | what the Local AI icon runs: open a window on the running app, starting it if needed |
+| `--serve-app` |  |  |  |
+| `--version` |  |  | show program's version number and exit |
 
 ---
 
