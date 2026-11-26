@@ -7,3 +7,5 @@ dist/
 # suite_install: downloaded offline files and built packages are never committed
 suite_install/offline/
 suite_install/offline-*.zip
+# Boann CPU libraries: built by the release (boann_windows.yml), never committed
+damit_runner/boann/hydro/prebuilt/

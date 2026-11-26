@@ -74,5 +74,34 @@ class ReleaseRoundTrip(unittest.TestCase):
         self.assertIsNone(MPX.zip_version("DamSafety_Core_1.0.0.zip"))
 
 
+class BoannWindowsEngineShips(unittest.TestCase):
+    """Boann's Windows CPU libraries (boann_windows.yml) go into the DamIT Runner zip at
+    damit_runner/boann/hydro/prebuilt/windows-x64/, and the release waits for their Windows check."""
+
+    def test_package_keeps_prebuilt_libraries(self):
+        import package_plugins as PP
+        for name in ("mf_cpu_0123456789abcdef_omp.dll", "mf_cpu_0123456789abcdef.dll"):
+            rel = "damit_runner/boann/hydro/prebuilt/windows-x64/" + name
+            self.assertTrue(PP._should_include(rel), rel)
+
+    def test_release_runs_the_windows_check_first(self):
+        with open(os.path.join(ROOT, ".github", "workflows", "release.yml"), encoding="utf-8") as f:
+            rel = f.read()
+        self.assertIn("uses: ./.github/workflows/boann_windows.yml", rel)
+        self.assertIn("needs: boann-windows", rel)
+        self.assertIn("name: boann-cpu-windows-x64", rel)
+        self.assertIn("path: damit_runner/boann/hydro/prebuilt", rel)
+        with open(os.path.join(ROOT, ".github", "workflows", "boann_windows.yml"), encoding="utf-8") as f:
+            wf = f.read()
+        self.assertIn("workflow_call:", wf)
+        self.assertIn("scripts/boann_windows_check.py", wf)
+
+    def test_prebuilt_never_committed_or_vendored(self):
+        with open(os.path.join(ROOT, ".gitignore"), encoding="utf-8") as f:
+            self.assertIn("damit_runner/boann/hydro/prebuilt/", f.read())
+        import boann_sync
+        self.assertIn("prebuilt", boann_sync.SKIP_DIRS)
+
+
 if __name__ == "__main__":
     unittest.main()

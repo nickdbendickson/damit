@@ -17,6 +17,12 @@ name: Release
 # the name; plugins.xml is scripts/make_plugins_xml.py's, merged with the one already on gh-pages so
 # a plugin missing from a release keeps its last entry. LISFLOOD-FP is not bundled: the Runner
 # falls back to its built-in engine, and suite_install/ installs LISFLOOD-FP per OS.
+#
+# Boann on Windows: boann_windows.yml cross-compiles Boann's CPU libraries for windows-x64 and
+# runs them from the Runner zip on a real Windows with no compiler; a library that does not open
+# or run stops the release. The libraries ship in the DamIT Runner zip under
+# damit_runner/boann/hydro/prebuilt/windows-x64/, so a Windows PC runs Boann (every core) with no
+# C++ compiler. A Mac runs Boann on its Metal GPU; Linux builds the CPU library itself.
 
 on:
   push:
@@ -31,7 +37,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  boann-windows:
+    uses: ./.github/workflows/boann_windows.yml
+
   release:
+    needs: boann-windows
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,6 +51,11 @@ jobs:
           python-version: "3.12"
       - name: Packaging checks (metadata readable by QGIS, zips and plugins.xml round-trip)
         run: python3 -m unittest -v tests.test_release_channel tests.test_metadata_suite
+      - name: Boann's Windows CPU libraries (checked on Windows by boann-windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: boann-cpu-windows-x64
+          path: damit_runner/boann/hydro/prebuilt
       - name: Plugin zips + SHA256SUMS
         run: |
           python3 scripts/package_plugins.py dist
@@ -77,7 +92,9 @@ jobs:
             https://nickdbendickson.github.io/damit/plugins.xml in QGIS (Plugins > Manage and
             Install Plugins > Settings > Add) so QGIS offers updates; or install each zip with
             Install from ZIP. `SHA256SUMS` lists every zip. The one-step installer in
-            suite_install/ also sets up QGIS and the flood models.
+            suite_install/ also sets up QGIS and the flood models. The DamIT Runner zip carries
+            Boann's CPU engine for Windows (damit_runner/boann/hydro/prebuilt/windows-x64/), so a
+            Windows PC runs Boann with no C++ compiler.
           files: |
             dist/*.zip
             dist/SHA256SUMS
