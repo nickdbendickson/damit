@@ -12,6 +12,13 @@
 #                               Dakota Crest desk (DWR_Plugins dwr_crest/) are retired and no longer shipped;
 #                               --crest is accepted and ignored so older build commands still run
 #        [--zip]                also write <out>.zip
+#        [--no-boann-windows]   leave out Boann's Windows CPU engine (see below)
+#
+# Boann on Windows: a Windows PC has no C++ compiler, so it runs Boann only from CPU libraries
+# shipped in the plugin zips. When MinGW-w64 is here (x86_64-w64-mingw32-g++[-posix]; on a Mac
+# `brew install mingw-w64`), they are built for windows-x64 from each checkout's own Boann (DWR's
+# into the DamSafety Core zip, damit's into the DamIT Runner zip) the way the releases build them;
+# without it the package says so and Windows PCs fall back to LISFLOOD-FP.
 #
 # The package = suite_install's scripts + locks, the DamSafety plugin zips (DWR_Plugins
 # tools/build_release.py: committed files only), the DamIT plugin zips (scripts/package_plugins.py),
@@ -21,10 +28,10 @@
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"        # suite_install/
 DAMIT="$(cd "$HERE/.." && pwd)"
-DWR=""; OUT=""; LFBIN=""; ZIP=0; DESK=""
+DWR=""; OUT=""; LFBIN=""; ZIP=0; DESK=""; BOANN_WIN=1
 while [ $# -gt 0 ]; do case "$1" in
   --dwr) DWR="$(cd "$2" && pwd)"; shift ;; --out) OUT="$2"; shift ;;
-  --lisflood-bin) LFBIN="$(cd "$2" && pwd)"; shift ;; --zip) ZIP=1 ;;
+  --lisflood-bin) LFBIN="$(cd "$2" && pwd)"; shift ;; --zip) ZIP=1 ;; --no-boann-windows) BOANN_WIN=0 ;;
   --desk) if [ "$2" = none ]; then DESK=none; else DESK="$(cd "$2" && pwd)"; fi; shift ;;
   --crest) echo "--crest is retired (the Crest desks are replaced by DamIT Desk, --desk); ignored" >&2; shift ;;
   *) echo "unknown option $1" >&2; exit 2 ;; esac; shift; done
@@ -47,8 +54,27 @@ echo "$(date +%Y-%m-%d) (DWR_Plugins $DWR_C, damit $DAMIT_C$DESK_C)" > "$OUT/VER
 
 echo "== plugins"
 T="$(mktemp -d)"
-python3 "$DWR/tools/build_release.py" --out "$T/ds" >/dev/null
+DS_BOANN=(); DI_PREBUILT="$DAMIT/damit_runner/boann/hydro/prebuilt/windows-x64"; DI_PREBUILT_MADE=0
+if [ "$BOANN_WIN" = 1 ]; then
+  MINGW=""; for c in x86_64-w64-mingw32-g++-posix x86_64-w64-mingw32-g++; do
+    if command -v "$c" >/dev/null 2>&1; then MINGW="$c"; break; fi; done
+  if [ -z "$MINGW" ]; then
+    echo "note: no MinGW-w64 (x86_64-w64-mingw32-g++): no Boann CPU engine for Windows in this package (Windows PCs use LISFLOOD-FP)" >&2
+  elif [ -e "$DI_PREBUILT" ]; then
+    echo "note: $DI_PREBUILT already exists; remove it first. No Boann CPU engine for Windows in this package" >&2
+  elif python3 "$DWR/tools/build_boann_cpu.py" --out "$T/boann-ds" --platform windows-x64 --cxx "$MINGW" --extra=-static > "$T/boann-ds.log" 2>&1 \
+       && python3 "$DAMIT/scripts/build_boann_cpu.py" --out "$T/boann-di" --platform windows-x64 --cxx "$MINGW" --extra=-static > "$T/boann-di.log" 2>&1; then
+    DS_BOANN=(--boann-cpu "$T/boann-ds")
+    mkdir -p "$DI_PREBUILT"; cp "$T"/boann-di/windows-x64/* "$DI_PREBUILT/"; DI_PREBUILT_MADE=1
+    echo "Boann CPU engine for Windows: $(ls "$T/boann-ds/windows-x64" | wc -l | tr -d ' ') DamSafety + $(ls "$DI_PREBUILT" | wc -l | tr -d ' ') DamIT libraries ($MINGW)"
+  else
+    echo "note: the Boann Windows build failed (see $T/boann-ds.log, $T/boann-di.log): no Boann CPU engine for Windows in this package" >&2
+  fi
+fi
+python3 "$DWR/tools/build_release.py" --out "$T/ds" "${DS_BOANN[@]}" >/dev/null
 python3 "$DAMIT/scripts/package_plugins.py" "$T/di" >/dev/null
+# the libraries were only borrowed into the checkout for packaging (never committed: .gitignore)
+if [ "$DI_PREBUILT_MADE" = 1 ]; then rm -rf "$DI_PREBUILT"; rmdir "$(dirname "$DI_PREBUILT")" 2>/dev/null || true; fi
 mkdir -p "$OUT/plugins/damsafety" "$OUT/plugins/damit"
 cp "$T"/ds/*.zip "$OUT/plugins/damsafety/"; cp "$T"/di/*.zip "$OUT/plugins/damit/"
 { echo "# Plugins in this package"; echo
