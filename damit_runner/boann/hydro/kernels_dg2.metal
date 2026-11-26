@@ -97,8 +97,29 @@ using namespace metal;
 #define S_QOUT 14
 #define S_LASTDT 15
 #define S_STAGE 16     // uint: current RK2 stage (0 = predictor, 1 = corrector)
+#define S_TILES 18     // uint: 0 = every cell runs; 1 = the host turned the skip on (this batch's first redraw scans every cell); 2 = k_tgrow_dg2 has written ton
 #define S_WORDS 32
 #define MF_FIX 1.0e-4f
+
+// Dry-tile skip. Same tiles as FV1 (MF_TILE 16, state word 18). Exact when all three hold
+// (tests/test_boann_fv_tiles.py, bit for bit):
+// 1. A dry element (average depth 0) stays dry. mf_sx / mf_sy return 0 at or below MF_DRYSLOPE
+//    and mf_pvel returns 0 at or below MF_HVEL, so the edge state is zero depth and zero velocity
+//    even if a slope coefficient were nonzero. k_limit_dg2, when it runs, writes a dry cell's six
+//    slope coefficients to 0. A cell with any of the nine coefficients nonzero is a seed, so a
+//    cell the skip leaves out already holds nine zeros. The positivity clip stores +0 for all
+//    nine when the average is not positive. A face between two dry cells therefore has a zero
+//    flux, and the volume integral of a zero state is zero (the two Gauss mass fluxes sum to
+//    twice the mean discharge).
+// 2. Two stages a step, each one faces-and-cont sweep: R = 2. The limiter reads one neighbour,
+//    and only while the cell is above MF_DRYSLOPE, so that read does not write the neighbour.
+//    Chunk 4 and a 1-tile ring cover 4 * 2 + 2 = 10 cells; an off cell is at least 17 away.
+// 3. Uh0, Uhu0, Uhv0 are written by k_save_dg2 at stage 0, and the face fluxes by k_faces_dg2,
+//    before k_cont_dg2 reads them. A face runs when either cell beside it is on.
+// Reductions still include every lane with a dry cell's values. S_TILES is 1 for the batch's
+// first redraw and 2 after k_tgrow_dg2.
+#define MF_TILE 16u
+#define MF_TILE_RING 1u
 
 struct Params {
     uint nx, ny;
@@ -122,13 +143,14 @@ struct Params {
     float t_end;
     float theta;          // unused
     float pad4;
+    uint n_wl;            // water-level (HFIX / HVAR) edge faces, s_cell / s_series [n_src ..)
 };
 
-// Buffer layout for the DG2 scheme (its own order, 0..26; Params at 27). The three conserved
+// Buffer layout for the DG2 scheme (its own order, 0..28; Params at 29). The three conserved
 // variables and their previous-step copy are stored packed (three modal coefficients per cell):
 // Uh/Uhu/Uhv and Uh0/Uhu0/Uhv0 each hold 3*cells floats. The bed z is one float per cell (piecewise
-// constant). The interface fluxes fxh..fyhv are as in the FV kernels. 27 buffers keep DG2 inside
-// Metal's 31-slot argument-table cap.
+// constant). The interface fluxes fxh..fyhv are as in the FV kernels. tseed and ton are the
+// dry-tile skip (one uint per tile). 29 buffers plus Params stay inside Metal's 31-slot cap.
 inline uint mf_cells(constant Params& p) { return p.nx * p.ny; }
 
 #define MF_ARGS_DG2 \
@@ -159,7 +181,9 @@ inline uint mf_cells(constant Params& p) { return p.nx * p.ny; }
     device float* Uh0 B(24), \
     device float* Uhu0 B(25), \
     device float* Uhv0 B(26), \
-    constant Params& p B(27), \
+    device uint* tseed B(27), \
+    device uint* ton B(28), \
+    constant Params& p B(29), \
     uint2 gid GID
 
 struct F3 { float h, mn, mt; };   // flux: mass, normal momentum, tangential momentum
@@ -228,6 +252,45 @@ inline F3 mf_hllc(float hL, float hnL, float htL, float hR, float hnR, float htR
     return f;
 }
 
+// -- water-level (stage) boundary, Boann 6.8.0 ----------------------------------------------
+// As kernels.metal: water-level face j (0 <= j < n_wl) is s_cell[n_src + j] = its edge position
+// (W: row, E: ny + row, N: 2 ny + column, S: 2 ny + nx + column) and s_series[n_src + j] = its
+// level series (relative to the bed reference). k_begin writes each face's level into
+// src[cells + position] at the step start; a position that is not a water-level face holds
+// MF_WL_NONE. A deck without water levels has n_wl = 0, src has no slots past the cells, and none
+// of this runs.
+#define MF_WL_NONE (-1.0e30f)
+#define MF_WL_CUT (-1.0e29f)        // a slot above this holds a level
+#define S_QBIN 19      // uint, atomic: inflow through the water-level edges this step (MF_FIX m3/s)
+
+// the edge cell of edge position pos
+inline uint mf_wl_cell(uint pos, constant Params& p) {
+    if (pos < p.ny) {
+        return pos * p.nx;                                   // W
+    }
+    pos -= p.ny;
+    if (pos < p.ny) {
+        return pos * p.nx + p.nx - 1u;                       // E
+    }
+    pos -= p.ny;
+    if (pos < p.nx) {
+        return pos;                                          // N
+    }
+    return (p.ny - 1u) * p.nx + (pos - p.nx);                // S
+}
+
+// the flux through a water-level edge face: LISFLOOD-FP 8.3's HFIX / HVAR ghost cell (fv1.cpp
+// set_boundary_values), depth hg = max(0, level - bed of the edge cell) over that same bed, with
+// the edge cell's velocity carried over (LISFLOOD-FP carries the discharge over; carrying the
+// velocity keeps a shallow ghost's speed bounded, and the two agree once the ghost and the cell
+// hold the same depth). The HLLC flux between it and the edge cell lets water in when the level is
+// above the cell's surface and out when below. At rest (level = surface, no velocity) both states
+// are equal and the flux is the still-water pressure a wall gives: a lake at rest stays at rest.
+// minus: the ghost is on the - side (W / N edges).
+inline F3 mf_wl_hllc(float hg, float hi, float ni, float ti, bool minus, float g) {
+    return minus ? mf_hllc(hg, ni, ti, hi, ni, ti, g) : mf_hllc(hi, ni, ti, hg, ni, ti, g);
+}
+
 inline float mf_series(uint k, float tm, device const uint* ser_off,
                        device const float* ser_t, device const float* ser_q,
                        device uint* cursor) {
@@ -268,6 +331,37 @@ inline float mf_pvel(float q0, float h0c, float sq, float sh, float fac) {
     return u0 + fac * (sq - u0 * sh) / h0c;
 }
 
+inline bool mf_on(device const uint* st, device const uint* ton, uint gx, uint gy,
+                  constant Params& p) {
+    if (st[S_TILES] == 0u) {
+        return true;
+    }
+    uint tx = (gx < p.wc ? gx : p.wc - 1u) / MF_TILE;
+    uint ty = (gy < p.wr ? gy : p.wr - 1u) / MF_TILE;
+    uint ntx = (p.wc + MF_TILE - 1u) / MF_TILE;
+    return ton[ty * ntx + tx] != 0u;
+}
+
+inline bool mf_face_x(device const uint* st, device const uint* ton, uint gx, uint gy,
+                      constant Params& p) {
+    if (gy >= p.wr) {
+        return false;
+    }
+    bool right = mf_on(st, ton, gx, gy, p);
+    bool left = gx > 0u && mf_on(st, ton, gx - 1u, gy, p);
+    return left || right;
+}
+
+inline bool mf_face_y(device const uint* st, device const uint* ton, uint gx, uint gy,
+                      constant Params& p) {
+    if (gx >= p.wc) {
+        return false;
+    }
+    bool south = mf_on(st, ton, gx, gy, p);
+    bool north = gy > 0u && mf_on(st, ton, gx, gy - 1u, p);
+    return north || south;
+}
+
 // -- kernels --------------------------------------------------------------------------------
 
 // one thread each: set the RK2 stage for the dispatches that follow in the plan.
@@ -287,6 +381,17 @@ kernel void k_begin_dg2(MF_ARGS_DG2) {
             return;
         }
         float wm = as_type<float>(st[S_WMAX]);
+        // water levels at the step start (Boann 6.8.0); a ghost's wave speed counts in the CFL
+        for (uint j = 0; j < p.n_wl; ++j) {
+            uint k = p.n_src + j;
+            float lev = mf_series(s_series[k], p.t0 + t, ser_off, ser_t, ser_q, cursor);
+            src[mf_cells(p) + s_cell[k]] = lev;
+            uint e = mf_wl_cell(s_cell[k], p);
+            float hg = fmax(0.0f, lev - z[e]);
+            float ue = mf_vel(Uhu[3u * e], Uh[3u * e]);
+            float ve = mf_vel(Uhv[3u * e], Uh[3u * e]);
+            wm = fmax(wm, sqrt(ue * ue + ve * ve) + sqrt(p.g * hg));
+        }
         float cfl = fmin(p.alpha, MF_DG2_CFL);
         float dt = p.dt0;
         if (wm > 1.0e-6f) {
@@ -313,14 +418,17 @@ kernel void k_begin_dg2(MF_ARGS_DG2) {
     // the edge outflow is summed over BOTH stages: the Heun blend U^n+1 = (U^n + U* + dt L(U*)) / 2
     // moves 0.5 dt (F(U^n) + F(U*)) through each face, so k_end books half the two-stage sum
     // (counting only the corrector's flux mis-booked up to ~1 % of a draining basin's volume)
-    if (stage == 0u) st[S_QOUT] = 0u;
+    if (stage == 0u) {
+        st[S_QOUT] = 0u;
+        st[S_QBIN] = 0u;
+    }
 }
 
 // every cell of the window: at the predictor (stage 0) save U^n (all three modal coefficients of
 // each variable) for the RK2 blend, before k_cont_dg2 overwrites the state. A no-op at the corrector.
 kernel void k_save_dg2(MF_ARGS_DG2) {
     device float* sf = (device float*)st;
-    if (sf[S_DT] <= 0.0f || st[S_STAGE] != 0u) {
+    if (sf[S_DT] <= 0.0f || st[S_STAGE] != 0u || !mf_on(st, ton, gid.x, gid.y, p)) {
         return;
     }
     uint r = p.r0 + gid.y;
@@ -340,7 +448,7 @@ kernel void k_save_dg2(MF_ARGS_DG2) {
 // the face sweep of each RK stage, only where a slope is actually clipped. A no-op when limiter == 0.
 kernel void k_limit_dg2(MF_ARGS_DG2) {
     device float* sf = (device float*)st;
-    if (sf[S_DT] <= 0.0f || p.limiter == 0u) {
+    if (sf[S_DT] <= 0.0f || p.limiter == 0u || !mf_on(st, ton, gid.x, gid.y, p)) {
         return;
     }
     uint nx = p.nx;
@@ -413,8 +521,11 @@ kernel void k_faces_dg2(MF_ARGS_DG2) {
     uint c = p.c0 + gid.x;
     float g = p.g;
     float outflow = 0.0f;
+    float wlin = 0.0f;               // water in through a water-level edge (Boann 6.8.0)
+    bool xon = mf_face_x(st, ton, gid.x, gid.y, p);
+    bool yon = mf_face_y(st, ton, gid.x, gid.y, p);
 
-    if (gid.y < p.wr) {               // x-face at (row r, face column c), 0..nx
+    if (xon) {                        // x-face at (row r, face column c), 0..nx
         uint f = r * (nx + 1u) + c;
         F3 fl;
         fl.h = 0.0f; fl.mn = 0.0f; fl.mt = 0.0f;
@@ -446,7 +557,16 @@ kernel void k_faces_dg2(MF_ARGS_DG2) {
         } else if (c == 0u) {         // left domain edge, cell i is the + side
             uint ii = r * nx;
             float h0i = Uh[3u * ii];
-            if (ok[ii] != 0 && h0i > MF_HVEL) {
+            float lev = p.n_wl != 0u ? src[mf_cells(p) + r] : MF_WL_NONE;
+            if (lev > MF_WL_CUT) {      // water-level edge face (Boann 6.8.0)
+                if (ok[ii] != 0) {
+                    float hi = Uh[3u * ii];
+                    fl = mf_wl_hllc(fmax(0.0f, lev - z[ii]), hi, mf_vel(Uhu[3u * ii], hi), mf_vel(Uhv[3u * ii], hi),
+                                    true, g);
+                    wlin += fmax(fl.h, 0.0f);
+                    outflow += fmax(-fl.h, 0.0f);
+                }
+            } else if (ok[ii] != 0 && h0i > MF_HVEL) {
                 float ui = mf_vel(Uhu[3u * ii], h0i);
                 float vi = mf_vel(Uhv[3u * ii], h0i);
                 if ((p.free_mask & MF_W) != 0u) {
@@ -465,7 +585,16 @@ kernel void k_faces_dg2(MF_ARGS_DG2) {
         } else {                      // c == nx, right domain edge, cell i is the - side
             uint ii = r * nx + nx - 1u;
             float h0i = Uh[3u * ii];
-            if (ok[ii] != 0 && h0i > MF_HVEL) {
+            float lev = p.n_wl != 0u ? src[mf_cells(p) + ny + r] : MF_WL_NONE;
+            if (lev > MF_WL_CUT) {      // water-level edge face (Boann 6.8.0)
+                if (ok[ii] != 0) {
+                    float hi = Uh[3u * ii];
+                    fl = mf_wl_hllc(fmax(0.0f, lev - z[ii]), hi, mf_vel(Uhu[3u * ii], hi), mf_vel(Uhv[3u * ii], hi),
+                                    false, g);
+                    wlin += fmax(-fl.h, 0.0f);
+                    outflow += fmax(fl.h, 0.0f);
+                }
+            } else if (ok[ii] != 0 && h0i > MF_HVEL) {
                 float ui = mf_vel(Uhu[3u * ii], h0i);
                 float vi = mf_vel(Uhv[3u * ii], h0i);
                 if ((p.free_mask & MF_E) != 0u) {
@@ -487,7 +616,7 @@ kernel void k_faces_dg2(MF_ARGS_DG2) {
         fxhv[f] = fl.mt;
     }
 
-    if (gid.x < p.wc) {               // y-face at (face row r, col c), 0..ny. Normal = y (south +).
+    if (yon) {                        // y-face at (face row r, col c), 0..ny. Normal = y (south +).
         uint f = r * nx + c;
         F3 fl;
         fl.h = 0.0f; fl.mn = 0.0f; fl.mt = 0.0f;
@@ -519,7 +648,16 @@ kernel void k_faces_dg2(MF_ARGS_DG2) {
         } else if (r == 0u) {         // north domain edge, cell i is the + (south) side
             uint ii = c;
             float h0i = Uh[3u * ii];
-            if (ok[ii] != 0 && h0i > MF_HVEL) {
+            float lev = p.n_wl != 0u ? src[mf_cells(p) + 2u * ny + c] : MF_WL_NONE;
+            if (lev > MF_WL_CUT) {      // water-level edge face (Boann 6.8.0)
+                if (ok[ii] != 0) {
+                    float hi = Uh[3u * ii];
+                    fl = mf_wl_hllc(fmax(0.0f, lev - z[ii]), hi, mf_vel(Uhv[3u * ii], hi), mf_vel(Uhu[3u * ii], hi),
+                                    true, g);
+                    wlin += fmax(fl.h, 0.0f);
+                    outflow += fmax(-fl.h, 0.0f);
+                }
+            } else if (ok[ii] != 0 && h0i > MF_HVEL) {
                 float ni = mf_vel(Uhv[3u * ii], h0i);
                 float ti = mf_vel(Uhu[3u * ii], h0i);
                 if ((p.free_mask & MF_N) != 0u) {
@@ -538,7 +676,16 @@ kernel void k_faces_dg2(MF_ARGS_DG2) {
         } else {                      // r == ny, south domain edge, cell i is the - side
             uint ii = (ny - 1u) * nx + c;
             float h0i = Uh[3u * ii];
-            if (ok[ii] != 0 && h0i > MF_HVEL) {
+            float lev = p.n_wl != 0u ? src[mf_cells(p) + 2u * ny + nx + c] : MF_WL_NONE;
+            if (lev > MF_WL_CUT) {      // water-level edge face (Boann 6.8.0)
+                if (ok[ii] != 0) {
+                    float hi = Uh[3u * ii];
+                    fl = mf_wl_hllc(fmax(0.0f, lev - z[ii]), hi, mf_vel(Uhv[3u * ii], hi), mf_vel(Uhu[3u * ii], hi),
+                                    false, g);
+                    wlin += fmax(-fl.h, 0.0f);
+                    outflow += fmax(fl.h, 0.0f);
+                }
+            } else if (ok[ii] != 0 && h0i > MF_HVEL) {
                 float ni = mf_vel(Uhv[3u * ii], h0i);
                 float ti = mf_vel(Uhu[3u * ii], h0i);
                 if ((p.free_mask & MF_S) != 0u) {
@@ -565,6 +712,13 @@ kernel void k_faces_dg2(MF_ARGS_DG2) {
         atomic_fetch_add_explicit((device atomic_uint*)(st + S_QOUT),
                                   uint(tot * p.dx / MF_FIX + 0.5f), memory_order_relaxed);
     }
+    if (p.n_wl != 0u) {
+        float tin = simd_sum(wlin);
+        if (simd_is_first() && tin != 0.0f) {
+            atomic_fetch_add_explicit((device atomic_uint*)(st + S_QBIN),
+                                      uint(tin * p.dx / MF_FIX + 0.5f), memory_order_relaxed);
+        }
+    }
 }
 
 // every cell of the window: the DG2 RK2 update of all three modal coefficients of each variable. The
@@ -585,6 +739,12 @@ kernel void k_cont_dg2(MF_ARGS_DG2) {
     uint c = p.c0 + gid.x;
     uint i = r * nx + c;
     uint j = 3u * i;
+    // a skipped cell stays at nine zeros and joins the stage-1 reductions with zeros (see MF_TILE).
+    // Stage 0 has no reduction: every thread returns together, on or off.
+    float nh0 = 0.0f;
+    float clip = 0.0f;
+    float wcell = 0.0f;
+    if (mf_on(st, ton, gid.x, gid.y, p)) {
     uint fx = r * (nx + 1u) + c;
     float dx = p.dx;
     float g = p.g;
@@ -657,7 +817,7 @@ kernel void k_cont_dg2(MF_ARGS_DG2) {
     float srcterm = src[i] * dt / (dx * dx);     // point source into the element average
 
     // -- SSP-RK2 blend, per modal coefficient ------------------------------------------------
-    float nh0, nhu0, nhv0, nhx, nhux, nhvx, nhy, nhuy, nhvy;
+    float nhu0, nhv0, nhx, nhux, nhvx, nhy, nhuy, nhvy;
     if (stage == 0u) {               // predictor: U* = U^n + dt L(U^n)
         nh0 = h0 + dh0 + srcterm;  nhu0 = hu0 + dhu0;  nhv0 = hv0 + dhv0;
         nhx = hx + dhx;  nhux = ux + dhux;  nhvx = vx + dhvx;
@@ -674,7 +834,6 @@ kernel void k_cont_dg2(MF_ARGS_DG2) {
         nhvy = 0.5f * (Uhv0[j + 2u] + (vy + dhvy));
     }
 
-    float clip = 0.0f;
     if (nh0 <= 0.0f) {               // positivity: a dry element average is first order and still
         clip = -nh0 * dx * dx;
         nh0 = 0.0f;
@@ -699,18 +858,20 @@ kernel void k_cont_dg2(MF_ARGS_DG2) {
     Uh[j] = nh0;   Uh[j + 1u] = nhx;   Uh[j + 2u] = nhy;
     Uhu[j] = nhu0; Uhu[j + 1u] = nhux; Uhu[j + 2u] = nhuy;
     Uhv[j] = nhv0; Uhv[j + 1u] = nhvx; Uhv[j + 2u] = nhvy;
-
-    if (stage == 0u) {               // the predictor's clip is a half-step transient; count the corrector's
-        return;
     }
 
+    // the predictor's clip is a half-step transient; every thread returns before any
+    // reduction (stage 0 has none). Maxima are the corrector's, and only in an on tile.
+    if (stage == 0u) {
+        return;
+    }
+    if (mf_on(st, ton, gid.x, gid.y, p)) {
     float th = (p.t0 + sf[S_T] + dt) / 3600.0f;
-    float wcell = 0.0f;
     float vmagn = 0.0f;
     if (nh0 > MF_HVEL) {
-        float un = mf_vel(nhu0, nh0);
-        float vn = mf_vel(nhv0, nh0);
-        float cc = sqrt(g * nh0);
+        float un = mf_vel(Uhu[j], nh0);
+        float vn = mf_vel(Uhv[j], nh0);
+        float cc = sqrt(p.g * nh0);
         wcell = fmax(fabs(un) + cc, fabs(vn) + cc);
         vmagn = sqrt(un * un + vn * vn);
     }
@@ -728,10 +889,11 @@ kernel void k_cont_dg2(MF_ARGS_DG2) {
     }
     if (nh0 > p.dry) {
         float dv = nh0 * vmagn;
-        uint j = mf_cells(p) + i;
-        if (dv > vmax[j]) {
-            vmax[j] = dv;
+        uint jd = mf_cells(p) + i;
+        if (dv > vmax[jd]) {
+            vmax[jd] = dv;
         }
+    }
     }
 
     bool wet = nh0 > 0.0f;
@@ -771,5 +933,88 @@ kernel void k_end_dg2(MF_ARGS_DG2) {
     sf[S_MINDT] = fmin(sf[S_MINDT], dt);
     sf[S_LASTDT] = dt;
     sf[S_VOUT] += 0.5f * float(st[S_QOUT]) * MF_FIX * dt;   // half the two-stage sum (k_begin)
+    if (st[S_QBIN] != 0u) {         // water-level inflow, half the two-stage sum as the outflow
+        float qb = 0.5f * float(st[S_QBIN]) * MF_FIX;
+        sf[S_QIN] += qb;
+        sf[S_VIN] += qb * dt;
+    }
     st[S_WMAX] = st[S_WNEXT];
+}
+
+// -- dry-tile skip (see MF_TILE) ---------------------------------------------------------------
+
+kernel void k_tclear_dg2(MF_ARGS_DG2) {
+    uint ntx = (p.wc + MF_TILE - 1u) / MF_TILE;
+    uint nty = (p.wr + MF_TILE - 1u) / MF_TILE;
+    if (gid.x < ntx && gid.y < nty) {
+        tseed[gid.y * ntx + gid.x] = 0u;
+    }
+}
+
+kernel void k_tseed_dg2(MF_ARGS_DG2) {
+    if (gid.x >= p.wc || gid.y >= p.wr) {
+        return;
+    }
+    uint nx = p.nx;
+    uint ntx = (p.wc + MF_TILE - 1u) / MF_TILE;
+    uint tile = (gid.y / MF_TILE) * ntx + gid.x / MF_TILE;
+    if (st[S_TILES] != 2u || ton[tile] != 0u) {
+        uint j = 3u * ((p.r0 + gid.y) * nx + (p.c0 + gid.x));
+        bool seed = false;
+        for (uint m = 0u; m < 3u; ++m) {
+            if (Uh[j + m] != 0.0f || Uhu[j + m] != 0.0f || Uhv[j + m] != 0.0f) {
+                seed = true;
+            }
+        }
+        if (seed) {
+            atomic_fetch_max_explicit((device atomic_uint*)(tseed + tile),
+                                      1u, memory_order_relaxed);
+        }
+    }
+    if (gid.x == 0u && gid.y == 0u) {
+        for (uint k = 0; k < p.n_src; ++k) {
+            uint sr = s_cell[k] / nx;
+            uint sc = s_cell[k] % nx;
+            if (sr >= p.r0 && sr < p.r0 + p.wr && sc >= p.c0 && sc < p.c0 + p.wc) {
+                atomic_fetch_max_explicit((device atomic_uint*)(tseed + ((sr - p.r0) / MF_TILE)
+                                                                * ntx + (sc - p.c0) / MF_TILE),
+                                          1u, memory_order_relaxed);
+            }
+        }
+        // a water-level edge cell is a seed like a source: water can come in there at any step
+        for (uint j = 0; j < p.n_wl; ++j) {
+            uint e = mf_wl_cell(s_cell[p.n_src + j], p);
+            uint sr = e / nx;
+            uint sc = e % nx;
+            if (sr >= p.r0 && sr < p.r0 + p.wr && sc >= p.c0 && sc < p.c0 + p.wc) {
+                atomic_fetch_max_explicit((device atomic_uint*)(tseed + ((sr - p.r0) / MF_TILE)
+                                                                * ntx + (sc - p.c0) / MF_TILE),
+                                          1u, memory_order_relaxed);
+            }
+        }
+    }
+}
+
+kernel void k_tgrow_dg2(MF_ARGS_DG2) {
+    uint ntx = (p.wc + MF_TILE - 1u) / MF_TILE;
+    uint nty = (p.wr + MF_TILE - 1u) / MF_TILE;
+    if (gid.x >= ntx || gid.y >= nty) {
+        return;
+    }
+    uint on = 0u;
+    uint y0 = gid.y > MF_TILE_RING ? gid.y - MF_TILE_RING : 0u;
+    uint y1 = gid.y + MF_TILE_RING < nty ? gid.y + MF_TILE_RING : nty - 1u;
+    uint x0 = gid.x > MF_TILE_RING ? gid.x - MF_TILE_RING : 0u;
+    uint x1 = gid.x + MF_TILE_RING < ntx ? gid.x + MF_TILE_RING : ntx - 1u;
+    for (uint y = y0; y <= y1; ++y) {
+        for (uint x = x0; x <= x1; ++x) {
+            if (tseed[y * ntx + x] != 0u) {
+                on = 1u;
+            }
+        }
+    }
+    ton[gid.y * ntx + gid.x] = on;
+    if (gid.x == 0u && gid.y == 0u) {
+        st[S_TILES] = 2u;
+    }
 }

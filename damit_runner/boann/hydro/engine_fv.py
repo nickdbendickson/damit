@@ -21,13 +21,21 @@ from . import engine as mfe
 from .engine import Deck, _f, _setf
 
 NAME = "Boann, shock-capturing (HLLC finite volume, on the GPU via Metal)"
-VERSION = "0.3.0"     # 0.3.0 (Runner 3.98.0): FV1 adds rain on the grid (new input; FV2/DG2 refuse
-                      # it still). 0.2.0 (Runner 3.93.0): a face against NoData is a reflecting wall
+VERSION = "0.4.0"     # 0.4.0 (Boann 6.8.0): water-level (HFIX / HVAR) edge faces (new input, no existing
+                      # result moves). 0.3.1: FV1's GPU dry-tile skip (no result moves). 0.3.0 (Runner 3.98.0): FV1 adds
+                      # rain on the grid (new input; FV2/DG2 refuse it still). 0.2.0 (Runner 3.93.0):
+                      # a face against NoData is a reflecting wall
 G = bl.G
 DRY_M = bl.DRY_M
 NODATA = bl.NODATA
 BATCH_STEPS = 64
 WINDOW_MARGIN = BATCH_STEPS + 4
+# FV1: R = 1, 1-tile ring, chunk 8 (17 > 8). FV2 and DG2: two stages and a slope stencil,
+# R = 2, stencil 2; a chunk of 4 with the 1-tile ring covers 10 cells and an off cell is 17 away.
+# A 2-tile ring with a chunk of 8 runs more cells on a thin flood, so the shorter chunk is used.
+SKIP_CHUNK_FV = 8
+SKIP_CHUNK_FV2 = 4
+SKIP_CHUNK_DG2 = 4
 
 EngineError = bl.EngineError
 Cancelled = bl.Cancelled
@@ -46,7 +54,13 @@ class Engine:
         self.b = backend
         ny, nx = d.ny, d.nx
         # rainfall rides as one more series after the inflow series (index n_series), as in engine.py
+        self.zref = float(d.z[d.valid].min()) if d.valid.any() else 0.0
+        if getattr(d, "breach", None) is not None:
+            self.zref = min(self.zref, d.breach.lowest_final())
         self.series = list(d.series) + ([("rain",) + tuple(d.rain)] if d.rain is not None else [])
+        # water-level series (relative to zref) after the inflow and rain series (engine.py)
+        wl_base = len(self.series)
+        self.series += mfe.wl_series(d, self.zref)
         n_values = sum(len(s[1]) for s in self.series)
         spec = getattr(backend, "spec", None)
         # each 2nd-order scheme needs its own layout: FV2 adds the previous-step state; DG2 stores
@@ -56,11 +70,9 @@ class Engine:
         self.scheme = "dg2" if self.is_dg2 else ("fv2" if is_fv2 else "fv")
         lay = (be.dg2_buffer_layout if self.is_dg2 else
                be.fv2_buffer_layout if is_fv2 else be.fv_buffer_layout)
-        layout = lay(ny, nx, len(d.src_cells), len(self.series), n_values)
+        layout = lay(ny, nx, len(d.src_cells), len(self.series), n_values,
+                     n_wl=len(mfe.wl_faces(d)))
         a = self.a = backend.allocate(layout)
-        self.zref = float(d.z[d.valid].min()) if d.valid.any() else 0.0
-        if getattr(d, "breach", None) is not None:
-            self.zref = min(self.zref, d.breach.lowest_final())
         a["z"][:] = np.where(d.valid, d.z - self.zref, 0.0).ravel()
         a["n2"][:] = (d.n ** 2).ravel()
         if self.is_dg2:
@@ -84,6 +96,7 @@ class Engine:
         for i, (r, c, k) in enumerate(d.src_cells):
             a["s_cell"][i] = r * nx + c
             a["s_series"][i] = k
+        self.wl_rc = mfe.wl_setup(self, d, a, wl_base)
         # first step's dt: the still-water wave speed of the deepest cell (velocities start at 0)
         hgrid = self.h2()
         h0max = float(hgrid.max()) if hgrid.size else 0.0
@@ -97,6 +110,7 @@ class Engine:
         p.nx, p.ny = nx, ny
         p.free_mask = sum(_FREE_BITS[e] for e in d.free)
         p.n_src, p.n_series = len(d.src_cells), len(d.series)
+        p.n_wl = len(mfe.wl_faces(d))
         p.dx, p.dt0, p.alpha, p.g = d.dx, d.dt0, d.cfl, G
         p.dry, p.arr_depth = DRY_M, d.arr_depth
         p.rain = int(d.rain is not None)          # FV1 rainfall (ACC-matched); FV2/DG2 refuse it
@@ -125,6 +139,10 @@ class Engine:
         if brc is not None and len(brc[0]):
             rmin, rmax = min(rmin, int(brc[0].min())), max(rmax, int(brc[0].max()))
             cmin, cmax = min(cmin, int(brc[1].min())), max(cmax, int(brc[1].max()))
+        wrc = getattr(self, "wl_rc", None)
+        if wrc is not None and len(wrc[0]):
+            rmin, rmax = min(rmin, int(wrc[0].min())), max(rmax, int(wrc[0].max()))
+            cmin, cmax = min(cmin, int(wrc[1].min())), max(cmax, int(wrc[1].max()))
         if rmin > rmax:
             return (0, 1, 0, 1)
         m = WINDOW_MARGIN
@@ -150,7 +168,10 @@ class Engine:
         st[S_WMAX] = wm
         _setf(st, S_MINDT, 1e30)
         st[S_RMIN] = st[S_CMIN] = 0xFFFFFFFF
-        self.b.run_batch(p, nsteps)
+        chunk = (SKIP_CHUNK_FV if self.scheme == "fv" else
+                 SKIP_CHUNK_FV2 if self.scheme == "fv2" else
+                 SKIP_CHUNK_DG2 if self.scheme == "dg2" else 0)
+        self.b.run_batch(p, nsteps, chunk)
         out = {"t_local": _f(st, S_T), "dt": _f(st, S_LASTDT), "steps": int(st[S_STEPS]),
                "min_dt": _f(st, S_MINDT), "vin": _f(st, S_VIN), "vout": _f(st, S_VOUT),
                "clip": int(st[S_CLIP]) * MF_FIX, "qin": _f(st, S_QIN),
@@ -354,7 +375,8 @@ def _run(d, bk, progress, cancel, say, limiter=False):
              "steps": steps, "batches": batches, "sim_time_s": t,
              "wall_s": round(wall, 2), "cells": nx * ny, "injected_m3": vin, "outflow_m3": vout,
              "final_volume_m3": vol, "mass_error_m3": vol - (vol0 + vin - vout),
-             "clipped_m3": clip, "rain_m3": vrain}
+             "clipped_m3": clip, "rain_m3": vrain,
+             "cell_steps": getattr(bk, "cells_run", None)}
     # where the time went (backends.Profile); timing only, no result depends on it
     stats["profile"] = bk.profile() if hasattr(bk, "profile") else None
     if br is not None:
