@@ -68,11 +68,13 @@ def tiles_wanted():
 def tile_count(ny, nx):
     """Tiles of the largest window (the whole grid): the length of the tseed / ton buffers."""
     return (-(-int(ny) // TILE)) * (-(-int(nx) // TILE))
-FV_KERNELS = ("k_begin_fv", "k_faces_fv", "k_cont_fv", "k_end_fv")
+FV_KERNELS = ("k_begin_fv", "k_faces_fv", "k_cont_fv", "k_end_fv",
+              "k_tclear_fv", "k_tseed_fv", "k_tgrow_fv")
 FV2_KERNELS = ("k_stage_p_fv2", "k_begin_fv2", "k_save_fv2", "k_faces_fv2", "k_cont_fv2",
-               "k_stage_c_fv2", "k_end_fv2")
+               "k_stage_c_fv2", "k_end_fv2", "k_tclear_fv2", "k_tseed_fv2", "k_tgrow_fv2")
 DG2_KERNELS = ("k_stage_p_dg2", "k_begin_dg2", "k_save_dg2", "k_limit_dg2", "k_faces_dg2",
-               "k_cont_dg2", "k_stage_c_dg2", "k_end_dg2")
+               "k_cont_dg2", "k_stage_c_dg2", "k_end_dg2",
+               "k_tclear_dg2", "k_tseed_dg2", "k_tgrow_dg2")
 SGC_KERNELS = ("k_begin_sgc", "k_faces_sgc", "k_scale_sgc", "k_limit_sgc", "k_cont_sgc",
                "k_speed_sgc", "k_end_sgc")
 
@@ -87,17 +89,30 @@ class Params(ctypes.Structure):
         "nx", "ny", "r0", "c0", "wr", "wc", "free_mask", "n_src", "n_series",
         "fric2d", "clip_end", "inflow_lf_order")] + [(n, ctypes.c_float) for n in (
             "dx", "dt0", "alpha", "g", "dry", "maxhflow", "velmin", "arr_depth", "t0", "t_end",
-            "theta")] + [("rain", ctypes.c_uint32)]
-    # "rain" is kernels.metal's last word (ACC only, Runner 3.60.0); the FV / FV2 / DG2 / SGC
-    # kernels declare that word as an unused float pad4, and the engines leave it 0 (= 0.0f).
+            "theta")] + [("rain", ctypes.c_uint32), ("n_wl", ctypes.c_uint32)]
+    # "rain" is kernels.metal's rainfall switch (ACC and FV1; FV2 / DG2 / SGC declare that word
+    # as an unused float pad4, left 0 = 0.0f). "n_wl" (Boann 6.8.0) counts the water-level (HFIX /
+    # HVAR) boundary faces, listed in s_cell / s_series after the n_src point sources; 0 in every
+    # deck without one (SGC declares the word and never reads it).
 
 
-def buffer_layout(ny, nx, n_src, n_series, n_values):
+def _wl_counts(ny, nx, n_src, n_wl):
+    """(src length, s_cell / s_series length): a deck with water-level faces lists them after the
+    point sources and keeps each edge position's level in src past the cells (engine.wl_setup);
+    without them both are the cells and n_src, as before."""
+    cells = ny * nx
+    if not n_wl:
+        return cells, n_src
+    return cells + 2 * (nx + ny), n_src + n_wl
+
+
+def buffer_layout(ny, nx, n_src, n_series, n_values, n_wl=0):
     """[(name, dtype, count)] in the order of the kernels' buffer indices 0..24."""
     cells = ny * nx
+    nsrcb, n_src = _wl_counts(ny, nx, n_src, n_wl)
     f, u = np.float32, np.uint32
     return [("z", f, cells), ("n2", f, cells), ("h", f, cells), ("qx", f, ny * (nx + 1)),
-            ("qy", f, (ny + 1) * nx), ("src", f, cells), ("scl", f, cells), ("hmax", f, cells),
+            ("qy", f, (ny + 1) * nx), ("src", f, nsrcb), ("scl", f, cells), ("hmax", f, cells),
             ("tmax", f, cells), ("arr", f, cells), ("vmax", f, 2 * cells), ("ok", np.uint8, cells),  # vmax: [0:cells) peak speed; [cells:) peak depth x speed
             ("s_cell", u, n_src), ("s_series", u, n_src), ("ser_off", u, n_series + 1),
             ("ser_t", f, n_values), ("ser_q", f, n_values), ("cursor", u, n_series),
@@ -106,49 +121,56 @@ def buffer_layout(ny, nx, n_src, n_series, n_values):
             ("tseed", u, tile_count(ny, nx)), ("ton", u, tile_count(ny, nx))]
 
 
-def fv_buffer_layout(ny, nx, n_src, n_series, n_values):
-    """[(name, dtype, count)] in the order of kernels_fv.metal's buffer indices 0..23."""
+def fv_buffer_layout(ny, nx, n_src, n_series, n_values, n_wl=0):
+    """[(name, dtype, count)] in the order of kernels_fv.metal's buffer indices 0..25.
+    tseed and ton are the dry-tile skip (one uint per tile of the whole grid). Params is bound
+    at 26."""
     cells = ny * nx
+    nsrcb, n_src = _wl_counts(ny, nx, n_src, n_wl)
     xf, yf = ny * (nx + 1), (ny + 1) * nx
     f, u = np.float32, np.uint32
     return [("z", f, cells), ("n2", f, cells), ("h", f, cells), ("hu", f, cells),
-            ("hv", f, cells), ("src", f, cells), ("hmax", f, cells), ("tmax", f, cells),
-            ("arr", f, cells), ("vmax", f, 2 * cells), ("ok", np.uint8, cells),  # vmax: [0:cells) peak speed; [cells:) peak depth x speed
-            ("s_cell", u, n_src), ("s_series", u, n_src), ("ser_off", u, n_series + 1),
-            ("ser_t", f, n_values), ("ser_q", f, n_values), ("cursor", u, n_series),
-            ("st", u, S_WORDS), ("fxh", f, xf), ("fxhu", f, xf), ("fxhv", f, xf),
-            ("fyh", f, yf), ("fyhu", f, yf), ("fyhv", f, yf)]
-
-
-def fv2_buffer_layout(ny, nx, n_src, n_series, n_values):
-    """[(name, dtype, count)] in the order of kernels_fv2.metal's buffer indices 0..27: the FV1
-    layout (0..23), the previous-step state h0/hu0/hv0 for the RK2 blend, and hs, the stage-start
-    depth k_cont_fv2 reads for its neighbours' slopes (so the in-place update has no read-after-write
-    race). Params is bound at 28. The minmod slopes are not stored (Metal caps the buffer table at
-    31 slots); they are recomputed inline in the kernels."""
-    cells = ny * nx
-    f = np.float32
-    base = fv_buffer_layout(ny, nx, n_src, n_series, n_values)
-    return base + [("h0", f, cells), ("hu0", f, cells), ("hv0", f, cells), ("hs", f, cells)]
-
-
-def dg2_buffer_layout(ny, nx, n_src, n_series, n_values):
-    """[(name, dtype, count)] in the order of kernels_dg2.metal's buffer indices 0..26. The three
-    conserved variables (Uh, Uhu, Uhv) and their previous-step RK2 copy (Uh0, Uhu0, Uhv0) are stored
-    packed, three modal coefficients per cell (3*cells floats): [3 i + 0] element average, [3 i + 1]
-    x-slope, [3 i + 2] y-slope. The bed z is piecewise constant (one float per cell). 27 buffers keep
-    DG2 inside Metal's 31-slot argument-table cap (slopes are modal unknowns, not separate buffers)."""
-    cells = ny * nx
-    xf, yf = ny * (nx + 1), (ny + 1) * nx
-    f, u = np.float32, np.uint32
-    return [("z", f, cells), ("n2", f, cells), ("Uh", f, 3 * cells), ("Uhu", f, 3 * cells),
-            ("Uhv", f, 3 * cells), ("src", f, cells), ("hmax", f, cells), ("tmax", f, cells),
+            ("hv", f, cells), ("src", f, nsrcb), ("hmax", f, cells), ("tmax", f, cells),
             ("arr", f, cells), ("vmax", f, 2 * cells), ("ok", np.uint8, cells),  # vmax: [0:cells) peak speed; [cells:) peak depth x speed
             ("s_cell", u, n_src), ("s_series", u, n_src), ("ser_off", u, n_series + 1),
             ("ser_t", f, n_values), ("ser_q", f, n_values), ("cursor", u, n_series),
             ("st", u, S_WORDS), ("fxh", f, xf), ("fxhu", f, xf), ("fxhv", f, xf),
             ("fyh", f, yf), ("fyhu", f, yf), ("fyhv", f, yf),
-            ("Uh0", f, 3 * cells), ("Uhu0", f, 3 * cells), ("Uhv0", f, 3 * cells)]
+            ("tseed", u, tile_count(ny, nx)), ("ton", u, tile_count(ny, nx))]
+
+
+def fv2_buffer_layout(ny, nx, n_src, n_series, n_values, n_wl=0):
+    """[(name, dtype, count)] in the order of kernels_fv2.metal's buffer indices 0..29: the FV1
+    layout without its tile buffers (0..23), the previous-step state h0/hu0/hv0 and the
+    stage-start depth hs, then tseed/ton. Params is bound at 30 (30 buffers + Params = 31 slots,
+    the Metal cap). The minmod slopes are not stored; they are recomputed inline."""
+    cells = ny * nx
+    f, u = np.float32, np.uint32
+    base = [b for b in fv_buffer_layout(ny, nx, n_src, n_series, n_values, n_wl)
+            if b[0] not in ("tseed", "ton")]
+    return base + [("h0", f, cells), ("hu0", f, cells), ("hv0", f, cells), ("hs", f, cells),
+                   ("tseed", u, tile_count(ny, nx)), ("ton", u, tile_count(ny, nx))]
+
+
+def dg2_buffer_layout(ny, nx, n_src, n_series, n_values, n_wl=0):
+    """[(name, dtype, count)] in the order of kernels_dg2.metal's buffer indices 0..28. The three
+    conserved variables (Uh, Uhu, Uhv) and their previous-step RK2 copy (Uh0, Uhu0, Uhv0) are stored
+    packed, three modal coefficients per cell (3*cells floats): [3 i + 0] element average, [3 i + 1]
+    x-slope, [3 i + 2] y-slope. The bed z is piecewise constant (one float per cell). tseed and ton
+    are the dry-tile skip. 29 buffers plus Params at 29 stay inside Metal's 31-slot cap."""
+    cells = ny * nx
+    nsrcb, n_src = _wl_counts(ny, nx, n_src, n_wl)
+    xf, yf = ny * (nx + 1), (ny + 1) * nx
+    f, u = np.float32, np.uint32
+    return [("z", f, cells), ("n2", f, cells), ("Uh", f, 3 * cells), ("Uhu", f, 3 * cells),
+            ("Uhv", f, 3 * cells), ("src", f, nsrcb), ("hmax", f, cells), ("tmax", f, cells),
+            ("arr", f, cells), ("vmax", f, 2 * cells), ("ok", np.uint8, cells),  # vmax: [0:cells) peak speed; [cells:) peak depth x speed
+            ("s_cell", u, n_src), ("s_series", u, n_src), ("ser_off", u, n_series + 1),
+            ("ser_t", f, n_values), ("ser_q", f, n_values), ("cursor", u, n_series),
+            ("st", u, S_WORDS), ("fxh", f, xf), ("fxhu", f, xf), ("fxhv", f, xf),
+            ("fyh", f, yf), ("fyhu", f, yf), ("fyhv", f, yf),
+            ("Uh0", f, 3 * cells), ("Uhu0", f, 3 * cells), ("Uhv0", f, 3 * cells),
+            ("tseed", u, tile_count(ny, nx)), ("ton", u, tile_count(ny, nx))]
 
 
 def sgc_buffer_layout(ny, nx, n_src, n_series, n_values):
@@ -223,7 +245,13 @@ def _fv_plan(p):
     return [("k_begin_fv", one), ("k_faces_fv", faces), ("k_cont_fv", cells), ("k_end_fv", one)]
 
 
-FV_SPEC = Spec("fv", FV_KERNEL_SOURCE, SHIM, FV_CPU_SOURCE, FV_KERNELS, Params, _fv_plan)
+def _fv_tile_plan(p):
+    tiles = (-(-int(p.wc) // TILE), -(-int(p.wr) // TILE), 1)
+    return [("k_tclear_fv", tiles), ("k_tseed_fv", (p.wc, p.wr, 1)), ("k_tgrow_fv", tiles)]
+
+
+FV_SPEC = Spec("fv", FV_KERNEL_SOURCE, SHIM, FV_CPU_SOURCE, FV_KERNELS, Params, _fv_plan,
+               tile_plan=_fv_tile_plan)
 
 
 def _fv2_plan(p):
@@ -239,7 +267,13 @@ def _fv2_plan(p):
             ("k_faces_fv2", faces), ("k_cont_fv2", cells), ("k_end_fv2", one)]
 
 
-FV2_SPEC = Spec("fv2", FV2_KERNEL_SOURCE, SHIM, FV2_CPU_SOURCE, FV2_KERNELS, Params, _fv2_plan)
+def _fv2_tile_plan(p):
+    tiles = (-(-int(p.wc) // TILE), -(-int(p.wr) // TILE), 1)
+    return [("k_tclear_fv2", tiles), ("k_tseed_fv2", (p.wc, p.wr, 1)), ("k_tgrow_fv2", tiles)]
+
+
+FV2_SPEC = Spec("fv2", FV2_KERNEL_SOURCE, SHIM, FV2_CPU_SOURCE, FV2_KERNELS, Params, _fv2_plan,
+                tile_plan=_fv2_tile_plan)
 
 
 def _dg2_plan(p):
@@ -255,7 +289,13 @@ def _dg2_plan(p):
             ("k_end_dg2", one)]
 
 
-DG2_SPEC = Spec("dg2", DG2_KERNEL_SOURCE, SHIM, DG2_CPU_SOURCE, DG2_KERNELS, Params, _dg2_plan)
+def _dg2_tile_plan(p):
+    tiles = (-(-int(p.wc) // TILE), -(-int(p.wr) // TILE), 1)
+    return [("k_tclear_dg2", tiles), ("k_tseed_dg2", (p.wc, p.wr, 1)), ("k_tgrow_dg2", tiles)]
+
+
+DG2_SPEC = Spec("dg2", DG2_KERNEL_SOURCE, SHIM, DG2_CPU_SOURCE, DG2_KERNELS, Params, _dg2_plan,
+                tile_plan=_dg2_tile_plan)
 
 
 def _sgc_plan(p):
@@ -280,10 +320,13 @@ CPU_FLAGS = ("-O3", "-std=c++14", "-fno-strict-aliasing", "-ffp-contract=off")
 
 
 def _source_hash(spec):
+    """16 hex characters naming these exact kernel sources and CPU_FLAGS. Line ends do not count
+    (Boann 6.8.1): Git for Windows checks the sources out with CRLF, and the prebuilt libraries,
+    built from LF files on Linux, must still match there. An LF file hashes as before."""
     h = hashlib.sha256()
     for p in (spec.kernel_source, spec.shim, spec.cpu_source):
         with open(p, "rb") as f:
-            h.update(f.read())
+            h.update(f.read().replace(b"\r\n", b"\n"))
     h.update(" ".join(CPU_FLAGS).encode())
     return h.hexdigest()[:16]
 
@@ -635,6 +678,12 @@ def cpu_build_command(spec, cxx, out, openmp=True, extra=(), omp_flags=None):
         cflags, link = omp_flags or (["-fopenmp"], [])
         cmd += list(cflags)
     return cmd + inc + ["-x", "c++", spec.cpu_source] + list(extra) + list(link) + ["-o", out]
+
+
+def cpu_available(spec=FLOOD_SPEC):
+    """True when the CPU build of spec can be had here without a Metal GPU: a prebuilt library
+    shipped for this computer, or a C++ compiler to build one (Boann 6.8.1)."""
+    return bool(prebuilt_available(spec) or find_compiler())
 
 
 def prebuilt_available(spec=FLOOD_SPEC):
