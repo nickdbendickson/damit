@@ -1,0 +1,203 @@
+<?xml version='1.0' encoding='utf-8'?>
+<plugins>
+  <pyqgis_plugin name="DamIT Catalog" version="0.2.0">
+    <description>Data catalog for DamIT dam hazard screening: methods M1-M13, scenarios S1-S7, domain cutoffs D1-D2, modifiers R1-R10, class labels and jurisdiction presets from Appendix A of US Dam Hazard Classification - Corrected Edition (Nov 9, 2026), as JSON data files with a Python loader, plus the hand-off schema and its NID-ID rule (the dam inventory is the USACE National Inventory of Dams). No Processing tools.</description>
+    <about>Single source of truth for the DamIT plugins (DamIT Screener, DamIT Runner, DamIT Hazard). Every threshold, label map, method parameter, scenario and modifier lives in data/*.json, so presets can be updated without a plugin code release; set the DAMIT_CATALOG_DIR environment variable to use an edited copy. Preset mode loads a state or agency bundle; custom mode shows method IDs and parameters without branding. Output of the DamIT plugins is a suggested classification only; the engineer of record and the regulating agency make the determination.</about>
+    <version>0.2.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>Nick Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,hazard classification,catalog</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_catalog_0_2_0.zip</file_name>
+    <icon>damit_catalog/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_catalog_0_2_0.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Core" version="0.4.0">
+    <description>Shared library for the DamIT plugins: suite settings, the DamIT plugin list and version checks, US state table, dam-record field helpers, DamIT Catalog access and a small HTTP helper. Adds only an About entry to the menu.</description>
+    <about>DamIT Core holds the code DamIT Setup, DamIT Data, DamIT Hazard Lite and DamIT PMP share (damit_core.lib): the suite settings store (QgsSettings group damit/, or a JSON file named by the DAMIT_SETTINGS environment variable), the list of DamIT plugins with their Processing provider ids and a version / dependency check, a table of US states and territories (FIPS, bounding box, Geofabrik and Microsoft footprint names), dam-record normalization onto the DamIT Screener dam fields, DamIT Catalog access (preset list, preset for a state) and an HTTP helper (QGIS network settings inside QGIS, urllib outside). It holds no jurisdiction thresholds: those live in DamIT Catalog. It depends on no DamSafety plugin. DamIT Hazard, Screener, Runner and Crest do not use it yet in 0.1.0; they can switch later.</about>
+    <version>0.4.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>N.D. Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,library</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_core_0_4_0.zip</file_name>
+    <icon>damit_core/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_core_0_4_0.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Data" version="0.2.2">
+    <description>Keeps offline copies of public structure and building-footprint layers for any US state (or an extent): USACE NSI, Microsoft US Building Footprints, OpenStreetMap (Geofabrik) and, with a pasted link, FEMA / ORNL USA Structures. Processing provider damit_data.</description>
+    <about>damit_data:download fetches the chosen sources for the chosen state (NSI county by county, or one request for a small extent), stages and verifies each download (zip integrity, GeoJSON), and replaces the local copy only when the source changed (ETag / Last-Modified / size, or the NSI content hash). Files go to &lt;data folder&gt;/&lt;state or extent&gt;/&lt;source&gt;/ with a manifest (versions, citations); the data folder is the tool's folder, else the DamIT data_folder setting (DamIT Setup), else ~/Documents/DamIT Data. A folder inside an ND Dam Suite offline pack is refused. damit_data:status lists what is held; the menu adds the layers to the project. Generalized from the North Dakota-only DamSafety Data; the ND-specific layers (ND 911 address points, NDDOT, DWR, ND offline pack) are not part of DamIT Data 0.1.0.</about>
+    <version>0.2.2</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>N.D. Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,structures,buildings,nsi,openstreetmap,offline</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_data_0_2_2.zip</file_name>
+    <icon>damit_data/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_data_0_2_2.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Finder" version="0.7.4">
+    <description>Finds dams, dry dams, road fills, ponds, dugouts and road / rail stream crossings in LiDAR, hydrography and aerial imagery that are not on the NID, state or bridge / culvert lists you give.</description>
+    <about>Nine Processing tools (Processing Toolbox &gt; DamIT Finder &gt; Find structures). Fills across streams and draws: walks the 3DHP / NHD flowlines and every draw traced from the DEM itself over a bare-earth DEM and reports every fill that blocks the valley (spill level, height, head, storage, pool), as a dam, dry embankment or road fill. Ponds and dugouts: classes every polygon of a water-body layer from the LiDAR. Crossings: every road / rail x stream crossing, the places a culvert or bridge must be. Open water: pond outlines from 4-band or colour-infrared aerial imagery (NDWI; several years keep the persistent water) or straight from a classified LiDAR point cloud (ASPRS class 9), marked when no water-body layer has them. Build the water mosaic: turn a folder of classified LiDAR tiles into the class-9 water-count / mean-elevation rasters (CONUS Albers, the whole U.S.) the open-water tool reads. Also: where each pool spills, dug pits and raised ridges (levees, dikes) anywhere in the DEM, the drainage area and expected pipe size at each crossing, dams / dikes / culverts from OpenStreetMap, a score learned from the fills already on a dam list (four kinds, bagged boosted trees among them), evidence the DEM cannot give (water year after year in the imagery, NWI codes, LiDAR return drop-out, buildings and roads down the flow path), and review batches whose marks give precision and recall with honest 95 % intervals. Every candidate is checked against the known-structure layers you give (NID, state lists, NBI, DOT culverts, USGS / SARP crossings): listed, unsure or new. Runs no flood model. Candidates for review against an aerial image, not determinations; a new dam has no NID ID, so DamIT Screener does not take it as a dam record until it is listed.</about>
+    <version>0.7.4</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>N.D. Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,lidar,culvert,pond,processing</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_finder_0_7_4.zip</file_name>
+    <icon>damit_finder/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_finder_0_7_4.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Hazard" version="0.5.0">
+    <description>Suggested dam hazard class from existing flood rasters and receptor layers, by jurisdiction preset (FEMA 333, USBR, BIA, NRCS and 11 states) or by methods you pick. NID dams only: the dam record names the dam by its USACE National Inventory of Dams ID.</description>
+    <about>One Processing tool (damit:classify) and a window. Reads maximum depth / velocity rasters (and optional DV, water surface, non-breach and arrival rasters) of a breach run made elsewhere - it does not run any model - and scores structures, roads, rail, facilities, lifelines and environmental features with the Appendix A methods of the US Dam Hazard Classification Corrected Edition (Nov 9, 2026). Every threshold, preset and label comes from the DamIT Catalog plugin (Appendix A as data; install it first). Output: the suggested class with its driving receptors and method IDs, a receptor layer styled by class and a run report with flags and citations. Informational, not a regulatory determination: the engineer of record and the regulating agency make the determination. Based on DamSafety Hazard's sampling and TM-11 charts.</about>
+    <version>0.5.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>N.D. Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,hazard,classification,flood,dam safety,TM-11</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_hazard_0_5_0.zip</file_name>
+    <icon>damit_hazard/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_hazard_0_5_0.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Hazard Lite" version="0.2.2">
+    <description>One Processing tool (damit_lite:classify): samples maximum depth / velocity rasters at structures, roads and railroads and suggests a hazard class with any DamIT Catalog preset or custom method set.</description>
+    <about>A lighter companion to DamIT Hazard: no dialog of its own, one tool. Thresholds, classes, wet depth and sampling distances all come from DamIT Catalog (the same source of truth as DamIT Hazard), so the North Dakota, Nebraska, New York, FEMA 333, USBR (USBR_TM11 alias) and other presets, or custom method IDs, work the same way. 0.1.0 screens the catalog methods about structures, roads and rail; methods about other receptors are listed for review; M1 chart zones are read from a field, not computed. Writes hazard_lite.json, receptors.csv, hazard_lite_summary.md and a receptor point layer. Runs no flood model. Results are suggested classifications only: the engineer of record and the regulating agency make the determination.</about>
+    <version>0.2.2</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>N.D. Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,hazard classification,processing</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_hazardlite_0_2_2.zip</file_name>
+    <icon>damit_hazardlite/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_hazardlite_0_2_2.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT PMP" version="0.5.0">
+    <description>NOAA Atlas 14 precipitation-frequency estimates for dam safety work (Processing provider damit_pmp): point and basin tables from the NOAA/NWS Precipitation Frequency Data Server, Atlas 14 GIS grids fetched from NOAA for any return period and duration, a design hyetograph (alternating block, NOAA Atlas 14 temporal distributions or NRCS 24-hour types, with optional initial / constant losses), the watershed of a dam point from a DEM, basin statistics, and LISFLOOD-FP / ANUGA rain-on-grid files and jobs. NOAA Atlas 14 is the only data source.</description>
+    <about>damit_pmp:pointpf and damit_pmp:basinpf query PFDS (https://hdsc.nws.noaa.gov/pfds/) for the 19 Atlas 14 durations (5 min - 60 days) and the PDS 1 - 1000-year ARIs or AMS 1/2 - 1/1000 AEPs with 90% bounds, cache the answers, and write a CSV table and a JSON file recording the Atlas 14 volume, version, region, query URL, fetch time and citation. damit_pmp:fetchgrid downloads the Atlas 14 'PF in GIS format' grid (hdsc.nws.noaa.gov/pub/hdsc/data) for the return period, duration, series (PDS / AMS) and bound (estimate, 90% lower, 90% upper) you choose, clips it to a point buffer, extent or basin, and writes a GeoTIFF in inches with a JSON sidecar (URL, fetch time, SHA-256, citation). damit_pmp:hyetograph builds a design hyetograph from the point table (the Atlas 14 depth always; the shape is the alternating block, a NOAA Atlas 14 Volume 8 temporal distribution or an NRCS Type I / IA / II / III curve; optional initial and constant losses give excess rain); damit_pmp:watershed delineates the watershed of a dam point from a DEM (a file, or USGS 3DEP fetched for you) and compares it with the NID drainage area; damit_pmp:gridbasin gives the basin mean / min / max of an Atlas 14 grid (a file you have or one it fetches); damit_pmp:raingrid writes the storm as a LISFLOOD-FP .rain file (mm/hr) and an ANUGA rate series (m/s); damit_pmp:anugarain sets up an ANUGA rain-on-grid job on the damit_runner gmsh mesh (the runner's own mesher, sizes and domain build, a ready-to-run script and a run manifest). damit_pmp:lisfloodrain sets up the same storm on the same domain as a LISFLOOD-FP job with damit_runner's setup (solver ACC by default). It launches no model: the gmsh mesh is built only when you give an ANUGA Python, ANUGA runs only if you switch RUN_ANUGA on and LISFLOOD-FP only if you switch RUN_LISFLOOD on (both off by default). A location outside Atlas 14 coverage fails with a clear message. Atlas 14 publishes frequency estimates up to the 1000-year ARI: this plugin computes no probable maximum precipitation and uses no PMP study, HMR, state PMP tool or other precipitation source (it is not a port of the DamSafety PMP / North Dakota PMP Evaluation Tool and ships none of its data).</about>
+    <version>0.5.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>N.D. Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,precipitation,noaa atlas 14,hydrology,processing</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_pmp_0_5_0.zip</file_name>
+    <icon>damit_pmp/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_pmp_0_5_0.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Runner" version="0.13.0">
+    <description>Dam breach model runs (Processing provider damit_run): damit_run:rundam accepts a DamIT Screener hand-off package (or equivalent parameters), validates it against DamIT Catalog (NID dams only: the dam needs its NID ID unless new / proposed or a desk sample), prepares the run and launches the breach model with the DamSafety Runner's parameters and defaults (breach hydrograph, LISFLOOD-FP executable or the built-in engine when none is installed, optional ANUGA tier on the DamSafety mesh, growth loop and grid refinement), writing Depth (Max), Velocity (Max), Arrival Time, WSE (Max), hmax and the flood polygons into the dam folder for DamIT Hazard.</description>
+    <about>Generalized from the DamSafety Runner breach-run workflow for the DamIT presets. Tools: damit_run:rundam (DRY_RUN on = prepare / record only; HEC-RAS is refused) and damit_run:checkhandoff. It never starts HEC-RAS, Wine, ndbreach:rundam or ndbreach:batch, and always creates a new run folder rather than writing into an existing one. Also ships the flood package (breach hydrographs, built-in LISFLOOD-FP and finite-volume engines) used by DamIT Screener. Classification of finished rasters is DamIT Hazard's job (damit:classify); the Runner attaches catalog metadata only. Suggested classifications only; the engineer of record and the regulating agency make the determination.</about>
+    <version>0.13.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>Nick Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,breach,flood,processing</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_runner_0_13_0.zip</file_name>
+    <icon>damit_runner/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_runner_0_13_0.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Screener" version="0.3.9">
+    <description>Multi-jurisdiction dam hazard screening (Processing provider damit_screen): preflight, a scenario-driven screening chain (inventory prepare, terrain, storage, breach direction, hydrograph, triage, 2D screening flood, preliminary suggested class), and hand-off packages for DamIT Runner. The dam inventory is the USACE National Inventory of Dams (NID): each dam needs its NID ID. Presets and thresholds come from DamIT Catalog.</description>
+    <about>Generalized from the DamSafety Screening workflow for the DamIT presets (FEMA 333, USBR ACER TM-11, BIA, NRCS, North Dakota REG_05.2026, Nebraska, New York, Virginia, Texas, Idaho, Colorado, Rhode Island, Arizona, California, Alaska) or custom method selection. Tools: damit_screen:preflight, damit_screen:runchain, damit_screen:prepare, :terrain, :storage, :breachdirection, :hydrograph, :triage, :engine2d (the DamSafety Screening tool-7 2D flood with the built-in finite-volume engine in this process, or LISFLOOD-FP through DamIT Runner's launcher; larger clips from the configured offline pack when it covers the area, else a USGS 3DEP download; writes Screening Depth / Velocity / DV (Max) and samples the receptors so :suggest gives a preliminary class), :suggest, :handoff (writes damit_handoff.json for damit_run:rundam) and :report. It never starts ANUGA, HEC-RAS or Wine; LISFLOOD-FP only with engine2d = lisflood (the built-in engine, shipped with DamIT Runner, is the default). Results are suggested classifications only; the engineer of record and the regulating agency make the determination. Classification of finished rasters is DamIT Hazard's job (damit:classify).</about>
+    <version>0.3.9</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>Nick Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,hazard classification,screening,breach,processing</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_screener_0_3_9.zip</file_name>
+    <icon>damit_screener/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_screener_0_3_9.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+  <pyqgis_plugin name="DamIT Setup" version="0.2.0">
+    <description>Start here for the DamIT plugins: choose the suite data folder and work folder, check that DamIT Core, DamIT Catalog and the other DamIT plugins are installed, fill empty settings from the folder, and continue in DamIT Screener (damit_screen:preflight) with the folder handed over.</description>
+    <about>One window (Plugins &gt; DamIT &gt; Start here...). Scans the suite data folder for dams, terrain, structures / footprints, roads and railroads (any jurisdiction; no North Dakota pack is required, and DamIT Data's download folders are recognized), lists the DamIT plugins and their versions, proposes the DamIT Catalog preset for the chosen state (or leave it for an agency preset or custom mode), saves the choices in the DamIT suite settings without overwriting values already set, and writes damit_screen_settings.json in the work folder. Continue opens DamIT Screener's preflight with the work folder, dams, terrain, receptors, preset and the settings file filled in. Hand-off targets are damit_screen:preflight / :runchain and damit_run:rundam only; nddam / ndbreach ids are refused.</about>
+    <version>0.2.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <homepage>https://github.com/nickdbendickson/damit</homepage>
+    <author_name>N.D. Bendickson</author_name>
+    <tracker>https://github.com/nickdbendickson/damit/issues</tracker>
+    <repository>https://github.com/nickdbendickson/damit</repository>
+    <tags>dam,dam safety,setup</tags>
+    <experimental>True</experimental>
+    <deprecated>False</deprecated>
+    <supports_qt6>True</supports_qt6>
+    <file_name>damit_setup_0_2_0.zip</file_name>
+    <icon>damit_setup/icon.svg</icon>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_setup_0_2_0.zip</download_url>
+    <update_date>2026-11-27</update_date>
+    <create_date>2026-11-27</create_date>
+  </pyqgis_plugin>
+</plugins>
