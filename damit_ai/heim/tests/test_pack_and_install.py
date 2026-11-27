@@ -217,7 +217,8 @@ class TestHfGgufFallback(StrictCase):
         spit(self.fake, "#!/usr/bin/env bash\n"
                         "echo \"$@\" >> '%s'\n"
                         "if [[ \"$1\" == pull ]]; then echo 'pull: manifest redirect failed' >&2; exit 1; fi\n"
-                        "if [[ \"$1\" == create ]]; then cp \"$4\" '%s.modelfile'; fi\n" % (self.log, self.log))
+                        "if [[ \"$1\" == create ]]; then cp \"$4\" '%s.modelfile'; ls -ld \"$(dirname \"$4\")\" > '%s.dir'; fi\n"
+                        "if [[ \"$1\" == create && -n \"${FAKE_CREATE_FAILS:-}\" ]]; then exit 1; fi\n" % (self.log, self.log, self.log))
         os.chmod(self.fake, 0o755)
 
     def run_block(self, script, spec=None, extra_env=None, path=None):
@@ -226,6 +227,8 @@ class TestHfGgufFallback(StrictCase):
                    HF_ENDPOINT="http://127.0.0.1:%d" % self.srv.server_address[1],
                    HEIM_GGUF_SPEC=spec or "acme/tiny-GGUF tiny.gguf %s %d" % (self.sha, len(self.payload)))
         env.update(extra_env or {})
+        for k in [k for k, v in env.items() if v is None]:
+            env.pop(k)
         for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
             env.pop(k, None)
         env["no_proxy"] = "127.0.0.1"
@@ -237,7 +240,7 @@ class TestHfGgufFallback(StrictCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         calls = slurp(self.log).splitlines()
         self.assertEqual(calls[0], "pull tiny:1")
-        self.assertRegex(calls[1], r"^create tiny:1 -f .*Modelfile\.\d+$")
+        self.assertRegex(calls[1], r"^create tiny:1 -f .*/heim-gguf\.\w{6}/Modelfile$")
         mf = slurp(self.log + ".modelfile")
         self.assertRegex(mf, r"^FROM .*tiny\.gguf\n")
         self.assertIn("PARAMETER num_ctx 4096", mf)
@@ -254,6 +257,45 @@ class TestHfGgufFallback(StrictCase):
         r = self.run_block("hf_gguf_create tiny:1", spec="acme/missing-GGUF none.gguf %s 99" % self.sha)
         self.assertEqual(r.returncode, 1)
         self.assertIn("download failed", r.stderr)
+
+    def test_the_gguf_is_fetched_into_a_fresh_private_folder(self):
+        r = self.run_block("hf_gguf_create tiny:1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        mf = slurp(self.log + ".modelfile")
+        where = os.path.dirname(re.match(r"^FROM (.*)\n", mf).group(1))
+        self.assertEqual(os.path.dirname(where), os.path.join(self.root, "gg"))
+        self.assertRegex(os.path.basename(where), r"^heim-gguf\.\w{6}$")      # mktemp -d, not a fixed name
+        self.assertTrue(slurp(self.log + ".dir").startswith("drwx------"))   # only this user can get in
+        self.assertFalse(os.path.exists(where))                              # and it is gone afterwards
+
+    def test_a_file_planted_in_the_old_shared_folder_is_not_used(self):
+        # the old code used $TMPDIR/heim-gguf/<file> as is when its size matched (check-then-use in a shared folder)
+        tmp = os.path.join(self.root, "tmp")
+        old = os.path.join(tmp, "heim-gguf")
+        os.makedirs(old)
+        victim = os.path.join(self.root, "victim")
+        spit(victim, "keep me")
+        with open(os.path.join(old, "tiny.gguf"), "wb") as f:
+            f.write(b"X" * len(self.payload))                                 # right size, wrong bytes
+        os.symlink(victim, os.path.join(old, "Modelfile"))
+        r = self.run_block("hf_gguf_create tiny:1", extra_env={"HEIM_GGUF_DIR": None, "TMPDIR": tmp})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(old + "/", slurp(self.log + ".modelfile"))
+        self.assertEqual(slurp(victim), "keep me")
+        self.assertEqual(sorted(os.listdir(tmp)), ["heim-gguf"])            # only the planted folder is left, untouched
+        self.assertEqual(sorted(os.listdir(old)), ["Modelfile", "tiny.gguf"])
+
+    def test_every_failure_removes_the_private_folder(self):
+        gg = os.path.join(self.root, "gg")
+        for spec, env, says in (
+                ("acme/missing-GGUF none.gguf %s 99" % self.sha, {}, "download failed"),
+                ("acme/tiny-GGUF tiny.gguf %s %d" % ("0" * 64, len(self.payload)), {}, "sha256"),
+                (None, {"FAKE_CREATE_FAILS": "1"}, "ollama create tiny:1 failed"),
+                ("acme/tiny-GGUF ../tiny.gguf %s %d" % (self.sha, len(self.payload)), {}, "bad GGUF file name")):
+            r = self.run_block("hf_gguf_create tiny:1", spec=spec, extra_env=env)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            self.assertIn(says, r.stderr)
+            self.assertEqual(os.listdir(gg) if os.path.isdir(gg) else [], [], says)
 
     def test_the_fallback_can_be_switched_off_and_unknown_tags_are_refused(self):
         r = self.run_block("hf_gguf_create tiny:1", extra_env={"HEIM_NO_HF_FALLBACK": "1"})

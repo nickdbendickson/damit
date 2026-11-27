@@ -230,8 +230,8 @@ The `damit_ai-offline` download adds `damit_ai/offline/` next to `heim/` and `vo
   `conda create --offline`, OCR included. It needs conda (the dam-suites package ships Miniforge).
 
 Models still come from Ollama's registry (`ollama pull`, 17 to 24 GB each). They are too big to bundle. If `ollama pull` fails
-(for example behind a proxy), the Linux, Mac and Windows installers fall back to the model's Hugging Face GGUF (sha256 checked,
-resumable) and `ollama create` it under the same tag. `HF_ENDPOINT` points at a mirror, `HEIM_GGUF_SPEC` overrides the table,
+(for example behind a proxy), the Linux, Mac and Windows installers fall back to the model's Hugging Face GGUF (sha256 checked;
+on Linux and Mac it is fetched into a fresh private temporary folder that is removed afterwards) and `ollama create` it under the same tag. `HF_ENDPOINT` points at a mirror, `HEIM_GGUF_SPEC` overrides the table,
 `HEIM_NO_HF_FALLBACK=1` turns the fallback off.
 
 ## Models by Mac
