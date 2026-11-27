@@ -66,7 +66,7 @@ class SgcChoice(unittest.TestCase):
         for text in (lf.engine_label(e), lf.describe_exe(e)):
             self.assertIn("NOT LISFLOOD-FP", text)
             self.assertIn("sub-grid channels", text)
-        self.assertEqual(lf.engine_name(e), "the GPU engine (sub-grid channels)")
+        self.assertEqual(lf.engine_name(e), "Boann (sub-grid channels)")   # 0.10.0: DamSafety wording
 
     def test_run_tool_choice_is_appended(self):
         try:
@@ -75,6 +75,9 @@ class SgcChoice(unittest.TestCase):
             self.skipTest("algorithms need QGIS ({})".format(e))
         self.assertEqual(algs.FLOOD_ENGINES[:2], ("lisflood", "gpu"))   # saved indices unchanged
         self.assertEqual(algs.FLOOD_ENGINES[2], "gpu-sgc")
+        # 0.10.0: the other Boann solvers and "Recommended (auto)" appended after DamIT's three
+        self.assertEqual(algs.FLOOD_ENGINES[3:], ("gpu-fv", "gpu-fv2", "gpu-dg2", "gpu-subfv", "auto",
+                                                  "gpu-subli"))
         self.assertEqual(len(algs.FLOOD_ENGINES_TEXT), len(algs.FLOOD_ENGINES))
         self.assertFalse(any("Apple GPU" in t for t in algs.FLOOD_ENGINES_TEXT))
 

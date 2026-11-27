@@ -163,6 +163,13 @@ def _carve_default():
 
 
 class RunSettings:
+    # 3.39.0 / 3.88.0: the Courant number and ACC theta a user sets (the run tool's CFL / THETA,
+    # the CLI's model.cfl / model.theta); None = each engine's own. Class attributes on purpose:
+    # they reach the checkpoint key (as_dict) only for a run that sets them, exactly as before
+    # 3.88.0, so every earlier checkpoint still resumes.
+    user_cfl = None
+    user_theta = None
+
     def __init__(self, **kw):
         self.tier = TIER_LISFLOOD
         self.breach_method = brmod.METHOD_PIPING
@@ -369,6 +376,9 @@ class RunSettings:
         # 3.49.0: Boann sub-grid FV (gpu-subfv) coarsening factor r (1-8). None = the engine's
         # own default (4). The QGIS run tool sets it from SUBGRID_R, the CLI from model.subgrid_r.
         self.user_subgrid_r = None
+        # 3.79.0: Boann sub-grid local inertial (gpu-subli) only: the paper's upwind flux weighting
+        # (off by default). The CLI sets it from model.subgrid_upwind.
+        self.user_subgrid_upwind = False
         # 3.35.0: closed depressions (potholes) of the model DEM start this share (0-1) full,
         # each to the one flat level that holds that share of its volume (core/pothole_fill.py,
         # 4-connected like the engines' faces). 0 = dry, the default (no change); 1 = full to the
@@ -580,12 +590,13 @@ def _check_solver(st, model_dir, log=None):
         if str(getattr(st, "sgc_start", "auto")) not in sgcmod.START_MODES:
             raise brmod.BreachInputError("Sub-grid channel start must be auto, empty or full.")
         if lfmod.is_inprocess(st.lisflood_exe):
-            # 0.8.0 (DamSafety Runner 3.36.0): the GPU engine with sub-grid channels (gpu-sgc) runs
-            # the channels natively, with no LISFLOOD-FP binary to check. The built-in engine and
-            # the plain GPU engine (ACC) have no channel model, so that is a configuration error.
+            # Boann's sub-grid-channel engine (gpu-sgc) runs the channels natively - there is no
+            # LISFLOOD-FP binary in the loop, so there is no arrival-depth patch to check. The
+            # built-in engine and the other in-process engines (ACC / FV / DG2) have no channel
+            # model, so sub-grid channels with them is a configuration error, not a binary to test.
             if not lfmod.is_gpu_sgc(st.lisflood_exe):
                 raise brmod.BreachInputError(
-                    "Sub-grid channels need LISFLOOD-FP or the GPU engine with sub-grid channels "
+                    "Sub-grid channels need LISFLOOD-FP or the Boann sub-grid-channel engine "
                     "(gpu-sgc); {} has no channel model. Choose one of those or turn sub-grid "
                     "channels off.".format(lfmod.engine_name(st.lisflood_exe)))
         else:
@@ -663,6 +674,9 @@ def key_settings(st):
     # a different flood); left at the engine's default it stays out, so earlier checkpoints resume
     if getattr(st, "user_subgrid_r", None) is None:
         d.pop("user_subgrid_r", None)
+    # 3.79.0: likewise the sub-grid local-inertial flux weighting, off unless asked for
+    if not getattr(st, "user_subgrid_upwind", False):
+        d.pop("user_subgrid_upwind", None)
     # 3.35.0: dry potholes (the default) stay out of the key, so earlier checkpoints resume
     if not getattr(st, "pothole_start_fill", 0.0):
         d.pop("pothole_start_fill", None)
@@ -1366,6 +1380,19 @@ def spread_still_moving(arr_hr, hmax_m, sim_hr, cell_ac, prev_flooded_ac=None,
     return bool(go), info
 
 
+def _stability_marker_kind(path):
+    """Which re-run left the stable-settings marker of a LISFLOOD-FP folder (3.88.0): the
+    checkerboard one (CFL only) or the mass-balance one (theta and CFL; also every marker written
+    before 3.88.0, and one that cannot be read)."""
+    try:
+        with open(path) as f:
+            kind = (json.load(f) or {}).get("kind")
+    except (OSError, ValueError, AttributeError):
+        kind = None
+    return lfmod.STABILITY_KIND_CHECKER if kind == lfmod.STABILITY_KIND_CHECKER \
+        else lfmod.STABILITY_KIND_MASS
+
+
 def previous_pass_flooded_ac(iterations, run, sim_hr, stable_settings=False):
     """The wet area (ac, at the arrival depth) of the pass the spread rule compares with: the
     LAST recorded pass, when it belongs to the same domain run (`run`), ran a shorter clock than
@@ -1454,8 +1481,6 @@ def latest_arrival_lower_bound(iterations, t_ref_hr=0.0):
         "{:.1f} h LISFLOOD-FP clock".format(
             late, _spread_pct(float(sp.get("late_frac") or 0.0)),
             100.0 * (1.0 - SPREAD_LATE_WINDOW), float(last.get("sim_time_hr") or 0.0)))
-
-
 def hit_extent_cap(next_w_m, next_h_m, max_extent_m, over):
     """The next domain would exceed the largest-domain cap (max_extent, in metres) and the flood
     is still leaving."""
@@ -1481,7 +1506,9 @@ def place_midcrest(dam, st, dam_xy, read, cell_m=1.0):
     (dam._point_original, set before prepare() snapped it to the line, else dam_xy) and the
     move. A breach position on the crest line (st.breach_xy) keeps the point where it is (the
     record has moved=False and the mid-crest DEM crest is still used). Without a line or DEM:
-    (dam_xy, {"warning": ...}) - the point is used as given."""
+    (dam_xy, {"warning": ...}) - the point is used as given. 3.73.0 (batch 44 DWR-2976): a
+    midpoint in a dip of the crest (a spillway, a road cut, the line running off the dam) moves
+    to the middle of the line's longest level stretch (midcrest avoid_dip; rec["dip_note"])."""
     orig = getattr(dam, "_point_original", None) or dam_xy
     line = getattr(dam, "crest_line_xy", None) or getattr(st, "midcrest_line", None)
     base = {"original_xy": [round(float(orig[0]), 3), round(float(orig[1]), 3)]}
@@ -1496,7 +1523,7 @@ def place_midcrest(dam, st, dam_xy, read, cell_m=1.0):
         g = read((min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad), float(cell_m))
         z = np.where(g.valid(), g.data, np.nan)
         rec = mcmod.midcrest(pts, mcmod.bilinear(z, (g.x0, g.dx, 0.0, g.y0, 0.0, -g.dx)),
-                             original_xy=orig)
+                             original_xy=orig, avoid_dip=True)
     except Exception as e:                                   # noqa - never stop a run for this
         base["warning"] = "mid-crest not read ({}: {}): the dam point is used as given".format(
             type(e).__name__, e)
@@ -2402,7 +2429,10 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
             warnings.append("Dam point: " + mc_rec["warning"] + ".")
             mc_why = mc_rec["warning"]
             mc_rec = None if "z_m" not in mc_rec else mc_rec
-        elif mc_rec.get("review"):
+        if mc_rec is not None and mc_rec.get("dip_note"):
+            # 3.73.0: told as a warning so the run's reader checks the crest pick
+            warnings.append("Dam point: " + mc_rec["dip_note"] + ". Check the top of dam.")
+        if mc_rec is not None and not mc_rec.get("warning") and mc_rec.get("review"):
             # 3.12.5 (Nick 2026-10-29): the highest point at the edge of the +-25 m profile -
             # the pick is kept (method unchanged) but flagged
             warnings.append("REVIEW: Dam point: " + mc_rec["review"] + ".")
@@ -2871,6 +2901,33 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     except Exception as _cc_err:                 # noqa - a report check never stops the run
         log("crossing check skipped: {}".format(_cc_err))
 
+    # --- S7 (3.22.x): road / rail / STRUCTURES crossings still blocked after the cuts ------
+    # Report only; never fails a run. Walk the flow path on the model DEM AFTER the culvert,
+    # bridge and notch cuts and record where an embankment still walls the channel. This reads
+    # the DEM and writes report["crossing_check"] and one warning only - it cuts nothing and
+    # changes no breach, hydrograph, raster, extent, arrival, storage or routing value.
+    try:
+        _cross_lines = (list(getattr(st, "road_lines", None) or [])
+                        + list(getattr(st, "rail_lines", None) or [])
+                        + [s.line for s in (st.structures or [])])
+        if _cross_lines and len(path) >= 2:
+            _cc = structmod.crossing_barriers(dem_for("lisflood", bounds, cs), path,
+                                              _cross_lines, cs)
+            if _cc:
+                report["crossing_check"] = _cc
+                if _cc["blocked"]:
+                    _cw = ("{} road/rail crossing(s) on the flow path are still blocked after "
+                           "the culvert and bridge cuts (worst residual embankment {:.2f} m "
+                           "above the upstream channel, at {:g} m cells). The model holds that "
+                           "embankment as a wall there; add or widen a culvert, bridge or "
+                           "notch, or model at a finer cell. Report only; the run is "
+                           "unchanged.").format(_cc["blocked"], _cc["worst_height_m"],
+                                                _cc["cell_m"])
+                    warnings.append(_cw)
+                    log(_cw)
+    except Exception as _cc_err:                 # noqa - a report check never stops the run
+        log("crossing check skipped: {}".format(_cc_err))
+
     # --- LISFLOOD-FP run helper -----------------------------------------------------
     def gauge_list(bnds, gauges):
         gl = []
@@ -2925,16 +2982,42 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
 
     # 3.15.1: stable ACC settings once a run of this dam lost its mass balance (lfmod.STABLE_*).
     # A resumed run picks them up from the marker its LISFLOOD-FP folder was left with.
-    stability = {"on": False, "events": []}
-    if state.resumed and os.path.exists(os.path.join(model_dir, "lisflood",
-                                                     lfmod.STABILITY_MARKER)):
+    # 3.88.0: "kind" says which re-run engaged them: the mass balance (theta and CFL) or a
+    # checkerboarded peak surface (lfmod.checkerboard: the CFL only).
+    stability = {"on": False, "kind": None, "events": []}
+    _marker0 = os.path.join(model_dir, "lisflood", lfmod.STABILITY_MARKER)
+    if state.resumed and os.path.exists(_marker0):
         stability["on"] = True
+        stability["kind"] = _stability_marker_kind(_marker0)
 
     def stable_kw():
+        # 3.41.0: the sub-grid FV coarsening factor is a mesh choice, not a stability knob, so it is
+        # forwarded whether or not the stability fallback is engaged (only theta/cfl change then).
+        kw = {}
+        if getattr(st, "user_subgrid_r", None) is not None:
+            kw["subgrid_r"] = int(st.user_subgrid_r)
+        if getattr(st, "user_subgrid_upwind", False):
+            kw["subgrid_upwind"] = True
+        if stability["on"] and stability["kind"] == lfmod.STABILITY_KIND_CHECKER and \
+                getattr(st, "lisflood_solver", lfmod.SOLVER_ACC) == lfmod.SOLVER_ACC:
+            # 3.88.0: a checkerboarded run is cured by the smaller time step alone; theta stays
+            # the user's (or the engine's own 1.0), so the flood is not damped
+            if getattr(st, "user_theta", None) is not None:
+                kw["theta"] = float(st.user_theta)
+            kw["cfl"] = lfmod.checker_cfl(getattr(st, "user_cfl", None))
+            return kw
         if stability["on"] and getattr(st, "lisflood_solver", lfmod.SOLVER_ACC) == \
                 lfmod.SOLVER_ACC:
-            return {"theta": lfmod.STABLE_THETA, "cfl": lfmod.stable_cfl(st.lisflood_exe)}
-        return {}
+            kw["theta"] = lfmod.STABLE_THETA
+            kw["cfl"] = lfmod.stable_cfl(st.lisflood_exe)
+            return kw
+        # 3.39.0: the Courant number / theta the user set in the run tool (None = engine default).
+        # The stability fallback above still wins once a run has lost its mass balance.
+        if getattr(st, "user_theta", None) is not None:
+            kw["theta"] = float(st.user_theta)
+        if getattr(st, "user_cfl", None) is not None:
+            kw["cfl"] = float(st.user_cfl)
+        return kw
 
     # audit P2: the wall-clock record of every LISFLOOD-FP pass (report["lisflood_wall"]) and the
     # one warning when a pass's time step collapsed (the run itself goes on)
@@ -3042,12 +3125,15 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
             report["lisflood_unpatched"] = True
         env = lfmod.read_results(wd, dem, lst, hyd)
         err = env.stats.get("max_volume_error_pct")
-        if (not stability["on"] and getattr(st, "lisflood_stability_retry", True)
+        # 3.88.0: the mass-balance re-run also takes over from the CFL-only settings of a
+        # checkerboard re-run (it is the stronger cure)
+        if (stability["kind"] != lfmod.STABILITY_KIND_MASS
+                and getattr(st, "lisflood_stability_retry", True)
                 and lst.solver == lfmod.SOLVER_ACC and err is not None
                 and err > lfmod.STABILITY_RETRY_PCT):
             stability["on"] = True
+            stability["kind"] = lfmod.STABILITY_KIND_MASS
             eng_nm = lfmod.engine_name(st.lisflood_exe)   # "LISFLOOD-FP" or the Boann engine
-            eng_nm = eng_nm[:1].upper() + eng_nm[1:]      # DamIT: "the GPU engine" opens a sentence
             log("{} lost its mass balance ({:.1f}% of the injected volume); running "
                 "it again with theta {:g} and CFL {:g}.".format(eng_nm, err, lfmod.STABLE_THETA,
                                                                 lfmod.stable_cfl(st.lisflood_exe)))
@@ -3061,6 +3147,7 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
                   "theta": lfmod.STABLE_THETA, "cfl": lfmod.stable_cfl(st.lisflood_exe)}
             stability["events"].append(ev)
             report["lisflood_stability"] = {"stable_settings": True,
+                                            "kind": lfmod.STABILITY_KIND_MASS,
                                             "theta": lfmod.STABLE_THETA,
                                             "cfl": lfmod.stable_cfl(st.lisflood_exe),
                                             "events": stability["events"]}
@@ -3071,12 +3158,74 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
                 "this dam uses them. The results come from the repeated run.".format(
                     eng_nm, err, lfmod.STABLE_THETA, lfmod.stable_cfl(st.lisflood_exe),
                     "?" if err2 is None else "{:.2f}".format(err2)))
+        # 3.88.0: a run can go unstable and KEEP its mass balance: its peak water surface is a
+        # checkerboard (lfmod.checkerboard). The plain ACC engines are run again with a smaller
+        # time step (CFL only); the others, and a run already at that CFL, are flagged.
+        _old = stability.setdefault("checker_msgs", {}).pop(tag, None)
+        if _old in warnings:                 # this pass replaces the last one of the same grid
+            warnings.remove(_old)
+        if (report.get("lisflood_checkerboard") or {}).get("run") == "lisflood" + tag:
+            report.pop("lisflood_checkerboard", None)
+        if lst.solver == lfmod.SOLVER_ACC and chans is None \
+                and lfmod.is_checkerboard(env.stats):
+            eng_nm = lfmod.engine_name(st.lisflood_exe)
+            pct = env.stats.get("checkerboard_pct")
+            cfl_new = lfmod.checker_cfl(getattr(st, "user_cfl", None))
+            cfl_now = lst.cfl if lst.cfl is not None else lfmod.DEFAULT_CFL
+            can_rerun = (not stability["on"] and getattr(st, "lisflood_stability_retry", True)
+                         and not lfmod.is_gpu_shock(st.lisflood_exe)
+                         and not lfmod.is_builtin(st.lisflood_exe)
+                         and cfl_new < cfl_now - 1e-9)
+            if can_rerun:
+                stability["on"] = True
+                stability["kind"] = lfmod.STABILITY_KIND_CHECKER
+                log("{}'s peak water surface is checkerboarded ({:.2f}% of its deep cells stand "
+                    "above or below all four neighbours): the run went unstable. Running it again "
+                    "with CFL {:g}.".format(eng_nm, pct, cfl_new))
+                lst = settings()
+                par = lfmod.write_inputs(wd, dem, inflow_xy, hyd, lst, inflow_line=inline)
+                runtime += lfmod.run(wd, par, lst, prog, cancel, log)
+                _note_wall(lst, "lisflood" + tag + " (stable re-run)")
+                env = lfmod.read_results(wd, dem, lst, hyd)
+                pct2 = env.stats.get("checkerboard_pct")
+                ev = {"run": "lisflood" + tag, "kind": lfmod.STABILITY_KIND_CHECKER,
+                      "checkerboard_pct": pct, "stable_checkerboard_pct": pct2,
+                      "theta": lst.theta, "cfl": lst.cfl}
+                stability["events"].append(ev)
+                report["lisflood_stability"] = {"stable_settings": True,
+                                                "kind": lfmod.STABILITY_KIND_CHECKER,
+                                                "theta": lst.theta, "cfl": lst.cfl,
+                                                "events": stability["events"]}
+                warnings.append(
+                    "{} went unstable with its default time step: its peak water surface was a "
+                    "checkerboard ({:.2f}% of the deep cells stood above or below all four "
+                    "neighbours by more than {:g} m) although its volume balanced. The run was "
+                    "repeated with CFL {:g} ({}% now), and every later run of this dam uses it. "
+                    "The results come from the repeated run.".format(
+                        eng_nm, pct, lfmod.CHECKER_JUMP_M, cfl_new,
+                        "?" if pct2 is None else "{:.2f}".format(pct2)))
+            if lfmod.is_checkerboard(env.stats):
+                msg = ("{}'s peak water surface is a checkerboard ({:.2f}% of the deep cells "
+                       "stand above or below all four neighbours by more than {:g} m): the "
+                       "solver went unstable, and the depths and water levels of lisflood{} are "
+                       "not reliable where the water is deep.{}".format(
+                           eng_nm, env.stats.get("checkerboard_pct"), lfmod.CHECKER_JUMP_M, tag,
+                           "" if lfmod.is_builtin(st.lisflood_exe) else
+                           " Run it again with a smaller CFL (the run tool's CFL setting, or "
+                           "model.cfl in the command-line config)."))
+                warnings.append(msg)
+                stability["checker_msgs"][tag] = msg
+                report["lisflood_checkerboard"] = {
+                    "run": "lisflood" + tag, "pct": env.stats.get("checkerboard_pct"),
+                    "cells": env.stats.get("checkerboard_rough_cells")}
         if stability["on"] and lst.solver == lfmod.SOLVER_ACC:
             with open(marker, "w") as f:
-                json.dump({"theta": lst.theta, "cfl": lst.cfl}, f)
+                json.dump({"theta": lst.theta, "cfl": lst.cfl,
+                           "kind": stability["kind"] or lfmod.STABILITY_KIND_MASS}, f)
             report.setdefault("lisflood_stability", {"stable_settings": True,
-                                                     "theta": lfmod.STABLE_THETA,
-                                                     "cfl": lfmod.stable_cfl(st.lisflood_exe),
+                                                     "kind": stability["kind"]
+                                                     or lfmod.STABILITY_KIND_MASS,
+                                                     "theta": lst.theta, "cfl": lst.cfl,
                                                      "events": stability["events"]})
         # 3.16.0: a main-run solver other than ACC must write the maximum velocity (checked
         # before the run by _check_solver; this catches a build that stops doing so)
@@ -3120,24 +3269,49 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
             warnings.append(bmsg)
             log(bmsg)
     if lfmod.is_gpu(st.lisflood_exe):
-        gmsg = ("This run uses the GPU engine (LISFLOOD-FP 8.3's ACC scheme rewritten as GPU "
+        gmsg = ("This run uses Boann (LISFLOOD-FP 8.3's ACC scheme rewritten as GPU "
                 "kernels, on {}), not LISFLOOD-FP itself. It matched LISFLOOD-FP 8.3 within "
-                "millimetres on the test cases (DWR-2801 at 30 m, Lake Delhi 2010), but it is new: "
-                "confirm a final hazard classification with a LISFLOOD-FP run."
-                .format(lfmod.gpu_backend_note()))
+                "millimetres across the test cases (DWR-2801 at 30 m, Lake Delhi 2010), the "
+                "breach-inflow cell included: the point source enters in LISFLOOD-FP's order by "
+                "default ('physicalinflow' in the .par keeps a mass-conserving order instead - a "
+                "lower, CFL-independent breach-cell depth, differing from LISFLOOD-FP only at the "
+                "breach cell and its near field). It is new: confirm a final hazard classification "
+                "with a LISFLOOD-FP run.".format(lfmod.gpu_backend_note()))
         if gmsg not in warnings:
             warnings.append(gmsg)
             log(gmsg)
-    if lfmod.is_gpu_sgc(st.lisflood_exe):
-        smsg = ("This run uses the GPU engine with LISFLOOD-FP's sub-grid channels (the ACC scheme "
-                "with a rectangular channel narrower than the cell, rewritten as GPU kernels, on {}), "
-                "not LISFLOOD-FP itself. Below bankfull it matches the analytic Manning depth; on the "
-                "Lake Delhi 2010 survey it came within about 0.1 ft of LISFLOOD-FP 8.3's own SGC at "
-                "the bridges. It is new: confirm a final hazard classification with a LISFLOOD-FP "
-                "run.".format(lfmod.gpu_backend_note()))
-        if smsg not in warnings:
-            warnings.append(smsg)
-            log(smsg)
+    if lfmod.is_gpu_subli(st.lisflood_exe):
+        lmsg = ("This run uses Boann, sub-grid local inertial (on {}), not LISFLOOD-FP itself: the "
+                "ACC scheme on cells {} times the DEM cell, each keeping its DEM sub-cells as "
+                "stage tables (after Nithila Devi & Kuiry 2024, with exact stage curves and "
+                "compound-channel friction). Depth and water-surface rasters are written at the "
+                "DEM cell; arrival time and velocity are those of the coarse cell a DEM cell lies "
+                "in. On flat sub-cells it is the Boann ACC engine exactly, and on the meandering "
+                "test valley it matched the fine run within centimetres, but it is new and has "
+                "not been checked against surveyed marks: confirm a final hazard classification "
+                "with a LISFLOOD-FP run.".format(
+                    lfmod.gpu_backend_note(), getattr(st, "user_subgrid_r", None) or 4))
+        if lmsg not in warnings:
+            warnings.append(lmsg)
+            log(lmsg)
+    if lfmod.is_gpu_shock(st.lisflood_exe):
+        if lfmod.is_gpu_dg2(st.lisflood_exe):
+            _scheme = "discontinuous Galerkin 2nd order (an RKDG2 solver of"
+        elif lfmod.is_gpu_fv2(st.lisflood_exe):
+            _scheme = "shock-capturing 2nd order (an HLLC finite-volume solver of"
+        elif lfmod.is_gpu_subfv(st.lisflood_exe):
+            _scheme = ("sub-grid finite volume (a coarse HLLC solver, each cell keeping its LiDAR "
+                       "sub-cells as stage tables, of")
+        else:
+            _scheme = "shock-capturing (an HLLC finite-volume solver of"
+        fmsg = ("This run uses Boann, {} the 2-D shallow-water equations, on {}), not LISFLOOD-FP "
+                "itself. It is well balanced (lake at rest to machine precision) and reproduces the "
+                "analytical dam-break (Ritter) solution, but it is a different numerical scheme from "
+                "LISFLOOD-FP and is new: confirm a final hazard classification with a LISFLOOD-FP "
+                "run.".format(_scheme, lfmod.gpu_backend_note()))
+        if fmsg not in warnings:
+            warnings.append(fmsg)
+            log(fmsg)
 
     # --- LISFLOOD-FP with domain extension ----------------------------------------
     iterations = list(state.get("iterations", []))
@@ -4009,11 +4183,24 @@ def _run_dam_once(dam, dam_xy, st, terrain_src, writer, out_folder, inflow_xy=No
     _builtin_run = lfmod.is_builtin(st.lisflood_exe)
     report["flood_engine"] = ("Built-in engine (local inertial, numpy; NOT LISFLOOD-FP)"
                               if _builtin_run else
-                              "GPU engine (LISFLOOD-FP ACC scheme on the GPU; NOT LISFLOOD-FP)"
+                              "Boann (ACC scheme on the GPU; NOT LISFLOOD-FP)"
                               if lfmod.is_gpu(st.lisflood_exe) else
-                              "GPU engine, sub-grid channels (ACC + LISFLOOD-FP sub-grid channels; "
+                              "Boann, sub-grid channels (ACC + LISFLOOD-FP sub-grid channels; "
                               "NOT LISFLOOD-FP)"
-                              if lfmod.is_gpu_sgc(st.lisflood_exe) else "LISFLOOD-FP (inertial solver)")
+                              if lfmod.is_gpu_sgc(st.lisflood_exe) else
+                              "Boann, sub-grid finite volume (coarse HLLC with LiDAR sub-cells; "
+                              "NOT LISFLOOD-FP)"
+                              if lfmod.is_gpu_subfv(st.lisflood_exe) else
+                              "Boann, sub-grid local inertial (coarse ACC with LiDAR sub-cells; "
+                              "NOT LISFLOOD-FP)"
+                              if lfmod.is_gpu_subli(st.lisflood_exe) else
+                              "Boann, discontinuous Galerkin 2nd order (RKDG2; NOT LISFLOOD-FP)"
+                              if lfmod.is_gpu_dg2(st.lisflood_exe) else
+                              "Boann, shock-capturing 2nd order (MUSCL + SSP-RK2 HLLC finite volume; "
+                              "NOT LISFLOOD-FP)"
+                              if lfmod.is_gpu_fv2(st.lisflood_exe) else
+                              "Boann, shock-capturing (HLLC finite volume; NOT LISFLOOD-FP)"
+                              if lfmod.is_gpu_fv(st.lisflood_exe) else "LISFLOOD-FP (inertial solver)")
     report["flood_engine_short"] = lfmod.engine_name(st.lisflood_exe)
     summary["flood_engine_short"] = report["flood_engine_short"]
     # 3.15.0 (ND 3.27.7): a coarse cell over a wide, shallow flood on flat terrain can

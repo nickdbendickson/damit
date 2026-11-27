@@ -580,10 +580,23 @@ if ($DoVor) {
       $LibEmpty = $false
     }
   }
-  # index the library when it has files and no index yet (also when an earlier run copied it and
-  # its ingest was stopped); a library you already indexed is left to `vor ingest`
+  # index the library when it has files and its index has no passages yet: no index file, or an
+  # empty one (an earlier run copied it and its ingest was stopped before the first document, or
+  # something opened the index before the library was there); a library you already indexed is
+  # left to `vor ingest`
   $hasLib = Get-ChildItem -Path $libDir -Recurse -File -Include '*.pdf','*.md','*.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($hasLib -and -not (VorHasIndex $RHome)) {
+  $hasPassages = $false
+  foreach ($f in @((Join-Path $RHome 'vor.db'), (Join-Path $RHome 'research.db'))) {
+    if (Test-Path $f) {
+      # the SQL goes in as an argument: Windows PowerShell 5.1 drops double quotes inside a native
+      # command's arguments; try/catch because a Python error on stderr stops this script there
+      try { & $PyR -c 'import sqlite3,sys; sys.exit(0 if sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0] else 1)' $f 'SELECT COUNT(*) FROM chunks' 2>$null; $hasPassages = ($LASTEXITCODE -eq 0) }
+      catch { $hasPassages = $false }
+      $global:LASTEXITCODE = 0
+      break
+    }
+  }
+  if ($hasLib -and -not $hasPassages) {
     if (-not $NoModels -and -not $NoIndex) {
       Say "Vor's library: indexing it"
       Ok 'a while for a full library; Ctrl+C is safe, then run: vor ingest'
@@ -745,6 +758,36 @@ if ($DoHeim) {
 }
 if ($DoVor) { New-Launcher 'vor' $PyR (Join-Path $VorDir 'vor.py') ''; $made += 'vor' }
 Ok "$($made -join ', ')"
+
+# The Local AI icon (ai_ui 1.2.0): a Start menu and desktop shortcut that opens the `ai` page in a window of
+# its own. Your own Start menu and desktop: no admin rights. The shortcut runs a one-line .vbs, so no console
+# window opens; that runs ai.cmd --app (ai.cmd sets the assistants' settings, as for every command), which
+# starts the page's server in the background when it is not running. Not made for a -Prefix sandbox.
+if ($DoHeim -and -not $Prefix) {
+  try {
+    $ico = Join-Path $LocalAI 'local-ai.ico'
+    $icoSrc = Join-Path $Here 'heim\icons\local-ai.ico'
+    if (Test-Path $icoSrc) { Copy-Item -LiteralPath $icoSrc -Destination $ico -Force }
+    $vbs = Join-Path $Bin 'local-ai-app.vbs'
+    $aiCmd = Join-Path $Bin 'ai.cmd'
+    # %USERPROFILE% in the file, expanded when it runs: an ASCII .vbs keeps a user name with other letters
+    @('Set sh = CreateObject("WScript.Shell")',
+      ('sh.Run """" & sh.ExpandEnvironmentStrings("' + (Cmd-Path $aiCmd) + '") & """ --app", 0, False')) |
+      Set-Content -LiteralPath $vbs -Encoding ASCII
+    $wsh = New-Object -ComObject WScript.Shell
+    foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+      if (-not $dir) { continue }
+      $lnk = $wsh.CreateShortcut((Join-Path $dir 'Local AI.lnk'))
+      $lnk.TargetPath = Join-Path $env:WINDIR 'System32\wscript.exe'
+      $lnk.Arguments = '"' + $vbs + '"'
+      $lnk.WorkingDirectory = $LocalAI
+      $lnk.Description = 'Heim and Vor, the dam-safety assistants on this computer'
+      if (Test-Path $ico) { $lnk.IconLocation = "$ico,0" }
+      $lnk.Save()
+    }
+    Ok 'Local AI icon -> your Start menu and desktop'
+  } catch { Warn "could not make the Local AI shortcut ($($_.Exception.Message)): open the page with  ai  instead" }
+}
 if (-not $Prefix) {
   # the user PATH as stored (REG_EXPAND_SZ, %VARS% kept), with local-ai\bin added once
   $envKey = 'HKCU:\Environment'
@@ -819,6 +862,7 @@ if ($DoVor)  { Write-Host '    vor "what breach width does Froehlich 2008 give?"
 if ($DoHeim) {
   Write-Host '    heim "what does REFINE_NEAR do?"                      the suite''s tools and known behaviours'
   Write-Host '    ai                                                     both on one page in your browser'
+  if (-not $Prefix) { Write-Host '    Local AI (Start menu or desktop)                       the same page in a window of its own: no typing' }
   Write-Host '    heim help                                              the short list of commands'
 }
 if ($DoVor -and $LibEmpty) {

@@ -80,6 +80,20 @@ your library is empty), index it, run `ai-doctor`, and print the first commands 
 on their own, `setup-local-heim.sh` and `setup-vor.zsh` do not touch the library). Open a new shell (the
 aliases/functions load from `~/.bashrc` / `~/.zshrc` / PowerShell `$PROFILE`), then:
 
+**Easiest: the Local AI icon.** The installers make a launcher in your own space (no sudo or admin):
+`~/Applications/Local AI.app` on a Mac, a Start menu and desktop shortcut on Windows, and an entry in
+`~/.local/share/applications` on Linux. It opens the `ai` page in a window of its own (Chrome, Edge or
+Brave in app mode when one is installed, otherwise your default browser) and starts the page's server in
+the background when it is not running; one copy runs, and it stops by itself ten minutes after its last
+window closes. On the page: **Ask**; **Library** (what is indexed, drop PDFs to add them, "Get more
+documents" from the download catalog a group at a time, each then indexed); **Check answers** (`ai-score`
+and its history); **Health & update** (`ai-doctor`, where every "Run: ..." line has a button that runs it,
+Start Ollama, and Install an update: choose the downloaded dam-local-ai zip and its installer runs, keeping
+the library, indexes, models and results). Long commands run as jobs with a log under
+`~/local-ai/logs/ui-jobs`, so closing the window does not stop them. `ai --app` is what the icon runs.
+
+Or in a terminal:
+
 ```
 vor "what breach width does Froehlich 2008 give?"    # the same as: vor ask "..."
 heim "what does REFINE_NEAR do?"

@@ -83,12 +83,17 @@ class UiTest(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode(), None
 
-    def test_page_needs_the_key(self):
-        self.assertEqual(self.req("/", key=None)[0], 403)
-        code, body, _ = self.req("/?k=k3y", key=None)
-        self.assertEqual(code, 200)
-        self.assertIn("Heim and Vor", body)
-        self.assertIn('const KEY="k3y"', body)
+    def test_the_page_holds_no_key_and_takes_it_from_its_address(self):
+        """1.2.0: the page is a shell with no secret in it; it reads the key from ?k=... (the address `ai`
+        prints) or #k=... (the Local AI icon) and sends it with each request."""
+        for path in ("/", "/?k=k3y"):
+            code, body, _ = self.req(path, key=None)
+            self.assertEqual(code, 200)
+            self.assertIn("Heim and Vor", body)
+            self.assertNotIn("k3y", body)
+        self.assertIn("location.hash.match(/[#&]k=", body)
+        self.assertIn("location.search.match(/[?&]k=", body)
+        self.assertEqual(self.req("/api/status", key=None)[0], 403)
 
     def test_a_request_from_another_host_name_is_refused(self):
         self.assertEqual(self.req("/?k=k3y", key=None, host="evil.example:80")[0], 403)

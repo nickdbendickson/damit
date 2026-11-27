@@ -1,11 +1,11 @@
 """DamIT port of DamSafety Runner tests/test_metalflood.py (DWR_Plugins 01758ea1), run by unittest through
 damit_runner/tests/_dwr_registry.py. The test bodies are DamSafety's; only import paths and DamIT names
-changed. DamIT differences: the DamSafety tests of the Runner's engine dropdown, its CLI and
-"Recommended (auto)" (gpu/fv/fv2/dg2/sgc/subfv_engine_is_a_runner_engine_choice,
-recommended_auto_engine_choice, boann_shock_engines_rerun_at_a_cfl_they_honour,
-subfv_coarsening_factor_is_a_cli_config_key) are not ported: DamIT's Runner offers LISFLOOD-FP, Boann ACC
-and Boann sub-grid channels (tests/test_gpu_engine.py, tests/test_gpu_sgc.py), and the other Boann solvers
-are carried in core/metalflood without a Runner choice. metalflood_matches_lisflood_fp (a model test that
+changed. DamIT differences: the DamSafety tests of the Runner's engine dropdown and its CLI
+(gpu/fv/fv2/dg2/sgc/subfv_engine_is_a_runner_engine_choice, recommended_auto_engine_choice,
+subfv_coarsening_factor_is_a_cli_config_key) are not ported: they name DamSafety's dropdown indices and
+ndbreach_cli, and DamIT's dropdown keeps its own order (algorithms/engine.py FLOOD_ENGINES; covered by
+tests/test_gpu_engine.py). DamIT Runner 0.10.0 added the 3.83.0-3.93.0 engine tests at the end
+(FV2 wet/dry front, the NoData wall of Boann 6.0.0, the shock re-run CFL). metalflood_matches_lisflood_fp (a model test that
 needs a LISFLOOD-FP build) is not ported either. Every engine-level test is DamSafety's.
 """
 """The GPU flood engine (core/metalflood): its kernels, run through the CPU build of the same
@@ -160,7 +160,7 @@ def metalflood_params_layout_matches_kernels():
     _need_cpu_build()
     import ctypes
     lib = ctypes.CDLL(mfb.build_cpu_library())
-    assert lib.mf_params_size() == ctypes.sizeof(mfb.Params) == 96
+    assert lib.mf_params_size() == ctypes.sizeof(mfb.Params) == 100  # Boann 6.8.0 added n_wl
     names = [n for n, _, _ in mfb.buffer_layout(3, 4, 1, 1, 2)]
     with open(mfb.KERNEL_SOURCE, encoding="utf-8") as f:
         src = f.read()
@@ -864,7 +864,7 @@ def metalflood_sgc_params_layout_matches_kernels():
     _need_cpu_build()
     import ctypes
     lib = ctypes.CDLL(mfb.build_cpu_library(mfb.SGC_SPEC))
-    assert lib.mf_params_size() == ctypes.sizeof(mfb.Params) == 96
+    assert lib.mf_params_size() == ctypes.sizeof(mfb.Params) == 100  # Boann 6.8.0 added n_wl
     names = [n for n, _, _ in mfb.sgc_buffer_layout(3, 4, 1, 1, 2)]
     assert len(names) == 30, len(names)
     assert names[:3] == ["z", "n2", "h"] and names[-3:] == ["w", "Dd", "nc2"]
@@ -1250,6 +1250,143 @@ def metalflood_dg2_is_insensitive_to_fma_rounding():
         shutil.rmtree(d, True)
 
 
+# --- ported from DamSafety Runner tests/test_metalflood.py at DWR_Plugins c86ba915 (DamIT Runner 0.10.0) ---
+
+def _fv2_wetdry_case(ny=30, nx=48, dx=10.0):
+    """A dam break onto a dry, rough 1 % slope with ridges and a pit, every edge closed."""
+    rng = np.random.default_rng(1)
+    xx = np.mgrid[0:ny, 0:nx][1].astype(float)
+    z = 0.01 * dx * xx + rng.uniform(0.0, 0.6, (ny, nx))     # rising east, bumps and pits
+    z[::7, 24:] += 1.5                                        # ridges across the slope
+    z[5:9, 32:36] -= 2.0                                      # a pit
+    h0 = np.zeros((ny, nx))
+    h0[:, :10] = np.maximum(4.0 + z[:, :10].min() - z[:, :10], 0.0)   # the reservoir
+    return z, h0, dx
+
+
+def _nodata_lake_deck(folder):
+    """A 1 m lake at rest on a flat 20 x 20 grid (10 m cells) with a NoData column and a NoData
+    block inside it: every NoData face is a wall the water rests against."""
+    os.makedirs(folder, exist_ok=True)
+    z = np.zeros((20, 20))
+    z[:, 10] = bl.NODATA
+    z[5:8, 3:6] = bl.NODATA
+    h = np.where(z == bl.NODATA, 0.0, 1.0)
+    bl._write_asc(os.path.join(folder, "dem.asc"), z, 0.0, 0.0, 10.0)
+    bl._write_asc(os.path.join(folder, "start.asc"), h, 0.0, 0.0, 10.0)
+    p = os.path.join(folder, "run.par")
+    with open(p, "w") as f:
+        f.write("DEMfile dem.asc\nstartfile start.asc\nfpfric 0.03\nsim_time 600\n"
+                "initial_tstep 1\nsaveint 1000\nmassint 60\n")
+    return p
+
+
+@test
+def metalflood_fv2_wet_dry_front_conserves_mass():
+    """Runner 3.83.0 regression for the Runner 3.66.0 FV2 fix (#492; Absaraka DWR-2801, FV2 ended 58 %
+    over the injected volume with Qout 0): a dam break onto a dry rough slope in a closed box must
+    keep its volume to round-off, with no depth clip and no collapse of the time step. Before 3.66.0
+    FV2 reconstructed the DISCHARGE hu and divided it by the reconstructed edge depth; on a thin edge
+    that velocity was unbounded (tens of km/s on a 0.3 m cell here), dt fell below 1e-4 s and the
+    depth >= 0 clip created water (+4.4 % by 217 s). The step budget makes that code fail rather
+    than hang."""
+    _need_cpu_build()
+    d = _tmp()
+    try:
+        z, h0, dx = _fv2_wetdry_case()
+        sim = 900.0
+        p = _fv_deck(os.path.join(d, "wd"), z, h0, dx=dx, sim=sim, n=0.03, free="")
+        deck = fve.Deck(p)
+        eng = fve.Engine(deck, mfb.CpuBackend(mfb.FV2_SPEC))
+        vol0 = float(eng.h2().sum(dtype=np.float64)) * dx * dx
+        t, clip, min_dt, batches = 0.0, 0.0, 1e9, 0
+        while t < sim - 1e-3 and batches < 120:          # ~20 batches of 64 steps are needed
+            out = eng.batch(t, sim, 64, True)
+            t += out["t_local"]
+            clip += out["clip"]
+            min_dt = min(min_dt, out["min_dt"])
+            batches += 1
+        vol = float(eng.h2().sum(dtype=np.float64)) * dx * dx
+        err = (vol - vol0) / vol0
+        assert t >= sim - 1e-3, "FV2 did not reach {:.0f} s in {} batches (t {:.1f} s, min dt "\
+            "{:.2e} s, volume {:+.3%})".format(sim, batches, t, min_dt, err)
+        assert abs(err) < 1e-5, "FV2 volume changed {:+.4%} over a closed wet/dry run".format(err)
+        assert clip < 1e-6 * vol0, "the depth clip added {:.3g} m3".format(clip)
+        assert min_dt > 0.05, "dt collapsed to {:.2e} s".format(min_dt)
+        h = eng.h2()
+        hu = eng.a["hu"].reshape(h.shape)
+        hv = eng.a["hv"].reshape(h.shape)
+        wet = h > 1e-3
+        spd = np.hypot(hu, hv)[wet] / h[wet]
+        assert spd.max() < 15.0, "unphysical speed {:.1f} m/s".format(spd.max())
+    finally:
+        shutil.rmtree(d, True)
+
+
+
+@test
+def metalflood_shock_solvers_hold_a_lake_against_nodata():
+    """Runner 3.93.0: the shock-capturing solvers (FV1, FV2, DG2) gave a face between a wet cell
+    and a NoData cell no flux at all - no wall pressure - while the cell's other faces and the
+    bed source still pushed. Water resting against NoData was driven into it forever: a 1 m lake
+    beside a NoData strip reached 5 m/s and 0.5-3.4 m depths in 10 minutes, and EA benchmark
+    test 5 at 10 m (NoData around the valley) ran at 0.008 s steps with water at 500 m/s and an 11%
+    volume gain. A NoData face is now a reflecting wall, as the domain edge already was (and as
+    ACC and LISFLOOD-FP treat it): the lake stays at rest."""
+    _need_cpu_build()
+    from damit_runner.core.metalflood import engine_dg2 as dge
+    d = _tmp()
+    try:
+        runs = (("fv1", lambda p: fve.run_par(p, backend="cpu", order=1)),
+                ("fv2", lambda p: fve.run_par(p, backend="cpu", order=2)),
+                ("dg2", lambda p: dge.run_par(p, backend="cpu")))
+        for name, run in runs:
+            sub = os.path.join(d, name)
+            run(_nodata_lake_deck(sub))
+            h = _res(sub, "max")
+            v = _res(sub, "maxVc")
+            wet = h != bl.NODATA
+            assert np.abs(h[wet] - 1.0).max() < 2e-3, (name, h[wet].min(), h[wet].max())
+            assert v[wet].max() < 1e-3, (name, v[wet].max())
+    finally:
+        shutil.rmtree(d, True)
+
+
+@test
+def boann_shock_engines_rerun_at_a_cfl_they_honour():
+    """The mass-balance re-run (workflow: volume error over STABILITY_RETRY_PCT) must change
+    something for Boann's shock-capturing engines. It used CFL 0.5, which FV1 / FV2 / DG2 / sub-grid
+    FV clamp to their own ceiling (0.45 or 1/3), and theta, which they ignore, so it re-ran them
+    unchanged (twice the time, the same 3.5 % error on the Lake Delhi gate). They now re-run at
+    STABLE_CFL_SHOCK, below every ceiling, and the engines really take more steps at it; the ACC /
+    LISFLOOD-FP re-run is unchanged."""
+    import re
+    from damit_runner.core import lisflood as lf
+    for e in (lf.GPU_FV_EXE, lf.GPU_FV2_EXE, lf.GPU_DG2_EXE, lf.GPU_SUBFV_EXE):
+        assert lf.stable_cfl(e) == lf.STABLE_CFL_SHOCK, e
+    for e in (lf.GPU_EXE, lf.GPU_SGC_EXE, "/usr/local/bin/lisflood", ""):
+        assert lf.stable_cfl(e) == lf.STABLE_CFL, e
+    here = lf.BOANN_DIR                    # damit_runner/boann/hydro (DamIT Runner 0.11.0: the pinned copy)
+    for k in ("kernels_fv.metal", "kernels_fv2.metal", "kernels_dg2.metal", "kernels_subfv.metal"):
+        with open(os.path.join(here, k), encoding="utf-8") as f:
+            m = re.search(r"#define MF_(?:DG2_CFL|CFL_CAP) ([0-9.]+)f", f.read())
+        cap = float(m.group(1))
+        assert lf.STABLE_CFL_SHOCK < cap, (k, cap)
+    _need_cpu_build()
+    d = _tmp()
+    try:
+        z = np.zeros((6, 30))
+        h0 = np.where(np.arange(30)[None, :] < 10, 2.0, 0.5) * np.ones((6, 1))
+        steps = []
+        for cfl in (None, lf.STABLE_CFL_SHOCK):
+            a = _fv_deck(os.path.join(d, str(cfl)), z, h0, dx=5.0, sim=30.0, n=0.03)
+            if cfl is not None:
+                with open(a, "a") as f:
+                    f.write("cfl {}\n".format(cfl))
+            steps.append(fve.run_par(a, backend="cpu", order=1)["steps"])
+        assert steps[1] > 1.5 * steps[0], steps
+    finally:
+        shutil.rmtree(d, True)
 
 
 from damit_runner.tests._dwr_registry import make_case  # noqa: E402

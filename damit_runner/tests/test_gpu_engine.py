@@ -63,23 +63,7 @@ class GpuEngineChoice(unittest.TestCase):
             os.environ.pop("DAMIT_MF_BACKEND", None)
 
 
-class MetalfloodProvenance(unittest.TestCase):
-    """core/metalflood is the DWR_Plugins #399 copy (commit 51d72917). The parity pin has no metalflood
-    folder, so the gate skips it; METALFLOOD_SOURCE.json records the commit and each file's sha256."""
-
-    def test_files_match_the_recorded_source(self):
-        import hashlib
-        import json
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, "METALFLOOD_SOURCE.json"), encoding="utf-8") as fh:
-            rec = json.load(fh)
-        folder = os.path.join(root, "core", "metalflood")
-        have = sorted(f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)))
-        self.assertEqual(have, sorted(rec["sha256"]), "core/metalflood files differ from METALFLOOD_SOURCE.json")
-        for name, want in rec["sha256"].items():
-            with open(os.path.join(folder, name), "rb") as fh:
-                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), want, name)
-        self.assertEqual(len(rec["source_commit"]), 40)
+# The vendored copy's provenance (BOANN.lock) is tests/test_boann_lock.py (DamIT Runner 0.11.0).
 
 
 if __name__ == "__main__":

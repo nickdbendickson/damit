@@ -1,0 +1,124 @@
+name: Boann on Windows
+
+# Boann's CPU libraries for Windows, and proof that a Windows PC with no C++ compiler runs Boann
+# from the DamIT Runner zip.
+#
+#   build    cross-compiles every engine's CPU library with MinGW-w64 on Linux (OpenMP and
+#            one-core, -static: no DLLs needed) by scripts/build_boann_cpu.py, the same way
+#            DWR_Plugins' release builds them; artifact boann-cpu-windows-x64
+#   package  the DamIT Runner zip (scripts/package_plugins.py) with those libraries under
+#            damit_runner/boann/hydro/prebuilt/windows-x64/; artifact damit-runner-windows-zip
+#   check    on windows-latest: unzip, take every compiler off PATH, then
+#            scripts/boann_windows_check.py runs the Runner's engine choice, a short deck through
+#            boann.py (ACC, FV1) and every engine's library, all from the zip
+#
+# Runs on a pull request that touches Boann or these scripts, by hand, and as a step of
+#   release.yml (which ships the libraries in the Runner zip) and
+#   damit-desk's CI (workflow_call with damit_ref: main; the files come from this repository).
+
+on:
+  pull_request:
+    paths:
+      - "damit_runner/boann/**"
+      - "damit_runner/BOANN.lock"
+      - "damit_runner/core/lisflood.py"
+      - "scripts/build_boann_cpu.py"
+      - "scripts/boann_windows_check.py"
+      - "scripts/package_plugins.py"
+      - ".github/workflows/boann_windows.yml"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      damit_ref:
+        description: "damit commit, branch or tag to build (empty: this run's own commit)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  # called from damit-desk the checkout must still be damit's, at the ref asked for
+  DAMIT_REPO: ${{ inputs.damit_ref && 'nickdbendickson/damit' || github.repository }}
+  DAMIT_REF: ${{ inputs.damit_ref || github.sha }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DAMIT_REPO }}
+          ref: ${{ env.DAMIT_REF }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cross-compile with MinGW-w64 (posix threads, OpenMP, -static)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix
+          python -m pip install -q numpy
+          python scripts/build_boann_cpu.py --out boann --platform windows-x64 \
+            --cxx x86_64-w64-mingw32-g++-posix --require-openmp --extra=-static
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boann-cpu-windows-x64
+          path: boann/
+          if-no-files-found: error
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DAMIT_REPO }}
+          ref: ${{ env.DAMIT_REF }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: boann-cpu-windows-x64
+          path: damit_runner/boann/hydro/prebuilt
+      - name: The DamIT Runner zip, Windows libraries inside
+        run: |
+          ls -la damit_runner/boann/hydro/prebuilt/windows-x64
+          python scripts/package_plugins.py dist
+          mkdir -p runner-zip && cp dist/damit_runner*.zip runner-zip/
+          unzip -l runner-zip/damit_runner*.zip | grep -c 'prebuilt/windows-x64/.*\.dll'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: damit-runner-windows-zip
+          path: runner-zip/
+          if-no-files-found: error
+
+  check:
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      # only the check script; Boann itself comes from the zip
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DAMIT_REPO }}
+          ref: ${{ env.DAMIT_REF }}
+          sparse-checkout: scripts/boann_windows_check.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: damit-runner-windows-zip
+          path: runner-zip
+      - name: Unzip the DamIT Runner the way QGIS installs it
+        shell: bash
+        run: |
+          python -m pip install -q numpy
+          mkdir plugins
+          python -c "import glob, zipfile; zipfile.ZipFile(glob.glob('runner-zip/damit_runner*.zip')[0]).extractall('plugins')"
+      - name: Boann end to end from the zip, no compiler
+        shell: bash
+        run: python scripts/boann_windows_check.py plugins

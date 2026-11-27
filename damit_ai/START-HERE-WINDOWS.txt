@@ -13,9 +13,13 @@ Two assistants that run on this PC only (nothing is sent anywhere):
      again. It carries on where it stopped. Everything it printed is in
      %USERPROFILE%\local-ai\install.log
 
-2. Open a NEW PowerShell or Command Prompt window (Start menu, type PowerShell).
+2. Open Local AI: it is in your Start menu and on your desktop.
+     Ask questions, add documents (drop PDFs on the Library tab), get more from the download
+     catalog, fix what Health reports with one press, test the answers and install updates.
+     Nothing to type, and nothing needs admin rights.
+   Or open a NEW PowerShell or Command Prompt window (Start menu, type PowerShell) and type:
 
-3. Try it:
+3. Try these:
      vor "what breach width does Froehlich 2008 give?"
      heim "what does REFINE_NEAR do?"
      ai            both on one page in your web browser

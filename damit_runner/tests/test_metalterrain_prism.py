@@ -1,13 +1,15 @@
 """DamIT port of DamSafety Runner tests/test_metalterrain_prism.py (DWR_Plugins 01758ea1), run by unittest through
 damit_runner/tests/_dwr_registry.py. The test bodies are DamSafety's; only import paths and DamIT names
-changed. DamIT difference: prism_default_curve_is_national_nd_selectable (DamIT keeps the national
-curve as the default)."""
+changed. DamIT difference: prism_damit_always_names_the_national_curve (DamIT Runner 0.11.0: Boann's
+prism defaults to the ND curve, so DamIT never relies on that default)."""
 """BoannGrid fine-DEM channel prism carve (core/metalterrain/prism.py): the regional
 geometry matches a hand computation, the trapezoidal carve only ever lowers ground, the carved
 bed falls monotonically downstream, the cross-section is deepest on the centreline and rises to the
 bank, and a larger drainage area carves a wider, deeper channel. Pure numpy - no GPU, no compiler,
 no scipy.
 """
+import os
+
 import numpy as np
 
 from damit_runner.core.metalterrain import prism as P
@@ -240,25 +242,48 @@ if __name__ == "__main__":
 
 
 @test
-def prism_default_curve_is_national_nd_selectable():
-    """DamIT (adapted from DamSafety 3.53.0's prism_default_curve_is_north_dakota): DamIT is used in
-    every state, so carve_prism / carve_channels keep Bieger 2015 (US) as the default; the ND curve
-    from 79 USGS gauges (DamSafety's default since 3.53.0) is selected through `coeffs`."""
+def prism_damit_always_names_the_national_curve():
+    """DamIT Runner 0.11.0 (was prism_default_curve_is_national_nd_selectable): BoannGrid is now
+    the pinned, byte-identical DamSafety copy, whose carve_prism / carve_channels default to the
+    North Dakota curve (DamSafety 3.53.0). DamIT is used in every state, so DamIT keeps Bieger 2015
+    (US) by never relying on that default: every DamIT call outside damit_runner/boann/ names
+    `coeffs` (none does today; the prism carve is not wired into DamIT's conditioner run), and the
+    national curve gives the national carve."""
+    import ast
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    bad = []
+    for d, subdirs, names in os.walk(root):
+        rel = os.path.relpath(d, root).replace(os.sep, "/")
+        subdirs[:] = [x for x in subdirs if x not in ("__pycache__", ".git")
+                      and not (rel + "/" + x).startswith("damit_runner/boann")
+                      and not (rel + "/" + x).endswith("/tests")]
+        for n in names:
+            if not n.endswith(".py"):
+                continue
+            path = os.path.join(d, n)
+            with open(path, encoding="utf-8") as fh:
+                try:
+                    tree = ast.parse(fh.read())
+                except SyntaxError:
+                    continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    f = node.func
+                    name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+                    if name in ("carve_prism", "carve_channels") and \
+                            "coeffs" not in {k.arg for k in node.keywords}:
+                        bad.append("{}:{}".format(os.path.relpath(path, root), node.lineno))
+    assert not bad, "DamIT calls the prism carve without coeffs= (Boann's default is ND): " + ", ".join(bad)
     assert P.ND_USGS_2026 == {"a_w": 1.946, "b_w": 0.304, "a_d": 0.221, "b_d": 0.256}
-    assert P.DEFAULT_COEFFS == P.BIEGER_2015_US
+    assert P.BIEGER_2015_US == {"a_w": 2.70, "b_w": 0.352, "a_d": 0.30, "b_d": 0.213}
     z = _sloping_plane(ny=80, nx=40, drop=0.0)
     line = [(40, c) for c in range(z.shape[1])]
     da = np.full(z.shape[1], 300.0)
-    default, reaches = P.carve_prism(z, line, da, cell_m=1.0)
     nd = P.carve_prism(z, line, da, cell_m=1.0, coeffs=P.ND_USGS_2026)[0]
     us = P.carve_prism(z, line, da, cell_m=1.0, coeffs=P.BIEGER_2015_US)[0]
-    assert np.array_equal(default, us)
-    assert not np.array_equal(default, nd)
-    w_nd, d_nd = P.bieger_geometry(300.0, **P.ND_USGS_2026)
-    assert abs(w_nd - 1.946 * 300.0 ** 0.304) < 1e-9 and abs(d_nd - 0.221 * 300.0 ** 0.256) < 1e-9
-    # ND channels are narrower than the national curve at the same area
     cm = z.shape[1] // 2
-    assert (nd[:, cm] < z[:, cm] - 1e-6).sum() < (default[:, cm] < z[:, cm] - 1e-6).sum()
+    # ND channels are narrower than the national curve at the same area
+    assert (nd[:, cm] < z[:, cm] - 1e-6).sum() < (us[:, cm] < z[:, cm] - 1e-6).sum()
 
 
 from damit_runner.tests._dwr_registry import make_case  # noqa: E402
