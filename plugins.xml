@@ -16,7 +16,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_catalog_0_2_0.zip</file_name>
     <icon>damit_catalog/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_catalog_0_2_0.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_catalog_0_2_0.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -36,7 +36,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_core_0_4_0.zip</file_name>
     <icon>damit_core/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_core_0_4_0.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_core_0_4_0.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -56,7 +56,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_data_0_2_2.zip</file_name>
     <icon>damit_data/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_data_0_2_2.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_data_0_2_2.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -76,7 +76,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_finder_0_7_4.zip</file_name>
     <icon>damit_finder/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_finder_0_7_4.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_finder_0_7_4.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -96,7 +96,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_hazard_0_5_0.zip</file_name>
     <icon>damit_hazard/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_hazard_0_5_0.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_hazard_0_5_0.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -116,7 +116,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_hazardlite_0_2_2.zip</file_name>
     <icon>damit_hazardlite/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_hazardlite_0_2_2.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_hazardlite_0_2_2.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -136,14 +136,14 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_pmp_0_5_0.zip</file_name>
     <icon>damit_pmp/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_pmp_0_5_0.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_pmp_0_5_0.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
-  <pyqgis_plugin name="DamIT Runner" version="0.13.0">
+  <pyqgis_plugin name="DamIT Runner" version="0.13.1">
     <description>Dam breach model runs (Processing provider damit_run): damit_run:rundam accepts a DamIT Screener hand-off package (or equivalent parameters), validates it against DamIT Catalog (NID dams only: the dam needs its NID ID unless new / proposed or a desk sample), prepares the run and launches the breach model with the DamSafety Runner's parameters and defaults (breach hydrograph, LISFLOOD-FP executable or the built-in engine when none is installed, optional ANUGA tier on the DamSafety mesh, growth loop and grid refinement), writing Depth (Max), Velocity (Max), Arrival Time, WSE (Max), hmax and the flood polygons into the dam folder for DamIT Hazard.</description>
     <about>Generalized from the DamSafety Runner breach-run workflow for the DamIT presets. Tools: damit_run:rundam (DRY_RUN on = prepare / record only; HEC-RAS is refused) and damit_run:checkhandoff. It never starts HEC-RAS, Wine, ndbreach:rundam or ndbreach:batch, and always creates a new run folder rather than writing into an existing one. Also ships the flood package (breach hydrographs, built-in LISFLOOD-FP and finite-volume engines) used by DamIT Screener. Classification of finished rasters is DamIT Hazard's job (damit:classify); the Runner attaches catalog metadata only. Suggested classifications only; the engineer of record and the regulating agency make the determination.</about>
-    <version>0.13.0</version>
+    <version>0.13.1</version>
     <qgis_minimum_version>3.28</qgis_minimum_version>
     <qgis_maximum_version>4.99</qgis_maximum_version>
     <homepage>https://github.com/nickdbendickson/damit</homepage>
@@ -154,9 +154,9 @@
     <experimental>True</experimental>
     <deprecated>False</deprecated>
     <supports_qt6>True</supports_qt6>
-    <file_name>damit_runner_0_13_0.zip</file_name>
+    <file_name>damit_runner_0_13_1.zip</file_name>
     <icon>damit_runner/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_runner_0_13_0.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_runner_0_13_1.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -176,7 +176,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_screener_0_3_9.zip</file_name>
     <icon>damit_screener/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_screener_0_3_9.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_screener_0_3_9.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
@@ -196,7 +196,7 @@
     <supports_qt6>True</supports_qt6>
     <file_name>damit_setup_0_2_0.zip</file_name>
     <icon>damit_setup/icon.svg</icon>
-    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.0/damit_setup_0_2_0.zip</download_url>
+    <download_url>https://github.com/nickdbendickson/damit/releases/download/v0.13.1/damit_setup_0_2_0.zip</download_url>
     <update_date>2026-11-27</update_date>
     <create_date>2026-11-27</create_date>
   </pyqgis_plugin>
