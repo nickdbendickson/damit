@@ -352,8 +352,16 @@ def receptor_hydraulics(res, points_xy, wet_ft=0.1):
         if d < wet_ft:
             out.append({"depth_ground_ft": 0.0, "velocity_fps": 0.0, "dv_ft2s": 0.0})
             continue
-        out.append({"depth_ground_ft": round(d, 2), "velocity_fps": round(float(res["vel"][r, c]) / FT, 2),
-                    "dv_ft2s": round(float(res["dv"][r, c]) / FT ** 2, 2)})
+        vv = float(res["vel"][r, c]) / FT
+        dv = float(res["dv"][r, c]) / FT ** 2
+        # A non-finite velocity is unknown, not 0. tm11.zone used to return LOW for NaN
+        # (every comparison with NaN is false) and the screener wrote that as m1_zone.
+        if not np.isfinite(vv):
+            out.append({"depth_ground_ft": round(d, 2), "velocity_fps": None, "dv_ft2s": None,
+                        "velocity_unknown": True})
+            continue
+        out.append({"depth_ground_ft": round(d, 2), "velocity_fps": round(vv, 2),
+                    "dv_ft2s": round(dv, 2) if np.isfinite(dv) else None})
     return out
 
 

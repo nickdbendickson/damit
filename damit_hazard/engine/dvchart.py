@@ -154,7 +154,7 @@ def select(receptors, charts, habitable_types, chart_for_type, wet_min=0.0, sour
         if cid is None:
             out["no_chart"] += 1
             continue
-        if v is None:
+        if v is None or zone is None:
             out["no_velocity"] += 1
             continue
         e = _common(r, rtype, basis, status)

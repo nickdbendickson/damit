@@ -551,9 +551,23 @@ def engine2d(dam, settings=None, folder=None, hydro_step=None, receptors=None, l
         sampled += 1
         if charts and r.get("receptor_type") == "structure":
             _, ch = charts
-            z = ch.zone(_chart_for(r), hyd["depth_ground_ft"], hyd["velocity_fps"])
-            if ZONE_NAMES.get(z):
-                r["m1_zone"] = ZONE_NAMES[z]
+            v = hyd.get("velocity_fps")
+            wet = hyd.get("depth_ground_ft") or 0
+            # Unknown velocity is not still water. The chart's NaN comparisons used to
+            # publish low_danger. A wet structure is high_danger (Screening: potentially
+            # lethal, borderline) and the note says the chart was not read.
+            if wet > 0 and (v is None or v != v):
+                r["m1_zone"] = "high_danger"
+                r["velocity_unknown"] = True
+            else:
+                z = ch.zone(_chart_for(r), hyd["depth_ground_ft"], v)
+                if ZONE_NAMES.get(z):
+                    r["m1_zone"] = ZONE_NAMES[z]
+    n_unk = sum(1 for r in recs if r.get("velocity_unknown"))
+    if n_unk:
+        notes.append("{} structure(s) with no finite velocity: m1_zone high_danger "
+                     "(the chart is not read at 0 ft/s; counted potentially lethal) - verify"
+                     .format(n_unk))
     g = res["grid"]
     wet = res["depth"] >= 0.1 * FT
     import numpy as np

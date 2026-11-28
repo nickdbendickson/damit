@@ -280,7 +280,7 @@ class Ctx(object):
         pairs = self.pairs(r, datum, mid)
         if not pairs:
             return None
-        if any(v is None for _d, v in pairs):
+        if any(v is None or v != v for _d, v in pairs):
             self.flag(ERROR, "no_velocity", "no velocity sampled: the depth-velocity charts "
                       "cannot be read", mid, r["id"])
             return None
@@ -692,6 +692,18 @@ def m8a(ctx):
             # The catalog takes the highest matching rule, so AADT raises a Low
             # road class (a private road with AADT over 2,000 is High).
             cls = ca if cls is None or ca > cls else cls
+        # REG 5.2.1.2, same rule as DamSafety Screening (unknown_aadt = Medium):
+        # an overtopped road that is not private, with no count, is Medium.
+        # Leaving it unscored published Low. Interstate / US-state / private
+        # already have a class from the lists above. A real AADT still decides.
+        if cls is None and a is None and c not in P["low_classes"]:
+            cls = 2
+            if c:
+                why.append(c)
+            why.append("AADT unknown, assumed Medium")
+            ctx.flag(WARNING, "m8a_assumed_medium",
+                     "overtopped road with no AADT that is not private: classed Medium "
+                     "(not left unscored) - verify the count", "M8a", r["id"])
         if cls is None:
             ctx.flag(WARNING, "m8a_unknown", "road class and AADT unknown: not scored", "M8a",
                      r["id"])
@@ -1399,6 +1411,18 @@ def _flag_dv_cells_differ(ctx):
              .format(len(recs)), None, [r["id"] for r in recs])
 
 
+def _flag_velocity_filled(ctx):
+    """A wet cell the velocity raster does not cover is filled with that receptor's peak
+    finite speed, not with 0 (0 would be a less severe ACER zone)."""
+    recs = [r for r in (ctx.run.get("receptors") or []) if r.get("velocity_filled")]
+    if not recs:
+        return
+    ctx.flag(WARNING, "velocity_filled",
+             "{} receptor(s) had no velocity on some wet cells; those cells use the receptor's "
+             "own peak velocity (a missing speed is not read as 0 ft/s) - verify"
+             .format(len(recs)), None, [r["id"] for r in recs])
+
+
 def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None, habitable_rule=RULE_LEGACY):
     dam = dict(dam or {})
     charts = charts or tm11.load()
@@ -1417,6 +1441,7 @@ def classify(cat, cfg, runs, dam=None, charts=None, layers=None, run_date=None, 
         ctx = Ctx(cat, cfg, charts, run, dam, flags, habitable_rule)
         _flag_nodata_neighbourhood(ctx)
         _flag_dv_cells_differ(ctx)
+        _flag_velocity_filled(ctx)
         ctx.receptors = _prefilter(ctx, notes)
         for mid in order:
             EVALUATORS[mid](ctx)

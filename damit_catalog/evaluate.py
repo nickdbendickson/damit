@@ -208,6 +208,20 @@ def _band(value, bands, params):
     return best
 
 
+def _m8a_assumed_medium(r):
+    """REG 5.2.1.2: an overtopped road that is not private, with no AADT, is Medium.
+
+    A counted AADT still uses the catalog bands (a count in the Low band stays Low). Private with no
+    count stays on the private rule. This is the case the bands do not name, which used
+    to publish no hit and leave the dam Low."""
+    if _num(r.get("aadt")) is not None:
+        return False
+    if not _wet(r):
+        return False
+    rc = str(r.get("road_class") or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return rc not in ("private", "driveway")
+
+
 def _types(method):
     return (method.get("applies_to") or {}).get("receptor_type")
 
@@ -265,6 +279,12 @@ def _method_hits(mid, m, recs, summ, datums, sid, flags):
 
     for r in cands if m.get("receptor_rules") else []:
         c, why, miss, _ = _rule_pass(m["receptor_rules"], r, params, datums)
+        if mid == "M8a" and c is None and _m8a_assumed_medium(r):
+            c, why = 2, "AADT unknown on a road that is not private: Medium"
+            flags.append(_flag("m8a_assumed_medium",
+                               "overtopped road with no AADT that is not private: classed Medium "
+                               "(not left unscored) - verify the count",
+                               method="M8a", receptor=r.get("id"), scenario=sid))
         if c is not None:
             hit(r.get("id"), c, why)
         if miss:

@@ -79,6 +79,30 @@ def test_structure_cells_and_values():
     assert out["far"]["in_domain"] is False and out["far"]["sampled"] is False
 
 
+def test_missing_velocity_is_not_read_as_zero():
+    """A velocity hole is not 0 ft/s (0 is a less severe ACER zone)."""
+    d = tempfile.mkdtemp()
+    dep = np.zeros((100, 100), np.float32)
+    dep[40:60, 40:60] = 1.5
+    hole = np.full((100, 100), -9999.0, np.float32)
+    part = np.full((100, 100), 4.0, np.float32)
+    part[50, 50] = -9999.0
+    items = {"h": (_poly_wkb(48.0, 48.0, 52.0, 52.0), (50.0, 50.0), None)}
+    rs = S.open_rasters({"depth": _tif(os.path.join(d, "d.tif"), dep),
+                         "velocity": _tif(os.path.join(d, "v.tif"), hole)})
+    out = S.sample_structures(items, rs, edge=1.0, point_radius=1.0)
+    h = out["h"]
+    assert h["depth_ft"] == 1.5, h["depth_ft"]
+    assert h.get("velocity_unknown") is True and h.get("velocity_fps") is None, h
+    assert h["cells"] and all(v is None for _d, v in h["cells"])
+    rs = S.open_rasters({"depth": _tif(os.path.join(d, "d2.tif"), dep),
+                         "velocity": _tif(os.path.join(d, "v2.tif"), part)})
+    out = S.sample_structures(items, rs, edge=1.0, point_radius=1.0)
+    h = out["h"]
+    assert h["velocity_fps"] == 4.0 and h.get("velocity_filled") is True, h
+    assert all(v == 4.0 for _d, v in h["cells"]), h["cells"][:8]
+
+
 def test_metres_and_lines():
     d = tempfile.mkdtemp()
     dep = np.zeros((10, 10), np.float32)

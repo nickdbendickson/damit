@@ -462,6 +462,14 @@ class Combination(unittest.TestCase):
         self.assertEqual(E.evaluate(self.cat, cfg, [road(500)], {})["suggested_ordinal"], 2)
         self.assertEqual(E.evaluate(self.cat, cfg, [road(2000)], {})["suggested_ordinal"], 2)
         self.assertEqual(E.evaluate(self.cat, cfg, [road(2001)], {})["suggested_ordinal"], 3)
+        bare = {"id": "r", "receptor_type": "road", "road_class": "county", "depth_ground_ft": 0.4}
+        nd = E.evaluate(self.cat, self.cat.resolve_preset("ND"), [bare], {})
+        self.assertEqual(nd["suggested_ordinal"], 2)
+        self.assertEqual(nd["suggested_label"], "Medium")
+        self.assertTrue(any(f["code"] == "m8a_assumed_medium" for f in nd["flags"]))
+        priv = {"id": "r", "receptor_type": "road", "road_class": "private", "depth_ground_ft": 0.4}
+        self.assertEqual(E.evaluate(self.cat, self.cat.resolve_preset("ND"), [priv], {})
+                         ["suggested_ordinal"], 1)
 
     def test_custom_mode_unbranded(self):
         cfg = self.cat.resolve_custom(["M2", "M8a"], ["S1"], ["R7"], ["D1"], {"M2": {"depth_ft": 3.0}})

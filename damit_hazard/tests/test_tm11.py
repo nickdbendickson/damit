@@ -22,6 +22,7 @@ def test_zone_rule():
     assert CHARTS.zone("houses", hi, 1.0) == tm11.HIGH
     assert CHARTS.zone("houses", 0.5, 30.0) == tm11.HIGH             # past the velocity axis
     assert CHARTS.zone("houses", 0.0, 30.0) == tm11.LOW              # dry
+    assert CHARTS.zone("houses", 1.5, float("nan")) is None          # missing speed is not low
     assert CHARTS.zone("mobile_homes", 2.5, 0.0) == tm11.HIGH
 
 

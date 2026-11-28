@@ -104,8 +104,17 @@ def test_nd_m8a_aadt_bands():
     assert cls(cls="private", aadt=500) == 2      # 500-2,000 is Significant, private included
     assert cls(cls="private", aadt=2000) == 2
     assert cls(cls="private", aadt=2500) == 3     # over 2,000 is High, private included
+    # no AADT, not private: Medium (not left unscored, which published Low)
+    assert cls(cls="county") == 2
+    assert cls(cls="municipal") == 2
+    assert cls(cls="other_public") == 2
+    assert cls(cls="private") == 1                # private with no count stays Low
+    res = run(preset("ND"), [road("r", cls="county")], scenario="S3")
+    assert res["suggested_class"] == 2 and "m8a_assumed_medium" in codes(res, "warning")
     res = run(preset("ND"), [road("r")], scenario="S3")
-    assert "m8a_unknown" in codes(res, "warning")
+    assert res["suggested_class"] == 2 and "m8a_assumed_medium" in codes(res, "warning")
+    bare = run(preset("ND"), [home("h", depth=1.5, vel=0.0)], scenario="S3")
+    assert "no_velocity" not in codes(bare, "error") and "M1" not in methods_hit(bare)
 
 
 def test_nd_m8b_m9a_m11a_and_labels():
@@ -286,9 +295,13 @@ def test_virginia_low_volume_and_wording():
 
 
 def test_missing_inputs_are_flagged():
-    # no velocity: M1 cannot be scored
+    # no velocity: M1 cannot be scored (not read as 0 ft/s, which is the low zone)
     res = run(preset("ND"), [R.make("h", "structure", "home", depth_ft=5.0)], scenario="S3")
     assert "no_velocity" in codes(res, "error")
+    assert "M1" not in methods_hit(res)
+    res = run(preset("ND"), [R.make("h", "structure", "home", depth_ft=1.5,
+                                    cells=[(1.5, float("nan"))])], scenario="S3")
+    assert "no_velocity" in codes(res, "error") and "M1" not in methods_hit(res)
     # no road layer for a road method
     res = run(preset("ND"), [home("h", depth=0.0)], scenario="S3")
     assert "no_layer" in codes(res, "warning")

@@ -454,22 +454,41 @@ def _hyd(rs, xs, ys, d):
     wet = d > 0
     v = None
     if "velocity" in rs:
-        v = rs["velocity"].values_at(xs, ys)
-        v = np.where(np.isfinite(v), np.abs(v), 0.0)
-        if wet.any():
-            v_peak = float(v[wet].max())
-            out["velocity_fps"] = v_peak
-            out["dv_peak_ft2s"] = d_peak * v_peak
-            out["dv_same_cell_ft2s"] = float((d[wet] * v[wet]).max())
-            out["dv_cells_differ"] = not bool(np.any(wet & (d == d_peak) & (v == v_peak)))
+        raw = np.asarray(rs["velocity"].values_at(xs, ys), dtype=np.float64)
+        finite = np.isfinite(raw)
+        known = wet & finite
+        if known.any():
+            # A non-finite velocity is not 0 ft/s. 0 is a less severe ACER zone, so filling
+            # a hole with 0 published a low zone for a cell the raster does not cover.
+            # A partial hole takes this receptor's own peak finite speed (cannot lower the
+            # zone). No finite speed on any wet cell stays unknown (None), and M1 does not
+            # read the chart.
+            speed = np.abs(raw)
+            peak = float(speed[known].max())
+            missing = wet & ~finite
+            if missing.any():
+                out["velocity_filled"] = True
+            used = np.where(known, speed, np.where(missing, peak, 0.0))
+            v = used
+            out["velocity_fps"] = peak
+            out["dv_peak_ft2s"] = d_peak * peak
+            out["dv_same_cell_ft2s"] = float((d[wet] * used[wet]).max())
+            out["dv_cells_differ"] = not bool(np.any(wet & (d == d_peak) & (used == peak)))
+        elif wet.any():
+            out["velocity_fps"] = None
+            out["velocity_unknown"] = True
+            out["dv_peak_ft2s"] = None
+            out["dv_same_cell_ft2s"] = None
+            v = None
         else:
             out["velocity_fps"] = 0.0
+            v = np.zeros(np.shape(d), dtype=np.float64)
     if "dv" in rs:
         dv = rs["dv"].values_at(xs, ys)
         dv = dv[np.isfinite(dv)]
         out["dv_ft2s"] = float(dv.max()) if dv.size else 0.0
         out["dv_source"] = "raster"
-    elif v is not None:
+    elif v is not None and out.get("velocity_fps") is not None:
         out["dv_ft2s"] = float(out["dv_same_cell_ft2s"])
         out["dv_source"] = "cells"
     if v is None:

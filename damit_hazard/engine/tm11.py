@@ -67,8 +67,15 @@ class Charts(object):
     def zone(self, cid, d, v):
         if not self.digitized(cid):
             raise ChartNotDigitized(cid)
+        try:
+            d, v = float(d), float(v)
+        except (TypeError, ValueError):
+            return None
+        # NaN is not 0 ft/s. Every comparison with NaN is false, so a missing speed used to
+        # fall through to LOW and publish a low-danger zone. None = do not read the chart.
+        if d != d or v != v:
+            return None
         c = self.charts[cid]
-        d, v = float(d), float(v)
         if d <= 0:
             return LOW                       # a dry point is not in danger whatever the velocity
         if v > c["v_max_fts"] or d > c["d_max_ft"]:
